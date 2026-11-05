@@ -1,54 +1,79 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::io::Cursor;
+use std::sync::Arc;
 
-use dioxus::html::geometry::Pixels;
-use dioxus::html::geometry::euclid::Rect;
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
+use gpui::{
+    Context, Entity, Image, ImageFormat, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Task, Window, div, img, px, relative,
+};
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::TrackingEvent;
-use slab::Slab;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use crate::hub::HubContext;
+use crate::hub::{Hub, HubHandle};
 
-/// A `broadcast::Sender` usable as a prop: Dioxus `#[component]` props must be
-/// `PartialEq`, and this one always compares unequal so a change re-renders.
-#[derive(Clone)]
-pub(crate) struct TrackingSender(pub broadcast::Sender<(Device, TrackingEvent)>);
-
-impl PartialEq for TrackingSender {
-    fn eq(&self, _other: &Self) -> bool {
-        false
-    }
+macro_rules! crosshair_png {
+    ($name:literal) => {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/images/crosshairs/",
+            $name
+        ))
+    };
 }
 
-const CROSSHAIR_IMAGES: [Asset; 6] = [
-    asset!("/assets/images/crosshairs/crosshair-red.png"),
-    asset!("/assets/images/crosshairs/crosshair-blue.png"),
-    asset!("/assets/images/crosshairs/crosshair-yellow.png"),
-    asset!("/assets/images/crosshairs/crosshair-green.png"),
-    asset!("/assets/images/crosshairs/crosshair-orange.png"),
-    asset!("/assets/images/crosshairs/crosshair-gray.png"),
+const CROSSHAIR_IMAGES: [&[u8]; 6] = [
+    crosshair_png!("crosshair-red.png"),
+    crosshair_png!("crosshair-blue.png"),
+    crosshair_png!("crosshair-yellow.png"),
+    crosshair_png!("crosshair-green.png"),
+    crosshair_png!("crosshair-orange.png"),
+    crosshair_png!("crosshair-gray.png"),
 ];
 
-/// Gives each `CrosshairManager` instance its own id so it gets a fresh subscription.
-static CROSSHAIR_MANAGER_ID: AtomicU64 = AtomicU64::new(0);
-
-/// A crosshair's place in the container, in pixels, and its palette slot.
-type CrosshairPlacement = (f64, f64, usize);
-type CrosshairPositions = HashMap<[u8; 6], CrosshairPlacement>;
-
-/// Image for the device at slab slot `key`; slots past the palette share the last.
-fn crosshair_image(key: usize) -> Asset {
-    CROSSHAIR_IMAGES[key.min(CROSSHAIR_IMAGES.len() - 1)]
+/// A crosshair image and its natural size, in pixels.
+struct Sprite {
+    image: Arc<Image>,
+    width: f32,
+    height: f32,
 }
 
-/// Slab slots can be reused or reassigned on a device-list refresh. Keep
-/// positions by UUID so a new occupant never inherits the old device's aim.
-fn retain_device_crosshairs(positions: &mut CrosshairPositions, devices: &Slab<Device>) {
+fn load_sprites() -> Vec<Sprite> {
+    CROSSHAIR_IMAGES
+        .iter()
+        .filter_map(|bytes| {
+            let reader = image::ImageReader::with_format(Cursor::new(*bytes), image::ImageFormat::Png);
+            match reader.into_dimensions() {
+                Ok((width, height)) => Some(Sprite {
+                    image: Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())),
+                    width: width as f32,
+                    height: height as f32,
+                }),
+                Err(error) => {
+                    tracing::error!("Failed to read a crosshair image: {error}");
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// A crosshair's place in the container as fractions of its width and height,
+/// and its palette slot.
+type CrosshairPlacement = (f32, f32, usize);
+type CrosshairPositions = HashMap<[u8; 6], CrosshairPlacement>;
+
+/// Palette slot for the device at list position `slot`; positions past the
+/// palette share the last.
+fn palette_slot(slot: usize) -> usize {
+    slot.min(CROSSHAIR_IMAGES.len() - 1)
+}
+
+/// Device-list positions change on a refresh. Keep positions by UUID so a new
+/// occupant of a position never inherits the old device's aim.
+fn retain_device_crosshairs(positions: &mut CrosshairPositions, devices: &[Device]) {
     positions.retain(|uuid, (_, _, palette)| {
-        if let Some((slot, _)) = devices.iter().find(|(_, device)| device.uuid == *uuid) {
+        if let Some(slot) = devices.iter().position(|device| device.uuid == *uuid) {
             *palette = slot;
             true
         } else {
@@ -57,117 +82,111 @@ fn retain_device_crosshairs(positions: &mut CrosshairPositions, devices: &Slab<D
     });
 }
 
-/// Pixel position of a normalised aimpoint inside a container of `width` x
-/// `height`; aimpoints off the screen stick to its edge.
-fn aimpoint_pixels(aim_x: f32, aim_y: f32, width: f64, height: f64) -> (f64, f64) {
-    (
-        f64::from(aim_x.clamp(0.0, 1.0)) * width,
-        f64::from(aim_y.clamp(0.0, 1.0)) * height,
-    )
+/// A normalised aimpoint as container fractions; aimpoints off the screen
+/// stick to its edge.
+fn clamped_aimpoint(aim_x: f32, aim_y: f32) -> (f32, f32) {
+    (aim_x.clamp(0.0, 1.0), aim_y.clamp(0.0, 1.0))
 }
 
-/// Moves crosshairs as tracking events arrive, until the channel closes.
-async fn follow_tracking(
-    instance_id: u64,
-    mut receiver: broadcast::Receiver<(Device, TrackingEvent)>,
-    hub: Signal<HubContext>,
-    rect_signal: Signal<Rect<f64, Pixels>>,
-    mut crosshair_positions: Signal<CrosshairPositions>,
-) {
-    tracing::info!("CrosshairManager[{}]: entering event loop", instance_id);
-    loop {
-        let (device, tracking) = match receiver.recv().await {
-            Ok(event) => event,
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(broadcast::error::RecvError::Closed) => {
-                tracing::warn!("CrosshairManager[{}]: tracking channel closed", instance_id);
-                break;
-            }
-        };
-        tracing::debug!(
-            "CrosshairManager[{}] received tracking event for device {:?}: aimpoint=({}, {})",
-            instance_id,
-            device.uuid,
-            tracking.aimpoint.x,
-            tracking.aimpoint.y
-        );
-        let size = rect_signal.peek().size;
-        if size.width <= 0.0 || size.height <= 0.0 {
-            tracing::warn!("Container size invalid: {}x{}", size.width, size.height);
-            continue;
-        }
+/// Draws one crosshair per tracked device over the whole of its container.
+pub(crate) struct CrosshairManager {
+    hub: Entity<Hub>,
+    sprites: Vec<Sprite>,
+    positions: CrosshairPositions,
+    _hub_changed: Subscription,
+    _follow_tracking: Task<()>,
+}
 
-        let Some(key) = hub.peek().device_key(&device) else {
-            continue;
-        };
-        let (x, y) = aimpoint_pixels(
-            tracking.aimpoint.x,
-            tracking.aimpoint.y,
-            size.width,
-            size.height,
-        );
-        crosshair_positions.write().insert(device.uuid, (x, y, key));
+impl CrosshairManager {
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        let hub = cx.global::<HubHandle>().0.clone();
+        let hub_changed = cx.observe(&hub, |manager, hub, cx| {
+            retain_device_crosshairs(&mut manager.positions, &hub.read(cx).devices);
+            cx.notify();
+        });
+
+        let mut receiver = hub.read(cx).subscribe_tracking();
+        let follow_tracking = cx.spawn(async move |this, cx| {
+            tracing::info!("CrosshairManager: subscribed to tracking events");
+            loop {
+                let first = match receiver.recv().await {
+                    Ok(event) => event,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => {
+                        tracing::warn!("CrosshairManager: tracking channel closed");
+                        break;
+                    }
+                };
+                // One repaint per wake: later samples overwrite earlier ones.
+                let mut batch = vec![first];
+                loop {
+                    match receiver.try_recv() {
+                        Ok(event) => batch.push(event),
+                        Err(TryRecvError::Lagged(_)) => {}
+                        Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                    }
+                }
+                if this
+                    .update(cx, |manager, cx| manager.track(batch, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            hub,
+            sprites: load_sprites(),
+            positions: CrosshairPositions::new(),
+            _hub_changed: hub_changed,
+            _follow_tracking: follow_tracking,
+        }
+    }
+
+    fn track(&mut self, batch: Vec<(Device, TrackingEvent)>, cx: &mut Context<Self>) {
+        let devices = &self.hub.read(cx).devices;
+        for (device, tracking) in batch {
+            tracing::debug!(
+                "CrosshairManager received tracking event for device {:?}: aimpoint=({}, {})",
+                device.uuid,
+                tracking.aimpoint.x,
+                tracking.aimpoint.y
+            );
+            let Some(slot) = devices.iter().position(|known| known.uuid == device.uuid) else {
+                continue;
+            };
+            let (x, y) = clamped_aimpoint(tracking.aimpoint.x, tracking.aimpoint.y);
+            self.positions.insert(device.uuid, (x, y, slot));
+        }
+        cx.notify();
     }
 }
 
-#[component]
-pub fn CrosshairManager(
-    hub: Signal<HubContext>,
-    /// Passed as a prop rather than a `Signal`, which does not work across VirtualDoms.
-    #[props(optional)]
-    tracking_sender: Option<TrackingSender>,
-) -> Element {
-    let instance_id = use_hook(|| CROSSHAIR_MANAGER_ID.fetch_add(1, Ordering::SeqCst));
-
-    let mut root_div = use_signal(|| None);
-    let mut rect_signal = use_signal(Rect::zero);
-    let mut crosshair_positions = use_signal(CrosshairPositions::new);
-
-    let sender = tracking_sender.map_or_else(|| hub.peek().tracking_events.clone(), |ts| ts.0);
-    use_future(move || {
-        let receiver = sender.subscribe();
-        tracing::info!(
-            "CrosshairManager[{}]: subscribed to tracking events",
-            instance_id
-        );
-        follow_tracking(instance_id, receiver, hub, rect_signal, crosshair_positions)
-    });
-
-    use_effect(move || {
-        let devices = (hub().devices)();
-        retain_device_crosshairs(&mut crosshair_positions.write(), &devices);
-    });
-
-    rsx! {
-        div {
-            class: "w-full h-full relative overflow-hidden",
-            onmounted: move |cx| {
-                async move {
-                    let cx_data = cx.data();
-                    if let Ok(rect) = cx_data.as_ref().get_client_rect().await {
-                        rect_signal.set(rect);
-                    }
-                    root_div.set(Some(cx_data));
-                }
-            },
-            onresize: move |_| {
-                async move {
-                    if let Some(root) = root_div()
-                        && let Ok(rect) = root.as_ref().get_client_rect().await
-                    {
-                        rect_signal.set(rect);
-                    }
-                }
-            },
-            for (uuid, (x, y, palette)) in crosshair_positions.read().iter() {
-                img {
-                    key: "{uuid:?}",
-                    src: crosshair_image(*palette),
-                    class: "absolute pointer-events-none",
-                    style: "left: {x}px; top: {y}px; transform: translate(-50%, -50%);",
-                }
-            }
-        }
+impl Render for CrosshairManager {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let crosshairs = self.positions.values().filter_map(|&(x, y, slot)| {
+            let sprite = self.sprites.get(palette_slot(slot))?;
+            Some(
+                div()
+                    .absolute()
+                    .left(relative(x))
+                    .top(relative(y))
+                    .child(
+                        img(Arc::clone(&sprite.image))
+                            .absolute()
+                            .left(px(-sprite.width / 2.0))
+                            .top(px(-sprite.height / 2.0))
+                            .w(px(sprite.width))
+                            .h(px(sprite.height)),
+                    ),
+            )
+        });
+        div()
+            .relative()
+            .size_full()
+            .overflow_hidden()
+            .children(crosshairs)
     }
 }
 
@@ -193,35 +212,31 @@ mod tests {
         // Before the refresh, the departed device occupied slot zero and this
         // survivor occupied slot one. A full list refresh reuses slot zero.
         let mut positions = CrosshairPositions::from([
-            ([1; 6], (50.0, 60.0, 0)),
-            (surviving.uuid, (70.0, 80.0, 1)),
+            ([1; 6], (0.5, 0.25, 0)),
+            (surviving.uuid, (0.75, 0.125, 1)),
         ]);
-        let mut devices = Slab::new();
-        devices.insert(surviving);
 
-        retain_device_crosshairs(&mut positions, &devices);
+        retain_device_crosshairs(&mut positions, &[surviving]);
 
         assert_eq!(
             positions,
-            CrosshairPositions::from([([2; 6], (70.0, 80.0, 0))])
+            CrosshairPositions::from([([2; 6], (0.75, 0.125, 0))])
         );
     }
 
     #[test]
-    fn aimpoint_scales_to_the_container() {
-        assert_eq!(aimpoint_pixels(0.5, 0.25, 800.0, 400.0), (400.0, 100.0));
+    fn aimpoint_inside_the_screen_is_unchanged() {
+        assert_eq!(clamped_aimpoint(0.5, 0.25), (0.5, 0.25));
     }
 
     #[test]
     fn aimpoint_off_screen_sticks_to_the_edge() {
-        assert_eq!(aimpoint_pixels(-0.3, 1.7, 800.0, 400.0), (0.0, 400.0));
+        assert_eq!(clamped_aimpoint(-0.3, 1.7), (0.0, 1.0));
     }
 
     #[test]
-    fn crosshair_images_past_the_palette_share_the_last() {
-        assert_eq!(
-            crosshair_image(99),
-            crosshair_image(CROSSHAIR_IMAGES.len() - 1)
-        );
+    fn crosshair_slots_past_the_palette_share_the_last() {
+        assert_eq!(palette_slot(99), CROSSHAIR_IMAGES.len() - 1);
+        assert_eq!(palette_slot(2), 2);
     }
 }

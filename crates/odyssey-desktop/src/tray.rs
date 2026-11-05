@@ -1,3 +1,18 @@
+use futures::StreamExt as _;
+use futures::channel::mpsc::UnboundedSender;
+use gpui::{AnyWindowHandle, App, AppContext as _};
+use tokio_util::sync::CancellationToken;
+
+/// What the tray asks of the app. Tray callbacks run on foreign threads, so
+/// they only send these; the GPUI side acts on them.
+#[derive(Clone, Copy, Debug)]
+enum TrayCommand {
+    Show,
+    Quit,
+}
+
+type Commands = UnboundedSender<TrayCommand>;
+
 /// Decoded tray icon, in whatever form the platform backend wants.
 struct TrayImage {
     width: u32,
@@ -11,7 +26,7 @@ fn tray_image() -> TrayImage {
         "/assets/images/tray-icon.png"
     ));
     let image = image::load_from_memory(bytes)
-        .expect("failed to decode the tray icon")
+        .expect("the bundled tray icon is a valid image")
         .into_rgba8();
     let (width, height) = image.dimensions();
     TrayImage {
@@ -21,19 +36,30 @@ fn tray_image() -> TrayImage {
     }
 }
 
-/// Closing the window only hides it, so the tray is the sole way back.
-fn show_window() {
-    let window = dioxus::desktop::window();
-    window.set_visible(true);
-    window.set_focus();
-}
+/// Builds the tray icon and its menu and acts on its clicks for as long as the
+/// app runs. Closing the window only minimizes it, so the tray is the way back.
+/// Quitting from the tray cancels `cancellation_token` and ends the app.
+pub(crate) fn start(cancellation_token: CancellationToken, window: AnyWindowHandle, cx: &mut App) {
+    let (commands, mut received) = futures::channel::mpsc::unbounded();
+    platform::start(cancellation_token.clone(), commands, cx);
 
-/// Builds the tray icon and its menu.
-///
-/// Call it from a component, such as the main App, so the hooks run inside the
-/// Dioxus event loop.
-pub(crate) fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationToken) {
-    platform::use_tray(cancellation_token);
+    cx.spawn(async move |cx| {
+        while let Some(command) = received.next().await {
+            match command {
+                TrayCommand::Show => {
+                    let shown = cx.update_window(window, |_, window, _| window.activate_window());
+                    if shown.is_err() {
+                        tracing::warn!("The tray could not show the window: it is closed");
+                    }
+                }
+                TrayCommand::Quit => {
+                    cancellation_token.cancel();
+                    cx.update(|cx| cx.quit());
+                }
+            }
+        }
+    })
+    .detach();
 }
 
 /// StatusNotifier hosts only offer a left click to items that implement
@@ -43,18 +69,23 @@ pub(crate) fn use_tray_menu(cancellation_token: tokio_util::sync::CancellationTo
 /// the window, right click opens the menu.
 #[cfg(target_os = "linux")]
 mod platform {
-    use dioxus::prelude::*;
     use ksni::menu::StandardItem;
     use ksni::{Icon, MenuItem, Tray, TrayMethods as _};
-    use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
     use tokio_util::sync::CancellationToken;
 
-    use super::{TrayImage, show_window, tray_image};
+    use super::{Commands, TrayCommand, TrayImage, tray_image};
+    use crate::runtime;
 
     struct OdysseyTray {
         icon: Icon,
-        open: UnboundedSender<()>,
-        cancellation_token: CancellationToken,
+        commands: Commands,
+    }
+
+    impl OdysseyTray {
+        fn send(&self, command: TrayCommand) {
+            // The receiver only closes when the app is already shutting down.
+            let _ = self.commands.unbounded_send(command);
+        }
     }
 
     impl Tray for OdysseyTray {
@@ -71,25 +102,20 @@ mod platform {
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
-            let _ = self.open.send(());
+            self.send(TrayCommand::Show);
         }
 
         fn menu(&self) -> Vec<MenuItem<Self>> {
             vec![
                 StandardItem {
                     label: "Open".into(),
-                    activate: Box::new(|tray: &mut Self| {
-                        let _ = tray.open.send(());
-                    }),
+                    activate: Box::new(|tray: &mut Self| tray.send(TrayCommand::Show)),
                     ..Default::default()
                 }
                 .into(),
                 StandardItem {
                     label: "Quit".into(),
-                    activate: Box::new(|tray: &mut Self| {
-                        tray.cancellation_token.cancel();
-                        std::process::exit(0);
-                    }),
+                    activate: Box::new(|tray: &mut Self| tray.send(TrayCommand::Quit)),
                     ..Default::default()
                 }
                 .into(),
@@ -111,91 +137,101 @@ mod platform {
         }
     }
 
-    pub(super) fn use_tray(cancellation_token: CancellationToken) {
-        use_future(move || {
-            let cancellation_token = cancellation_token.clone();
-            async move {
-                let (open, mut opens) = unbounded_channel();
-                let tray = OdysseyTray {
-                    icon: icon_from(tray_image()),
-                    open,
-                    cancellation_token,
-                };
-
-                // The handle has to outlive the loop below: dropping it
-                // unregisters the item and the icon disappears.
-                let _handle = match tray.spawn().await {
-                    Ok(handle) => handle,
-                    Err(e) => {
-                        dioxus::logger::tracing::error!("failed to register the tray icon: {e}");
-                        return;
-                    }
-                };
-
-                // Activate arrives on the D-Bus task, which cannot touch the
-                // window; hop back onto the Dioxus event loop to do that.
-                while opens.recv().await.is_some() {
-                    show_window();
+    pub(super) fn start(
+        cancellation_token: CancellationToken,
+        commands: Commands,
+        _cx: &mut gpui::App,
+    ) {
+        let tray = OdysseyTray {
+            icon: icon_from(tray_image()),
+            commands,
+        };
+        runtime::spawn(async move {
+            // The handle has to outlive the wait below: dropping it
+            // unregisters the item and the icon disappears.
+            let _handle = match tray.spawn().await {
+                Ok(handle) => handle,
+                Err(e) => {
+                    tracing::error!("failed to register the tray icon: {e}");
+                    return;
                 }
-            }
+            };
+            cancellation_token.cancelled().await;
         });
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 mod platform {
-    use dioxus::desktop::muda::MenuItem;
-    use dioxus::desktop::trayicon::menu::Menu;
-    use dioxus::desktop::trayicon::{
-        Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-    };
-    use dioxus::desktop::{use_muda_event_handler, use_tray_icon_event_handler};
-    use dioxus::prelude::*;
+    use gpui::Global;
+    use tokio_util::sync::CancellationToken;
+    use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+    use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-    use super::{show_window, tray_image};
+    use super::{Commands, TrayCommand, tray_image};
 
-    pub fn use_tray(cancellation_token: tokio_util::sync::CancellationToken) {
+    const OPEN_ID: &str = "open";
+    const QUIT_ID: &str = "quit";
+
+    /// Dropping the icon unregisters it, so it lives as long as the app.
+    struct TrayHolder(#[expect(dead_code, reason = "held only to keep the icon registered")] TrayIcon);
+
+    impl Global for TrayHolder {}
+
+    pub(super) fn start(
+        _cancellation_token: CancellationToken,
+        commands: Commands,
+        cx: &mut gpui::App,
+    ) {
         let image = tray_image();
-        let icon = Icon::from_rgba(image.rgba, image.width, image.height)
-            .expect("failed to build the tray icon");
+        let icon = match Icon::from_rgba(image.rgba, image.width, image.height) {
+            Ok(icon) => icon,
+            Err(e) => {
+                tracing::error!("failed to build the tray icon: {e}");
+                return;
+            }
+        };
 
         let menu = Menu::new();
-        let open_item = MenuItem::with_id("open", "Open", true, None);
-        let quit_item = MenuItem::with_id("quit", "Quit", true, None);
+        let open_item = MenuItem::with_id(OPEN_ID, "Open", true, None);
+        let quit_item = MenuItem::with_id(QUIT_ID, "Quit", true, None);
         if let Err(e) = menu.append_items(&[&open_item, &quit_item]) {
-            dioxus::logger::tracing::error!("failed to build the tray menu: {e}");
+            tracing::error!("failed to build the tray menu: {e}");
         }
 
-        // Built by hand rather than through init_tray_icon so the menu above is
-        // the one that ships with the icon.
-        let builder = TrayIconBuilder::new()
+        let tray = match TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
-            .with_icon(icon);
-
-        // Dropping the icon unregisters it, so it lives in the app's context.
-        provide_context(builder.build().expect("tray icon builder failed"));
-
-        // Menu clicks surface on the muda channel rather than the tray one, so
-        // use_tray_menu_event_handler never sees them.
-        use_muda_event_handler(move |event| match event.id.0.as_str() {
-            "open" => show_window(),
-            "quit" => {
-                cancellation_token.cancel();
-                std::process::exit(0);
+            .with_icon(icon)
+            .build()
+        {
+            Ok(tray) => tray,
+            Err(e) => {
+                tracing::error!("failed to register the tray icon: {e}");
+                return;
             }
-            _ => {}
-        });
+        };
 
-        use_tray_icon_event_handler(|event| {
+        // The handlers run on whichever thread the OS delivers the event to.
+        let menu_commands = commands.clone();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let command = match event.id.0.as_str() {
+                OPEN_ID => TrayCommand::Show,
+                QUIT_ID => TrayCommand::Quit,
+                _ => return,
+            };
+            let _ = menu_commands.unbounded_send(command);
+        }));
+        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                show_window();
+                let _ = commands.unbounded_send(TrayCommand::Show);
             }
-        });
+        }));
+        cx.set_global(TrayHolder(tray));
     }
 }

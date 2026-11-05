@@ -1,78 +1,94 @@
 //! Changes to the hub's accessory list.
+//!
+//! Only one whole-map replacement may be in flight at a time, so rapid edits
+//! cannot overwrite each other's snapshots. Changes are shown only once the
+//! hub accepts them.
 
 use std::num::NonZeroU64;
 
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
+use gpui::Context;
 use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryType};
 
-use crate::hub::HubContext;
+use super::AccessoriesView;
+use crate::runtime;
 
-/// The ways the list can be edited. Only one whole-map replacement may be in
-/// flight at a time, so rapid edits cannot overwrite each other's snapshots.
-/// Changes are shown only once the hub accepts them.
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct AccessoryEdits {
-    hub: Signal<HubContext>,
-    infos: Signal<AccessoryInfoMap>,
-    pending: Signal<bool>,
-}
-
-impl AccessoryEdits {
-    pub(super) fn use_new(hub: Signal<HubContext>, infos: Signal<AccessoryInfoMap>) -> Self {
-        Self {
-            hub,
-            infos,
-            pending: use_signal(|| false),
-        }
-    }
-
-    pub(super) fn pending(self) -> bool {
-        (self.pending)()
-    }
-
-    pub(super) fn add(self, id: [u8; 6], name: String, ty: AccessoryType) {
-        self.commit("add", |infos| {
+impl AccessoriesView {
+    pub(super) fn add(
+        &mut self,
+        id: [u8; 6],
+        name: String,
+        ty: AccessoryType,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.commit("add", cx, |infos| {
             infos.insert(id, AccessoryInfo::with_defaults(name, ty));
         });
     }
 
-    pub(super) fn remove(self, id: [u8; 6]) {
-        self.commit("remove", |infos| {
+    pub(super) fn remove(&mut self, id: [u8; 6], cx: &mut Context<'_, Self>) {
+        self.commit("remove", cx, |infos| {
             infos.remove(&id);
         });
     }
 
     /// Hands the accessory to the device with this uuid, or to none.
-    pub(super) fn assign(self, id: [u8; 6], device_uuid: Option<NonZeroU64>) {
-        self.commit("assign", |infos| {
+    pub(super) fn assign(
+        &mut self,
+        id: [u8; 6],
+        device_uuid: Option<NonZeroU64>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.commit("assign", cx, |infos| {
             if let Some(info) = infos.get_mut(&id) {
                 info.assignment = device_uuid;
             }
         });
     }
 
-    fn commit(mut self, action: &'static str, edit: impl FnOnce(&mut AccessoryInfoMap)) {
-        if *self.pending.peek() {
+    fn commit(
+        &mut self,
+        action: &'static str,
+        cx: &mut Context<'_, Self>,
+        edit: impl FnOnce(&mut AccessoryInfoMap),
+    ) {
+        if self.edit_pending {
             return;
         }
-        self.pending.set(true);
-        let mut next = self.infos.read().clone();
+        self.edit_pending = true;
+        let mut next = self.infos.clone();
         edit(&mut next);
 
-        let Some(client) = self.hub.read().client.read().clone() else {
+        let Some(client) = self.hub.read(cx).client() else {
             tracing::warn!("Failed to {action} accessory: not connected to the hub");
-            self.pending.set(false);
+            self.edit_pending = false;
             return;
         };
-        spawn(async move {
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let sent = next.clone();
+            let outcome = runtime::spawn(async move {
+                client
+                    .update_accessory_info_map(sent)
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(std::convert::identity);
             // The hub replaces the whole map, so showing the edit before it
             // is accepted leaves the UI claiming a change the hub rejected.
-            match client.update_accessory_info_map(next.clone()).await {
-                Ok(()) => self.infos.set(next),
-                Err(e) => tracing::error!("Failed to {action} accessory: {e}"),
-            }
-            self.pending.set(false);
-        });
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    Ok(()) => this.infos = next,
+                    Err(error) => {
+                        tracing::error!("Failed to {action} accessory: {error}");
+                        this.forget_shown_assignments();
+                    }
+                }
+                this.edit_pending = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

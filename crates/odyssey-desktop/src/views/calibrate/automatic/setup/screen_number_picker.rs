@@ -1,61 +1,82 @@
 //! The slot a finished calibration is saved under.
 
-use dioxus::prelude::*;
+use gpui::{
+    App, Div, Entity, FontWeight, InteractiveElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, div, px,
+};
 use odyssey_common::MAX_SCREEN_ID;
 
+use crate::theme::{Palette, RADIUS};
 use crate::views::calibrate::automatic::screens::screen_label;
 use crate::views::calibrate::automatic::wizard::Wizard;
 
-#[component]
-pub(super) fn ScreenNumberPicker(wizard: Wizard) -> Element {
-    let chosen = wizard.screen_id();
-    let saved = *wizard.saved.read();
-    rsx! {
-        div {
-            class: "flex flex-col gap-2",
-            span {
-                id: "screen-number-label",
-                class: "text-base font-medium text-fg-muted",
-                "Save the result as:"
-            }
-            div {
-                role: "radiogroup",
-                aria_labelledby: "screen-number-label",
-                class: "grid grid-cols-3 gap-2 sm:grid-cols-6",
-                for id in 0..=MAX_SCREEN_ID {
-                    {
-                        let selected = id == chosen;
-                        let taken = saved[usize::from(id)];
-                        let class = if selected {
-                            "border-accent bg-accent text-on-accent"
-                        } else {
-                            "border-line bg-surface text-fg hover:border-accent-ink"
-                        };
-                        let status_class = if selected { "opacity-90" } else { "text-fg-muted" };
-                        rsx! {
-                            button {
-                                key: "{id}",
-                                r#type: "button",
-                                role: "radio",
-                                aria_checked: selected,
-                                class: "flex flex-col items-center rounded-lg border-2 px-2 py-2 {class}",
-                                onclick: move |_| *wizard.screen_choice.write() = Some(id),
-                                span { class: "text-base font-semibold", "{screen_label(id)}" }
-                                span {
-                                    class: "text-xs {status_class}",
-                                    if taken { "Calibrated" } else { "Empty" }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if saved[usize::from(chosen)] {
-                span {
-                    class: "text-sm text-warning-ink",
-                    "{screen_label(chosen)} already has a calibration. You'll be asked before it is replaced."
-                }
-            }
+pub(super) fn screen_number_picker(p: Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
+    let state = wizard.read(cx);
+    let chosen = state.screen_id();
+    let saved = state.saved;
+    let mut grid = div().grid().grid_cols(6).gap_2();
+    for id in 0..=MAX_SCREEN_ID {
+        let selected = id == chosen;
+        let taken = saved[usize::from(id)];
+        let (bg, border, fg, sub) = if selected {
+            (p.accent, p.accent, p.on_accent, p.on_accent)
+        } else {
+            (p.surface, p.line, p.fg, p.fg_muted)
+        };
+        let wizard = wizard.clone();
+        let mut cell = div()
+            .id(("screen-number", usize::from(id)))
+            .flex()
+            .flex_col()
+            .items_center()
+            .px_2()
+            .py_2()
+            .rounded(px(RADIUS))
+            .border_2()
+            .border_color(border)
+            .bg(bg)
+            .text_color(fg)
+            .cursor_pointer()
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(screen_label(id)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(sub)
+                    .child(if taken { "Calibrated" } else { "Empty" }),
+            )
+            .on_click(move |_, _, cx| {
+                wizard.update(cx, |w, cx| {
+                    w.screen_choice = Some(id);
+                    cx.notify();
+                });
+            });
+        if !selected {
+            cell = cell.hover(move |s| s.border_color(p.accent_ink));
         }
+        grid = grid.child(cell);
     }
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_base()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.fg_muted)
+                .child("Save the result as:"),
+        )
+        .child(grid);
+    if saved[usize::from(chosen)] {
+        col = col.child(div().text_sm().text_color(p.warning_ink).child(format!(
+            "{} already has a calibration. You'll be asked before it is replaced.",
+            screen_label(chosen)
+        )));
+    }
+    col
 }

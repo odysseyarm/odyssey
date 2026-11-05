@@ -1,9 +1,13 @@
 //! "What are you calibrating?": a flat screen or a projector.
 
-use dioxus::prelude::*;
+use gpui::{
+    App, Div, Entity, FocusHandle, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, px,
+};
 
-use crate::components::wizard::{Icon, IconView};
-use crate::views::calibrate::automatic::illustrations::{ProjectorIllustration, TvIllustration};
+use crate::components::wizard::{Icon, icon};
+use crate::theme::{Palette, RADIUS_LG};
+use crate::views::calibrate::automatic::illustrations::{projector_illustration, tv_illustration};
 use crate::views::calibrate::automatic::kind::DisplayKind;
 use crate::views::calibrate::automatic::wizard::Wizard;
 
@@ -32,60 +36,85 @@ fn kind_id(kind: DisplayKind) -> &'static str {
 
 /// Two big illustrated cards behind one radio group. Arrow keys move the
 /// choice, and only the chosen card is a tab stop, as for any radio group.
-#[component]
-pub(super) fn KindChooser(wizard: Wizard) -> Element {
-    let chosen = wizard.kind();
-    rsx! {
-        div {
-            role: "radiogroup",
-            aria_label: "What are you calibrating?",
-            class: "grid grid-cols-1 gap-3 sm:grid-cols-2",
-            onkeydown: move |e| {
-                let step = match e.key() {
-                    Key::ArrowRight | Key::ArrowDown => 1,
-                    Key::ArrowLeft | Key::ArrowUp => KINDS.len() - 1,
+pub(super) fn kind_chooser(
+    p: Palette,
+    wizard: &Entity<Wizard>,
+    focus: &[FocusHandle; 2],
+    cx: &App,
+) -> Div {
+    let chosen = wizard.read(cx).kind();
+    let mut row = div().grid().grid_cols(2).gap_3();
+    for (i, kind) in KINDS.into_iter().enumerate() {
+        let selected = kind == chosen;
+        let (border, bg) = if selected {
+            (p.accent_ink, p.accent_soft)
+        } else {
+            (p.line, p.surface)
+        };
+        let key_wizard = wizard.clone();
+        let click_wizard = wizard.clone();
+        let handles = focus.clone();
+        let mut card = div()
+            .id(kind_id(kind))
+            .track_focus(&focus[i])
+            .tab_stop(selected)
+            .relative()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .pb_4()
+            .pt_5()
+            .text_center()
+            .rounded(px(RADIUS_LG))
+            .border_2()
+            .border_color(border)
+            .bg(bg)
+            .cursor_pointer()
+            .on_key_down(move |event, window, cx| {
+                let step = match event.keystroke.key.as_str() {
+                    "right" | "down" => 1,
+                    "left" | "up" => KINDS.len() - 1,
                     _ => return,
                 };
-                e.prevent_default();
-                let at = KINDS.iter().position(|&k| k == wizard.kind()).unwrap_or(0);
-                let next = KINDS[(at + step) % KINDS.len()];
-                wizard.set_kind(next);
-                let _ = document::eval(&format!("document.getElementById('{}')?.focus();", kind_id(next)));
-            },
-            for kind in KINDS {
-                {
-                    let selected = kind == chosen;
-                    let class = if selected {
-                        "border-accent-ink bg-accent-soft ring-4 ring-accent/30"
-                    } else {
-                        "border-line bg-surface hover:border-accent-ink"
-                    };
-                    rsx! {
-                        button {
-                            key: "{kind_id(kind)}",
-                            id: kind_id(kind),
-                            r#type: "button",
-                            role: "radio",
-                            aria_checked: selected,
-                            tabindex: if selected { "0" } else { "-1" },
-                            class: "relative flex flex-col items-center gap-2 rounded-xl border-2 px-4 pb-4 pt-5 text-center transition-colors {class}",
-                            onclick: move |_| wizard.set_kind(kind),
-                            if selected {
-                                span {
-                                    class: "absolute right-3 top-3 text-accent-ink",
-                                    IconView { icon: Icon::Check, class: "size-7".to_string() }
-                                }
-                            }
-                            match kind {
-                                DisplayKind::Flat => rsx! { TvIllustration { class: "h-28".to_string() } },
-                                DisplayKind::Projector => rsx! { ProjectorIllustration { class: "h-28".to_string() } },
-                            }
-                            span { class: "text-xl font-semibold text-fg-strong", "{kind_title(kind)}" }
-                            span { class: "text-base text-fg-muted", "{kind_blurb(kind)}" }
-                        }
-                    }
-                }
-            }
+                cx.stop_propagation();
+                let at = KINDS
+                    .iter()
+                    .position(|&k| k == key_wizard.read(cx).kind())
+                    .unwrap_or(0);
+                let next = (at + step) % KINDS.len();
+                key_wizard.update(cx, |w, cx| w.set_kind(KINDS[next], cx));
+                handles[next].focus(window, cx);
+            })
+            .on_click(move |_, _, cx| click_wizard.update(cx, |w, cx| w.set_kind(kind, cx)));
+        if !selected {
+            card = card.hover(move |s| s.border_color(p.accent_ink));
         }
+        if selected {
+            card = card.child(
+                div()
+                    .absolute()
+                    .right_3()
+                    .top_3()
+                    .child(icon(Icon::Check, 28.0, p.accent_ink)),
+            );
+        }
+        let art = match kind {
+            DisplayKind::Flat => tv_illustration(p, 112.0).into_any_element(),
+            DisplayKind::Projector => projector_illustration(p, 112.0).into_any_element(),
+        };
+        row = row.child(
+            card.child(art)
+                .child(
+                    div()
+                        .text_xl()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.fg_strong)
+                        .child(kind_title(kind)),
+                )
+                .child(div().text_base().text_color(p.fg_muted).child(kind_blurb(kind))),
+        );
     }
+    row
 }

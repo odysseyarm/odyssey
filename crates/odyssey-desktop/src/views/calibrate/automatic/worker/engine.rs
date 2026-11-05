@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvError, TryRecvError};
 use std::time::Instant;
 
-use dioxus::logger::tracing;
 use odyssey_autocalib::camera::CameraError;
 use odyssey_autocalib::session::{AttemptFrames, Calibration, Session, SessionError, Step};
 use tokio::sync::mpsc::UnboundedSender;
@@ -276,11 +275,7 @@ impl Engine {
             Ok(solved) => solved,
             Err(e) => return self.session_failed(e),
         };
-        let (image, width, height) = encode::encode_rgb(
-            &declared.review.color,
-            u32::MAX,
-            encode::REVIEW_JPEG_QUALITY,
-        );
+        let (image, width, height) = encode::encode_rgb(&declared.review.color, u32::MAX);
         // Kept so the user can save it after `close` below releases the camera.
         self.remember_attempt(report::finished_summary(&declared, measured.as_ref()));
         let finished = Finished {

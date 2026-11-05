@@ -1,8 +1,7 @@
-use odyssey_hub_common::device::Device;
+use odyssey_hub_client::client::DeviceClient;
 
 use super::field_issue::{FieldChecker, FieldIssue};
 use super::registers::{NEAR_FIELD_PORT, Register, RegisterRun, Registers};
-use crate::hub::HubContext;
 
 // PAG7665 register map (used for product_id 0x5211).
 const FPS: Register = Register::new(0x00, 0x13);
@@ -43,11 +42,8 @@ fn encode_exposure(exposure_us: u16) -> u8 {
     units | LED_ALWAYS_ON_FLAG
 }
 
-pub(super) async fn pag_load_from_device(
-    hub: &HubContext,
-    device: &Device,
-) -> eros::Result<PagState> {
-    let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
+pub(super) async fn pag_load_from_device(client: &DeviceClient) -> eros::Result<PagState> {
+    let registers = Registers::new(client, NEAR_FIELD_PORT);
     let fps = registers.read(FPS).await?;
     let exposure_raw = registers.read(EXPOSURE).await?;
     let gain = registers.read(GAIN).await?;
@@ -115,11 +111,10 @@ pub(super) fn pag_validate(state: &PagState) -> Result<PagValues, Vec<FieldIssue
 }
 
 pub(super) async fn pag_apply_to_device(
-    hub: &HubContext,
-    device: &Device,
+    client: &DeviceClient,
     values: &PagValues,
 ) -> eros::Result<()> {
-    let registers = Registers::new(hub, device, NEAR_FIELD_PORT);
+    let registers = Registers::new(client, NEAR_FIELD_PORT);
     registers.write(FPS, values.fps).await?;
     registers
         .write(EXPOSURE, encode_exposure(values.exposure_us))

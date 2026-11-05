@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The WiX template for the Odyssey installer: dioxus-cli's built-in one (0.7.10), with the
-  changes marked by comments below. It is rendered by `dx bundle` (Handlebars), then compiled
-  by WiX's candle, which reads two environment variables the caller must set:
+  The WiX template for the Odyssey installer, rendered by cargo-packager (Handlebars) and then
+  compiled by WiX's candle. cargo-packager derives its own upgrade code from the binary name, so
+  the code Windows knows this product by is written in below instead. Windows identifies an
+  installed product by it: change it and an upgrade installs a second copy beside the first
+  instead of replacing it, so it has to outlive every rename and every version.
 
-    ODYSSEY_MSI_VARIANT   "online" or "full". Full carries the Orbbec camera SDK as an
-                          optional feature and asks for Orbbec's EULA; online carries nothing.
-    ODYSSEY_ORBBEC_STAGE  Directory `cargo xtask desktop prepare-orbbec` filled (full only):
-                          EULA.rtf and the SDK files the fragment installs.
+  candle reads two environment variables the caller must set. cargo-packager clears the
+  environment for WiX except names starting with CARGO_PACKAGER, hence the prefix:
+
+    CARGO_PACKAGER_ODYSSEY_MSI_VARIANT   "online" or "full". Full carries the Orbbec camera SDK
+                                         as an optional feature and asks for Orbbec's EULA;
+                                         online carries nothing.
+    CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE  Directory `cargo xtask desktop prepare-orbbec` filled
+                                         (full only): EULA.rtf and the SDK files the fragment
+                                         installs.
 
   Which variant is installed and whether offline mode is on are separate choices: neither
   variant turns offline mode on unless OFFLINE_MODE=1 is passed at install time.
@@ -18,19 +25,17 @@
     <Product
         Id="*"
         Name="{{product_name}}"
-        UpgradeCode="{{upgrade_code}}"
+        UpgradeCode="B881AF96-4F5E-4BC7-99E7-F1C46F96C235"
         Language="1033"
         Codepage="1252"
         Version="{{version}}"
-        Manufacturer="{{publisher}}">
+        Manufacturer="{{manufacturer}}">
 
         <Package
             Id="*"
             Keywords="Installer"
-            {{#if short_description}}
-            Description="{{short_description}}"
-            {{/if}}
-            Manufacturer="{{publisher}}"
+            Description="Odyssey PC application"
+            Manufacturer="{{manufacturer}}"
             InstallScope="perMachine"
             Languages="1033"
             Compressed="yes"
@@ -38,25 +43,21 @@
 
         <MajorUpgrade
             Schedule="afterInstallInitialize"
-            {{#if allow_downgrades}}
-            AllowDowngrades="yes"
-            {{else}}
             DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit."
-            AllowSameVersionUpgrades="yes"
-            {{/if}} />
+            AllowSameVersionUpgrades="yes" />
 
-        <MediaTemplate EmbedCab="yes" {{#if fips_compliant}}CompressionLevel="none"{{/if}} />
+        <MediaTemplate EmbedCab="yes" />
 
         {{#if icon_path}}
         <Icon Id="ProductIcon" SourceFile="{{icon_path}}" />
         <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
         {{/if}}
 
-        <?if $(env.ODYSSEY_MSI_VARIANT) = "full" ?>
+        <?if $(env.CARGO_PACKAGER_ODYSSEY_MSI_VARIANT) = "full" ?>
         <!-- The full installer offers Orbbec camera support as an optional feature, so it
              uses the feature tree, and its licence page is Orbbec's EULA (`cargo xtask desktop
              prepare-orbbec` writes it). -->
-        <WixVariable Id="WixUILicenseRtf" Value="$(env.ODYSSEY_ORBBEC_STAGE)\EULA.rtf" />
+        <WixVariable Id="WixUILicenseRtf" Value="$(env.CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE)\EULA.rtf" />
         <UIRef Id="WixUI_FeatureTree" />
         <?else?>
         <UI>
@@ -74,32 +75,31 @@
         <Property Id="OFFLINE_MODE" Secure="yes" />
 
         <Directory Id="TARGETDIR" Name="SourceDir">
-            <Directory Id="{{wix_program_files_folder}}">
+            <Directory Id="ProgramFiles64Folder">
                 <Directory Id="INSTALLDIR" Name="{{product_name}}">
                     <Component Id="MainExecutable" Guid="*">
                         <File
                             Id="MainExe"
-                            Name="{{main_binary_name}}"
-                            Source="{{main_binary_path}}"
+                            Source="{{app_exe_source}}"
                             KeyPath="yes" />
                     </Component>
                     <Component Id="OfflineModePolicy" Guid="*">
                         <Condition>OFFLINE_MODE = "1"</Condition>
                         <RegistryValue
                             Root="HKLM"
-                            Key="SOFTWARE\{{publisher}}\{{product_name}}"
+                            Key="SOFTWARE\{{manufacturer}}\{{product_name}}"
                             Name="OfflineMode"
                             Type="integer"
                             Value="1"
                             KeyPath="yes" />
                     </Component>
-{{{install_tree}}}
+{{{resources}}}
                 </Directory>
             </Directory>
 
             <!-- %ProgramData%\OdysseyArm\Odyssey\firmware-pack, where offline mode reads firmware. -->
             <Directory Id="CommonAppDataFolder">
-                <Directory Id="OdysseyDataPublisher" Name="{{publisher}}">
+                <Directory Id="OdysseyDataPublisher" Name="{{manufacturer}}">
                     <Directory Id="OdysseyDataProduct" Name="{{product_name}}">
                         <Directory Id="FirmwarePackFolder" Name="firmware-pack">
                             <!-- A folder as the key path needs an explicit GUID; never change it. -->
@@ -118,15 +118,13 @@
                         <Shortcut
                             Id="ApplicationShortcut"
                             Name="{{product_name}}"
-                            {{#if short_description}}
-                            Description="{{short_description}}"
-                            {{/if}}
-                            Target="[INSTALLDIR]{{main_binary_name}}"
+                            Description="Odyssey PC application"
+                            Target="[#MainExe]"
                             WorkingDirectory="INSTALLDIR" />
                         <RemoveFolder Id="RemoveProgramMenuSubfolder" On="uninstall" />
                         <RegistryValue
                             Root="HKCU"
-                            Key="Software\{{publisher}}\{{product_name}}"
+                            Key="Software\{{manufacturer}}\{{product_name}}"
                             Name="installed"
                             Type="integer"
                             Value="1"
@@ -140,14 +138,12 @@
                     <Shortcut
                         Id="DesktopShortcut"
                         Name="{{product_name}}"
-                        {{#if short_description}}
-                        Description="{{short_description}}"
-                        {{/if}}
-                        Target="[INSTALLDIR]{{main_binary_name}}"
+                        Description="Odyssey PC application"
+                        Target="[#MainExe]"
                         WorkingDirectory="INSTALLDIR" />
                     <RegistryValue
                         Root="HKCU"
-                        Key="Software\{{publisher}}\{{product_name}}"
+                        Key="Software\{{manufacturer}}\{{product_name}}"
                         Name="desktop_shortcut"
                         Type="integer"
                         Value="1"
@@ -168,7 +164,9 @@
             <ComponentRef Id="DesktopShortcut" />
             <ComponentRef Id="OfflineModePolicy" />
             <ComponentRef Id="FirmwarePackFolderComponent" />
-{{{component_refs_xml}}}
+            {{#each resource_file_ids}}
+            <ComponentRef Id="{{this}}" />
+            {{/each}}
             {{#each component_group_refs}}
             <ComponentGroupRef Id="{{this}}" />
             {{/each}}

@@ -18,7 +18,7 @@ impl Stage {
 
     /// Index into [`Self::STEPS`]; `Saved` is one past the end so every step
     /// shows as done.
-    pub(super) fn step(self) -> usize {
+    pub(crate) fn step(self) -> usize {
         match self {
             Self::Setup => 0,
             Self::Position => 1,

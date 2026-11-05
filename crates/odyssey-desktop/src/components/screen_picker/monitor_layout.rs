@@ -1,4 +1,3 @@
-use dioxus::desktop::tao::monitor::MonitorHandle;
 use odyssey_hub_common::config::MonitorKey;
 
 /// What the picker knows about one monitor.
@@ -9,30 +8,13 @@ pub(crate) struct MonitorInfo {
 }
 
 impl MonitorInfo {
-    pub(super) fn from_handle(handle: &MonitorHandle, primary: Option<&MonitorKey>) -> Self {
-        let key = monitor_key(handle);
-        let primary = primary == Some(&key);
-        Self { key, primary }
-    }
-
+    /// GPUI does not report display names, so a key's name is usually empty.
     pub(crate) fn display_name(&self) -> &str {
-        self.key.name.as_deref().unwrap_or("Unknown display")
+        self.key.name.as_deref().unwrap_or("Display")
     }
 
     pub(crate) fn resolution(&self) -> String {
         format!("{} × {}", self.key.width, self.key.height)
-    }
-}
-
-pub(crate) fn monitor_key(handle: &MonitorHandle) -> MonitorKey {
-    let position = handle.position();
-    let size = handle.size();
-    MonitorKey {
-        name: handle.name(),
-        x: position.x,
-        y: position.y,
-        width: size.width,
-        height: size.height,
     }
 }
 

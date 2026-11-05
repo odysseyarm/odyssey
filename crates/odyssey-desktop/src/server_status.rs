@@ -1,12 +1,9 @@
 use std::io::ErrorKind;
 
-use dioxus::desktop::window;
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 use odyssey_hub_server::Message;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::{mpsc::UnboundedReceiver, watch};
 
 /// Why the status stream ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +12,17 @@ pub(crate) enum ServerExit {
     AnotherInstanceRunning,
     /// The server stopped, failed to start, or hung up.
     Stopped,
+}
+
+/// What the shell has to act on, from the tokio side to the UI.
+#[derive(Debug)]
+pub(crate) enum ShellMessage {
+    /// Config files that could not be read at startup.
+    ConfigCorruptions(Vec<ConfigCorruptionEvent>),
+    /// Another instance asked this one to raise its window.
+    BringToFront,
+    /// The status stream ended.
+    Exit(ServerExit),
 }
 
 /// Asks the instance that already owns the hub socket to raise its window.
@@ -43,11 +51,12 @@ fn report_corruptions(corruptions: &[ConfigCorruptionEvent]) {
     }
 }
 
-/// Applies the hub server's status messages to the UI until it stops.
+/// Applies the hub server's status messages until it stops. `server_ready`
+/// turns true once the server listens; every other outcome goes to `shell`.
 pub(crate) async fn handle_server_status(
     mut receiver: UnboundedReceiver<Message>,
-    mut config_corruptions: Signal<Vec<ConfigCorruptionEvent>>,
-    mut server_ready: Signal<bool>,
+    shell: tokio::sync::mpsc::UnboundedSender<ShellMessage>,
+    server_ready: watch::Sender<bool>,
 ) -> ServerExit {
     loop {
         match receiver.recv().await {
@@ -57,9 +66,9 @@ pub(crate) async fn handle_server_status(
                 } else {
                     report_corruptions(&corruptions);
                     // A non-empty list opens the config-corruption dialog.
-                    config_corruptions.set(corruptions);
+                    let _ = shell.send(ShellMessage::ConfigCorruptions(corruptions));
                 }
-                server_ready.set(true);
+                let _ = server_ready.send(true);
             }
             Some(Message::ServerInit(Err(e))) => {
                 if e.kind() == ErrorKind::AddrInUse {
@@ -72,8 +81,7 @@ pub(crate) async fn handle_server_status(
             }
             Some(Message::BringToFront) => {
                 tracing::info!("Received BringToFront request");
-                window().set_focus();
-                window().set_visible(true);
+                let _ = shell.send(ShellMessage::BringToFront);
             }
             Some(Message::Stop) => {
                 tracing::info!("Server stopped");

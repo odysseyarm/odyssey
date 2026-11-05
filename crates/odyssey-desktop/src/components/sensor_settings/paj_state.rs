@@ -1,9 +1,8 @@
-use odyssey_hub_common::device::Device;
+use odyssey_hub_client::client::DeviceClient;
 
 use super::field_issue::{FieldChecker, FieldIssue};
 use super::gain_table::{GAIN_TABLE, gain_index_from_reg};
 use super::registers::{Register, RegisterRun, Registers};
-use crate::hub::HubContext;
 
 // PAJ sensor register map. Exposure and gain are read back from different
 // addresses than they are written to; both are kept as the device defines them.
@@ -68,11 +67,10 @@ impl Default for PajState {
 }
 
 pub(super) async fn paj_load_from_device(
-    hub: &HubContext,
-    device: &Device,
+    client: &DeviceClient,
     port: u8,
 ) -> eros::Result<PajState> {
-    let registers = Registers::new(hub, device, port);
+    let registers = Registers::new(client, port);
     let brightness_threshold = registers.read(BRIGHTNESS_THRESHOLD).await?;
     let noise_threshold = registers.read(NOISE_THRESHOLD).await?;
     let area_threshold_min = registers.read(AREA_THRESHOLD_MIN).await?;
@@ -193,12 +191,11 @@ pub(super) fn paj_validate(state: &PajState) -> Result<PajValues, Vec<FieldIssue
 }
 
 pub(super) async fn paj_apply_to_device(
-    hub: &HubContext,
-    device: &Device,
+    client: &DeviceClient,
     port: u8,
     values: &PajValues,
 ) -> eros::Result<()> {
-    let registers = Registers::new(hub, device, port);
+    let registers = Registers::new(client, port);
     let gain = &GAIN_TABLE[values.gain_index];
 
     registers

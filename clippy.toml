@@ -13,7 +13,7 @@ allow-print-in-tests = true
 
 # Wildcard imports (`wildcard_imports`, warn in Cargo.toml) stay at clippy's
 # defaults, which allow exactly the accepted cases: `use super::*` in a
-# test module, `prelude` modules (`dioxus::prelude::*`), enum variants, and
+# test module, `prelude` modules, enum variants, and
 # `pub use` facades over generated code. Anything else is spelled out. The one
 # suppression is `use tonic::codegen::*` emitted into odyssey-hub-server-interface's
 # generated proto module.

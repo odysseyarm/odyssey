@@ -130,7 +130,7 @@ pub(super) fn swap_in(staging: &Path, dest: &Path, rename: Rename<'_>) -> io::Re
         MoveAside::Missing => None,
         MoveAside::Moved(old) => Some(old),
         MoveAside::InUse(e) => {
-            dioxus::logger::tracing::info!(
+            tracing::info!(
                 "Could not move the Orbbec SDK in {}; the update waits for a restart: {e}",
                 dest.display()
             );
@@ -149,12 +149,12 @@ pub(super) fn swap_in(staging: &Path, dest: &Path, rename: Rename<'_>) -> io::Re
         return Err(e);
     }
     if let Err(e) = remove_file_if_present(&dest.join(STAGED_OK)) {
-        dioxus::logger::tracing::warn!("Could not clean the installed SDK's staging marker: {e}");
+        tracing::warn!("Could not clean the installed SDK's staging marker: {e}");
     }
     if let Some(old) = old
         && let Err(e) = remove_dir_if_present(&old)
     {
-        dioxus::logger::tracing::warn!(
+        tracing::warn!(
             "Could not clean the previous Orbbec SDK in {}: {e}",
             old.display()
         );
@@ -182,7 +182,7 @@ fn remove_at_with(dir: &Path, rename: Rename<'_>) -> io::Result<Removal> {
         MoveAside::Missing => remove_dir_if_present(&old)?,
         MoveAside::Moved(old) => remove_dir_if_present(&old)?,
         MoveAside::InUse(e) => {
-            dioxus::logger::tracing::info!(
+            tracing::info!(
                 "Could not move the Orbbec SDK in {}; removal waits for a restart: {e}",
                 dir.display()
             );
@@ -216,7 +216,7 @@ fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
     // A removal asked for after a download wins over it.
     if removal_marker(dir).exists() {
         if let Err(e) = remove_at_with(dir, rename) {
-            dioxus::logger::tracing::warn!(
+            tracing::warn!(
                 "Could not finish removing the downloaded Orbbec SDK: {e}"
             );
         }
@@ -226,11 +226,11 @@ fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
     if staging.join(STAGED_OK).is_file() {
         match swap_in(&staging, dir, rename) {
             Ok(Swap::Ready) => {}
-            Ok(Swap::AfterRestart) => dioxus::logger::tracing::warn!(
+            Ok(Swap::AfterRestart) => tracing::warn!(
                 "The downloaded Orbbec SDK is still in use; its update remains pending"
             ),
             Err(e) => {
-                dioxus::logger::tracing::warn!(
+                tracing::warn!(
                     "Could not switch to the downloaded Orbbec SDK: {e}"
                 );
             }

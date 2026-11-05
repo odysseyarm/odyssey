@@ -11,7 +11,6 @@ mod product_ids;
 mod registers;
 mod settings_form;
 mod settings_panel;
-mod styles;
 mod transport_mode_panel;
 
 pub(crate) use settings_panel::SensorSettings;

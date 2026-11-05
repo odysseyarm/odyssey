@@ -1,7 +1,4 @@
 use odyssey_hub_client::client::DeviceClient;
-use odyssey_hub_common::device::Device;
-
-use crate::hub::HubContext;
 
 /// Sensor ports on the device: the near-field sensor and the wide-field one.
 pub(super) const NEAR_FIELD_PORT: u8 = 0;
@@ -42,37 +39,28 @@ impl<const N: usize> RegisterRun<N> {
 ///
 /// Multi-byte values go one RPC per byte, low byte first.
 pub(super) struct Registers<'a> {
-    hub: &'a HubContext,
-    device: &'a Device,
+    client: &'a DeviceClient,
     port: u8,
 }
 
 impl<'a> Registers<'a> {
-    pub(super) fn new(hub: &'a HubContext, device: &'a Device, port: u8) -> Self {
-        Self { hub, device, port }
+    pub(super) fn new(client: &'a DeviceClient, port: u8) -> Self {
+        Self { client, port }
     }
 
     pub(super) async fn read(&self, register: Register) -> eros::Result<u8> {
         let value = self
-            .device_client()?
+            .client
             .read_register(self.port, register.bank, register.addr)
             .await?;
         Ok(value)
     }
 
     pub(super) async fn write(&self, register: Register, value: u8) -> eros::Result<()> {
-        self.device_client()?
+        self.client
             .write_register(self.port, register.bank, register.addr, value)
             .await?;
         Ok(())
-    }
-
-    fn device_client(&self) -> eros::Result<DeviceClient> {
-        let client = self
-            .hub
-            .client()
-            .ok_or_else(|| eros::error!("not connected to the hub"))?;
-        Ok(client.device(self.device.clone()))
     }
 
     pub(super) async fn read_u16(&self, run: RegisterRun<2>) -> eros::Result<u16> {

@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use backon::Retryable as _;
-use dioxus::logger::tracing;
 use eros::Context as _;
 use odyssey_hub_server::firmware;
 

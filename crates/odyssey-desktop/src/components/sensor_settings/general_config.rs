@@ -1,7 +1,6 @@
-use odyssey_hub_common::device::Device;
+use odyssey_hub_client::client::DeviceClient;
 
 use super::field_issue::{FieldChecker, FieldIssue};
-use crate::hub::HubContext;
 
 /// Config `kind` ids understood by the hub's read/write config calls.
 pub(super) const IMPACT_THRESHOLD_CONFIG: u8 = 0;
@@ -48,14 +47,9 @@ pub(super) fn general_validate(
 /// Write the general config. Callers validate first, so a typo in one field
 /// cannot leave the device holding a half-applied set.
 pub(super) async fn write_general_config(
-    hub: &HubContext,
-    device: &Device,
+    client: &DeviceClient,
     values: GeneralValues,
 ) -> eros::Result<()> {
-    let client = hub
-        .client()
-        .ok_or_else(|| eros::error!("not connected to the hub"))?
-        .device(device.clone());
     client
         .write_config(IMPACT_THRESHOLD_CONFIG, values.impact_threshold)
         .await?;

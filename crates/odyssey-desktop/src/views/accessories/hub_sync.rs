@@ -1,58 +1,22 @@
 //! Following the hub's accessory list.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::time::Duration;
 
-use backon::{ConstantBuilder, Retryable as _};
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
 use futures::StreamExt as _;
-use odyssey_hub_client::client::{ClientError, RpcError};
-use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryInfoMap, AccessoryMap};
+use gpui::{Context, Task};
+use odyssey_hub_client::client::{Client, ClientError, RpcError};
+use odyssey_hub_common::accessory::{AccessoryInfo, AccessoryMap};
+use tokio::sync::mpsc;
 
-use crate::hub::HubContext;
+use super::AccessoriesView;
+use crate::runtime;
 
 /// How long to wait before subscribing again after the stream ended.
 const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(2);
 
 /// The accessories the hub knows, and whether each is connected.
 pub(super) type Known = HashMap<[u8; 6], (AccessoryInfo, bool)>;
-
-/// Seeds `known` and `infos` from the hub and keeps them current.
-pub(super) fn use_accessory_map(
-    hub: Signal<HubContext>,
-    mut known: Signal<Known>,
-    mut infos: Signal<AccessoryInfoMap>,
-) {
-    use_future(move || async move {
-        let client = hub.read().client.read().clone();
-        if let Some(client) = client
-            && let Ok(map) = client.get_accessory_map().await
-        {
-            publish(map, &mut known, &mut infos);
-        }
-
-        // Resubscribe after a stream error: ending the loop would freeze the
-        // list for the rest of the session.
-        let backoff = ConstantBuilder::new()
-            .with_delay(RESUBSCRIBE_DELAY)
-            .without_max_times();
-        // A stream never ends well, so with no retry limit this only
-        // completes by being dropped.
-        let _ = (|| follow_accessory_map(hub, known, infos))
-            .retry(backoff)
-            .notify(|down, _| match down {
-                StreamDown::NoHub => {
-                    tracing::warn!("accessory map subscribe failed: not connected to the hub");
-                }
-                StreamDown::Subscribe(e) => tracing::warn!("accessory map subscribe failed: {e}"),
-                StreamDown::Failed(e) => tracing::warn!("accessory map stream error: {e}"),
-                StreamDown::Ended => {}
-            })
-            .await;
-    });
-}
 
 /// Why the accessory map stopped updating.
 enum StreamDown {
@@ -62,32 +26,75 @@ enum StreamDown {
     Ended,
 }
 
-/// Applies accessory maps until the subscription fails or ends. Takes the
-/// hub's client afresh each attempt, so a retry picks up a later connection.
-async fn follow_accessory_map(
-    hub: Signal<HubContext>,
-    mut known: Signal<Known>,
-    mut infos: Signal<AccessoryInfoMap>,
-) -> Result<Infallible, StreamDown> {
-    let Some(client) = hub.read().client.read().clone() else {
-        return Err(StreamDown::NoHub);
-    };
-    let mut stream = client
-        .subscribe_accessory_map()
-        .await
-        .map_err(StreamDown::Subscribe)?;
-    while let Some(next) = stream.next().await {
-        let map = next.map_err(StreamDown::Failed)?;
-        publish(map, &mut known, &mut infos);
-    }
-    Err(StreamDown::Ended)
+/// Seeds the view's `known` and `infos` from the hub and keeps them current.
+/// Following stops when the returned task is dropped.
+pub(super) fn follow(cx: &mut Context<'_, AccessoriesView>) -> Task<()> {
+    cx.spawn(async move |this, cx| {
+        let Ok(client) = this.update(cx, |this, cx| this.hub.read(cx).client()) else {
+            return;
+        };
+        if let Some(client) = client
+            && let Ok(Ok(map)) =
+                runtime::spawn(async move { client.get_accessory_map().await }).await
+            && this.update(cx, |this, cx| this.publish(map, cx)).is_err()
+        {
+            return;
+        }
+
+        // Resubscribe after a stream error: ending the loop would freeze the
+        // list for the rest of the session.
+        loop {
+            // The client is taken afresh each attempt, so a retry picks up a
+            // later connection.
+            let Ok(client) = this.update(cx, |this, cx| this.hub.read(cx).client()) else {
+                return;
+            };
+            let down = match client {
+                None => StreamDown::NoHub,
+                Some(client) => {
+                    let (maps, mut received) = mpsc::unbounded_channel();
+                    let stream = runtime::spawn(follow_accessory_map(client, maps));
+                    while let Some(map) = received.recv().await {
+                        if this.update(cx, |this, cx| this.publish(map, cx)).is_err() {
+                            stream.abort();
+                            return;
+                        }
+                    }
+                    stream.await.unwrap_or(StreamDown::Ended)
+                }
+            };
+            match down {
+                StreamDown::NoHub => {
+                    tracing::warn!("accessory map subscribe failed: not connected to the hub");
+                }
+                StreamDown::Subscribe(e) => tracing::warn!("accessory map subscribe failed: {e}"),
+                StreamDown::Failed(e) => tracing::warn!("accessory map stream error: {e}"),
+                StreamDown::Ended => {}
+            }
+            cx.background_executor().timer(RESUBSCRIBE_DELAY).await;
+        }
+    })
 }
 
-fn publish(map: AccessoryMap, known: &mut Signal<Known>, infos: &mut Signal<AccessoryInfoMap>) {
-    let info_only = map
-        .iter()
-        .map(|(id, (info, _))| (*id, info.clone()))
-        .collect();
-    known.set(map);
-    infos.set(info_only);
+/// Forwards accessory maps until the subscription fails or ends; dropping the
+/// sender then tells the receiver.
+async fn follow_accessory_map(
+    client: Client,
+    maps: mpsc::UnboundedSender<AccessoryMap>,
+) -> StreamDown {
+    let mut stream = match client.subscribe_accessory_map().await {
+        Ok(stream) => stream,
+        Err(e) => return StreamDown::Subscribe(e),
+    };
+    while let Some(next) = stream.next().await {
+        match next {
+            Ok(map) => {
+                if maps.send(map).is_err() {
+                    break;
+                }
+            }
+            Err(e) => return StreamDown::Failed(e),
+        }
+    }
+    StreamDown::Ended
 }

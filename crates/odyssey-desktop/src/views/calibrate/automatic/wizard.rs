@@ -1,8 +1,9 @@
 //! State and flow of the automatic calibration wizard.
 //!
-//! [`Wizard`] is a bundle of signal handles, so it is `Copy` and every step
-//! view gets the whole controller. It owns the camera thread, the pattern
-//! window and the stage machine; the views only draw it and call its methods.
+//! [`Wizard`] is a GPUI model: step views hold an `Entity<Wizard>`, read its
+//! plain fields and call its methods, which `cx.notify()` on every change. It
+//! owns the camera thread, the pattern window and the stage machine; the views
+//! only draw it.
 //!
 //! ```text
 //! Setup ─▶ Position ─▶ Measuring ─▶ Markers ─▶ MeasuringMarkers ─▶ Review ─▶ Saved
@@ -20,6 +21,7 @@
 
 mod events;
 mod helper;
+mod init;
 mod markers;
 mod navigation;
 mod pattern;
@@ -27,13 +29,11 @@ mod saving;
 mod session;
 mod setup_answers;
 mod stage;
-mod use_wizard;
 
 use std::rc::Rc;
 use std::time::Duration;
 
-use dioxus::core::Task;
-use dioxus::prelude::*;
+use gpui::{AnyWindowHandle, Bounds, DisplayId, Entity, Pixels, Task};
 pub(crate) use helper::Helper;
 use odyssey_autocalib::camera::CameraInfo;
 use odyssey_autocalib::orbbec::RuntimeStatus;
@@ -41,18 +41,13 @@ use odyssey_autocalib::session::Step;
 use odyssey_hub_common::config::{MonitorKey, UiState};
 pub(crate) use stage::Stage;
 use tokio::sync::mpsc::UnboundedSender;
-pub(crate) use use_wizard::use_wizard;
 
 use super::kind::{DisplayKind, Finding};
 use super::pattern_window::{PatternDisplay, PatternEvent};
 use super::reference::Reference;
 use super::screens::SCREEN_COUNT;
 use super::settings::SizeField;
-use super::worker::{
-    Command, Event, Failure, FailureKind, Finished, ListError, MarkerFrame, PreviewFrame,
-    SavedAttempt, SessionEvent, Worker,
-};
-use crate::ServerReady;
+use super::worker::{Failure, Finished, MarkerFrame, PreviewFrame, SavedAttempt, Worker};
 use crate::components::screen_picker::MonitorSelection;
 use crate::ui_state::UiStateWriter;
 
@@ -82,119 +77,94 @@ pub(crate) struct SavedInfo {
     pub path: String,
 }
 
-#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Wizard {
     pub demo: bool,
-    pub monitors: MonitorSelection,
-    pub stage: Signal<Stage>,
+    pub monitors: Entity<MonitorSelection>,
+    pub stage: Stage,
     /// Stepper position; stays put while a problem is shown.
-    pub step: Signal<usize>,
-    worker: Signal<Rc<Worker>>,
-    server_ready: Option<ServerReady>,
+    pub step: usize,
+    worker: Rc<Worker>,
+    /// The wizard's own window, where the pattern may land on top of it.
+    host: AnyWindowHandle,
+    host_bounds: Bounds<Pixels>,
+    host_display: Option<DisplayId>,
+    /// The selected monitor, mirrored from `monitors` so getters need no `cx`.
+    selected: Option<MonitorKey>,
 
-    pub screen_choice: Signal<Option<u8>>,
-    pub saved: Signal<[bool; SCREEN_COUNT]>,
-    ui_state: Signal<UiState>,
+    pub screen_choice: Option<u8>,
+    pub saved: [bool; SCREEN_COUNT],
+    ui_state: UiState,
     ui_state_writer: UiStateWriter,
-    pub cameras: Signal<CameraList>,
-    pub camera_choice: Signal<Option<String>>,
+    pub cameras: CameraList,
+    pub camera_choice: Option<String>,
     /// The size field's text. Blank means "use what the display says, or
     /// measure".
-    pub size_text: Signal<String>,
+    pub size_text: String,
     /// Which dimension the size field takes for a projector.
-    pub size_field: Signal<SizeField>,
+    pub size_field: SizeField,
     /// The tech's explicit answer to "What are you calibrating?"; until then
-    /// the remembered or default kind shows.
-    kind_choice: Signal<Option<DisplayKind>>,
+    /// the remembered or default kind shows. Set it with [`Wizard::set_kind`].
+    kind_choice: Option<DisplayKind>,
     /// What the display's own information says about its size; `None` while
     /// it is being read.
-    pub finding: Signal<Option<Finding>>,
+    pub finding: Option<Finding>,
     /// Whether the "Not right? Enter the size yourself" field is open.
-    pub manual_size: Signal<bool>,
+    pub manual_size: bool,
     /// A size the tech measured by hand with the tape or card, and the
     /// monitor it describes.
-    pub reference: Signal<Option<(MonitorKey, Reference)>>,
+    pub reference: Option<(MonitorKey, Reference)>,
     /// The tape and card helper, while it is open.
-    pub helper: Signal<Option<Helper>>,
+    pub helper: Option<Helper>,
     /// Why the helper would not open, shown beside its buttons: the page-top
     /// notes are out of sight by the time someone is down at the size section.
-    pub helper_problem: Signal<Option<String>>,
+    pub helper_problem: Option<String>,
     /// Show the camera's own measurement on the review instead of the declared
     /// size.
-    pub use_measured: Signal<bool>,
+    pub use_measured: bool,
     /// Command-line values that could not be honored, shown in Setup.
-    pub notes: Signal<Vec<String>>,
-    list_pending: Signal<bool>,
+    pub notes: Vec<String>,
+    list_pending: bool,
     /// Remembered setup answers and saved screen IDs have finished loading.
-    setup_ready: Signal<bool>,
+    setup_ready: bool,
     /// A command line that names the monitor skips Setup once a camera is
     /// known.
-    auto_start: Signal<bool>,
+    auto_start: bool,
 
-    pub color_exposure: Signal<u32>,
-    pub ir_exposure: Signal<u32>,
-    session: Signal<u64>,
-    pub restarting: Signal<bool>,
-    pub preview: Signal<Option<PreviewFrame>>,
-    pub markers: Signal<Option<MarkerFrame>>,
-    pub progress: Signal<Option<Step>>,
+    pub color_exposure: u32,
+    pub ir_exposure: u32,
+    session: u64,
+    pub restarting: bool,
+    pub preview: Option<PreviewFrame>,
+    pub markers: Option<MarkerFrame>,
+    pub progress: Option<Step>,
 
-    pub finished: Signal<Option<Rc<Finished>>>,
-    pub failure: Signal<Option<Failure>>,
-    pub saved_to: Signal<Option<SavedInfo>>,
-    pub confirm_replace: Signal<bool>,
-    pub saving: Signal<bool>,
-    pub save_error: Signal<Option<String>>,
+    pub finished: Option<Rc<Finished>>,
+    pub failure: Option<Failure>,
+    pub saved_to: Option<SavedInfo>,
+    pub confirm_replace: bool,
+    pub saving: bool,
+    pub save_error: Option<String>,
     /// The diagnostic bundle: whether one is being written, and how the last save went.
-    pub attempt_status: Signal<Option<Result<SavedAttempt, String>>>,
-    pub attempt_saving: Signal<bool>,
+    pub attempt_status: Option<Result<SavedAttempt, String>>,
+    pub attempt_saving: bool,
 
-    pattern: Signal<Option<PatternDisplay>>,
-    pattern_loss: Signal<UnboundedSender<PatternEvent>>,
+    pattern: Option<PatternDisplay>,
+    pattern_loss: UnboundedSender<PatternEvent>,
     /// The pattern would cover the wizard, so the wizard hides while it shows.
-    pub same_monitor: Signal<bool>,
-    hidden: Signal<bool>,
-    flow: Signal<Option<Task>>,
+    pub same_monitor: bool,
+    hidden: bool,
+
+    /// The countdown flow; dropping it cancels the flow.
+    flow: Option<Task<()>>,
+    camera_poll: Option<Task<()>>,
+    finding_task: Option<Task<()>>,
+    save_task: Option<Task<()>>,
+    /// Event pumps and one-shot loaders that live as long as the wizard.
+    _tasks: Vec<Task<()>>,
 }
 
 impl Wizard {
-    fn send(mut self, command: Command) {
-        let result = self.worker.peek().send(command);
-        if let Err(error) = result {
-            let details = "the camera thread is no longer running".to_string();
-            match error.0 {
-                Command::Close => {}
-                Command::ListCameras => {
-                    self.on_event(Event::Cameras(Err(ListError::Camera(details))));
-                }
-                Command::SaveAttempt { .. } => self.on_event(Event::Session {
-                    session: *self.session.peek(),
-                    event: SessionEvent::AttemptSaved(Err(details)),
-                }),
-                _ => {
-                    *self.restarting.write() = false;
-                    self.problem(Failure {
-                        kind: FailureKind::Internal,
-                        details,
-                        camera_open: false,
-                        size_origin: None,
-                    });
-                }
-            }
-        }
-    }
-
-    pub(crate) fn note(mut self, text: String) {
-        self.notes.write().push(text);
-    }
-
-    pub(crate) fn set_stage(mut self, stage: Stage) {
-        *self.stage.write() = stage;
-        if stage != Stage::Setup {
-            self.cancel_helper();
-        }
-        if stage != Stage::Problem {
-            *self.step.write() = stage.step();
-        }
+    pub(crate) fn is_hidden(&self) -> bool {
+        self.hidden
     }
 }

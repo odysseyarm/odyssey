@@ -1,19 +1,38 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use dioxus::prelude::{Signal, WritableExt as _, use_future, use_signal};
+use gpui::{App, AppContext as _, Entity, Global};
+use odyssey_hub_common::device::Device;
 use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
+use crate::hub::HubHandle;
 
 /// Firmware update state per device, shared between the tokio update tasks
-/// and the Dioxus components that poll it.
+/// and the views that show it. `generation` counts every change so the UI can
+/// redraw only when something moved.
 #[derive(Clone)]
 pub(crate) struct FirmwareUpdateManager {
     states: Arc<Mutex<HashMap<[u8; 6], FirmwareUpdateState>>>,
     updating: Arc<Mutex<HashSet<[u8; 6]>>>,
+    /// The hub's device list as last seen, which the tokio update task cannot
+    /// read from the GPUI-side hub entity.
+    devices: Arc<Mutex<Vec<Device>>>,
+    generation: Arc<AtomicU64>,
 }
+
+/// Notifies observers whenever the manager's state changed. Views observe it
+/// instead of polling the manager themselves.
+pub(crate) struct UpdateTicker;
+
+struct ManagerHandle {
+    manager: FirmwareUpdateManager,
+    ticker: Entity<UpdateTicker>,
+}
+
+impl Global for ManagerHandle {}
 
 /// Keeps a device claimed until its update future and final result are gone,
 /// including when that future is cancelled before it is first polled.
@@ -28,24 +47,77 @@ impl Drop for UpdateClaim {
     }
 }
 
-impl PartialEq for FirmwareUpdateManager {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.states, &other.states)
-    }
-}
-
 impl Default for FirmwareUpdateManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// How often the ticker checks whether the manager changed; the update task
+/// writes it from another thread.
+const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 impl FirmwareUpdateManager {
     pub(crate) fn new() -> Self {
         Self {
             states: Arc::new(Mutex::new(HashMap::new())),
             updating: Arc::new(Mutex::new(HashSet::new())),
+            devices: Arc::new(Mutex::new(Vec::new())),
+            generation: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// The app-wide manager and its ticker. The first call also starts
+    /// mirroring the hub's device list, so an update keeps verifying its device
+    /// while no page is open.
+    pub(crate) fn global(cx: &mut App) -> (Self, Entity<UpdateTicker>) {
+        if let Some(handle) = cx.try_global::<ManagerHandle>() {
+            return (handle.manager.clone(), handle.ticker.clone());
+        }
+        let manager = Self::new();
+        let ticker = cx.new(|_| UpdateTicker);
+
+        let hub = cx.global::<HubHandle>().0.clone();
+        manager.set_devices(hub.read(cx).devices.clone());
+        let mirror = manager.clone();
+        cx.observe(&hub, move |hub, cx| {
+            mirror.set_devices(hub.read(cx).devices.clone());
+        })
+        .detach();
+
+        let watched = manager.clone();
+        let tick = ticker.clone();
+        cx.spawn(async move |cx| {
+            let mut seen = watched.generation.load(Ordering::Acquire);
+            loop {
+                cx.background_executor().timer(STATE_POLL_INTERVAL).await;
+                let now = watched.generation.load(Ordering::Acquire);
+                if now != seen {
+                    seen = now;
+                    tick.update(cx, |_, cx| cx.notify());
+                }
+            }
+        })
+        .detach();
+
+        cx.set_global(ManagerHandle {
+            manager: manager.clone(),
+            ticker: ticker.clone(),
+        });
+        (manager, ticker)
+    }
+
+    pub(super) fn set_devices(&self, devices: Vec<Device>) {
+        *self.devices.lock() = devices;
+        self.bump();
+    }
+
+    pub(super) fn devices(&self) -> Vec<Device> {
+        self.devices.lock().clone()
+    }
+
+    fn bump(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
     }
 
     pub(super) fn get_state(&self, uuid: &[u8; 6]) -> FirmwareUpdateState {
@@ -58,6 +130,7 @@ impl FirmwareUpdateManager {
 
     pub(super) fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
         self.states.lock().insert(uuid, state);
+        self.bump();
     }
 
     /// Availability is computed during render and may already be stale when it
@@ -65,8 +138,11 @@ impl FirmwareUpdateManager {
     pub(super) fn set_before_update_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
         let mut states = self.states.lock();
         let current = states.entry(uuid).or_insert(FirmwareUpdateState::Idle);
-        if current.is_before_update() {
+        // Equal states would bump every render and loop the ticker forever.
+        if current.is_before_update() && *current != state {
             *current = state;
+            drop(states);
+            self.bump();
         }
     }
 
@@ -83,41 +159,22 @@ impl FirmwareUpdateManager {
         })
     }
 
-    pub(super) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
+    pub(crate) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
         self.updating.lock().contains(uuid)
     }
 
+    /// The devices being updated, in a stable order.
     pub(crate) fn get_all_updating(&self) -> Vec<[u8; 6]> {
-        self.updating.lock().iter().copied().collect()
+        let mut uuids: Vec<_> = self.updating.lock().iter().copied().collect();
+        uuids.sort_unstable();
+        uuids
     }
 
     fn clear_state(&self, uuid: &[u8; 6]) {
         self.states.lock().remove(uuid);
         self.updating.lock().remove(uuid);
+        self.bump();
     }
-}
-
-/// How often components re-read the manager, which the update task writes from
-/// another thread.
-const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-/// A signal that follows `uuid`'s firmware update state in `manager`.
-pub(super) fn use_polled_state(
-    manager: &FirmwareUpdateManager,
-    uuid: [u8; 6],
-) -> Signal<FirmwareUpdateState> {
-    let mut state = use_signal(|| manager.get_state(&uuid));
-    let manager = manager.clone();
-    use_future(move || {
-        let manager = manager.clone();
-        async move {
-            loop {
-                tokio::time::sleep(STATE_POLL_INTERVAL).await;
-                state.set(manager.get_state(&uuid));
-            }
-        }
-    });
-    state
 }
 
 #[cfg(test)]

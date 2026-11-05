@@ -1,20 +1,26 @@
 //! A single row in the connected devices list.
 //!
-//! A component of its own because Dioxus hooks must run the same number of
-//! times, in the same order, on every render of a component instance. A
-//! `use_signal` per iteration of a loop over connected devices breaks that as
-//! soon as the device count changes, which is when a device and its settings
-//! panel first appear.
+//! An entity of its own so the rename field and the settings panels keep their
+//! state while the device list around them changes.
 
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
-use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
-use odyssey_hub_server::firmware::FirmwareManifest;
+use std::time::Duration;
 
-use crate::components::{
-    DeviceFirmwareUpdate, FirmwareUpdateManager, ImageViewer, SensorSettings, TransportModePanel,
+use gpui::{
+    Animation, AnimationExt as _, AnyElement, AppContext as _, Context, Entity,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
+    pulsating_between,
 };
-use crate::hub::HubContext;
+use gpui::component::input::{Input, InputEvent, InputState};
+use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
+
+use super::firmware_state::FirmwareManifestModel;
+use crate::components::firmware_update::{FirmwareUpdateManager, UpdateTicker, device_firmware_update};
+use crate::components::image_viewer::ImageViewer;
+use crate::components::sensor_settings::{SensorSettings, TransportModePanel};
+use crate::hub::Hub;
+use crate::runtime;
+use crate::theme::{self, Palette, RADIUS};
 
 /// The firmware version shown for a device until it reports its own.
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
@@ -38,190 +44,337 @@ fn transport_suffix(device: &Device) -> &'static str {
     }
 }
 
-fn status_dot_class(is_updating: bool, is_dfu: bool) -> &'static str {
-    if is_updating {
-        "size-2 bg-accent rounded-full animate-pulse"
-    } else if is_dfu {
-        "size-2 bg-warning rounded-full animate-pulse"
-    } else {
-        "size-2 bg-success rounded-full"
-    }
+fn is_dfu(device: &Device) -> bool {
+    device.capabilities.contains(DeviceCapabilities::DFU)
+        && !device.capabilities.contains(DeviceCapabilities::CONTROL)
+        && !device
+            .capabilities
+            .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
 }
 
-#[component]
-pub(super) fn ConnectedDeviceRow(
-    hub: Signal<HubContext>,
+pub(super) struct ConnectedDeviceRow {
+    hub: Entity<Hub>,
     device: Device,
-    is_updating: bool,
-    battery: Option<(u8, bool)>,
-    manifest: Signal<Option<FirmwareManifest>>,
+    manifest: Entity<FirmwareManifestModel>,
     manager: FirmwareUpdateManager,
-) -> Element {
-    let is_dfu = device.capabilities.contains(DeviceCapabilities::DFU)
-        && !device.capabilities.contains(DeviceCapabilities::CONTROL);
-    let firmware_version = device.firmware_version;
+    is_updating: bool,
+    sensor_settings: Entity<SensorSettings>,
+    transport_panel: Entity<TransportModePanel>,
+    image_viewer: Entity<ImageViewer>,
+    /// The rename field; shown only while `editing`.
+    name_input: Entity<InputState>,
+    editing: bool,
+    renamed: bool,
+    rename_error: Option<String>,
+    rename_pending: bool,
+    _subscriptions: Vec<Subscription>,
+}
 
-    rsx! {
-        div {
-            class: "flex flex-col p-3 bg-surface-alt rounded-lg gap-2",
-            div {
-                class: "flex items-center justify-between",
-                div {
-                    class: "flex items-center gap-3",
-                    div { class: status_dot_class(is_updating, is_dfu) }
-                    DeviceName { hub, device: device.clone() }
+impl ConnectedDeviceRow {
+    pub(super) fn new(
+        device: Device,
+        hub: Entity<Hub>,
+        manifest: Entity<FirmwareManifestModel>,
+        manager: FirmwareUpdateManager,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
+        let is_updating = manager.is_updating(&device.uuid);
+        let name_input = cx.new(|cx| InputState::new(window, cx));
+        let sensor_settings = cx.new(|cx| SensorSettings::new(device.clone(), window, cx));
+        let transport_panel = cx.new(|cx| TransportModePanel::new(device.clone(), cx));
+        let image_viewer = cx.new(|cx| ImageViewer::new(device.clone(), is_updating, cx));
+        let (_, ticker): (_, Entity<UpdateTicker>) = FirmwareUpdateManager::global(cx);
+
+        let subscriptions = vec![
+            // Battery and the net core reading arrive through the hub.
+            cx.observe(&hub, |_, _, cx| cx.notify()),
+            cx.observe(&manifest, |_, _, cx| cx.notify()),
+            cx.observe(&ticker, |this, _, cx| this.refresh_updating(cx)),
+            cx.subscribe_in(&name_input, window, |this, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.submit_rename(cx);
                 }
-                span {
-                    class: "text-xs text-fg-muted",
-                    {transport_name(device.transport)}
-                    {transport_suffix(&device)}
-                }
-            }
-            div {
-                class: "flex items-center gap-2 text-xs",
-                span {
-                    class: "text-fg-muted",
-                    "Firmware:"
-                }
-                if firmware_version != UNKNOWN_FIRMWARE_VERSION {
-                    span {
-                        class: "text-fg font-mono",
-                        "{firmware_version[0]}.{firmware_version[1]}.{firmware_version[2]}"
-                    }
-                } else {
-                    span {
-                        class: "text-fg-muted italic",
-                        "Not available"
-                    }
-                }
-            }
-            if let Some((percent, charging)) = battery {
-                div {
-                    class: "flex items-center gap-2 text-xs",
-                    span {
-                        class: "text-fg-muted",
-                        "Battery:"
-                    }
-                    span {
-                        class: "text-fg font-mono",
-                        "{percent}%"
-                    }
-                    span {
-                        class: if charging { "text-success-ink" } else { "text-fg-muted" },
-                        if charging { "Charging" } else { "Discharging" }
-                    }
-                }
-            }
-            DeviceFirmwareUpdate {
-                device: device.clone(),
-                manifest,
-                manager,
-                devices: hub().devices,
-            }
-            ImageViewer {
-                hub,
-                device: device.clone(),
-                is_updating,
-            }
-            // Transport mode first: it decides whether sensor tuning is
-            // reachable at all, so it belongs above the settings it gates.
-            TransportModePanel {
-                hub,
-                device: device.clone(),
-            }
-            SensorSettings {
-                hub,
-                device: device.clone(),
-            }
+            }),
+        ];
+        Self {
+            hub,
+            device,
+            manifest,
+            manager,
+            is_updating,
+            sensor_settings,
+            transport_panel,
+            image_viewer,
+            name_input,
+            editing: false,
+            renamed: false,
+            rename_error: None,
+            rename_pending: false,
+            _subscriptions: subscriptions,
         }
+    }
+
+    pub(super) fn set_device(&mut self, device: Device, cx: &mut Context<'_, Self>) {
+        self.device = device.clone();
+        self.sensor_settings
+            .update(cx, |panel, cx| panel.set_device(device.clone(), cx));
+        self.transport_panel
+            .update(cx, |panel, cx| panel.set_device(device.clone(), cx));
+        let is_updating = self.is_updating;
+        self.image_viewer
+            .update(cx, |viewer, cx| viewer.set_state(device, is_updating, cx));
+        cx.notify();
+    }
+
+    fn refresh_updating(&mut self, cx: &mut Context<'_, Self>) {
+        let is_updating = self.manager.is_updating(&self.device.uuid);
+        if is_updating != self.is_updating {
+            self.is_updating = is_updating;
+            let device = self.device.clone();
+            self.image_viewer
+                .update(cx, |viewer, cx| viewer.set_state(device, is_updating, cx));
+        }
+        cx.notify();
+    }
+
+    fn start_rename(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let name = self.device.name().to_string();
+        self.name_input.update(cx, |input, cx| {
+            input.set_value(name, window, cx);
+            input.focus(window, cx);
+        });
+        self.renamed = false;
+        self.rename_error = None;
+        self.editing = true;
+        cx.notify();
+    }
+
+    /// One rename is sent at a time, with an owned client handle rather than
+    /// anything of the hub held across the RPC.
+    fn submit_rename(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.editing || self.rename_pending {
+            return;
+        }
+        self.rename_pending = true;
+        self.editing = false;
+        let name = self.name_input.read(cx).value().to_string();
+        let device = self.device.clone();
+        let client = self.hub.read(cx).client();
+        let rename = runtime::spawn(async move {
+            let Some(client) = client else {
+                tracing::warn!("Failed to rename device: not connected to the hub");
+                return Err("not connected to the hub".to_owned());
+            };
+            client
+                .device(device)
+                .set_device_name(name)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to rename device: {e}");
+                    e.to_string()
+                })
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = rename
+                .await
+                .unwrap_or_else(|e| Err(format!("The rename task stopped unexpectedly: {e}")));
+            this.update(cx, |this, cx| {
+                match outcome {
+                    Ok(()) => this.renamed = true,
+                    Err(error) => this.rename_error = Some(error),
+                }
+                this.rename_pending = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn status_dot(&self, p: Palette) -> AnyElement {
+        let dot = || div().size_2().rounded_full();
+        let id = SharedString::from(format!("dot-{:02x?}", self.device.uuid));
+        let pulse = |color| {
+            dot().id(id.clone()).bg(color).with_animation(
+                id.clone(),
+                Animation::new(Duration::from_secs(2))
+                    .repeat()
+                    .with_easing(pulsating_between(0.4, 1.0)),
+                |el, delta| el.opacity(delta),
+            )
+        };
+        if self.is_updating {
+            pulse(p.accent).into_any_element()
+        } else if is_dfu(&self.device) {
+            pulse(p.warning).into_any_element()
+        } else {
+            dot().bg(p.success).into_any_element()
+        }
+    }
+
+    /// The device's label, which turns into a text field to rename it.
+    fn device_name(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        if self.editing {
+            return div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape" {
+                        this.editing = false;
+                        cx.notify();
+                    }
+                }))
+                .child(div().w(px(192.0)).child(Input::new(&self.name_input)))
+                .child(
+                    div()
+                        .id("cancel-rename")
+                        .cursor_pointer()
+                        .text_xs()
+                        .text_color(p.fg_muted)
+                        .hover(|s| s.text_color(p.fg_strong))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.editing = false;
+                            cx.notify();
+                        }))
+                        .child("✕"),
+                )
+                .into_any_element();
+        }
+
+        let mut name = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .font_family("monospace")
+                    .text_color(p.fg)
+                    .child(crate::views::device_label(&self.device)),
+            );
+        if self.device.capabilities.contains(DeviceCapabilities::CONTROL) {
+            let pending = self.rename_pending;
+            let mut pencil = div()
+                .id("rename")
+                .text_xs()
+                .text_color(p.fg_muted)
+                .child("✎");
+            pencil = if pending {
+                pencil.opacity(0.5)
+            } else {
+                pencil
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(p.accent_ink))
+                    .on_click(cx.listener(|this, _, window, cx| this.start_rename(window, cx)))
+            };
+            name = name.child(pencil);
+        }
+        if self.renamed {
+            name = name.child(
+                div()
+                    .text_xs()
+                    .italic()
+                    .text_color(p.warning_ink)
+                    .child("USB name reflects last boot"),
+            );
+        }
+        if let Some(error) = &self.rename_error {
+            name = name.child(div().text_xs().text_color(p.danger_ink).child(error.clone()));
+        }
+        name.into_any_element()
     }
 }
 
-/// The device's label, which turns into a text field to rename it.
-/// One rename is sent at a time, with an owned client handle rather than a
-/// signal write guard held across the RPC.
-#[component]
-fn DeviceName(hub: Signal<HubContext>, device: Device) -> Element {
-    let label = crate::views::device_label(&device);
-    let current_name = device.name().to_string();
-    let mut editing = use_signal(|| false);
-    let mut edit_value = use_signal(|| current_name.clone());
-    let mut renamed = use_signal(|| false);
-    let mut rename_error = use_signal(|| None::<String>);
-    let mut rename_pending = use_signal(|| false);
-    if editing() {
-        return rsx! {
-            input {
-                class: "field px-1 py-0.5 font-mono w-48",
-                value: "{edit_value}",
-                autofocus: true,
-                oninput: move |e| edit_value.set(e.value()),
-                onkeydown: {
-                    let device = device.clone();
-                    move |e: KeyboardEvent| {
-                        if e.key() == Key::Enter {
-                            if *rename_pending.peek() {
-                                return;
-                            }
-                            rename_pending.set(true);
-                            let name = edit_value();
-                            let device = device.clone();
-                            let client = hub.peek().client();
-                            editing.set(false);
-                            spawn(async move {
-                                let Some(client) = client else {
-                                    tracing::warn!("Failed to rename device: not connected to the hub");
-                                    rename_error.set(Some("not connected to the hub".to_owned()));
-                                    rename_pending.set(false);
-                                    return;
-                                };
-                                match client.device(device).set_device_name(name).await {
-                                    Ok(()) => renamed.set(true),
-                                    Err(e) => {
-                                        tracing::error!("Failed to rename device: {e}");
-                                        rename_error.set(Some(e.to_string()));
-                                    }
-                                }
-                                rename_pending.set(false);
-                            });
-                        } else if e.key() == Key::Escape {
-                            editing.set(false);
-                        }
-                    }
-                },
-            }
-            button {
-                class: "text-xs text-fg-muted hover:text-fg-strong",
-                onclick: move |_| editing.set(false),
-                "✕"
-            }
-        };
-    }
-    rsx! {
-        span {
-            class: "text-sm font-mono text-fg",
-            {label}
+impl Render for ConnectedDeviceRow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let p = theme::palette(cx);
+        let device = &self.device;
+        let firmware_version = device.firmware_version;
+        let battery = self.hub.read(cx).battery_states.get(&device.uuid).copied();
+
+        let firmware_row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_xs()
+            .child(div().text_color(p.fg_muted).child("Firmware:"))
+            .child(if firmware_version != UNKNOWN_FIRMWARE_VERSION {
+                div()
+                    .font_family("monospace")
+                    .text_color(p.fg)
+                    .child(format!(
+                        "{}.{}.{}",
+                        firmware_version[0], firmware_version[1], firmware_version[2]
+                    ))
+            } else {
+                div().italic().text_color(p.fg_muted).child("Not available")
+            });
+
+        let manifest = self.manifest.read(cx).manifest.clone();
+        let update = device_firmware_update(device, manifest.as_ref(), &self.manager, p);
+
+        let mut row = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .p_3()
+            .gap_2()
+            .rounded(px(RADIUS))
+            .bg(p.surface_alt)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(self.status_dot(p))
+                            .child(self.device_name(p, cx)),
+                    )
+                    .child(div().text_xs().text_color(p.fg_muted).child(format!(
+                        "{}{}",
+                        transport_name(device.transport),
+                        transport_suffix(device)
+                    ))),
+            )
+            .child(firmware_row);
+        if let Some((percent, charging)) = battery {
+            row = row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_xs()
+                    .child(div().text_color(p.fg_muted).child("Battery:"))
+                    .child(
+                        div()
+                            .font_family("monospace")
+                            .text_color(p.fg)
+                            .child(format!("{percent}%")),
+                    )
+                    .child(
+                        div()
+                            .text_color(if charging { p.success_ink } else { p.fg_muted })
+                            .child(if charging { "Charging" } else { "Discharging" }),
+                    ),
+            );
         }
-        button {
-            class: "text-xs text-fg-muted hover:text-accent-ink",
-            disabled: rename_pending(),
-            title: "Rename",
-            onclick: move |_| {
-                edit_value.set(current_name.clone());
-                renamed.set(false);
-                rename_error.set(None);
-                editing.set(true);
-            },
-            "✎"
+        row = row.child(update);
+        if !device
+            .capabilities
+            .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
+        {
+            row = row.child(self.image_viewer.clone());
         }
-        if renamed() {
-            span {
-                class: "text-xs text-warning-ink italic",
-                "USB name reflects last boot"
-            }
-        }
-        if let Some(error) = rename_error() {
-            span { role: "alert", class: "text-xs text-danger-ink", {error} }
-        }
+        // Transport mode first: it decides whether sensor tuning is reachable
+        // at all, so it belongs above the settings it gates.
+        row.child(self.transport_panel.clone())
+            .child(self.sensor_settings.clone())
     }
 }

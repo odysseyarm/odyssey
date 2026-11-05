@@ -3,13 +3,10 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use backon::Retryable as _;
-use dioxus::logger::tracing;
-use dioxus::prelude::{ReadableExt as _, SyncSignal};
 use eros::Context as _;
 use futures::FutureExt as _;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
-use slab::Slab;
 
 use super::dfu_session::DfuSession;
 use super::downloads::{Downloads, published_release};
@@ -18,6 +15,7 @@ use super::poll_window::{poll_window, ready};
 use super::update_check::{desktop_version, format_version, is_in_bootloader};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
+use crate::runtime;
 
 /// How long the finished update stays visible before its state is cleared.
 const FINAL_STATE_LINGER: Duration = Duration::from_secs(5);
@@ -37,7 +35,6 @@ pub(super) fn start_firmware_update(
     device_type: String,
     vid: u16,
     pid: u16,
-    devices: SyncSignal<Slab<Device>>,
 ) {
     let device_uuid = device.uuid;
 
@@ -50,7 +47,7 @@ pub(super) fn start_firmware_update(
 
     // Keep both the transfer and its claim outside any component's lifetime.
     // Catch panics here because nobody awaits the detached task's handle.
-    tokio::spawn(async move {
+    runtime::spawn(async move {
         let _claim = claim;
         let result = AssertUnwindSafe(run_firmware_update(
             &manager,
@@ -59,7 +56,6 @@ pub(super) fn start_firmware_update(
             device_type,
             vid,
             pid,
-            devices,
         ))
         .catch_unwind()
         .await
@@ -88,7 +84,6 @@ async fn run_firmware_update(
     device_type: String,
     vid: u16,
     pid: u16,
-    devices: SyncSignal<Slab<Device>>,
 ) -> eros::Result<()> {
     let session = DfuSession {
         manager,
@@ -162,14 +157,13 @@ async fn run_firmware_update(
                     eros::error!("The update plan verifies the net core but none was written")
                 })?;
                 session.set_state(FirmwareUpdateState::VerifyingNetCore);
-                wait_for_netcore_release(&devices, &session.uuid, image.release).await?;
+                wait_for_netcore_release(manager, &session.uuid, image.release).await?;
             }
             firmware::UpdateStep::WriteApplication => {
                 session
                     .write_application(
                         &mut downloads,
                         firmware_entry.requires_bootloader,
-                        &devices,
                         expected_version,
                     )
                     .await?;
@@ -190,7 +184,6 @@ impl DfuSession<'_> {
         &self,
         downloads: &mut Downloads,
         requires_bootloader: u16,
-        devices: &SyncSignal<Slab<Device>>,
         expected_version: [u16; 3],
     ) -> eros::Result<()> {
         self.ensure_bootloader(downloads.bootloader.as_ref(), requires_bootloader)
@@ -234,7 +227,7 @@ impl DfuSession<'_> {
             // new image and fell back to the old application.
             let mut last_version = None;
             let reported = (|| {
-                last_version = reported_application_version(&devices.peek(), &self.uuid);
+                last_version = reported_application_version(&self.manager.devices(), &self.uuid);
                 future::ready(ready(last_version == Some(expected_version)))
             })
             .retry(poll_window(APP_VERSION_TIMEOUT, APP_VERSION_POLL_INTERVAL))
@@ -267,12 +260,16 @@ impl DfuSession<'_> {
     }
 }
 
-/// Only the requested unit's live control connection can verify its application.
-fn reported_application_version(devices: &Slab<Device>, uuid: &[u8; 6]) -> Option<[u16; 3]> {
+/// Verify the requested unit's live control connection or DFU-only USB runtime descriptor.
+fn reported_application_version(devices: &[Device], uuid: &[u8; 6]) -> Option<[u16; 3]> {
     devices
         .iter()
-        .find(|(_, device)| {
-            &device.uuid == uuid && device.capabilities.contains(DeviceCapabilities::CONTROL)
+        .find(|device| {
+            &device.uuid == uuid
+                && (device.capabilities.contains(DeviceCapabilities::CONTROL)
+                    || device
+                        .capabilities
+                        .contains(DeviceCapabilities::DFU_RUNTIME_ONLY))
         })
-        .map(|(_, device)| device.firmware_version)
+        .map(|device| device.firmware_version)
 }

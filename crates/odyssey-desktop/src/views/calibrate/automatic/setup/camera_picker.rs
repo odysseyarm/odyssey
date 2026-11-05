@@ -1,168 +1,217 @@
 //! Choosing the camera, and what to show when there is none.
 
-use dioxus::prelude::*;
+use gpui::{
+    AnyElement, App, Div, Entity, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, px,
+};
 
-use crate::components::wizard::{Icon, IconView, Spinner};
+use crate::components::ui::{ButtonKind, button};
+use crate::components::wizard::{Icon, icon};
 use crate::sdk_install::{self, Delivery};
+use crate::theme::{Palette, RADIUS, RADIUS_LG};
 use crate::views::calibrate::automatic::camera_support::{self, Notice, SDK_DOWNLOAD_URL};
 use crate::views::calibrate::automatic::sdk_download::DownloadSdk;
-use crate::views::calibrate::automatic::ui::{
-    AMBER_ALERT, PRIMARY_BUTTON, SECONDARY_BUTTON, WORKING_ROW,
-};
+use crate::views::calibrate::automatic::ui::{act, amber_alert, plain_details, working_row};
 use crate::views::calibrate::automatic::wizard::{CameraList, Wizard};
 
-#[component]
-pub(super) fn CameraPicker(wizard: Wizard) -> Element {
-    let cameras = wizard.cameras.read().clone();
-    let chosen = wizard.camera();
+pub(super) fn camera_picker(
+    p: Palette,
+    wizard: &Entity<Wizard>,
+    download: &Entity<DownloadSdk>,
+    details_open: &Entity<bool>,
+    cx: &App,
+) -> AnyElement {
+    let state = wizard.read(cx);
+    let chosen = state.camera();
 
-    match cameras {
-        CameraList::Searching => rsx! {
-            div {
-                class: WORKING_ROW,
-                Spinner { class: "size-5".to_string() }
-                "Looking for cameras…"
-            }
+    match &state.cameras {
+        CameraList::Searching => working_row(p, "Looking for cameras…").into_any_element(),
+        CameraList::Failed(error) => no_camera(
+            p,
+            "Couldn't look for cameras".into(),
+            "Unplug the camera and plug it back in. If this keeps happening, restart the app.".into(),
+            vec![error.clone()],
+            None,
+            details_open,
+            cx,
+        ),
+        CameraList::Unavailable(status) => match camera_support::notice(status) {
+            Some(notice) => camera_support_notice(p, wizard, notice, download, details_open, cx),
+            None => div().into_any_element(),
         },
-        CameraList::Failed(error) => rsx! {
-            NoCamera {
-                title: "Couldn't look for cameras".to_string(),
-                detail: "Unplug the camera and plug it back in. If this keeps happening, restart the app.".to_string(),
-                technical: vec![error],
-            }
-        },
-        CameraList::Unavailable(status) => match camera_support::notice(&status) {
-            Some(notice) => rsx! { CameraSupportNotice { wizard, notice } },
-            None => rsx! {},
-        },
-        CameraList::Found(list) if list.is_empty() => rsx! {
-            NoCamera {
-                title: "No camera found".to_string(),
-                detail: "Plug in the Orbbec camera with its USB cable. This page notices by itself.".to_string(),
-                technical: Vec::new(),
-            }
-        },
-        CameraList::Found(list) => rsx! {
-            div {
-                role: "radiogroup",
-                aria_label: "Camera",
-                class: "flex flex-col gap-2",
-                for camera in list {
-                    {
-                        let selected = chosen.as_ref().is_some_and(|c| c.id == camera.id);
-                        let class = if selected {
-                            "border-accent-ink bg-accent-soft"
-                        } else {
-                            "border-line bg-surface hover:border-accent-ink"
-                        };
-                        let id = camera.id.clone();
-                        rsx! {
-                            button {
-                                key: "{camera.id}",
-                                r#type: "button",
-                                role: "radio",
-                                aria_checked: selected,
-                                class: "flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left {class}",
-                                onclick: move |_| *wizard.camera_choice.write() = Some(id.clone()),
-                                IconView { icon: Icon::Camera, class: "size-7 shrink-0 text-accent-ink".to_string() }
-                                span {
-                                    class: "flex min-w-0 flex-col",
-                                    span { class: "text-lg font-medium text-fg-strong", "{camera.name}" }
-                                    if !camera.serial.is_empty() {
-                                        span { class: "text-sm text-fg-muted", "Serial {camera.serial}" }
-                                    }
-                                }
-                                if selected {
-                                    IconView { icon: Icon::Check, class: "ms-auto size-6 text-accent-ink".to_string() }
-                                }
-                            }
-                            if let Some(warning) = camera.link.warning() {
-                                div {
-                                    key: "{camera.id}-link",
-                                    role: "alert",
-                                    class: AMBER_ALERT,
-                                    {warning}
-                                }
-                            }
-                        }
-                    }
+        CameraList::Found(list) if list.is_empty() => no_camera(
+            p,
+            "No camera found".into(),
+            "Plug in the Orbbec camera with its USB cable. This page notices by itself.".into(),
+            Vec::new(),
+            None,
+            details_open,
+            cx,
+        ),
+        CameraList::Found(list) => {
+            let mut col = div().flex().flex_col().gap_2();
+            for (index, camera) in list.iter().enumerate() {
+                let selected = chosen.as_ref().is_some_and(|c| c.id == camera.id);
+                let (border, bg) = if selected {
+                    (p.accent_ink, p.accent_soft)
+                } else {
+                    (p.line, p.surface)
+                };
+                let id = camera.id.clone();
+                let wizard = wizard.clone();
+                let mut info = div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.fg_strong)
+                            .child(camera.name.clone()),
+                    );
+                if !camera.serial.is_empty() {
+                    info = info.child(
+                        div()
+                            .text_sm()
+                            .text_color(p.fg_muted)
+                            .child(format!("Serial {}", camera.serial)),
+                    );
+                }
+                let mut row = div()
+                    .id(("camera", index))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .rounded(px(RADIUS))
+                    .border_2()
+                    .border_color(border)
+                    .bg(bg)
+                    .px_4()
+                    .py_3()
+                    .cursor_pointer()
+                    .child(icon(Icon::Camera, 28.0, p.accent_ink))
+                    .child(info)
+                    .on_click(move |_, _, cx| {
+                        let id = id.clone();
+                        wizard.update(cx, |w, cx| {
+                            w.camera_choice = Some(id);
+                            cx.notify();
+                        });
+                    });
+                if !selected {
+                    row = row.hover(move |s| s.border_color(p.accent_ink));
+                }
+                if selected {
+                    row = row.child(
+                        div().ml_auto().child(icon(Icon::Check, 24.0, p.accent_ink)),
+                    );
+                }
+                col = col.child(row);
+                if let Some(warning) = camera.link.warning() {
+                    col = col.child(amber_alert(p, warning));
                 }
             }
-        },
+            col.into_any_element()
+        }
     }
 }
 
-#[component]
-pub(super) fn NoCamera(
+fn no_camera(
+    p: Palette,
     title: String,
     detail: String,
     technical: Vec<String>,
-    children: Element,
-) -> Element {
-    rsx! {
-        div {
-            class: "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line px-4 py-6 text-center",
-            IconView { icon: Icon::Camera, class: "size-10 text-fg-faint".to_string() }
-            div { class: "text-xl font-semibold text-fg-strong", {title} }
-            div { class: "text-base text-fg-muted", {detail} }
-            {children}
-            if !technical.is_empty() {
-                details {
-                    class: "w-full text-left text-sm text-fg-muted",
-                    summary { class: "cursor-pointer text-center", "Details" }
-                    div {
-                        class: "mt-2 flex flex-col gap-1",
-                        for (i, line) in technical.iter().enumerate() {
-                            code { key: "{i}", class: "break-words", {line.as_str()} }
-                        }
-                    }
-                }
-            }
-        }
+    extra: Option<AnyElement>,
+    details_open: &Entity<bool>,
+    cx: &App,
+) -> AnyElement {
+    let mut col: Div = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_2()
+        .rounded(px(RADIUS_LG))
+        .border_2()
+        .border_dashed()
+        .border_color(p.line)
+        .px_4()
+        .py_6()
+        .text_center()
+        .child(icon(Icon::Camera, 40.0, p.fg_faint))
+        .child(
+            div()
+                .text_xl()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.fg_strong)
+                .child(title),
+        )
+        .child(div().text_base().text_color(p.fg_muted).child(detail));
+    if let Some(extra) = extra {
+        col = col.child(extra);
     }
+    if !technical.is_empty() {
+        let lines = technical
+            .into_iter()
+            .map(|line| div().child(line).into_any_element())
+            .collect();
+        col = col.child(
+            div()
+                .w_full()
+                .text_left()
+                .child(plain_details("camera-details", p, "Details", lines, details_open, cx)),
+        );
+    }
+    col.into_any_element()
 }
 
 /// The camera library is missing, broken or the wrong version. The page keeps
 /// checking by itself; the button only saves the wait.
-#[component]
-pub(super) fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
-    rsx! {
-        NoCamera {
-            title: notice.title,
-            detail: notice.detail,
-            technical: notice.details,
-            div {
-                class: "flex flex-wrap items-center justify-center gap-3 pt-2",
-                if notice.offer_download {
-                    match sdk_install::delivery() {
-                        Delivery::Link => rsx! {
-                            a { class: PRIMARY_BUTTON, href: SDK_DOWNLOAD_URL, "Get the Orbbec SDK" }
-                        },
-                        Delivery::Download => rsx! { DownloadSdk { wizard } },
-                        Delivery::Installer => rsx! {
-                            p {
-                                class: "max-w-xl text-sm text-fg-muted",
-                                "This copy of Odyssey doesn't download the camera software. To add Orbbec camera support, run the \
-                                 Odyssey installer again, choose Change, and tick \"Orbbec camera support\"."
-                            }
-                        },
-                        Delivery::Offline => rsx! {
-                            p {
-                                class: "max-w-xl text-sm text-fg-muted",
-                                "Offline mode is on, so Odyssey won't download the camera software. Install it from \
-                                 the full Odyssey installer (the \"Orbbec camera support\" option), or ask your \
-                                 administrator."
-                            }
-                        },
-                    }
-                }
-                button {
-                    r#type: "button",
-                    class: SECONDARY_BUTTON,
-                    onclick: move |_| wizard.request_camera_list(),
-                    "Check again"
-                }
-            }
-        }
+fn camera_support_notice(
+    p: Palette,
+    wizard: &Entity<Wizard>,
+    notice: Notice,
+    download: &Entity<DownloadSdk>,
+    details_open: &Entity<bool>,
+    cx: &App,
+) -> AnyElement {
+    let mut actions = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .pt_2();
+    if notice.offer_download {
+        actions = match sdk_install::delivery() {
+            Delivery::Link => actions.child(
+                button("get-sdk", "Get the Orbbec SDK", ButtonKind::Primary, p)
+                    .on_click(|_, _, cx| cx.open_url(SDK_DOWNLOAD_URL)),
+            ),
+            Delivery::Download => actions.child(download.clone()),
+            Delivery::Installer => actions.child(
+                div().max_w(px(576.0)).text_sm().text_color(p.fg_muted).child(
+                    "This copy of Odyssey doesn't download the camera software. To add Orbbec camera support, run the Odyssey installer again, choose Change, and tick \"Orbbec camera support\".",
+                ),
+            ),
+            Delivery::Offline => actions.child(
+                div().max_w(px(576.0)).text_sm().text_color(p.fg_muted).child(
+                    "Offline mode is on, so Odyssey won't download the camera software. Install it from the full Odyssey installer (the \"Orbbec camera support\" option), or ask your administrator.",
+                ),
+            ),
+        };
     }
+    actions = actions.child(
+        button("check-again", "Check again", ButtonKind::Secondary, p)
+            .on_click(act(wizard, |w, cx| w.request_camera_list(cx))),
+    );
+    no_camera(
+        p,
+        notice.title,
+        notice.detail,
+        notice.details,
+        Some(actions.into_any_element()),
+        details_open,
+        cx,
+    )
 }

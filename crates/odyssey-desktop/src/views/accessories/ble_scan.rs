@@ -5,10 +5,14 @@ use std::time::Duration;
 
 use btleplug::api::{Central as _, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::{Adapter, Manager};
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
+use gpui::{Context, Task};
 use odyssey_hub_common::accessory::AccessoryType;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+use super::AccessoriesView;
+use crate::runtime;
 
 /// Accessories found nearby: id -> (label, type).
 pub(super) type Nearby = HashMap<[u8; 6], (String, AccessoryType)>;
@@ -36,8 +40,8 @@ const SCAN_DURATION: Duration = Duration::from_secs(3);
 /// How long to rest between scans.
 const SCAN_PAUSE: Duration = Duration::from_secs(5);
 
-/// Dioxus cancels the scan future when the page unmounts. Stopping discovery
-/// must outlive that scope, otherwise navigation during the scan leaves it on.
+/// The scan future is aborted when the page goes away. Stopping discovery
+/// must outlive that, otherwise navigation during the scan leaves it on.
 struct ScanSession {
     adapter: Adapter,
     active: bool,
@@ -56,41 +60,69 @@ impl Drop for ScanSession {
     }
 }
 
-/// Keeps `scan` up to date with the DryFireMag and MantisX accessories in
-/// range, or with why it cannot look for them.
-pub(super) fn use_ble_scan(mut scan: Signal<BleScan>) {
-    use_future(move || async move {
-        let manager = match Manager::new().await {
-            Ok(manager) => manager,
-            Err(error) => {
-                tracing::warn!("Bluetooth unavailable: {error}");
-                scan.set(BleScan::Unavailable(error.to_string()));
-                return;
+/// Aborts the tokio scan loop when the page's task is dropped.
+struct AbortOnDrop(JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Keeps the view's `scan` up to date with the DryFireMag and MantisX
+/// accessories in range, or with why it cannot look for them. Scanning stops
+/// when the returned task is dropped.
+pub(super) fn follow(cx: &mut Context<'_, AccessoriesView>) -> Task<()> {
+    let (updates, mut results) = mpsc::unbounded_channel();
+    let scanner = AbortOnDrop(runtime::spawn(scan_loop(updates)));
+    cx.spawn(async move |this, cx| {
+        let _scanner = scanner;
+        while let Some(scan) = results.recv().await {
+            let applied = this.update(cx, |this, cx| {
+                this.scan = scan;
+                cx.notify();
+            });
+            if applied.is_err() {
+                break;
             }
-        };
-        let adapters = match manager.adapters().await {
-            Ok(adapters) => adapters,
-            Err(error) => {
-                tracing::warn!("Bluetooth unavailable: {error}");
-                scan.set(BleScan::Unavailable(error.to_string()));
-                return;
-            }
-        };
-        let Some(adapter) = adapters.into_iter().next() else {
-            scan.set(BleScan::Unavailable(
-                "this computer has no Bluetooth adapter".to_string(),
-            ));
-            return;
-        };
-        let mut session = ScanSession {
-            adapter,
-            active: false,
-        };
-        loop {
-            scan.set(BleScan::Found(scan_once(&mut session).await));
-            tokio::time::sleep(SCAN_PAUSE).await;
         }
-    });
+    })
+}
+
+async fn scan_loop(updates: mpsc::UnboundedSender<BleScan>) {
+    let manager = match Manager::new().await {
+        Ok(manager) => manager,
+        Err(error) => {
+            tracing::warn!("Bluetooth unavailable: {error}");
+            let _ = updates.send(BleScan::Unavailable(error.to_string()));
+            return;
+        }
+    };
+    let adapters = match manager.adapters().await {
+        Ok(adapters) => adapters,
+        Err(error) => {
+            tracing::warn!("Bluetooth unavailable: {error}");
+            let _ = updates.send(BleScan::Unavailable(error.to_string()));
+            return;
+        }
+    };
+    let Some(adapter) = adapters.into_iter().next() else {
+        let _ = updates.send(BleScan::Unavailable(
+            "this computer has no Bluetooth adapter".to_string(),
+        ));
+        return;
+    };
+    let mut session = ScanSession {
+        adapter,
+        active: false,
+    };
+    loop {
+        let found = scan_once(&mut session).await;
+        if updates.send(BleScan::Found(found)).is_err() {
+            return;
+        }
+        tokio::time::sleep(SCAN_PAUSE).await;
+    }
 }
 
 async fn scan_once(session: &mut ScanSession) -> Nearby {

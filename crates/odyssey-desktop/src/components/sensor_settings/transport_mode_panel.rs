@@ -1,148 +1,200 @@
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
-use odyssey_hub_common::device::{Device, DeviceCapabilities};
+use gpui::component::button::{Button, ButtonVariants as _};
+use gpui::component::{Disableable as _, Sizable as _};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    Context, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+};
+use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport};
 
-use super::op_status::{OpStatus, StatusLine, rpc_failure};
+use super::op_status::{OpStatus, rpc_failure, status_line};
 use super::product_ids::supports_transport_switching;
-use super::styles::{DISCLOSURE_SUMMARY_CLASS, FIELD_GRID_CLASS, LABEL_CLASS};
-use crate::hub::HubContext;
-
-fn mode_button_class(active: bool) -> &'static str {
-    if active {
-        "btn btn-primary btn-sm"
-    } else {
-        "btn btn-secondary btn-sm"
-    }
-}
-
-/// Asks the hub to switch the device's events transport and reports progress
-/// through `status`; the device reboots, so success only means "requested".
-async fn switch_transport_mode(
-    hub: Signal<HubContext>,
-    device: Device,
-    usb_mode: bool,
-    mut status: Signal<OpStatus>,
-    mut user_pending_usb: Signal<Option<bool>>,
-    mut switching: Signal<bool>,
-) {
-    if *switching.peek() {
-        return;
-    }
-    switching.set(true);
-    status.set(OpStatus::Busy("Switching...".into()));
-    let Some(client) = hub.peek().client() else {
-        tracing::warn!("set_transport_mode failed: not connected to the hub");
-        user_pending_usb.set(None);
-        status.set(rpc_failure(
-            "switch the transport mode",
-            &"not connected to the hub",
-        ));
-        switching.set(false);
-        return;
-    };
-    match client.device(device).set_transport_mode(usb_mode).await {
-        Ok(confirmed_usb) => {
-            user_pending_usb.set(Some(confirmed_usb));
-            let mode_str = if confirmed_usb { "USB" } else { "Bluetooth" };
-            status.set(OpStatus::Busy(format!(
-                "Switching to {mode_str}. The device restarts and reconnects on its own."
-            )));
-        }
-        Err(e) => {
-            tracing::error!("set_transport_mode failed: {e:#}");
-            user_pending_usb.set(None);
-            status.set(rpc_failure("switch the transport mode", &e));
-        }
-    }
-    switching.set(false);
-}
+use crate::hub::HubHandle;
+use crate::runtime;
+use crate::theme::{RADIUS_SM, palette};
 
 /// Shows a transport mode selector (BLE / USB) for ATS Lite / Lite1 devices.
 /// Requires only CONTROL capability, so it is visible even when the device is
 /// in BLE mode and the EVENTS bulk endpoint is not available. Firmware with
 /// AUTO_TRANSPORT picks its link itself and gets no selector.
-#[component]
-pub(crate) fn TransportModePanel(hub: Signal<HubContext>, device: Device) -> Element {
-    let should_render = supports_transport_switching(device.product_id)
-        && device.capabilities.contains(DeviceCapabilities::CONTROL)
-        && !device
-            .capabilities
-            .contains(DeviceCapabilities::AUTO_TRANSPORT);
+pub(crate) struct TransportModePanel {
+    device: Device,
+    /// Distinguishes this panel's element ids from other rows'.
+    key: String,
+    is_open: bool,
+    details_open: bool,
+    status: OpStatus,
+    /// The mode the user asked for, `None` when there is no override. Cleared
+    /// once the device shows that mode, which happens after the reboot.
+    user_pending_usb: Option<bool>,
+    switching: bool,
+}
 
-    let mut status = use_signal(OpStatus::default);
-    // The mode the user asked for, `None` when there is no override. Cleared once
-    // the device prop shows that mode, which happens after the reboot.
-    let mut user_pending_usb = use_signal(|| Option::<bool>::None);
-    let switching = use_signal(|| false);
-
-    // The displayed mode prefers the user's request while the reboot is pending,
-    // and otherwise follows the device prop.
-    let device_is_usb =
-        device.events_transport == odyssey_hub_common::device::EventsTransport::Wired;
-    // Observe both the prop and pending request without spawning signal writes
-    // from render. Hooks stay mounted while CONTROL comes and goes.
-    use_effect(use_reactive!(|(device_is_usb)| {
-        let requested = *user_pending_usb.read();
-        if requested == Some(device_is_usb) {
-            user_pending_usb.set(None);
-            status.set(OpStatus::Idle);
+impl TransportModePanel {
+    pub(crate) fn new(device: Device, _cx: &mut Context<Self>) -> Self {
+        Self {
+            key: hex::encode(device.uuid),
+            device,
+            is_open: false,
+            details_open: false,
+            status: OpStatus::Idle,
+            user_pending_usb: None,
+            switching: false,
         }
-    }));
-    let pending_usb = user_pending_usb.read().unwrap_or(device_is_usb);
-
-    let set_mode = Callback::new(move |usb_mode: bool| {
-        spawn(switch_transport_mode(
-            hub,
-            device.clone(),
-            usb_mode,
-            status,
-            user_pending_usb,
-            switching,
-        ));
-    });
-
-    if !should_render {
-        return rsx! {};
     }
 
-    rsx! {
-        details {
-            class: "mt-2",
-            summary {
-                class: DISCLOSURE_SUMMARY_CLASS,
-                "Connection"
-            }
-            div {
-                class: "mt-2 space-y-2 p-3 bg-surface-alt rounded-lg",
-                div {
-                    class: FIELD_GRID_CLASS,
-                    label { class: LABEL_CLASS, "Transport mode" }
-                    div {
-                        class: "flex gap-3",
-                        button {
-                            class: mode_button_class(!pending_usb),
-                            disabled: switching() || !pending_usb,
-                            onclick: move |_| set_mode.call(false),
-                            "Bluetooth"
-                        }
-                        button {
-                            class: mode_button_class(pending_usb),
-                            disabled: switching() || pending_usb,
-                            onclick: move |_| set_mode.call(true),
-                            "USB"
-                        }
+    pub(crate) fn set_device(&mut self, device: Device, cx: &mut Context<Self>) {
+        if device == self.device {
+            return;
+        }
+        self.device = device;
+        let device_is_usb = self.device_is_usb();
+        if self.user_pending_usb == Some(device_is_usb) {
+            self.user_pending_usb = None;
+            self.status = OpStatus::Idle;
+        }
+        cx.notify();
+    }
+
+    fn device_is_usb(&self) -> bool {
+        self.device.events_transport == EventsTransport::Wired
+    }
+
+    /// Asks the hub to switch the device's events transport and reports
+    /// progress through `status`; the device reboots, so success only means
+    /// "requested".
+    fn switch_mode(&mut self, usb_mode: bool, cx: &mut Context<Self>) {
+        if self.switching {
+            return;
+        }
+        self.switching = true;
+        self.status = OpStatus::Busy("Switching...".into());
+        cx.notify();
+        let Some(client) = cx.global::<HubHandle>().0.read(cx).client() else {
+            tracing::warn!("set_transport_mode failed: not connected to the hub");
+            self.user_pending_usb = None;
+            self.status = rpc_failure("switch the transport mode", &"not connected to the hub");
+            self.switching = false;
+            return;
+        };
+        let device = self.device.clone();
+        cx.spawn(async move |this, cx| {
+            let result =
+                runtime::spawn(async move { client.device(device).set_transport_mode(usb_mode).await })
+                    .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(Ok(confirmed_usb)) => {
+                        this.user_pending_usb = Some(confirmed_usb);
+                        let mode = if confirmed_usb { "USB" } else { "Bluetooth" };
+                        this.status = OpStatus::Busy(format!(
+                            "Switching to {mode}. The device restarts and reconnects on its own."
+                        ));
+                    }
+                    Ok(Err(error)) => {
+                        tracing::error!("set_transport_mode failed: {error:#}");
+                        this.user_pending_usb = None;
+                        this.status = rpc_failure("switch the transport mode", &error);
+                    }
+                    Err(error) => {
+                        tracing::error!("set_transport_mode task failed: {error}");
+                        this.user_pending_usb = None;
+                        this.status = rpc_failure("switch the transport mode", &error);
                     }
                 }
-                p {
-                    class: "help",
-                    if pending_usb {
+                this.switching = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl Render for TransportModePanel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let capabilities = self.device.capabilities;
+        let should_render = supports_transport_switching(self.device.product_id)
+            && capabilities.contains(DeviceCapabilities::CONTROL)
+            && !capabilities.contains(DeviceCapabilities::AUTO_TRANSPORT);
+        if !should_render {
+            return div();
+        }
+        let palette = palette(cx);
+        // The displayed mode prefers the user's request while the reboot is
+        // pending, and otherwise follows the device.
+        let pending_usb = self.user_pending_usb.unwrap_or_else(|| self.device_is_usb());
+        let key = &self.key;
+        let mode_button = |name: &str, label: &'static str, usb_mode: bool| {
+            let active = pending_usb == usb_mode;
+            let button = Button::new(SharedString::from(format!("transport-{name}-{key}")))
+                .label(label)
+                .small()
+                .disabled(self.switching || active)
+                .on_click(cx.listener(move |this, _, _, cx| this.switch_mode(usb_mode, cx)));
+            if active { button.primary() } else { button.outline() }
+        };
+
+        div().mt_2().child(
+            div()
+                .id(SharedString::from(format!("transport-toggle-{key}")))
+                .text_sm()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(palette.fg)
+                .cursor_pointer()
+                .hover(|style| style.text_color(palette.accent_ink))
+                .child(if self.is_open { "▾ Connection" } else { "▸ Connection" })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.is_open = !this.is_open;
+                    cx.notify();
+                })),
+        )
+        .when(self.is_open, |this| {
+            this.child(
+                div()
+                    .mt_2()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .bg(palette.surface_alt)
+                    .rounded(px(RADIUS_SM))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .whitespace_nowrap()
+                                    .text_color(palette.fg_muted)
+                                    .child("Transport mode"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_3()
+                                    .child(mode_button("bluetooth", "Bluetooth", false))
+                                    .child(mode_button("usb", "USB", true)),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(palette.fg_muted).child(if pending_usb {
                         "USB carries sensor data and tuning over the wired connection."
                     } else {
                         "Bluetooth carries sensor data and tuning through a paired Odyssey dongle."
-                    }
-                }
-                StatusLine { status: status() }
-            }
-        }
+                    }))
+                    .child(status_line(
+                        &self.status,
+                        format!("transport-details-{key}"),
+                        self.details_open,
+                        cx.listener(|this, _, _, cx| {
+                            this.details_open = !this.details_open;
+                            cx.notify();
+                        }),
+                        palette,
+                    )),
+            )
+        })
     }
 }

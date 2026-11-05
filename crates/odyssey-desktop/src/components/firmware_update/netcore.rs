@@ -2,15 +2,13 @@ use std::future;
 use std::time::Duration;
 
 use backon::Retryable as _;
-use dioxus::logger::tracing;
-use dioxus::prelude::{ReadableExt as _, SyncSignal};
 use eros::Context as _;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware;
-use slab::Slab;
 
 use super::dfu_session::DfuSession;
 use super::poll_window::{NotYet, poll_window};
+use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
 
 /// How long the net core gets to report the release that was just written.
@@ -41,12 +39,11 @@ fn netcore_not_reported(published: u16) -> eros::ErrorUnion {
 
 /// The net core release the hub last read from a device that is in application
 /// mode, `None` while the device is absent or has no control connection.
-fn reported_netcore_release(devices: &SyncSignal<Slab<Device>>, uuid: &[u8; 6]) -> Option<u16> {
+fn reported_netcore_release(devices: &[Device], uuid: &[u8; 6]) -> Option<u16> {
     devices
-        .peek()
         .iter()
-        .find(|(_, d)| &d.uuid == uuid && d.capabilities.contains(DeviceCapabilities::CONTROL))
-        .map(|(_, d)| d.netcore_release)
+        .find(|d| &d.uuid == uuid && d.capabilities.contains(DeviceCapabilities::CONTROL))
+        .map(|d| d.netcore_release)
 }
 
 /// Poll the hub's device list until the net core reports exactly `published`.
@@ -55,7 +52,7 @@ fn reported_netcore_release(devices: &SyncSignal<Slab<Device>>, uuid: &[u8; 6]) 
 /// from before the reset can only be a mismatch, never a false match: the old
 /// release differs from the one just written, and a device with no answer reads 0.
 pub(super) async fn wait_for_netcore_release(
-    devices: &SyncSignal<Slab<Device>>,
+    manager: &FirmwareUpdateManager,
     uuid: &[u8; 6],
     published: u16,
 ) -> eros::Result<()> {
@@ -63,7 +60,7 @@ pub(super) async fn wait_for_netcore_release(
     let backoff = poll_window(NETCORE_REPORT_TIMEOUT, NETCORE_REPORT_POLL_INTERVAL);
     tokio::time::sleep(NETCORE_REPORT_POLL_INTERVAL).await;
     let reported = (|| {
-        let reading = reported_netcore_release(devices, uuid);
+        let reading = reported_netcore_release(&manager.devices(), uuid);
         if let Some(now) = reading {
             last = Some(now);
         }

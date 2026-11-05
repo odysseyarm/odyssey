@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use dioxus::logger::tracing;
 use eros::Context as _;
 use odyssey_hub_server::firmware;
 

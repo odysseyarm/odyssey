@@ -1,192 +1,298 @@
-use std::rc::Rc;
 use std::time::Duration;
 
-use dioxus::desktop::use_window;
-use dioxus::prelude::*;
+use gpui::{
+    Context, Entity, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    relative,
+};
 
 use super::identify_overlay::{IDENTIFY_DURATION, identify_monitors};
-use super::monitor_layout::{Detail, MonitorInfo, detail_for, layout};
+use super::monitor_layout::{Detail, MonitorInfo, Tile, detail_for, layout};
 use super::monitor_selection::MonitorSelection;
+use crate::components::ui::{ButtonKind, button};
+use crate::theme::{Palette, RADIUS, palette};
 
-/// Widest and tallest the diagram grows, in CSS pixels. The diagram shrinks
-/// below the width when its container is narrower.
+/// Widest and tallest the diagram grows, in pixels. The diagram shrinks below
+/// the width when its container is narrower.
 const DIAGRAM_MAX_WIDTH: f64 = 416.0;
 const DIAGRAM_MAX_HEIGHT: f64 = 200.0;
 
-const LABEL_ID: &str = "screen-picker-label";
+/// Keeps the Identify button disabled a moment past the overlay, so overlays
+/// never stack.
+const IDENTIFY_COOLDOWN: Duration = Duration::from_millis(400);
 
-#[component]
-pub(crate) fn ScreenPicker(selection: MonitorSelection) -> Element {
-    let window = use_window();
-    let mut identifying = use_signal(|| false);
+pub(crate) struct ScreenPicker {
+    selection: Entity<MonitorSelection>,
+    identifying: bool,
+    identify_reset: Option<Task<()>>,
+    _selection_changed: Subscription,
+}
 
-    let monitors = selection.monitors();
-    let selected = selection.selected();
-    let layout = layout(&monitors, DIAGRAM_MAX_WIDTH, DIAGRAM_MAX_HEIGHT);
+impl ScreenPicker {
+    pub(crate) fn new(
+        selection: Entity<MonitorSelection>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let selection_changed = cx.observe(&selection, |_, _, cx| cx.notify());
+        Self {
+            selection,
+            identifying: false,
+            identify_reset: None,
+            _selection_changed: selection_changed,
+        }
+    }
 
-    rsx! {
-        div {
-            class: "flex flex-col gap-3",
+    fn identify(&mut self, cx: &mut Context<Self>) {
+        self.identifying = true;
+        identify_monitors(cx);
+        let timer = cx
+            .background_executor()
+            .timer(IDENTIFY_DURATION + IDENTIFY_COOLDOWN);
+        self.identify_reset = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            this.update(cx, |picker, cx| {
+                picker.identifying = false;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+}
 
-            div {
-                class: "flex flex-row items-center justify-between",
-                span {
-                    id: LABEL_ID,
-                    class: "text-base font-medium text-fg-muted",
-                    "Choose a display:"
-                }
-                button {
-                    class: "btn btn-secondary btn-sm",
-                    r#type: "button",
-                    disabled: monitors.is_empty() || identifying(),
-                    title: "Briefly show each display's number on that display",
-                    onclick: move |_| {
-                        let window = Rc::clone(&window);
-                        async move {
-                            identifying.set(true);
-                            identify_monitors(&window);
-                            tokio::time::sleep(IDENTIFY_DURATION + Duration::from_millis(400)).await;
-                            identifying.set(false);
-                        }
-                    },
-                    "Identify"
-                }
-            }
+impl Render for ScreenPicker {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let (monitors, selected) = {
+            let selection = self.selection.read(cx);
+            (selection.monitors().to_vec(), selection.selected())
+        };
+        let diagram = layout(&monitors, DIAGRAM_MAX_WIDTH, DIAGRAM_MAX_HEIGHT);
 
-            if let Some(layout) = layout {
-                div {
-                    class: "flex justify-center rounded-lg bg-surface-alt p-3",
-                    div {
-                        role: "radiogroup",
-                        aria_labelledby: LABEL_ID,
-                        class: "relative",
-                        style: "width: min(100%, {layout.width:.1}px); aspect-ratio: {layout.width:.3} / {layout.height:.3};",
-                        for (i, (monitor, tile)) in monitors.iter().zip(layout.tiles.iter()).enumerate() {
-                            MonitorTile {
-                                key: "{i}:{monitor.key.x},{monitor.key.y}:{monitor.key.width}x{monitor.key.height}",
-                                number: i + 1,
-                                monitor: monitor.clone(),
-                                left: tile.x / layout.width * 100.0,
-                                top: tile.y / layout.height * 100.0,
-                                width: tile.w / layout.width * 100.0,
-                                height: tile.h / layout.height * 100.0,
-                                detail: detail_for(tile),
-                                selected: selected == Some(i),
-                                onselect: move |()| selection.select(i),
-                            }
-                        }
-                    }
-                }
+        let header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.fg_muted)
+                    .child("Choose a display:"),
+            )
+            .child(
+                button("identify-monitors", "Identify", ButtonKind::Secondary, p)
+                    .small()
+                    .disabled(monitors.is_empty() || self.identifying)
+                    .on_click(cx.listener(|picker, _, _, cx| picker.identify(cx))),
+            );
+
+        let body = match diagram {
+            Some(diagram) => {
+                let tiles = monitors
+                    .iter()
+                    .zip(&diagram.tiles)
+                    .enumerate()
+                    .map(|(i, (monitor, tile))| {
+                        let selection = self.selection.clone();
+                        monitor_tile(
+                            i,
+                            monitor,
+                            tile,
+                            diagram.width,
+                            diagram.height,
+                            selected == Some(i),
+                            p,
+                            move |cx| selection.update(cx, |selection, cx| selection.select(i, cx)),
+                        )
+                    });
+                let diagram_box = div()
+                    .flex()
+                    .justify_center()
+                    .rounded(px(RADIUS))
+                    .bg(p.surface_alt)
+                    .p_3()
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(diagram.width as f32))
+                            .max_w(relative(1.0))
+                            .aspect_ratio((diagram.width / diagram.height) as f32)
+                            .children(tiles),
+                    );
 
                 // A tile too small for its name and resolution gets them spelled out here.
-                if let Some((i, monitor)) = selected
-                    .filter(|&i| layout.tiles.get(i).is_some_and(|tile| detail_for(tile) != Detail::Full))
+                let selected_detail = selected
+                    .filter(|&i| {
+                        diagram
+                            .tiles
+                            .get(i)
+                            .is_some_and(|tile| detail_for(tile) != Detail::Full)
+                    })
                     .and_then(|i| monitors.get(i).map(|m| (i, m)))
-                {
-                    div {
-                        class: "text-sm text-fg-muted text-center",
-                        "{i + 1}. {monitor.display_name()} — {monitor.resolution()}"
-                        if monitor.primary {
-                            " — Primary"
-                        }
-                    }
-                }
-                if monitors.iter().zip(layout.tiles.iter()).any(|(m, t)| m.primary && detail_for(t) != Detail::Full) {
-                    div {
-                        class: "text-xs text-fg-muted text-center",
-                        "★ primary display"
-                    }
-                }
-            } else {
-                div {
-                    class: "rounded-lg bg-surface-alt p-6 text-center text-sm text-fg-muted",
-                    "No displays found."
-                }
+                    .map(|(i, monitor)| {
+                        let primary = if monitor.primary { " — Primary" } else { "" };
+                        div()
+                            .text_sm()
+                            .text_color(p.fg_muted)
+                            .text_center()
+                            .child(format!(
+                                "{}. {} — {}{primary}",
+                                i + 1,
+                                monitor.display_name(),
+                                monitor.resolution()
+                            ))
+                    });
+                let primary_legend = monitors
+                    .iter()
+                    .zip(&diagram.tiles)
+                    .any(|(m, t)| m.primary && detail_for(t) != Detail::Full)
+                    .then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(p.fg_muted)
+                            .text_center()
+                            .child("★ primary display")
+                    });
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(diagram_box)
+                    .children(selected_detail)
+                    .children(primary_legend)
             }
-        }
+            None => div()
+                .rounded(px(RADIUS))
+                .bg(p.surface_alt)
+                .p_6()
+                .text_center()
+                .text_sm()
+                .text_color(p.fg_muted)
+                .child("No displays found."),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(header)
+            .child(body)
     }
 }
 
-#[derive(Props, Clone, PartialEq)]
-struct MonitorTileProps {
-    number: usize,
-    monitor: MonitorInfo,
-    /// Percent of the diagram.
-    left: f64,
-    top: f64,
-    width: f64,
-    height: f64,
-    detail: Detail,
+/// One clickable monitor in the diagram. `select` runs when it is clicked.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a tile is exactly its monitor, geometry, state and handler"
+)]
+fn monitor_tile(
+    index: usize,
+    monitor: &MonitorInfo,
+    tile: &Tile,
+    diagram_width: f64,
+    diagram_height: f64,
     selected: bool,
-    onselect: EventHandler<()>,
-}
-
-#[component]
-fn MonitorTile(props: MonitorTileProps) -> Element {
-    let MonitorTileProps {
-        number,
-        monitor,
-        left,
-        top,
-        width,
-        height,
-        detail,
-        selected,
-        onselect,
-    } = props;
-
-    let tile_class = if selected {
-        "bg-accent border-accent-strong text-on-accent shadow-md hover:bg-accent-strong"
+    p: Palette,
+    select: impl Fn(&mut gpui::App) + 'static,
+) -> impl IntoElement {
+    let detail = detail_for(tile);
+    let number = index + 1;
+    let (bg, border, fg, hover_bg, hover_border) = if selected {
+        (p.accent, p.accent_strong, p.on_accent, p.accent_strong, p.accent_strong)
     } else {
-        "bg-surface border-line-strong text-fg hover:bg-surface-hover hover:border-accent-ink"
+        (p.surface, p.line_strong, p.fg, p.surface_hover, p.accent_ink)
     };
-    let badge_class = if selected {
-        "bg-black/15 text-on-accent"
+    let badge_bg: Hsla = if selected {
+        gpui::black().opacity(0.15)
     } else {
-        "bg-surface-alt text-fg-strong"
+        p.surface_alt.into()
     };
-    let description = format!(
-        "{number}. {}, {}{}",
-        monitor.display_name(),
-        monitor.resolution(),
-        if monitor.primary { ", primary" } else { "" }
-    );
+    let badge_fg = if selected { p.on_accent } else { p.fg_strong };
+    let fg_hsla: Hsla = fg.into();
 
-    rsx! {
-        // The wrapper's padding leaves a visible gap between touching monitors.
-        div {
-            class: "absolute p-0.5",
-            style: "left: {left:.3}%; top: {top:.3}%; width: {width:.3}%; height: {height:.3}%;",
-            button {
-                class: "relative w-full h-full overflow-hidden rounded-lg border-2 px-1 flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer transition-colors {tile_class}",
-                r#type: "button",
-                role: "radio",
-                aria_checked: selected,
-                aria_label: description.clone(),
-                title: description,
-                onclick: move |_| onselect.call(()),
-
-                span {
-                    class: "flex items-center justify-center size-6 shrink-0 rounded-full text-sm font-bold {badge_class}",
-                    "{number}"
-                }
-                if matches!(detail, Detail::Named | Detail::Full) {
-                    span { class: "max-w-full truncate text-xs font-medium", "{monitor.display_name()}" }
-                }
-                if detail != Detail::Minimal {
-                    span { class: "max-w-full truncate text-[11px] opacity-80", "{monitor.resolution()}" }
-                }
-                if monitor.primary {
-                    if detail == Detail::Full {
-                        span {
-                            class: "rounded-full px-1.5 text-[10px] font-semibold uppercase tracking-wide bg-current/15",
-                            "Primary"
-                        }
-                    } else {
-                        span { class: "absolute top-0.5 right-1 text-xs", aria_hidden: true, "★" }
-                    }
-                }
-            }
-        }
+    let mut content = div()
+        .id(("monitor-tile", index))
+        .relative()
+        .size_full()
+        .overflow_hidden()
+        .rounded(px(RADIUS))
+        .border_2()
+        .border_color(border)
+        .bg(bg)
+        .text_color(fg)
+        .px_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_0p5()
+        .text_center()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover_bg).border_color(hover_border))
+        .on_click(move |_, _, cx| select(cx))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_6()
+                .flex_shrink_0()
+                .rounded_full()
+                .bg(badge_bg)
+                .text_color(badge_fg)
+                .text_sm()
+                .font_weight(FontWeight::BOLD)
+                .child(number.to_string()),
+        );
+    if selected {
+        content = content.shadow_md();
     }
+    if matches!(detail, Detail::Named | Detail::Full) {
+        content = content.child(
+            div()
+                .max_w_full()
+                .truncate()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .child(monitor.display_name().to_owned()),
+        );
+    }
+    if detail != Detail::Minimal {
+        content = content.child(
+            div()
+                .max_w_full()
+                .truncate()
+                .text_size(px(11.0))
+                .opacity(0.8)
+                .child(monitor.resolution()),
+        );
+    }
+    if monitor.primary {
+        content = if detail == Detail::Full {
+            content.child(
+                div()
+                    .rounded_full()
+                    .px_1p5()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .bg(fg_hsla.opacity(0.15))
+                    .child("PRIMARY"),
+            )
+        } else {
+            content.child(div().absolute().top_0p5().right_1().text_xs().child("★"))
+        };
+    }
+
+    // The wrapper's padding leaves a visible gap between touching monitors.
+    div()
+        .absolute()
+        .p_0p5()
+        .left(relative((tile.x / diagram_width) as f32))
+        .top(relative((tile.y / diagram_height) as f32))
+        .w(relative((tile.w / diagram_width) as f32))
+        .h(relative((tile.h / diagram_height) as f32))
+        .child(content)
 }

@@ -1,99 +1,183 @@
 //! The Zero window: a fullscreen target on the chosen monitor and a sidebar to
 //! arm each device's zero.
 //!
-//! The window runs in its own VirtualDom, so nothing here can use the main
-//! window's context; the hub and the tracking sender arrive as props and events
-//! come over broadcast channels.
+//! The window is its own root, so it follows the hub through the shared `Hub`
+//! entity and the tracking and impact broadcast channels.
 
 mod device_controls;
-mod device_signals;
+mod device_state;
 mod device_sync;
 mod history;
 mod save_zero_button;
 mod shot_delay_control;
 mod zeroing;
 
-use device_controls::DeviceControls;
-use device_signals::SignalsByDevice;
-use device_sync::use_device_signal_sync;
-use dioxus::prelude::*;
-use history::use_tracking_history;
-use zeroing::{use_zero_on_impact, zero_on_key};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::components::Theme;
-use crate::components::crosshair_manager::{CrosshairManager, TrackingSender};
-use crate::hub::HubContext;
+use gpui::{
+    App, AppContext as _, Context, Entity, FocusHandle, Hsla, Image, ImageFormat,
+    InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Task, Window, WindowKind, div, img, px,
+};
+use odyssey_hub_common::config::MonitorKey;
+use odyssey_hub_common::device::Device;
+
+use crate::components::crosshair_manager::CrosshairManager;
+use crate::components::screen_picker::{display_for_key, fullscreen_options};
+use crate::hub::{Hub, HubHandle};
+use crate::theme::palette;
+use device_controls::DeviceControls;
+use history::HistoryByDevice;
 
 /// Zero point in screen space. The target layer covers the window, the window
 /// is fullscreen on the screen the hub resolves against, and the target image
 /// is centered in that layer, so the target sits at the screen center.
 const ZERO_TARGET: nalgebra::Vector2<f32> = nalgebra::Vector2::new(0.5, 0.5);
 
-#[component]
-pub(crate) fn Zero(
-    hub: Signal<HubContext>,
-    /// A plain sender rather than a `Signal`, because this runs in its own VirtualDom.
-    tracking_sender: TrackingSender,
-) -> Element {
-    let devices = (hub().devices)();
+const TARGET_IMAGE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/images/target.png"
+));
+/// Pixel size of [`TARGET_IMAGE`], for its aspect ratio.
+const TARGET_IMAGE_SIZE: (f32, f32) = (2021.0, 2481.0);
+/// The target is eleven inches wide at CSS's 96 pixels per inch, but never more
+/// than this fraction of the window.
+const TARGET_MAX_WIDTH: f32 = 11.0 * 96.0;
+const TARGET_MAX_WIDTH_FRACTION: f32 = 0.4;
 
-    // Per-device zeroing state, keyed by uuid. Slab slots are reused as devices
-    // come and go, so keying by slot hands one device the previous occupant's
-    // "zero on shot" flag and shot delay.
-    let mut device_signals = use_signal(SignalsByDevice::new);
-    {
-        let mut registered = device_signals.write();
-        for (_, device) in &devices {
-            registered.entry(device.uuid).or_default();
-        }
+/// Opens the Zero window fullscreen on the display `monitor` identifies.
+pub(crate) fn open(monitor: MonitorKey, cx: &mut App) {
+    let Some(display) = display_for_key(&monitor, cx) else {
+        tracing::warn!("Cannot open Zero: display {monitor:?} is no longer attached");
+        return;
+    };
+    let options = fullscreen_options(display.as_ref(), WindowKind::Normal);
+    let opened = cx.open_window(options, |window, cx| cx.new(|cx| ZeroView::new(window, cx)));
+    if let Err(error) = opened {
+        tracing::error!("Failed to open the Zero window: {error}");
     }
+}
 
-    let tracking_history = use_tracking_history(hub);
-    use_zero_on_impact(hub, device_signals, tracking_history);
-    use_device_signal_sync(hub, device_signals);
+struct ZeroView {
+    hub: Entity<Hub>,
+    devices: Vec<Device>,
+    /// Per-device zeroing state, keyed by uuid. List positions are reused as
+    /// devices come and go, so keying by position would hand one device the
+    /// previous occupant's "zero on shot" flag and shot delay.
+    controls: HashMap<[u8; 6], Entity<DeviceControls>>,
+    history: HistoryByDevice,
+    last_snapshot: Vec<[u8; 6]>,
+    crosshairs: Entity<CrosshairManager>,
+    target: Arc<Image>,
+    focus: FocusHandle,
+    _hub_changed: Subscription,
+    _history: Task<()>,
+    _impacts: Task<()>,
+}
 
-    rsx! {
-        Theme {}
+impl ZeroView {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let hub = cx.global::<HubHandle>().0.clone();
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
 
-        div {
-            class: "flex h-screen bg-canvas",
-            tabindex: "0",
-            autofocus: true,
-            onkeydown: move |e: KeyboardEvent| {
-                zero_on_key(hub, device_signals, tracking_history, e.key().to_string());
-            },
+        let hub_changed =
+            cx.observe_in(&hub, window, |zero, _, window, cx| zero.sync_devices(window, cx));
+        let history = history::follow_tracking(&hub, cx);
+        let impacts = zeroing::zero_on_impact(&hub, cx);
+        let crosshairs = cx.new(CrosshairManager::new);
 
-            aside {
-                class: "fixed top-0 left-0 z-40 h-screen transition-transform -translate-x-full sm:translate-x-0",
-                div {
-                    class: "h-full px-3 py-4 overflow-y-auto bg-surface/80",
-                    ul { class: "space-y-2 font-medium",
-                        for (slot, device) in devices {
-                            if let Some(signals) = device_signals.peek().get(&device.uuid).copied() {
-                                DeviceControls { key: "{device.uuid:?}", hub, slot, device, signals }
-                            }
-                        }
-                    }
-                }
-            }
+        let mut zero = Self {
+            hub,
+            devices: Vec::new(),
+            controls: HashMap::new(),
+            history: HistoryByDevice::new(),
+            last_snapshot: Vec::new(),
+            crosshairs,
+            target: Arc::new(Image::from_bytes(ImageFormat::Png, TARGET_IMAGE.to_vec())),
+            focus,
+            _hub_changed: hub_changed,
+            _history: history,
+            _impacts: impacts,
+        };
+        zero.sync_devices(window, cx);
+        zero
+    }
+}
 
-            // Pinned to the viewport, not laid out next to the sidebar: the
-            // target center has to be the screen center, and CrosshairManager
-            // maps aimpoints onto this same box.
-            div {
-                class: "fixed inset-0 flex items-center justify-center bg-center bg-no-repeat",
-                style: format!(
-                    "background-image: url({}); background-size: clamp(0in, 11in, 40%) auto;",
-                    asset!("/assets/images/target.avif")
-                ),
-                CrosshairManager { hub, tracking_sender: Some(tracking_sender) },
-            }
+impl Render for ZeroView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let target_width =
+            TARGET_MAX_WIDTH.min(window.viewport_size().width.as_f32() * TARGET_MAX_WIDTH_FRACTION);
+        let target_height = target_width * TARGET_IMAGE_SIZE.1 / TARGET_IMAGE_SIZE.0;
 
-            button {
-                class: "fixed z-50 top-4 right-4 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-white text-xl flex items-center justify-center transition-colors",
-                onclick: move |_| dioxus::desktop::window().close(),
-                "✕"
-            }
-        }
+        let sidebar = div()
+            .id("zero-sidebar")
+            .absolute()
+            .top_0()
+            .left_0()
+            .h_full()
+            .overflow_y_scroll()
+            .px_3()
+            .py_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .bg(Hsla::from(p.surface).opacity(0.8))
+            .children(
+                self.devices
+                    .iter()
+                    .filter_map(|device| self.controls.get(&device.uuid).cloned()),
+            );
+
+        // Pinned to the window, not laid out next to the sidebar: the target
+        // center has to be the screen center, and the crosshair layer maps
+        // aimpoints onto this same box.
+        div()
+            .id("zero-window")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|zero, event: &KeyDownEvent, _, cx| {
+                zero.zero_on_key(&event.keystroke.key, cx);
+            }))
+            .relative()
+            .size_full()
+            .bg(p.canvas)
+            .child(
+                div()
+                    .absolute()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        img(Arc::clone(&self.target))
+                            .w(px(target_width))
+                            .h(px(target_height)),
+                    ),
+            )
+            .child(div().absolute().size_full().child(self.crosshairs.clone()))
+            .child(sidebar)
+            .child(
+                div()
+                    .id("zero-close")
+                    .absolute()
+                    .top_4()
+                    .right_4()
+                    .size_10()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(gpui::black().opacity(0.6))
+                    .text_color(gpui::white())
+                    .text_xl()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(gpui::black().opacity(0.8)))
+                    .on_click(|_, window, _| window.remove_window())
+                    .child("✕"),
+            )
     }
 }

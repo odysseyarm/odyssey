@@ -1,75 +1,60 @@
 //! The camera picture with the fitted screen outline and the marker positions.
 
-use dioxus::prelude::*;
+use std::sync::Arc;
 
-use crate::components::wizard::OverlayImage;
+use gpui::{Div, RenderImage, Rgba};
+
+use crate::components::wizard::{overlay_image, overlay_label};
+use crate::theme::Palette;
 use crate::views::calibrate::automatic::quality::Verdict;
 
 /// The width the overlay's stroke sizes are specified for; wider pictures
 /// scale them up to stay equally visible.
-const REFERENCE_WIDTH_PX: f64 = 640.0;
-const MARKER_COLOR: &str = "var(--oa-info)";
+const REFERENCE_WIDTH_PX: f32 = 640.0;
 
-pub(super) fn outline_color(verdict: Verdict) -> &'static str {
+pub(super) fn outline_color(p: Palette, verdict: Verdict) -> Rgba {
     match verdict {
-        Verdict::Good => "var(--oa-success)",
-        Verdict::Fair => "var(--oa-warning)",
-        Verdict::Poor => "var(--oa-danger)",
+        Verdict::Good => p.success,
+        Verdict::Fair => p.warning,
+        Verdict::Poor => p.danger,
     }
 }
 
-/// The corners as an SVG `points` list.
-pub(super) fn polygon_points(corners: &[[f32; 2]]) -> String {
-    corners
-        .iter()
-        .map(|corner| format!("{:.1},{:.1}", corner[0], corner[1]))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-#[component]
-pub(super) fn ResultOverlay(
-    image: String,
+pub(super) fn result_overlay(
+    p: Palette,
+    image: Arc<RenderImage>,
     width: u32,
     height: u32,
     screen_quad: [[f32; 2]; 4],
     markers: [[f32; 2]; 6],
-    outline: &'static str,
-) -> Element {
-    let points = polygon_points(&screen_quad);
-    let unit = f64::from(width) / REFERENCE_WIDTH_PX;
-    rsx! {
-        OverlayImage {
-            src: image,
-            width,
-            height,
-            alt: "The screen as the camera saw it, with the measured outline",
-            polygon {
-                points,
-                fill: "none",
-                style: "stroke: {outline}",
-                stroke_width: "{3.0 * unit}",
-                stroke_linejoin: "round",
+    outline: Rgba,
+) -> Div {
+    let unit = width as f32 / REFERENCE_WIDTH_PX;
+    let info = p.info;
+    let labels = markers
+        .iter()
+        .enumerate()
+        .map(|(i, marker)| {
+            overlay_label(
+                marker[0] + 12.0 * unit,
+                marker[1] - 10.0 * unit,
+                width,
+                height,
+                info,
+                (i + 1).to_string(),
+            )
+        })
+        .collect();
+    overlay_image(
+        Some(image),
+        width,
+        height,
+        move |canvas, window| {
+            canvas.stroke_path(window, &screen_quad, true, 3.0 * unit, outline);
+            for marker in &markers {
+                canvas.stroke_circle(window, *marker, 9.0 * unit, 2.5 * unit, info);
             }
-            for (i, marker) in markers.iter().enumerate() {
-                circle {
-                    key: "{i}",
-                    cx: "{marker[0]}",
-                    cy: "{marker[1]}",
-                    r: "{9.0 * unit}",
-                    fill: "none",
-                    style: "stroke: {MARKER_COLOR}",
-                    stroke_width: "{2.5 * unit}",
-                }
-                text {
-                    x: "{f64::from(marker[0]) + 12.0 * unit}",
-                    y: "{f64::from(marker[1]) - 10.0 * unit}",
-                    style: "fill: {MARKER_COLOR}",
-                    font_size: "{16.0 * unit}",
-                    font_weight: "700",
-                    "{i + 1}"
-                }
-            }
-        }
-    }
+        },
+        labels,
+    )
 }

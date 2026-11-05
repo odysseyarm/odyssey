@@ -1,14 +1,15 @@
 //! A dongle, its pairing controls, and the devices it has bonded or sees.
 
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
-use odyssey_hub_client::client::DongleInfo;
-use odyssey_hub_common::events::Event;
-use tokio::sync::broadcast::error::RecvError;
+use gpui::{
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
+    div, px,
+};
 
-use super::pair_buttons::PairButtons;
-use super::pairing_state::{PAIRING_TIMEOUT_MS, PairingState, result_status};
-use crate::hub::HubContext;
+use super::MONO_FONT;
+use super::pair_buttons::PairingControls;
+use super::pairing_state::PairTarget;
+use crate::hub::Hub;
+use crate::theme::{RADIUS, palette};
 use crate::views::device_label;
 use crate::views::device_label::format_address;
 
@@ -17,195 +18,139 @@ const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
 /// The firmware version shown for a dongle until it reports its own.
 const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
 
-/// The UI-facing reason a call could not be made without a hub connection.
-const NOT_CONNECTED: &str = "not connected to the hub";
+pub(super) struct DongleRow {
+    id: String,
+    hub: Entity<Hub>,
+    controls: Entity<PairingControls>,
+}
 
-async fn start(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    state.started();
-    let Some(client) = hub.peek().client() else {
-        tracing::warn!("Failed to start dongle pairing: {NOT_CONNECTED}");
-        state.start_failed(NOT_CONNECTED);
-        return;
-    };
-    if let Err(e) = client
-        .start_dongle_pairing(dongle_id, PAIRING_TIMEOUT_MS)
-        .await
-    {
-        tracing::error!("Failed to start dongle pairing: {e}");
-        state.start_failed(e);
+impl DongleRow {
+    pub(super) fn new(hub: Entity<Hub>, id: String, cx: &mut Context<'_, Self>) -> Self {
+        let target = PairTarget::Dongle(id.clone());
+        let controls = cx.new(|cx| PairingControls::new(hub.clone(), target, cx));
+        cx.observe(&controls, |_, _, cx| cx.notify()).detach();
+        // Device labels in the bond list follow the hub's device list.
+        cx.observe(&hub, |_, _, cx| cx.notify()).detach();
+        Self { id, hub, controls }
     }
 }
 
-async fn cancel(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    let Some(client) = hub.peek().client() else {
-        tracing::warn!("Failed to cancel dongle pairing: {NOT_CONNECTED}");
-        state.error(NOT_CONNECTED);
-        return;
-    };
-    match client.cancel_dongle_pairing(dongle_id).await {
-        Ok(()) => state.cancelled(),
-        Err(e) => {
-            tracing::error!("Failed to cancel dongle pairing: {e}");
-            state.error(e);
-        }
-    }
-}
+impl Render for DongleRow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let hub = self.hub.read(cx);
+        let Some(dongle) = hub.dongles.iter().find(|dongle| dongle.id == self.id) else {
+            return div();
+        };
+        let status = self.controls.read(cx).status().to_string();
 
-async fn clear(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    let Some(client) = hub.peek().client() else {
-        tracing::warn!("Failed to clear dongle bonds: {NOT_CONNECTED}");
-        state.error(NOT_CONNECTED);
-        return;
-    };
-    if state.is_pairing() {
-        if let Err(e) = client.cancel_dongle_pairing(dongle_id.clone()).await {
-            tracing::error!("Failed to cancel dongle pairing before clearing bonds: {e}");
-            state.error(e);
-            return;
-        }
-        state.stopped();
-    }
-    match client.clear_dongle_bonds(dongle_id).await {
-        Ok(()) => state.bonds_cleared("Bonds cleared"),
-        Err(e) => {
-            tracing::error!("Failed to clear dongle bonds: {e}");
-            state.error(e);
-        }
-    }
-}
+        let firmware = &dongle.firmware_version;
+        let firmware_suffix = if *firmware == UNKNOWN_FIRMWARE_VERSION {
+            String::new()
+        } else {
+            format!(" (fw {}.{}.{})", firmware[0], firmware[1], firmware[2])
+        };
 
-/// Shows the result of this dongle's pairings. Pairing results arrive once,
-/// so they come over their own channel.
-fn use_pairing_results(hub: Signal<HubContext>, dongle_id: String, state: PairingState) {
-    use_future(move || {
-        let mut results = hub.peek().subscribe_pairing();
-        let dongle_id = dongle_id.clone();
-        async move {
-            loop {
-                let event = match results.recv().await {
-                    Ok(event) => event,
-                    Err(RecvError::Lagged(_)) => continue,
-                    Err(RecvError::Closed) => break,
-                };
-                let Event::DonglePairingResult {
-                    dongle_id: event_id,
-                    success,
-                    paired_address,
-                    paired_name,
-                    error,
-                } = &event
-                else {
-                    continue;
-                };
-                if *event_id != dongle_id {
-                    continue;
-                }
-                state.finished(result_status(*success, paired_address, paired_name, error));
+        let mut heading = div()
+            .flex()
+            .flex_wrap()
+            .min_w_0()
+            .items_center()
+            .gap_x_2()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(p.fg)
+                    .child("Dongle"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .font_family(MONO_FONT)
+                    .text_color(p.fg_muted)
+                    .child(format!("{}{firmware_suffix}", dongle.id)),
+            );
+        if !status.is_empty() {
+            heading = heading.child(
+                div()
+                    .text_xs()
+                    .italic()
+                    .text_color(p.fg_muted)
+                    .child(status),
+            );
+        }
+
+        let mut row = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .rounded(px(RADIUS))
+            .bg(p.surface_alt)
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(heading)
+                    .child(self.controls.clone()),
+            );
+
+        // Dongles that can list their bonds show those; older ones only show who
+        // is connected right now.
+        let lists_bonds = dongle.control_protocol_version >= BONDS_PROTOCOL_VERSION;
+        let (listed_addresses, list_label) = if lists_bonds {
+            (&dongle.bonded_devices, "Bonds")
+        } else {
+            (&dongle.connected_devices, "Connected")
+        };
+        if !listed_addresses.is_empty() {
+            let mut list = div().ml_4().flex().flex_col().gap_1().child(
+                div()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(p.fg_muted)
+                    .child(list_label.to_uppercase()),
+            );
+            for address in listed_addresses {
+                let connected = dongle.connected_devices.contains(address);
+                let label = hub
+                    .devices
+                    .iter()
+                    .find(|device| device.uuid == *address)
+                    .map_or_else(|| format_address(address), device_label);
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            // A bonded device that is switched off is normal, not an error, so its dot is neutral.
+                            div().size_2().rounded_full().bg(if connected {
+                                p.success
+                            } else {
+                                p.fg_faint
+                            }),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(MONO_FONT)
+                                .text_color(p.fg_muted)
+                                .child(label),
+                        )
+                        .child(div().text_xs().text_color(p.fg_muted).child(if connected {
+                            "connected"
+                        } else {
+                            "not in range"
+                        })),
+                );
             }
+            row = row.child(list);
         }
-    });
-}
-
-#[component]
-pub(super) fn DongleRow(hub: Signal<HubContext>, dongle: DongleInfo) -> Element {
-    let state = PairingState::use_new();
-    use_pairing_results(hub, dongle.id.clone(), state);
-
-    let firmware = &dongle.firmware_version;
-    let firmware_suffix = if *firmware == UNKNOWN_FIRMWARE_VERSION {
-        String::new()
-    } else {
-        format!(" (fw {}.{}.{})", firmware[0], firmware[1], firmware[2])
-    };
-    // Dongles that can list their bonds show those; older ones only show who
-    // is connected right now.
-    let lists_bonds = dongle.control_protocol_version >= BONDS_PROTOCOL_VERSION;
-    let (listed_addresses, list_label) = if lists_bonds {
-        (&dongle.bonded_devices, "Bonds")
-    } else {
-        (&dongle.connected_devices, "Connected")
-    };
-    let devices = (hub.peek().devices)();
-
-    rsx! {
-        div {
-            class: "p-3 bg-surface-alt rounded-lg space-y-2",
-            div {
-                class: "flex flex-wrap items-center justify-between gap-2",
-                div {
-                    class: "flex min-w-0 flex-wrap items-center gap-x-2",
-                    span {
-                        class: "text-sm font-medium text-fg",
-                        "Dongle"
-                    }
-                    span {
-                        class: "text-xs font-mono text-fg-muted",
-                        "{dongle.id}{firmware_suffix}"
-                    }
-                    if !state.status.read().is_empty() {
-                        span {
-                            class: "text-xs text-fg-muted italic",
-                            "{state.status}"
-                        }
-                    }
-                }
-                div {
-                    class: "flex items-center gap-1",
-                    PairButtons {
-                        pairing: *state.pairing.read(),
-                        command_pending: (state.command_pending)(),
-                        clear_label: "Clear Bonds",
-                        clear_prompt: "Forget every device this dongle is bonded to?",
-                        on_pair: {
-                            let id = dongle.id.clone();
-                            move |()| state.run_command(start(hub, id.clone(), state))
-                        },
-                        on_cancel: {
-                            let id = dongle.id.clone();
-                            move |()| state.run_command(cancel(hub, id.clone(), state))
-                        },
-                        on_clear: {
-                            let id = dongle.id.clone();
-                            move |()| state.run_command(clear(hub, id.clone(), state))
-                        },
-                    }
-                }
-            }
-            if !listed_addresses.is_empty() {
-                div {
-                    class: "ml-4 space-y-1",
-                    div {
-                        class: "eyebrow",
-                        {list_label}
-                    }
-                    for address in listed_addresses {
-                        {
-                            let connected = dongle.connected_devices.contains(address);
-                            rsx! {
-                                div {
-                                    class: "flex items-center gap-2",
-                                    span {
-                                        // A bonded device that is switched off is normal, not an error, so its dot is neutral.
-                                        class: if connected { "size-2 rounded-full bg-success" } else { "size-2 rounded-full bg-fg-faint" },
-                                        aria_hidden: true,
-                                    }
-                                    span {
-                                        class: "text-xs font-mono text-fg-muted",
-                                        {devices
-                                            .iter()
-                                            .find(|(_, device)| device.uuid == *address)
-                                            .map_or_else(|| format_address(address), |(_, device)| device_label(device))}
-                                    }
-                                    span {
-                                        class: "text-xs text-fg-muted",
-                                        if connected { "connected" } else { "not in range" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        row
     }
 }

@@ -6,7 +6,7 @@ Desktop, the SDK docs, firmware-facing tools and the games. The values live in
 
 | Surface | Where the tokens come in |
 |---|---|
-| Odyssey Desktop | `crates/odyssey-desktop/input.css` imports `tokens.css` and maps it to Tailwind utilities and component classes |
+| Odyssey Desktop | `crates/odyssey-desktop/src/theme.rs` mirrors the `tokens.css` values by hand as GPUI colours; change it with `tokens.css` |
 | Website and docs ([odysseyarm.github.io](https://github.com/odysseyarm/odysseyarm.github.io)) | `src/styles/tokens.css` and `site.css` carry the same values; copy changes there |
 | SDK diagrams (`docs/sdk/images/`) | The `--oa-dg-*` variables in the site's `docs.css` use the same palette |
 | Unity games and demos | Copy the values into a USS variables file or a C# palette, see [Games](#games) |
@@ -154,11 +154,11 @@ for non-text use and placeholders. Check a new pair before shipping it.
 
 ## Components
 
-The desktop's component classes are the reference implementation
-(`crates/odyssey-desktop/input.css`, `@layer components`). The website's
-`.button` and `.button.secondary` follow the same rules.
+The names below are the style guide's. The desktop builds each one from the
+colours in `crates/odyssey-desktop/src/theme.rs` in GPUI; the website's
+`.button` and `.button.secondary` follow the same rules in CSS.
 
-| Component | Desktop class | Rules |
+| Component | Name | Rules |
 |---|---|---|
 | Primary button | `btn btn-primary` | Orange pill, near-black label. One per view or row: the action the user came for |
 | Secondary button | `btn btn-secondary` | Outline pill in `line-strong`. Everything else |
@@ -176,12 +176,12 @@ The desktop's component classes are the reference implementation
 | Focus | (global) | 2 px `accent-ink` outline, 2 px offset, on every focusable element. Never remove it |
 | Navigation | sidebar | `surface-alt`; current page in `accent-soft` with `accent-ink` text |
 
-Tailwind's stock palette is switched off in the desktop app, so `gray-500` or
-`blue-600` produce no CSS. To find stray colours:
+The desktop app takes every colour from `theme.rs`, so a view should never spell
+one out. To find stray colours:
 
 ```sh
 cd crates/odyssey-desktop/src
-grep -rnE '\b(dark:|(bg|text|border|ring|fill|stroke)-(gray|blue|red|amber|yellow|green|emerald|sky|purple|orange|slate)-[0-9]+)' .
+grep -rnE '\b(rgba?|hsla?)\(|0x[0-9a-fA-F]{6}\b' . | grep -v '^./theme.rs'
 ```
 
 Things that are not branded, on purpose: the calibration patterns the camera

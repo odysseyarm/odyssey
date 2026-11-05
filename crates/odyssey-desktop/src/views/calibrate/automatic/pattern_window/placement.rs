@@ -1,7 +1,6 @@
 //! Whether the pattern window would cover the wizard's own window.
 
-use dioxus::desktop::DesktopContext;
-use odyssey_hub_common::config::MonitorKey;
+use gpui::{Bounds, DisplayId, PlatformDisplay, Pixels, Point};
 
 /// A rectangle in desktop pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,12 +12,12 @@ pub(crate) struct Rect {
 }
 
 impl Rect {
-    pub(crate) fn of_monitor(key: &MonitorKey) -> Self {
+    fn of_bounds(bounds: Bounds<Pixels>) -> Self {
         Self {
-            x: key.x.into(),
-            y: key.y.into(),
-            width: key.width.into(),
-            height: key.height.into(),
+            x: f32::from(bounds.origin.x).round() as i64,
+            y: f32::from(bounds.origin.y).round() as i64,
+            width: f32::from(bounds.size.width).round() as i64,
+            height: f32::from(bounds.size.height).round() as i64,
         }
     }
 
@@ -32,26 +31,20 @@ impl Rect {
 }
 
 /// Whether showing the pattern fullscreen on `target` would cover (part of)
-/// the window `host`. Falls back to "same monitor" where the platform does not
-/// report window geometry.
+/// the wizard window, which has `host` bounds and sits on `host_display`.
+/// A window on the target display is covered outright. A window straddling
+/// displays is caught by overlap, unless the platform reports no window
+/// position (Wayland gives the origin), where only the display counts.
 pub(crate) fn covers_window(
-    host: &DesktopContext,
-    target: &MonitorKey,
-    current_monitor: Option<MonitorKey>,
+    host: Bounds<Pixels>,
+    host_display: Option<DisplayId>,
+    target: &dyn PlatformDisplay,
 ) -> bool {
-    match host.outer_position() {
-        Ok(position) => {
-            let size = host.outer_size();
-            let window = Rect {
-                x: position.x.into(),
-                y: position.y.into(),
-                width: size.width.into(),
-                height: size.height.into(),
-            };
-            window.overlaps(&Rect::of_monitor(target))
-        }
-        Err(_) => current_monitor.as_ref() == Some(target),
+    if host_display == Some(target.id()) {
+        return true;
     }
+    host.origin != Point::default()
+        && Rect::of_bounds(host).overlaps(&Rect::of_bounds(target.bounds()))
 }
 
 #[cfg(test)]

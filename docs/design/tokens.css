@@ -2,8 +2,8 @@
    docs/design/README.md explains each token and when to use it.
 
    Plain CSS custom properties so any web surface can import this file as is.
-   Odyssey Desktop maps them to Tailwind utilities in
-   crates/odyssey-desktop/input.css. The website (odysseyarm.github.io,
+   Odyssey Desktop mirrors them by hand in
+   crates/odyssey-desktop/src/theme.rs (GPUI has no CSS). The website (odysseyarm.github.io,
    src/styles/tokens.css) and the Unity projects copy the values; change them
    here first, then there.
 

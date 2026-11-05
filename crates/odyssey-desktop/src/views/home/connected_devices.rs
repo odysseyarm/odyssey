@@ -1,79 +1,66 @@
 //! The list of devices the hub reports, plus any being updated that it does not.
 
-use dioxus::prelude::*;
-use dioxus_router::Link;
-use odyssey_hub_server::firmware::FirmwareManifest;
+use gpui::{
+    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, div,
+};
 
-use super::connected_device_row::ConnectedDeviceRow;
-use crate::Route;
-use crate::components::{FirmwareUpdateManager, UpdatingDeviceRow};
-use crate::hub::HubContext;
+use super::{HomeEvent, HomeView};
+use crate::components::firmware_update::updating_device_row;
+use crate::components::ui;
+use crate::theme::Palette;
 
-#[component]
-pub(super) fn ConnectedDevices(
-    hub: Signal<HubContext>,
-    manifest: Signal<Option<FirmwareManifest>>,
-    manager: FirmwareUpdateManager,
-    updating: Vec<[u8; 6]>,
-) -> Element {
-    let devices = (hub().devices)();
-    let battery_states = (hub().battery_states)();
-    if devices.is_empty() && updating.is_empty() {
-        return rsx! {
-            div {
-                class: "card",
-                h2 {
-                    class: "card-title mb-1",
-                    "No devices connected"
-                }
-                p {
-                    class: "text-sm text-fg-muted",
-                    "Plug a device in with its USB cable, or "
-                    Link {
-                        to: Route::Pairing {},
-                        class: "link",
-                        "pair it with a dongle"
-                    }
-                    "."
-                }
-            }
-        };
-    }
+impl HomeView {
+    pub(super) fn connected_devices(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let devices = self.hub.read(cx).devices.clone();
+        let updating = self.manager.get_all_updating();
+        if devices.is_empty() && updating.is_empty() {
+            return ui::card(p)
+                .gap_1()
+                .child(ui::card_title(p, "No devices connected"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .text_sm()
+                        .text_color(p.fg_muted)
+                        .child("Plug a device in with its USB cable, or")
+                        .child(
+                            div()
+                                .flex()
+                                .child(
+                                    div()
+                                        .id("pair-link")
+                                        .cursor_pointer()
+                                        .underline()
+                                        .text_color(p.accent_ink)
+                                        .on_click(cx.listener(|_, _, _, cx| {
+                                            cx.emit(HomeEvent::OpenPairing);
+                                        }))
+                                        .child("pair it with a dongle"),
+                                )
+                                .child("."),
+                        ),
+                )
+                .into_any_element();
+        }
 
-    let updating_not_in_list: Vec<[u8; 6]> = updating
-        .iter()
-        .filter(|uuid| !devices.iter().any(|(_, device)| &device.uuid == *uuid))
-        .copied()
-        .collect();
-
-    rsx! {
-        div {
-            class: "card",
-            h2 {
-                class: "card-title mb-3",
-                "Connected Devices"
-            }
-            div {
-                class: "space-y-2",
-                for (_slot, device) in devices.iter() {
-                    ConnectedDeviceRow {
-                        key: "{device.uuid:02x?}",
-                        hub,
-                        device: device.clone(),
-                        is_updating: updating.contains(&device.uuid),
-                        battery: battery_states.get(&device.uuid).copied(),
-                        manifest,
-                        manager: manager.clone(),
-                    }
-                }
-                for uuid in updating_not_in_list {
-                    UpdatingDeviceRow {
-                        key: "{uuid:02x?}",
-                        uuid,
-                        manager: manager.clone(),
-                    }
-                }
+        let mut list = div().flex().flex_col().gap_2();
+        for device in &devices {
+            if let Some(row) = self.rows.get(&device.uuid) {
+                list = list.child(row.clone());
             }
         }
+        for uuid in updating
+            .iter()
+            .filter(|uuid| !devices.iter().any(|device| &device.uuid == *uuid))
+        {
+            list = list.child(updating_device_row(*uuid, &self.manager, p));
+        }
+        ui::card(p)
+            .child(div().mb_3().child(ui::card_title(p, "Connected Devices")))
+            .child(list)
+            .into_any_element()
     }
 }

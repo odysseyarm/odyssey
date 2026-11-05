@@ -4,195 +4,226 @@
 
 use std::time::Duration;
 
-use dioxus::prelude::*;
+use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
+use gpui::{
+    AppContext as _,    AnyElement, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
+    Styled as _, Subscription, Window, div,
+};
 
 use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
-use super::ui::{
-    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
-};
+use super::ui::{act, camera_placeholder, details, fact, open_state, step_page};
 use super::wizard::Wizard;
-use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
+use crate::components::ui::{ButtonKind, button, card};
+use crate::components::wizard::{
+    FrameSlot, Icon, Tone, overlay_image, overlay_label, slider, status_banner,
+};
+use crate::theme::{Palette, palette};
 
 /// How long the marker brightness slider rests before the camera follows it.
 const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(200);
 
-#[component]
-pub fn MarkersStep(wizard: Wizard) -> Element {
-    let all_found = use_memo(move || {
-        wizard
-            .markers
-            .read()
-            .as_ref()
-            .is_some_and(|f| f.matched.is_some())
-    });
-    let ir = *wizard.ir_exposure.read();
-    let mut generation = use_signal(|| 0u64);
+pub(super) struct MarkersStep {
+    wizard: Entity<Wizard>,
+    exposure: Entity<SliderState>,
+    /// Bumped on every slider movement; a debounce that finds it changed gives up.
+    generation: u64,
+    frame: FrameSlot,
+    _subscriptions: Vec<Subscription>,
+}
 
-    rsx! {
-        StepPage {
-            title: "Turn on the tracker markers",
-            subtitle: "The screen is dark now. Switch on all six markers and keep the camera where it is. Press Measure when you're ready.",
-            footer: rsx! {
-                div {
-                    class: "flex w-full flex-col gap-5",
-                    div {
-                        class: "flex items-center justify-between gap-3",
-                        button {
-                            class: SECONDARY_BUTTON,
-                            r#type: "button",
-                            onclick: move |_| wizard.back_to_setup(),
-                            "Cancel"
+impl MarkersStep {
+    pub(super) fn new(wizard: Entity<Wizard>, cx: &mut Context<Self>) -> Self {
+        let exposure = cx.new(|_| {
+            SliderState::new()
+                .max(*IR_EXPOSURE_RANGE_US.end() as f32)
+                .min(*IR_EXPOSURE_RANGE_US.start() as f32)
+                .step(IR_EXPOSURE_STEP_US as f32)
+        });
+        let subscriptions = vec![
+            cx.observe(&wizard, |_, _, cx| cx.notify()),
+            cx.subscribe(&exposure, |this, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(SliderValue::Single(value)) = event else {
+                    return;
+                };
+                let us = value.round().max(0.0) as u32;
+                this.wizard.update(cx, |wizard, cx| wizard.set_ir_exposure(us, cx));
+                this.generation += 1;
+                let mine = this.generation;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(EXPOSURE_DEBOUNCE).await;
+                    this.update(cx, |this, cx| {
+                        // A later movement of the slider supersedes this one.
+                        if this.generation == mine {
+                            this.wizard.update(cx, |wizard, cx| wizard.apply_ir_exposure(cx));
                         }
-                        button {
-                            id: PRIMARY_ID,
-                            class: PRIMARY_BUTTON,
-                            r#type: "button",
-                            disabled: !all_found(),
-                            onclick: move |_| wizard.measure_markers(),
-                            "Measure"
-                        }
-                    }
-                    MarkerBanner { wizard }
-                }
-            },
-
-            MarkerPreviewView { wizard }
-
-            div {
-                class: "card p-4",
-                Slider {
-                    id: "ir-exposure",
-                    label: "Marker brightness",
-                    value: ir,
-                    min: *IR_EXPOSURE_RANGE_US.start(),
-                    max: *IR_EXPOSURE_RANGE_US.end(),
-                    step: IR_EXPOSURE_STEP_US,
-                    value_text: format!("{ir} µs"),
-                    help: "Only the six markers should show up as bright dots. Lower it if other lights appear, raise it if a marker is missing.",
-                    oninput: move |us| {
-                        wizard.set_ir_exposure(us);
-                        let this = *generation.peek() + 1;
-                        generation.set(this);
-                        spawn(async move {
-                            tokio::time::sleep(EXPOSURE_DEBOUNCE).await;
-                            // A later movement of the slider supersedes this one.
-                            if *generation.peek() == this {
-                                wizard.apply_ir_exposure();
-                            }
-                        });
-                    },
-                }
-            }
-
-            MarkerDetails { wizard }
-            MarkerRules {}
+                    })
+                    .ok();
+                })
+                .detach();
+            }),
+        ];
+        Self {
+            wizard,
+            exposure,
+            generation: 0,
+            frame: FrameSlot::default(),
+            _subscriptions: subscriptions,
         }
     }
 }
 
-#[component]
-fn MarkerBanner(wizard: Wizard) -> Element {
-    let markers = wizard.markers.read();
-    let Some(frame) = markers.as_ref() else {
-        return rsx! {
-            StatusBanner {
-                tone: Tone::Attention,
-                icon: Icon::Camera,
-                title: "Switching the camera to marker view…",
-                detail: "This takes a moment.",
-            }
-        };
+impl Render for MarkersStep {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let wizard = self.wizard.clone();
+        let details_open = open_state("marker-details", window, cx);
+        let rules_open = open_state("marker-rules", window, cx);
+        let target = SliderValue::Single(wizard.read(cx).ir_exposure as f32);
+        if self.exposure.read(cx).value() != target {
+            self.exposure.update(cx, |slider, cx| slider.set_value(target, window, cx));
+        }
+        let state = wizard.read(cx);
+        self.frame.show(state.markers.as_ref().map(|f| &f.image), window);
+        let ir = state.ir_exposure;
+        let all_found = state.markers.as_ref().is_some_and(|f| f.matched.is_some());
+
+        let footer = vec![
+            div()
+                .flex()
+                .w_full()
+                .flex_col()
+                .gap_5()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            button("cancel", "Cancel", ButtonKind::Secondary, p)
+                                .on_click(act(&wizard, |w, cx| w.back_to_setup(cx))),
+                        )
+                        .child(
+                            button("measure", "Measure", ButtonKind::Primary, p)
+                                .disabled(!all_found)
+                                .on_click(act(&wizard, |w, cx| w.measure_markers(cx))),
+                        ),
+                )
+                .child(marker_banner(p, state))
+                .into_any_element(),
+        ];
+
+        let mut facts = Vec::new();
+        if let Some(frame) = state.markers.as_ref() {
+            facts.push(fact(p, "Bright spots seen", frame.blobs.len().to_string()));
+            facts.push(fact(
+                p,
+                "Matched to the marker layout",
+                if frame.matched.is_some() { "6 of 6" } else { "not all six" },
+            ));
+            facts.push(fact(
+                p,
+                "Picture size",
+                format!("{} × {}", frame.width, frame.height),
+            ));
+        }
+        facts.push(fact(p, "Infrared exposure", format!("{ir} µs")));
+
+        let rules = MARKER_RULES
+            .iter()
+            .map(|(title, text)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(*title))
+                    .child(div().text_color(p.fg_muted).child(*text))
+                    .into_any_element()
+            })
+            .collect();
+
+        let content = vec![
+            marker_preview(p, state),
+            card(p)
+                .p_4()
+                .child(slider(
+                    p,
+                    &self.exposure,
+                    "Marker brightness",
+                    format!("{ir} µs"),
+                    Some("Only the six markers should show up as bright dots. Lower it if other lights appear, raise it if a marker is missing."),
+                ))
+                .into_any_element(),
+            details("marker-details", p, "Details", facts, &details_open, cx).into_any_element(),
+            details("marker-rules", p, "Where the markers can go", rules, &rules_open, cx)
+                .into_any_element(),
+        ];
+
+        step_page(
+            p,
+            "Turn on the tracker markers",
+            Some("The screen is dark now. Switch on all six markers and keep the camera where it is. Press Measure when you're ready.".into()),
+            content,
+            footer,
+        )
+    }
+}
+
+fn marker_banner(p: Palette, wizard: &Wizard) -> AnyElement {
+    let Some(frame) = wizard.markers.as_ref() else {
+        return status_banner(
+            p,
+            Tone::Attention,
+            Icon::Camera,
+            "Switching the camera to marker view…",
+            "This takes a moment.",
+        )
+        .into_any_element();
     };
     let message = marker_hint(frame.hint);
-    rsx! {
-        StatusBanner { tone: message.tone, icon: message.icon, title: message.title, detail: message.detail }
-    }
+    status_banner(p, message.tone, message.icon, message.title, message.detail).into_any_element()
 }
 
-#[component]
-fn MarkerPreviewView(wizard: Wizard) -> Element {
-    let markers = wizard.markers.read();
-    let Some(frame) = markers.as_ref() else {
-        return rsx! {
-            div {
-                class: CAMERA_PLACEHOLDER,
-                "Waiting for the camera…"
-            }
-        };
+fn marker_preview(p: Palette, wizard: &Wizard) -> AnyElement {
+    let Some(frame) = wizard.markers.as_ref() else {
+        return camera_placeholder(p, "Waiting for the camera…").into_any_element();
     };
-    let unit = f64::from(frame.width) / 640.0;
+    let unit = frame.width as f32 / 640.0;
     let radius = 11.0 * unit;
     let line = 2.5 * unit;
-    rsx! {
-        OverlayImage {
-            src: frame.image.clone(),
-            width: frame.width,
-            height: frame.height,
-            alt: "Infrared camera picture",
-            for (i, blob) in frame.blobs.iter().enumerate() {
-                {
-                    // A blob matched to one of the six markers is green and numbered.
-                    let marker = frame.matched.and_then(|m| m.iter().position(|&b| b == i));
-                    let color = if marker.is_some() { "var(--oa-success)" } else { "var(--oa-warning)" };
-                    rsx! {
-                        circle {
-                            key: "{i}",
-                            cx: "{blob[0]}",
-                            cy: "{blob[1]}",
-                            r: "{radius}",
-                            fill: "none",
-                            style: "stroke: {color}",
-                            stroke_width: "{line}",
-                        }
-                        if let Some(marker) = marker {
-                            text {
-                                x: "{f64::from(blob[0]) + radius * 1.3}",
-                                y: "{f64::from(blob[1]) - radius * 1.1}",
-                                style: "fill: {color}",
-                                font_size: "{radius * 1.7}",
-                                font_weight: "700",
-                                "{marker + 1}"
-                            }
-                        }
-                    }
-                }
+    let (success, warning) = (p.success, p.warning);
+    // A blob matched to one of the six markers is green and numbered.
+    let marker_of = |i: usize| frame.matched.and_then(|m| m.iter().position(|&b| b == i));
+    let blobs = frame.blobs.clone();
+    let matched: Vec<Option<usize>> = (0..blobs.len()).map(marker_of).collect();
+    let labels = blobs
+        .iter()
+        .zip(&matched)
+        .filter_map(|(blob, marker)| {
+            marker.map(|marker| {
+                overlay_label(
+                    blob[0] + radius * 1.3,
+                    blob[1] - radius * 1.1,
+                    frame.width,
+                    frame.height,
+                    success,
+                    (marker + 1).to_string(),
+                )
+            })
+        })
+        .collect();
+    overlay_image(
+        Some(frame.image.clone()),
+        frame.width,
+        frame.height,
+        move |canvas, window| {
+            for (blob, marker) in blobs.iter().zip(&matched) {
+                let color = if marker.is_some() { success } else { warning };
+                canvas.stroke_circle(window, *blob, radius, line, color);
             }
-        }
-    }
-}
-
-#[component]
-fn MarkerDetails(wizard: Wizard) -> Element {
-    let markers = wizard.markers.read();
-    rsx! {
-        Details {
-            if let Some(frame) = markers.as_ref() {
-                Fact { label: "Bright spots seen", value: frame.blobs.len().to_string() }
-                Fact {
-                    label: "Matched to the marker layout",
-                    value: if frame.matched.is_some() { "6 of 6".to_string() } else { "not all six".to_string() },
-                }
-                Fact { label: "Picture size", value: format!("{} × {}", frame.width, frame.height) }
-            }
-            Fact { label: "Infrared exposure", value: format!("{} µs", *wizard.ir_exposure.read()) }
-        }
-    }
-}
-
-/// The rules for where markers can go, collapsed until asked for.
-#[component]
-fn MarkerRules() -> Element {
-    rsx! {
-        Details { summary: "Where the markers can go",
-            for (title, text) in MARKER_RULES {
-                div {
-                    key: "{title}",
-                    class: "flex flex-col gap-0.5",
-                    span { class: "font-medium", {title} }
-                    span { class: "text-fg-muted", {text} }
-                }
-            }
-        }
-    }
+        },
+        labels,
+    )
+    .into_any_element()
 }

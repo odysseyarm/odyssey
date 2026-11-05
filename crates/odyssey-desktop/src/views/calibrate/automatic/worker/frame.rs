@@ -1,14 +1,16 @@
 //! The pictures and results the camera thread hands to the UI.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use gpui::RenderImage;
 use odyssey_autocalib::session::{
     Calibration, EdgeCheck, Hint, MarkerHint, MarkerPreview, Preview, SideSet, SizeCheck,
     SizeSource,
 };
 use odyssey_common::ScreenCalibration;
 
-use super::encode::{PREVIEW_JPEG_QUALITY, PREVIEW_MAX_WIDTH, encode_gray, encode_rgb};
+use super::encode::{PREVIEW_MAX_WIDTH, encode_gray, encode_rgb};
 use crate::views::calibrate::automatic::kind::SizeOrigin;
 use crate::views::calibrate::automatic::quality::Measures;
 
@@ -17,7 +19,7 @@ use crate::views::calibrate::automatic::quality::Measures;
 /// overlay's coordinate system.
 #[derive(Debug, Clone)]
 pub(crate) struct PreviewFrame {
-    pub image: String,
+    pub image: Arc<RenderImage>,
     pub width: u32,
     pub height: u32,
     pub dots: Vec<[f32; 2]>,
@@ -37,7 +39,7 @@ pub(crate) struct PreviewFrame {
 
 #[derive(Debug, Clone)]
 pub(crate) struct MarkerFrame {
-    pub image: String,
+    pub image: Arc<RenderImage>,
     pub width: u32,
     pub height: u32,
     pub blobs: Vec<[f32; 2]>,
@@ -70,7 +72,7 @@ pub(crate) struct Outcome {
 /// What the review screen needs once the calibration is done.
 #[derive(Debug, Clone)]
 pub(crate) struct Finished {
-    pub image: String,
+    pub image: Arc<RenderImage>,
     pub width: u32,
     pub height: u32,
     pub size_origin: Option<SizeOrigin>,
@@ -117,8 +119,7 @@ pub(super) fn preview_frame(
     ready_for: Duration,
     require_edges: bool,
 ) -> PreviewFrame {
-    let (image, width, height) =
-        encode_rgb(&preview.color, PREVIEW_MAX_WIDTH, PREVIEW_JPEG_QUALITY);
+    let (image, width, height) = encode_rgb(&preview.color, PREVIEW_MAX_WIDTH);
     PreviewFrame {
         image,
         width,
@@ -140,7 +141,7 @@ pub(super) fn preview_frame(
 }
 
 pub(super) fn marker_frame(preview: MarkerPreview) -> MarkerFrame {
-    let (image, width, height) = encode_gray(&preview.ir, PREVIEW_JPEG_QUALITY);
+    let (image, width, height) = encode_gray(&preview.ir);
     MarkerFrame {
         image,
         width,

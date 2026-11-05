@@ -30,12 +30,9 @@ use std::sync::mpsc::{self, Sender};
 
 pub(crate) use backend::{Backend, DEMO_DIAGONAL_IN, ListError, OpenRequest, demo_scene};
 pub(crate) use command::{Command, Mode};
-use dioxus::logger::tracing;
 use engine::Engine;
 pub(crate) use event::{Event, SavedAttempt, SessionEvent};
 pub(crate) use failure::{Failure, FailureKind};
-#[cfg(all(test, feature = "sim"))]
-pub(crate) use frame::Outcome;
 pub(crate) use frame::{Finished, MarkerFrame, PreviewFrame};
 use tokio::sync::mpsc::UnboundedSender;
 

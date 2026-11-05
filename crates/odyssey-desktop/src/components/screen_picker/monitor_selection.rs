@@ -1,118 +1,167 @@
 use std::rc::Rc;
-use std::time::Duration;
 
-use dioxus::desktop::tao::monitor::MonitorHandle;
-use dioxus::desktop::{DesktopContext, use_window};
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
+use gpui::{
+    App, Context, DisplayId, PlatformDisplay, Subscription, WindowBounds, WindowKind,
+    WindowOptions,
+};
+
 use odyssey_hub_common::config::{self, MonitorKey};
 
-use super::monitor_layout::{MonitorInfo, monitor_key, resolve_selected};
+use super::monitor_layout::{MonitorInfo, resolve_selected};
+use crate::runtime;
 use crate::ui_state::UiStateWriter;
 
-/// How often to look for monitors being plugged in or removed.
-const MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Identity of a display, from the logical bounds GPUI reports.
+///
+/// GPUI exposes neither a display's name nor its scale factor, so the key is in
+/// logical pixels with no name. Physical pixels would need the scale of a window
+/// already on that display, which would make the key change when a window
+/// opens there. Callers that need physical pixels use their own window's scale.
+pub(crate) fn monitor_key_of(display: &dyn PlatformDisplay) -> MonitorKey {
+    let bounds = display.bounds();
+    MonitorKey {
+        name: None,
+        x: bounds.origin.x.as_f32().round() as i32,
+        y: bounds.origin.y.as_f32().round() as i32,
+        width: bounds.size.width.as_f32().round().max(0.0) as u32,
+        height: bounds.size.height.as_f32().round().max(0.0) as u32,
+    }
+}
 
-fn enumerate_monitors(window: &DesktopContext) -> Vec<MonitorInfo> {
-    let primary = window.primary_monitor().map(|m| monitor_key(&m));
-    window
-        .available_monitors()
-        .map(|m| MonitorInfo::from_handle(&m, primary.as_ref()))
+/// The attached display that `key` identifies, if it is still attached.
+pub(crate) fn display_for_key(key: &MonitorKey, cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
+    cx.displays()
+        .into_iter()
+        .find(|display| monitor_key_of(display.as_ref()) == *key)
+}
+
+/// Options for a borderless window covering `display`.
+pub(crate) fn fullscreen_options(display: &dyn PlatformDisplay, kind: WindowKind) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Fullscreen(display.bounds())),
+        titlebar: None,
+        kind,
+        display_id: Some(display.id()),
+        ..WindowOptions::default()
+    }
+}
+
+fn enumerate_monitors(cx: &App) -> Vec<MonitorInfo> {
+    let primary = cx
+        .primary_display()
+        .map(|display| monitor_key_of(display.as_ref()));
+    cx.displays()
+        .iter()
+        .map(|display| {
+            let key = monitor_key_of(display.as_ref());
+            let primary = primary.as_ref() == Some(&key);
+            MonitorInfo { key, primary }
+        })
         .collect()
 }
 
-/// The attached monitors and the one the user picked, plus the app's ordered
-/// persistence queue. Copy it freely: these are only handles.
-#[derive(Clone, Copy, PartialEq)]
+/// The attached displays and the one the user picked, plus the app's ordered
+/// persistence queue. Share it as an `Entity`.
 pub(crate) struct MonitorSelection {
-    monitors: Signal<Vec<MonitorInfo>>,
-    chosen: Signal<Option<MonitorKey>>,
+    monitors: Vec<MonitorInfo>,
+    chosen: Option<MonitorKey>,
     writer: UiStateWriter,
+    _displays: Option<Subscription>,
 }
 
 impl MonitorSelection {
-    #[cfg(all(test, feature = "sim"))]
-    pub(crate) fn for_test(key: MonitorKey, writer: UiStateWriter) -> Self {
+    /// Tracks the attached displays (including hot-plug) and restores the
+    /// display the user picked last time.
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        let this = cx.weak_entity();
+        let displays = cx.observe_displays(move |_, cx| {
+            this.update(cx, Self::refresh).ok();
+        });
+
+        let remembered = runtime::spawn(async {
+            config::ui_state_async().await.into_value().selected_monitor
+        });
+        cx.spawn(async move |this, cx| {
+            let remembered = match remembered.await {
+                Ok(remembered) => remembered,
+                Err(error) => {
+                    tracing::warn!("Failed to load the remembered display: {error}");
+                    return;
+                }
+            };
+            this.update(cx, |selection, cx| {
+                // A click that lands before the file loads wins over the stale value.
+                if selection.chosen.is_none() && remembered.is_some() {
+                    selection.chosen = remembered;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+
         Self {
-            monitors: Signal::new(vec![MonitorInfo { key, primary: true }]),
-            chosen: Signal::new(None),
-            writer,
+            monitors: enumerate_monitors(cx),
+            chosen: None,
+            writer: cx.global::<UiStateWriter>().clone(),
+            _displays: Some(displays),
         }
     }
 
-    pub(crate) fn monitors(&self) -> Vec<MonitorInfo> {
-        self.monitors.read().clone()
+    #[cfg(all(test, feature = "sim"))]
+    pub(crate) fn for_test(key: MonitorKey, writer: UiStateWriter) -> Self {
+        Self {
+            monitors: vec![MonitorInfo { key, primary: true }],
+            chosen: None,
+            writer,
+            _displays: None,
+        }
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let latest = enumerate_monitors(cx);
+        if self.monitors != latest {
+            self.monitors = latest;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn monitors(&self) -> &[MonitorInfo] {
+        &self.monitors
     }
 
     /// Index into [`Self::monitors`] of the selected monitor, if any are attached.
     pub(crate) fn selected(&self) -> Option<usize> {
-        resolve_selected(&self.monitors.read(), self.chosen.read().as_ref())
+        resolve_selected(&self.monitors, self.chosen.as_ref())
     }
 
-    /// The OS handle of the selected monitor, for placing windows on it.
-    pub(crate) fn selected_handle(&self) -> Option<MonitorHandle> {
-        let key = self.monitors.read().get(self.selected()?)?.key.clone();
-        dioxus::desktop::window()
-            .available_monitors()
-            .find(|m| monitor_key(m) == key)
+    pub(crate) fn selected_key(&self) -> Option<MonitorKey> {
+        Some(self.monitors.get(self.selected()?)?.key.clone())
+    }
+
+    /// The GPUI display of the selected monitor, for placing windows on it.
+    pub(crate) fn selected_display(&self, cx: &App) -> Option<DisplayId> {
+        Some(display_for_key(&self.selected_key()?, cx)?.id())
     }
 
     /// Selects the monitor at `index` and remembers it across launches.
-    pub(crate) fn select(&self, index: usize) {
-        let Some(key) = self.monitors.peek().get(index).map(|m| m.key.clone()) else {
+    pub(crate) fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(key) = self.monitors.get(index).map(|m| m.key.clone()) else {
             return;
         };
-        let mut chosen = self.chosen;
-        chosen.set(Some(key.clone()));
+        self.chosen = Some(key.clone());
+        cx.notify();
 
         // Queue at the click, before spawning a waiter. The shared writer
         // serializes edits and preserves fields changed by other views.
         let save = self
             .writer
             .update(move |state| state.selected_monitor = Some(key));
-        spawn(async move {
-            if let Err(e) = save.await {
-                tracing::warn!("Failed to save UI state: {e:?}");
+        cx.spawn(async move |_, _| {
+            if let Err(error) = save.await {
+                tracing::warn!("Failed to save UI state: {error:?}");
             }
-        });
-    }
-}
-
-/// Tracks the attached monitors (including hot-plug) and restores the
-/// monitor the user picked last time.
-pub(crate) fn use_monitor_selection() -> MonitorSelection {
-    let window = use_window();
-    let writer = use_context::<UiStateWriter>();
-    let mut monitors = use_signal({
-        let window = Rc::clone(&window);
-        move || enumerate_monitors(&window)
-    });
-    let mut chosen = use_signal(|| None::<MonitorKey>);
-
-    use_future(move || async move {
-        let remembered = config::ui_state_async().await.into_value().selected_monitor;
-        // A click that lands before the file loads wins over the stale value.
-        if chosen.peek().is_none() {
-            chosen.set(remembered);
-        }
-    });
-
-    use_future(move || {
-        let window = Rc::clone(&window);
-        async move {
-            loop {
-                tokio::time::sleep(MONITOR_POLL_INTERVAL).await;
-                let latest = enumerate_monitors(&window);
-                if *monitors.peek() != latest {
-                    monitors.set(latest);
-                }
-            }
-        }
-    });
-
-    MonitorSelection {
-        monitors,
-        chosen,
-        writer,
+        })
+        .detach();
     }
 }

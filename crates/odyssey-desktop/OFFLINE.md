@@ -14,8 +14,7 @@ software is not downloaded. Its own traffic between the app and the hub is on th
 | Orbbec camera software (online installer only) | `github.com/orbbec/OrbbecSDK_v2/releases/download/` and `raw.githubusercontent.com/orbbec/OrbbecSDK_v2/` | only when you press the download button |
 
 Links in the app (for example to a newer Odyssey) open in your browser and are not shown in
-offline mode. The web view Odyssey uses (Microsoft Edge WebView2) is a separate Windows
-component with its own update behaviour; manage it with your usual Windows policies.
+offline mode.
 
 ## Turning offline mode on
 

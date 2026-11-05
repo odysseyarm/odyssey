@@ -7,5 +7,5 @@ mod result_overlay;
 mod review_step;
 mod saved_step;
 
-pub(super) use review_step::ReviewStep;
-pub(super) use saved_step::SavedStep;
+pub(super) use review_step::review_step;
+pub(super) use saved_step::saved_step;

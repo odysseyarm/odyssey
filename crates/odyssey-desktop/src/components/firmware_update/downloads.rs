@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use dioxus::logger::tracing;
 use eros::Context as _;
 use odyssey_hub_server::firmware::{self, FileEntry, FirmwareEntry, UpdateStep};
 
@@ -13,7 +12,7 @@ pub(super) struct ReleaseImage {
 /// Everything an update writes, fetched before the device is touched.
 pub(super) struct Downloads {
     pub(super) netcore: Option<ReleaseImage>,
-    /// Application images by manifest file name (`app-a`, `app-b`).
+    /// Application images by manifest file name (`app` or `app-a` and `app-b`).
     pub(super) applications: HashMap<&'static str, Vec<u8>>,
     pub(super) bootloader: Option<ReleaseImage>,
 }
@@ -55,27 +54,6 @@ fn validate_image_size(name: &str, actual: usize, expected: u64) -> eros::Result
     Ok(())
 }
 
-/// Both banks must be available before the device is detached: only its
-/// bootloader can tell us which one is inactive.
-fn application_files(entry: &FirmwareEntry) -> eros::Result<[(&'static str, &FileEntry); 2]> {
-    Ok([
-        (
-            "app-a",
-            entry
-                .files
-                .get("app-a")
-                .ok_or_else(|| eros::error!("Firmware release has no app-a image"))?,
-        ),
-        (
-            "app-b",
-            entry
-                .files
-                .get("app-b")
-                .ok_or_else(|| eros::error!("Firmware release has no app-b image"))?,
-        ),
-    ])
-}
-
 impl Downloads {
     /// Which bank to write is only readable once the bootloader is running, so
     /// fetch both candidates up front. Detaching is the point of no return: the
@@ -89,10 +67,11 @@ impl Downloads {
         entry: &FirmwareEntry,
         steps: &[UpdateStep],
     ) -> eros::Result<Self> {
-        // The inactive bank is unknown until after detach. A one-bank release
-        // cannot safely start an update: it may leave the unit in DFU after
-        // writing its bootloader or net core with no application to finish it.
-        let application_files = application_files(entry)?;
+        let application_files = entry.application_files().ok_or_else(|| {
+            eros::error!(
+                "Firmware release must contain app or both app-a and app-b, not mixed images"
+            )
+        })?;
         let netcore = match published_release(entry, "net-core") {
             Some((file, release)) if steps.contains(&UpdateStep::FlashNetCore) => {
                 tracing::info!("Downloading net-core release {}", release);
@@ -180,7 +159,7 @@ mod tests {
                 released: None,
             };
             assert!(
-                application_files(&entry).is_err(),
+                entry.application_files().is_none(),
                 "A release with only {present} cannot cover both possible inactive banks"
             );
         }

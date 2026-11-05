@@ -1,4 +1,10 @@
-use dioxus::prelude::*;
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    AnyElement, App, ClickEvent, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
+};
+
+use crate::theme::Palette;
 
 /// Outcome of the most recent user-triggered operation in a panel.
 ///
@@ -39,33 +45,64 @@ pub(super) fn rpc_failure(context: &str, err: &dyn std::fmt::Display) -> OpStatu
     }
 }
 
-#[component]
-pub(super) fn StatusLine(status: OpStatus) -> Element {
+/// The status of the last operation. `id` must be unique among the status
+/// lines in the window; `details_open` and `on_toggle` drive the collapsed
+/// technical details of a failure.
+pub(super) fn status_line(
+    status: &OpStatus,
+    id: String,
+    details_open: bool,
+    on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    palette: Palette,
+) -> AnyElement {
     match status {
-        OpStatus::Idle => rsx! {},
-        OpStatus::Busy(msg) => rsx! {
-            span { class: "text-xs text-fg-muted italic", {msg} }
-        },
-        OpStatus::Done(msg) => rsx! {
-            span { class: "text-xs text-success-ink", {msg} }
-        },
-        OpStatus::Failed { summary, detail } => rsx! {
-            div {
-                class: "text-xs text-danger-ink space-y-1 basis-full",
-                p { {summary} }
-                if let Some(detail) = detail {
-                    details {
-                        summary {
-                            class: "cursor-pointer text-fg-muted select-none",
-                            "Technical details"
-                        }
-                        p {
-                            class: "mt-1 font-mono text-[11px] text-fg-muted break-all",
-                            {detail}
-                        }
-                    }
-                }
+        OpStatus::Idle => div().into_any_element(),
+        OpStatus::Busy(message) => div()
+            .text_xs()
+            .italic()
+            .text_color(palette.fg_muted)
+            .child(message.clone())
+            .into_any_element(),
+        OpStatus::Done(message) => div()
+            .text_xs()
+            .text_color(palette.success_ink)
+            .child(message.clone())
+            .into_any_element(),
+        OpStatus::Failed { summary, detail } => {
+            let mut failure = div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_xs()
+                .text_color(palette.danger_ink)
+                .child(summary.clone());
+            if let Some(detail) = detail {
+                failure = failure
+                    .child(
+                        div()
+                            .id(id)
+                            .cursor_pointer()
+                            .text_color(palette.fg_muted)
+                            .on_click(on_toggle)
+                            .child(if details_open {
+                                "▾ Technical details"
+                            } else {
+                                "▸ Technical details"
+                            }),
+                    )
+                    .when(details_open, |this| {
+                        this.child(
+                            div()
+                                .mt_1()
+                                .font_family("monospace")
+                                .text_size(gpui::px(11.0))
+                                .text_color(palette.fg_muted)
+                                .child(detail.clone()),
+                        )
+                    });
             }
-        },
+            failure.into_any_element()
+        }
     }
 }

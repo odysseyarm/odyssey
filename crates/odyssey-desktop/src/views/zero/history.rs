@@ -3,12 +3,13 @@
 
 use std::collections::HashMap;
 
-use dioxus::prelude::*;
+use gpui::{Context, Entity, Task};
 use odyssey_hub_client::tracking_history::TrackingHistory;
 use odyssey_hub_common::events::TrackingEvent;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::hub::HubContext;
+use super::ZeroView;
+use crate::hub::Hub;
 
 /// Samples kept per device, about 2 seconds at 100 Hz.
 const TRACKING_HISTORY_CAP: usize = 200;
@@ -19,29 +20,33 @@ const MICROS_PER_MILLI: u32 = 1000;
 /// Recent tracking events, by device uuid.
 pub(super) type HistoryByDevice = HashMap<[u8; 6], TrackingHistory>;
 
-/// Buffers every tracking event the hub broadcasts, per device. Subscribes
-/// through the broadcast channel, which works across VirtualDom windows.
-pub(super) fn use_tracking_history(hub: Signal<HubContext>) -> Signal<HistoryByDevice> {
-    let mut history = use_signal(HistoryByDevice::new);
-    use_future(move || {
-        let mut receiver = hub.peek().subscribe_tracking();
-        async move {
-            loop {
-                match receiver.recv().await {
-                    Ok((device, event)) => {
-                        history
-                            .write()
-                            .entry(device.uuid)
-                            .or_insert_with(|| TrackingHistory::new(TRACKING_HISTORY_CAP))
-                            .push(event);
+fn record(history: &mut HistoryByDevice, uuid: [u8; 6], event: TrackingEvent) {
+    history
+        .entry(uuid)
+        .or_insert_with(|| TrackingHistory::new(TRACKING_HISTORY_CAP))
+        .push(event);
+}
+
+/// Buffers every tracking event the hub broadcasts into `ZeroView::history`.
+/// Nothing is repainted: the history is only read when a zero is sent.
+pub(super) fn follow_tracking(hub: &Entity<Hub>, cx: &mut Context<ZeroView>) -> Task<()> {
+    let mut receiver = hub.read(cx).subscribe_tracking();
+    cx.spawn(async move |this, cx| {
+        loop {
+            match receiver.recv().await {
+                Ok((device, event)) => {
+                    let recorded = this.update(cx, |zero, _| {
+                        record(&mut zero.history, device.uuid, event);
+                    });
+                    if recorded.is_err() {
+                        break;
                     }
-                    Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => break,
                 }
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
             }
         }
-    });
-    history
+    })
 }
 
 /// The buffered sample closest to the moment of the shot.

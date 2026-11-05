@@ -1,89 +1,122 @@
-//! The firmware state the Home page shares with every device row.
+//! The firmware manifest the Home page shares with every device row.
 
 use std::time::Duration;
 
 use backon::{ExponentialBuilder, Retryable as _};
-use dioxus::logger::tracing;
-use dioxus::prelude::*;
-use odyssey_hub_server::firmware::{self, FirmwareManifest};
+use gpui::{Context, Task};
+use odyssey_hub_server::firmware::{self, FirmwareChannel, FirmwareManifest};
+use tokio::sync::mpsc;
 
-use crate::components::FirmwareUpdateManager;
-use crate::components::firmware_update::{FIRMWARE_CHANNEL, ensure_firmware_channel_loaded};
+use crate::components::firmware_update::FirmwareChannelModel;
+use crate::runtime;
 
-/// How often the list of devices being updated is refreshed.
-const UPDATING_POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// The first wait after a failed manifest fetch; each retry doubles it.
 const MANIFEST_RETRY_START: Duration = Duration::from_secs(5);
 const MANIFEST_RETRY_MAX: Duration = Duration::from_secs(300);
 
-/// The firmware manifest, fetched once and shared across all device firmware
-/// update components, and why there is none, for the offline notice.
-#[derive(Clone, Copy)]
-pub(super) struct FirmwareManifestState {
-    pub(super) manifest: Signal<Option<FirmwareManifest>>,
-    pub(super) error: Signal<Option<String>>,
+enum Fetch {
+    Failed(String),
+    Done(FirmwareManifest),
 }
 
-/// Fetches the manifest for the selected channel, again whenever the channel
-/// changes.
+/// The firmware manifest for the selected channel, shared across all device
+/// firmware update rows, and why there is none, for the offline notice.
 ///
 /// Without the manifest no update is ever offered, so a failed fetch is
 /// retried for the whole session, backing off so an offline machine does not
-/// hammer the network.
-pub(super) fn use_firmware_manifest() -> FirmwareManifestState {
-    let mut manifest: Signal<Option<FirmwareManifest>> = use_signal(|| None);
-    let mut error: Signal<Option<String>> = use_signal(|| None);
+/// hammer the network. It is fetched again whenever the channel changes.
+pub(super) struct FirmwareManifestModel {
+    pub(super) manifest: Option<FirmwareManifest>,
+    pub(super) error: Option<String>,
+    channel: Option<FirmwareChannel>,
+    fetcher: Option<tokio::task::JoinHandle<()>>,
+    _receiver: Option<Task<()>>,
+    _channel_subscription: gpui::Subscription,
+}
 
-    use_future(ensure_firmware_channel_loaded);
-    use_resource(move || async move {
-        // Reading the signal here re-runs this when Settings changes it.
-        let Some(channel) = FIRMWARE_CHANNEL() else {
+impl FirmwareManifestModel {
+    pub(super) fn new(cx: &mut Context<'_, Self>) -> Self {
+        let channel_model = FirmwareChannelModel::global(cx);
+        let subscription = cx.observe(&channel_model, |this, model, cx| {
+            let channel = model.read(cx).channel();
+            if channel != this.channel {
+                this.restart(channel, cx);
+            }
+        });
+        let mut this = Self {
+            manifest: None,
+            error: None,
+            channel: None,
+            fetcher: None,
+            _receiver: None,
+            _channel_subscription: subscription,
+        };
+        this.restart(channel_model.read(cx).channel(), cx);
+        this
+    }
+
+    fn restart(&mut self, channel: Option<FirmwareChannel>, cx: &mut Context<'_, Self>) {
+        self.stop();
+        self.channel = channel;
+        self.manifest = None;
+        self.error = None;
+        cx.notify();
+        let Some(channel) = channel else {
             return;
         };
-        manifest.set(None);
-        error.set(None);
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
         let backoff = ExponentialBuilder::new()
             .with_factor(2.0)
             .with_min_delay(MANIFEST_RETRY_START)
             .with_max_delay(MANIFEST_RETRY_MAX)
             .without_max_times();
-        let Ok(fetched) = (|| firmware::fetch_manifest(channel))
-            .retry(backoff)
-            .notify(|e, _| {
-                error.set(Some(e.to_string()));
-                tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
-            })
-            .await
-        else {
-            return;
-        };
-        tracing::info!(
-            "Fetched {} firmware manifest version {}",
-            channel.name(),
-            fetched.version
-        );
-        error.set(None);
-        manifest.set(Some(fetched));
-    });
-
-    FirmwareManifestState { manifest, error }
-}
-
-/// The uuids of the devices being updated, refreshed while the page is open.
-/// The signal also re-renders the page when updates start and finish.
-pub(super) fn use_updating_uuids(manager: &FirmwareUpdateManager) -> Signal<Vec<[u8; 6]>> {
-    let mut updating_uuids = use_signal(Vec::<[u8; 6]>::new);
-    use_future({
-        let manager = manager.clone();
-        move || {
-            let manager = manager.clone();
-            async move {
-                loop {
-                    tokio::time::sleep(UPDATING_POLL_INTERVAL).await;
-                    updating_uuids.set(manager.get_all_updating());
+        self.fetcher = Some(runtime::spawn(async move {
+            let fetched = (|| firmware::fetch_manifest(channel))
+                .retry(backoff)
+                .notify(|e, _| {
+                    tracing::warn!("Failed to fetch firmware manifest, retrying: {}", e);
+                    let _ = sender.send(Fetch::Failed(e.to_string()));
+                })
+                .await;
+            if let Ok(fetched) = fetched {
+                tracing::info!(
+                    "Fetched {} firmware manifest version {}",
+                    channel.name(),
+                    fetched.version
+                );
+                let _ = sender.send(Fetch::Done(fetched));
+            }
+        }));
+        self._receiver = Some(cx.spawn(async move |this, cx| {
+            while let Some(fetch) = receiver.recv().await {
+                let applied = this.update(cx, |this, cx| {
+                    match fetch {
+                        Fetch::Failed(error) => this.error = Some(error),
+                        Fetch::Done(manifest) => {
+                            this.error = None;
+                            this.manifest = Some(manifest);
+                        }
+                    }
+                    cx.notify();
+                });
+                if applied.is_err() {
+                    break;
                 }
             }
+        }));
+    }
+
+    fn stop(&mut self) {
+        if let Some(fetcher) = self.fetcher.take() {
+            fetcher.abort();
         }
-    });
-    updating_uuids
+    }
 }
+
+impl Drop for FirmwareManifestModel {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+

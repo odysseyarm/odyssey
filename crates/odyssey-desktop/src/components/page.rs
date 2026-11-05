@@ -1,29 +1,26 @@
 //! The frame every sidebar page sits in, so they share one width, one heading
-//! style and one background.
+//! style and one background. Scrolls when the content is taller than the window.
 
-use dioxus::prelude::*;
+use gpui::{
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    StatefulInteractiveElement as _, Styled as _, div,
+};
 
-#[component]
-pub(crate) fn Page(
-    title: String,
-    /// One or two sentences under the title saying what the page is for.
-    description: Option<String>,
-    children: Element,
-) -> Element {
-    rsx! {
-        div {
-            class: "min-h-screen bg-canvas px-6 py-8",
-            div {
-                class: "mx-auto w-full max-w-2xl flex flex-col gap-4",
-                header {
-                    class: "flex flex-col gap-1",
-                    h1 { class: "text-2xl", {title} }
-                    if let Some(description) = description {
-                        p { class: "text-sm text-fg-muted", {description} }
-                    }
-                }
-                {children}
-            }
-        }
-    }
+use crate::components::ui;
+use crate::theme::Palette;
+
+/// `description` is one or two sentences under the title saying what the page
+/// is for.
+pub(crate) fn page(
+    id: &'static str,
+    p: Palette,
+    title: impl Into<SharedString>,
+    description: Option<SharedString>,
+    children: impl IntoIterator<Item = AnyElement>,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .size_full()
+        .overflow_y_scroll()
+        .child(ui::page(p, title, description, children))
 }

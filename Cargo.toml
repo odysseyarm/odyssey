@@ -187,20 +187,10 @@ uuid = "1.18.0"
 # cargo-run-bin only reads this from the workspace root.
 # https://github.com/dustinblackman/cargo-run-bin
 [workspace.metadata.bin]
-dioxus-cli = { version = "0.7.10", locked = true, bins = ["dx"] }
+cargo-packager = { version = "0.11.8", locked = true, bins = ["cargo-packager"] }
 
 [profile.dev.package."*"]
 opt-level = 3
-
-[profile.wasm-dev]
-inherits = "dev"
-opt-level = 1
-
-[profile.server-dev]
-inherits = "dev"
-
-[profile.android-dev]
-inherits = "dev"
 
 # opencv-ros-camera is deliberately unpinned here: odyssey-cv depends on the same
 # fork without a rev, and a rev here would make them two distinct

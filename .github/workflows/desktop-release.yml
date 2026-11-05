@@ -24,9 +24,6 @@ on:
 permissions:
   contents: read
 
-env:
-  DIOXUS_CLI_VERSION: 0.7.10
-
 jobs:
   check-version:
     name: Check tag matches crate version
@@ -83,40 +80,29 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-binstall
-      - name: Install dioxus-cli
-        run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
+      # cargo-packager, at the version pinned in [workspace.metadata.bin] in Cargo.toml.
+      - name: Install cargo-packager
+        run: cargo bin --install
       # Two installers come from this one job. They are the same app: the full
       # one is built without the `sdk-download` feature and carries Orbbec's camera
       # SDK, for customers who may only run offline software. Neither turns offline
       # mode on unless installed with OFFLINE_MODE=1. Only the app crate
-      # is rebuilt for it. `cargo xtask desktop prepare-orbbec` stages what each
-      # variant needs, and the WiX template reads the two environment variables
-      # set here.
+      # is rebuilt for it. `cargo xtask desktop bundle` stages what each variant
+      # needs (prepare-orbbec), builds the app and runs cargo-packager with the
+      # environment the WiX template reads.
       - name: Bundle the online installer
         shell: bash
-        env:
-          ODYSSEY_MSI_VARIANT: online
-          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\crates\odyssey-desktop\target\orbbec-stage
-        run: |
-          cargo xtask desktop prepare-orbbec online
-          cd crates/odyssey-desktop
-          dx bundle --desktop --package-types msi --out-dir dist/online
+        run: cargo xtask desktop bundle online
       - name: Bundle the full installer
         shell: bash
-        env:
-          ODYSSEY_MSI_VARIANT: full
-          ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\crates\odyssey-desktop\target\orbbec-stage
-        run: |
-          cargo xtask desktop prepare-orbbec full
-          cd crates/odyssey-desktop
-          dx bundle --desktop --package-types msi --no-default-features --out-dir dist/full
+        run: cargo xtask desktop bundle full
       - name: Collect the installers
         shell: bash
         run: |
           mkdir dist
           for variant in online full; do
             set -- crates/odyssey-desktop/dist/$variant/*.msi
-            if [ ! -f "$1" ]; then echo "dx bundle produced no $variant msi" >&2; exit 1; fi
+            if [ ! -f "$1" ]; then echo "cargo-packager produced no $variant msi" >&2; exit 1; fi
             suffix=""; [ "$variant" = full ] && suffix="-full"
             cp "$1" "dist/Odyssey-$VERSION-win-x64$suffix.msi"
           done
@@ -141,15 +127,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libudev-dev \
-            libdbus-1-dev libssl-dev pkg-config fuse3 mold \
-            libayatana-appindicator3-dev
+            gcc g++ clang cmake libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev \
+            libvulkan1 libudev-dev libdbus-1-dev pkg-config fuse3 mold
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           version: "26.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The workspace links a webview, a gRPC server and a tray, so linking is
+      # The workspace links a GPUI app and a gRPC server, so linking is
       # a real slice of the build; mold cuts it to a fraction of GNU ld.
       - name: Link with mold
         run: echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> "$GITHUB_ENV"
@@ -164,62 +150,37 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-binstall
-      - name: Install dioxus-cli
-        run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
+      # cargo-packager, at the version pinned in [workspace.metadata.bin] in Cargo.toml.
+      - name: Install cargo-packager
+        run: cargo bin --install
+      # cargo-packager packages a finished binary; it does not build one.
+      - name: Build
+        run: cargo build --release --package odyssey-desktop
+      # The libraries GPUI loads from the host (Wayland, xkbcommon, Vulkan and
+      # the EGL/GL driver stack) are excluded from the image through
+      # appimage.excludedLibs in crates/odyssey-desktop/Cargo.toml: a bundled
+      # copy shadows the host's and breaks Vulkan against its driver.
       - name: Bundle
         working-directory: crates/odyssey-desktop
-        run: dx bundle --desktop --package-types appimage
-      # Two defects in the bundler this image comes out of, both documented
-      # upstream in tauri (dx shells out to tauri-bundler):
-      #
-      #   - libwebkit2gtk is bundled but none of the helper binaries it
-      #     spawns, and their path is compiled into the library rather than
-      #     read from the environment, so the unpatched image only runs on a
-      #     host that already has webkit2gtk-4.1 at a matching version
-      #     (tauri-apps/tauri#12463).
-      #   - linuxdeploy sweeps in libwayland-client and the GL stack, which
-      #     must come from the host: against Mesa 25+ the bundled copies make
-      #     eglGetDisplay fail, WebKitWebProcess aborts, and the window never
-      #     appears with nothing printed (tauri-apps/tauri#15665, #15976).
-      #
-      # Unpack, add the helpers, drop the libraries that belong to the host,
-      # repack.
+        run: cargo bin cargo-packager --release --formats appimage --packages odyssey-desktop --out-dir dist
+      # Unpack the image to prove it is well formed and that none of the host
+      # libraries slipped in, so a silent packaging change cannot ship an image
+      # that dies on a clean machine.
       - name: Collect the AppImage
         run: |
           set -eu
-          img=$(find target/dx -name '*.AppImage' -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
-          if [ -z "$img" ]; then echo "dx bundle produced no AppImage" >&2; exit 1; fi
-
-          chmod +x "$img"
-          "$img" --appimage-extract >/dev/null
-          helpers=/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1
-          if [ ! -x "$helpers/WebKitNetworkProcess" ]; then
-            echo "no webkit helpers at $helpers" >&2; exit 1
-          fi
-          mkdir -p "squashfs-root$helpers"
-          cp -a "$helpers/." "squashfs-root$helpers/"
-
-          # The pkg2appimage excludelist calls these out: they are the ABI
-          # boundary with the host's graphics driver.
-          for lib in libwayland-client libwayland-cursor libwayland-egl \
-                     libxkbcommon libEGL libGL libGLX libGLdispatch libgbm \
-                     libdrm libglapi; do
-            rm -f squashfs-root/usr/lib/$lib.so*
-          done
-
-          curl -fsSLo /tmp/appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
+          set -- crates/odyssey-desktop/dist/*.AppImage
+          if [ ! -f "$1" ]; then echo "cargo-packager produced no AppImage" >&2; exit 1; fi
           mkdir -p dist
-          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run \
-            squashfs-root "dist/Odyssey-$VERSION-x86_64.AppImage"
+          cp "$1" "dist/Odyssey-$VERSION-x86_64.AppImage"
           chmod +x "dist/Odyssey-$VERSION-x86_64.AppImage"
 
-          # Prove the helpers made it in, so a silent repack failure cannot
-          # ship an image that dies on a clean machine.
-          "dist/Odyssey-$VERSION-x86_64.AppImage" --appimage-extract \
-            "usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess" >/dev/null
-          test -x "squashfs-root$helpers/WebKitNetworkProcess"
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/dist/Odyssey-$VERSION-x86_64.AppImage" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bin/odyssey-desktop
+          leaked=$(find squashfs-root -name 'libwayland-*' -o -name 'libxkbcommon*' -o -name 'libvulkan*' \
+            -o -name 'libEGL*' -o -name 'libGL.so*' -o -name 'libGLX*' -o -name 'libgbm*' -o -name 'libdrm*')
+          if [ -n "$leaked" ]; then echo "host libraries bundled:" >&2; echo "$leaked" >&2; exit 1; fi
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-appimage

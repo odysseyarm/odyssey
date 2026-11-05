@@ -12,12 +12,12 @@ const DIR: &str = "crates/odyssey-desktop";
 const REPO: &str = "odysseyarm/odyssey";
 const TAG_PREFIX: &str = "odyssey-desktop-v";
 
-/// Windows release recipes. dx bundles for the host platform only, so these
+/// Windows release recipes. cargo-packager bundles for the host platform only, so these
 /// run on the Windows box.
 #[derive(clap::Subcommand)]
 pub(crate) enum Cmd {
     /// Stage what the MSI needs for one variant: writes the WiX fragment
-    /// Dioxus.toml points at and, for full, the SDK files and EULA it
+    /// the `wix` section of crates/odyssey-desktop/Cargo.toml points at and, for full, the SDK files and EULA it
     /// installs. The version, URLs, hashes and file list come only from
     /// crates/odyssey-desktop/orbbec-sdk.json, which the app reads too.
     PrepareOrbbec {
@@ -89,21 +89,28 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
 fn bundle(variant: Variant) -> eros::Result<()> {
     let stage = orbbec::prepare(variant, &orbbec::default_stage(), None, None)?;
 
-    let out_dir = format!("dist/{}", variant.name());
-    let mut dx = cmd::at(DIR, "cargo");
-    dx.args(["bin", "dx", "bundle", "--desktop", "--package-types", "msi"])
-        .args(["--out-dir", &out_dir])
-        // The installer template reads these (see wix/main.wxs).
-        .env("ODYSSEY_MSI_VARIANT", variant.name())
-        .env("ODYSSEY_ORBBEC_STAGE", &stage);
+    // cargo-packager packages a finished binary, it does not build one.
+    let mut build = cmd::at(DIR, "cargo");
+    build.args(["build", "--release", "--package", "odyssey-desktop"]);
     // The full app is the same code without the SDK downloader.
     if let Variant::Full = variant {
-        dx.arg("--no-default-features");
+        build.arg("--no-default-features");
     }
-    cmd::run(&mut dx)?;
+    cmd::run(&mut build)?;
+
+    let out_dir = format!("dist/{}", variant.name());
+    let mut packager = cmd::at(DIR, "cargo");
+    packager
+        .args(["bin", "cargo-packager", "--release", "--formats", "wix"])
+        .args(["--packages", "odyssey-desktop", "--out-dir", &out_dir])
+        // The installer template reads these (see wix/main.wxs); cargo-packager
+        // only forwards variables with this prefix to WiX.
+        .env("CARGO_PACKAGER_ODYSSEY_MSI_VARIANT", variant.name())
+        .env("CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE", &stage);
+    cmd::run(&mut packager)?;
 
     let Some(msi) = first_msi(&cmd::root().join(DIR).join(out_dir))? else {
-        eros::bail!("dx bundle produced no msi");
+        eros::bail!("cargo-packager produced no msi");
     };
     println!("{}", msi.display());
     Ok(())

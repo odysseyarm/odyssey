@@ -1,67 +1,39 @@
 //! Choosing the screen, then calibrating it or zeroing on it.
 
-use dioxus::desktop::tao::monitor::MonitorHandle;
-use dioxus::desktop::tao::window::Fullscreen;
-use dioxus::desktop::{Config, WindowBuilder, WindowCloseBehaviour};
-use dioxus::prelude::*;
-use dioxus_router::Link;
+use gpui::{AnyElement, Context, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use crate::Route;
-use crate::components::crosshair_manager::TrackingSender;
-use crate::components::{ScreenPicker, use_monitor_selection};
-use crate::hub::HubContext;
-use crate::views::zero::{Zero, ZeroProps};
+use super::{HomeEvent, HomeView};
+use crate::components::ui::{self, ButtonKind, button};
+use crate::theme::Palette;
 
-#[component]
-pub(super) fn ScreenActions(hub: Signal<HubContext>) -> Element {
-    let monitor_selection = use_monitor_selection();
-    let no_devices = (hub().devices)().is_empty();
-    rsx! {
-        div {
-            class: "card flex flex-col gap-3",
-
-            ScreenPicker { selection: monitor_selection }
-
-            div {
-                class: "flex flex-row justify-end gap-3",
-                Link {
-                    to: Route::Calibrate {},
-                    class: "btn btn-secondary shrink-0",
-                    "Calibrate screen"
-                }
-                button {
-                    class: "btn btn-primary shrink-0",
-                    r#type: "button",
-                    disabled: no_devices || monitor_selection.selected().is_none(),
-                    onclick: move |_| {
-                        if let Some(monitor) = monitor_selection.selected_handle() {
-                            open_zero_window(hub, monitor);
-                        }
-                    },
-                    "Zero"
-                }
-            }
-        }
+impl HomeView {
+    pub(super) fn screen_actions(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let no_devices = self.hub.read(cx).devices.is_empty();
+        let selected = self.selection.read(cx).selected_key();
+        let selection = self.selection.clone();
+        ui::card(p)
+            .gap_3()
+            .child(self.picker.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap_3()
+                    .child(
+                        button("calibrate-screen", "Calibrate screen", ButtonKind::Secondary, p)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(HomeEvent::OpenCalibrate))),
+                    )
+                    .child(
+                        button("zero", "Zero", ButtonKind::Primary, p)
+                            .disabled(no_devices || selected.is_none())
+                            .on_click(move |_, _, cx| {
+                                if let Some(monitor) = selection.read(cx).selected_key() {
+                                    crate::views::zero::open(monitor, cx);
+                                }
+                            }),
+                    ),
+            )
+            .into_any_element()
     }
-}
-
-/// Opens the Zero window fullscreen on `monitor`.
-fn open_zero_window(hub: Signal<HubContext>, monitor: MonitorHandle) {
-    let tracking_sender = TrackingSender(hub.peek().tracking_events.clone());
-    let dom = VirtualDom::new_with_props(
-        Zero,
-        ZeroProps {
-            hub,
-            tracking_sender,
-        },
-    );
-    let config = Config::default()
-        .with_menu(None)
-        .with_close_behaviour(WindowCloseBehaviour::WindowCloses)
-        .with_window(
-            WindowBuilder::new()
-                .with_position(monitor.position())
-                .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor)))),
-        );
-    dioxus::desktop::window().new_window(dom, config);
 }

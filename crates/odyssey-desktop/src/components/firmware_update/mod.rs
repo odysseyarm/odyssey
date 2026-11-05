@@ -1,8 +1,8 @@
 //! Firmware update UI for individual devices.
 //!
 //! Update state lives in a shared `Arc<Mutex<HashMap>>`. The update itself runs
-//! on `tokio::spawn`, outside any component's lifetime, and components poll the
-//! shared state to redraw. Its claim follows the future through cancellation;
+//! on the tokio runtime, outside any view's lifetime, and views redraw when the
+//! manager's ticker fires. Its claim follows the future through cancellation;
 //! task panics become failures rather than leaving a device claimed forever.
 //! Every image must be nonempty and match its manifest size before DFU starts.
 
@@ -13,7 +13,6 @@ mod downloads;
 mod firmware_channel;
 mod netcore;
 mod poll_window;
-mod progress_bar;
 mod update_available;
 mod update_check;
 mod update_manager;
@@ -22,7 +21,7 @@ mod update_state;
 mod update_task;
 mod updating_device_row;
 
-pub(crate) use device_firmware_update::DeviceFirmwareUpdate;
-pub(crate) use firmware_channel::{FIRMWARE_CHANNEL, ensure_firmware_channel_loaded};
-pub(crate) use update_manager::FirmwareUpdateManager;
-pub(crate) use updating_device_row::UpdatingDeviceRow;
+pub(crate) use device_firmware_update::device_firmware_update;
+pub(crate) use firmware_channel::FirmwareChannelModel;
+pub(crate) use update_manager::{FirmwareUpdateManager, UpdateTicker};
+pub(crate) use updating_device_row::updating_device_row;

@@ -1,9 +1,10 @@
 //! Stages what the MSI needs for one build variant.
 //!
-//! Writes `<stage>/orbbec.wxs`, the WiX fragment `Dioxus.toml` points at, and for the
-//! full variant also the files it installs. `dx bundle` runs afterwards with
-//! `ODYSSEY_MSI_VARIANT=<variant>` and `ODYSSEY_ORBBEC_STAGE=<stage>` (absolute; the
-//! template reads EULA.rtf from it).
+//! Writes `<stage>/orbbec.wxs`, the WiX fragment the `wix` section of
+//! crates/odyssey-desktop/Cargo.toml points at, and for the full variant also the files it
+//! installs. `cargo-packager` runs afterwards with
+//! `CARGO_PACKAGER_ODYSSEY_MSI_VARIANT=<variant>` and
+//! `CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE=<stage>` (absolute; the template reads EULA.rtf from it).
 //!
 //! online   A fragment with a hidden, empty feature. The installer carries nothing; the
 //!          app downloads the SDK itself (see src/sdk_install/).

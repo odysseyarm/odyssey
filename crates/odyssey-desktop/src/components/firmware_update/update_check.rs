@@ -1,4 +1,3 @@
-use dioxus::logger::tracing;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 
@@ -20,11 +19,13 @@ pub(super) fn format_version(version: [u16; 3]) -> String {
     format!("{}.{}.{}", version[0], version[1], version[2])
 }
 
-/// Whether the device is sitting in the DFU bootloader: DFU without CONTROL.
-/// Application-mode devices expose a DFU interface too.
+/// DFU recovery entry, not a control-capable or DFU-only running application.
 pub(super) fn is_in_bootloader(device: &Device) -> bool {
     device.capabilities.contains(DeviceCapabilities::DFU)
         && !device.capabilities.contains(DeviceCapabilities::CONTROL)
+        && !device
+            .capabilities
+            .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
 }
 
 /// What the manifest offers `device`, as the state its row should show.
@@ -39,8 +40,6 @@ pub(super) fn check_for_update(
     let device_version = device.firmware_version;
     let is_dfu_device = is_in_bootloader(device);
 
-    // The control protocol always reads a version, so [0,0,0] only comes from a
-    // device already in the DFU bootloader.
     if device.product_id == 0 || device_version == [0, 0, 0] && !is_dfu_device {
         return FirmwareUpdateState::Idle;
     }
@@ -97,9 +96,9 @@ pub(super) fn check_for_update(
     let available_version = available_fw.version.clone();
     let device_uuid = device.uuid;
 
-    // A device in the DFU bootloader needs flashing to recover, so it always
-    // gets the button. Anything else needs CONTROL to be flashed over USB.
-    if is_dfu_device || device.capabilities.contains(DeviceCapabilities::CONTROL) {
+    if device.capabilities.contains(DeviceCapabilities::DFU)
+        || device.capabilities.contains(DeviceCapabilities::CONTROL)
+    {
         if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
             if is_dfu_device {
                 tracing::info!(
@@ -142,5 +141,57 @@ pub(super) fn check_for_update(
     FirmwareUpdateState::NeedsUsbConnection {
         current: device_version,
         available: available_version,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use odyssey_hub_common::device::{EventsTransport, Transport};
+
+    use super::*;
+
+    #[test]
+    fn dfu_only_runtime_is_updatable_but_unknown_version_never_counts_as_recovery() {
+        let manifest: FirmwareManifest = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "devices": { "marker-control-board": { "firmwares": [{
+                "version": "0.1.1", "requires_bootloader": 1, "requires_netcore": 0,
+                "min_desktop": "0.7.3",
+                "files": { "app": { "sha256": "unused", "size": 1 } }
+            }] } }
+        }))
+        .unwrap();
+        let mut device = Device {
+            uuid: [1; 6],
+            transport: Transport::Usb,
+            capabilities: DeviceCapabilities::new(
+                DeviceCapabilities::DFU | DeviceCapabilities::DFU_RUNTIME_ONLY,
+            ),
+            firmware_version: [0, 1, 0],
+            events_transport: EventsTransport::Wired,
+            events_connected: false,
+            product_id: 0x5213,
+            name: [0; 33],
+            netcore_release: 0,
+        };
+        assert!(!is_in_bootloader(&device));
+        assert!(matches!(
+            check_for_update(&manifest, &device, &FirmwareUpdateState::Idle),
+            FirmwareUpdateState::Available { .. }
+        ));
+        device.firmware_version = [0, 0, 0];
+        assert!(!is_in_bootloader(&device));
+        assert!(matches!(
+            check_for_update(&manifest, &device, &FirmwareUpdateState::Idle),
+            FirmwareUpdateState::Idle
+        ));
+        device
+            .capabilities
+            .remove(DeviceCapabilities::DFU_RUNTIME_ONLY);
+        assert!(is_in_bootloader(&device));
+        assert!(matches!(
+            check_for_update(&manifest, &device, &FirmwareUpdateState::Idle),
+            FirmwareUpdateState::Available { .. }
+        ));
     }
 }

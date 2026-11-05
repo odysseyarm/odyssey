@@ -9,7 +9,6 @@ use std::fs::{self, File};
 use std::io;
 use std::path::Path;
 
-use dioxus::logger::tracing;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::{EnvFilter, fmt};

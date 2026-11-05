@@ -1,22 +1,25 @@
 //! Step 5: the result. The camera picture with the fitted screen outline and
 //! marker positions, the measured size, a green/amber/red verdict, and Save.
 
-use dioxus::prelude::*;
+use gpui::{
+    AnyElement, App, Div, Entity, FontWeight, IntoElement as _, ParentElement as _, Styled as _,
+    div,
+};
 use odyssey_autocalib::session::{EdgeCheck, SizeCheck, SizeSource};
 
 use super::notices::{
-    DisagreementNotice, OverscanNotice, ReplaceConfirmation, SaveError, UsingMeasuredNotice,
+    disagreement_notice, overscan_notice, replace_confirmation, save_error, using_measured_notice,
 };
-use super::result_overlay::{ResultOverlay, outline_color};
-use crate::components::wizard::{Icon, StatusBanner, Tone};
-use crate::views::calibrate::automatic::attempt_button::SaveAttempt;
+use super::result_overlay::{outline_color, result_overlay};
+use crate::components::ui::{ButtonKind, button, card};
+use crate::components::wizard::{Icon, Tone, status_banner};
+use crate::theme::Palette;
+use crate::views::calibrate::automatic::attempt_button::save_attempt;
 use crate::views::calibrate::automatic::hints::circle_text;
 use crate::views::calibrate::automatic::kind::source_label;
 use crate::views::calibrate::automatic::quality::{Verdict, assess};
 use crate::views::calibrate::automatic::screens::screen_label;
-use crate::views::calibrate::automatic::ui::{
-    Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage, focus_primary,
-};
+use crate::views::calibrate::automatic::ui::{act, details, fact, step_page};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 fn tone(verdict: Verdict) -> Tone {
@@ -37,12 +40,17 @@ fn headline(verdict: Verdict) -> (Icon, &'static str) {
 
 /// The save and redo buttons, which swap places with the verdict: the
 /// recommended action sits on the right. Neither action runs during a save.
-#[component]
-fn ReviewFooter(wizard: Wizard, poor: bool, saving: bool, confirming: bool) -> Element {
-    let (save_class, redo_class) = if poor {
-        (SECONDARY_BUTTON, PRIMARY_BUTTON)
+fn review_footer(
+    p: Palette,
+    wizard: &Entity<Wizard>,
+    poor: bool,
+    saving: bool,
+    confirming: bool,
+) -> Vec<AnyElement> {
+    let (save_kind, redo_kind) = if poor {
+        (ButtonKind::Secondary, ButtonKind::Primary)
     } else {
-        (PRIMARY_BUTTON, SECONDARY_BUTTON)
+        (ButtonKind::Primary, ButtonKind::Secondary)
     };
     let save_label = if saving {
         "Saving…"
@@ -51,157 +59,176 @@ fn ReviewFooter(wizard: Wizard, poor: bool, saving: bool, confirming: bool) -> E
     } else {
         "Save"
     };
-    let save_id = (!poor).then_some(PRIMARY_ID);
-    let redo_id = poor.then_some(PRIMARY_ID);
-    let save_button = rsx! {
-        button {
-            id: save_id,
-            class: save_class,
-            r#type: "button",
-            disabled: saving || confirming,
-            onclick: move |_| wizard.save(false),
-            {save_label}
-        }
-    };
-    let redo_button = rsx! {
-        button {
-            id: redo_id,
-            class: redo_class,
-            r#type: "button",
-            disabled: saving,
-            onclick: move |_| wizard.begin_position(),
-            "Redo"
-        }
-    };
+    let save_button = button("save", save_label, save_kind, p)
+        .disabled(saving || confirming)
+        .on_click(act(wizard, |w, cx| w.save(false, cx)))
+        .into_any_element();
+    let redo_button = button("redo", "Redo", redo_kind, p)
+        .disabled(saving)
+        .on_click(act(wizard, |w, cx| w.begin_position(cx)))
+        .into_any_element();
     if poor {
-        rsx! { {save_button} {redo_button} }
+        vec![save_button, redo_button]
     } else {
-        rsx! { {redo_button} {save_button} }
+        vec![redo_button, save_button]
     }
 }
 
 /// The monitor's name, for "Will be saved as".
-fn selected_monitor_name(wizard: Wizard) -> String {
-    wizard
-        .monitors
-        .monitors()
-        .get(wizard.monitors.selected().unwrap_or(usize::MAX))
-        .map_or_else(
-            || "this screen".into(),
-            |monitor| monitor.display_name().to_string(),
-        )
+fn selected_monitor_name(wizard: &Wizard, cx: &App) -> String {
+    let monitors = wizard.monitors.read(cx);
+    monitors
+        .selected()
+        .and_then(|index| monitors.monitors().get(index))
+        .map_or_else(|| "this screen".into(), |monitor| monitor.display_name().to_string())
 }
 
-#[component]
-pub fn ReviewStep(wizard: Wizard) -> Element {
-    // Follow the selected size's verdict: Enter saves a clearly good result or
-    // redoes a clearly bad one. Amber gets no default: the tech reads first.
-    use_effect(move || {
-        let use_measured = *wizard.use_measured.read();
-        let verdict = wizard
-            .finished
-            .read()
-            .as_ref()
-            .map(|f| assess(&f.outcome(use_measured).measures).verdict);
-        if matches!(verdict, Some(Verdict::Good | Verdict::Poor)) {
-            focus_primary();
-        }
-    });
-    let Some(finished) = wizard.finished.read().clone() else {
-        return rsx! {};
+fn stat_card(p: Palette) -> Div {
+    card(p).p_4()
+}
+
+pub(in crate::views::calibrate::automatic) fn review_step(
+    p: Palette,
+    wizard: &Entity<Wizard>,
+    details_open: &Entity<bool>,
+    difference_open: &Entity<bool>,
+    cx: &App,
+) -> Div {
+    let state = wizard.read(cx);
+    let Some(finished) = state.finished.clone() else {
+        return div();
     };
-    let use_measured = *wizard.use_measured.read();
+    let use_measured = state.use_measured;
     let outcome = finished.outcome(use_measured);
     let quality = assess(&outcome.measures);
     let disagreement = outcome.size_check.filter(SizeCheck::disagrees);
     let can_use_measured = finished.measured.is_some();
     let source = source_label(outcome.size_source, finished.size_origin);
-    let (icon, title) = headline(quality.verdict);
+    let (glyph, title) = headline(quality.verdict);
     let poor = quality.verdict == Verdict::Poor;
-    let screen = screen_label(wizard.screen_id());
-    let confirming = *wizard.confirm_replace.read();
-    let saving = *wizard.saving.read();
-    let save_error = wizard.save_error.read().clone();
-    let monitor = selected_monitor_name(wizard);
+    let screen = screen_label(state.screen_id());
+    let confirming = state.confirm_replace;
+    let saving = state.saving;
+    let monitor = selected_monitor_name(state, cx);
     let camera_sized_and_cropped = outcome.size_source == SizeSource::Measured
         && matches!(outcome.edges, EdgeCheck::Cropped { .. });
 
-    rsx! {
-        StepPage {
-            title: "Check the result",
-            subtitle: "This is what the camera measured.",
-            footer: rsx! { ReviewFooter { wizard, poor, saving, confirming } },
-
-            StatusBanner {
-                tone: tone(quality.verdict),
-                icon,
-                title: title,
-                detail: quality.advice(),
-            }
-
-            if let Some(check) = disagreement {
-                DisagreementNotice { wizard, check, size_origin: finished.size_origin, can_use_measured }
-            }
-            if camera_sized_and_cropped {
-                OverscanNotice {}
-            }
-            if use_measured && can_use_measured {
-                UsingMeasuredNotice { wizard }
-            }
-
-            ResultOverlay {
-                image: finished.image.clone(),
-                width: finished.width,
-                height: finished.height,
-                screen_quad: outcome.screen_quad,
-                markers: outcome.markers,
-                outline: outline_color(quality.verdict),
-            }
-
-            div {
-                class: "grid grid-cols-2 gap-3",
-                div {
-                    class: "card p-4",
-                    div { class: "text-sm text-fg-muted", "Screen size" }
-                    div {
-                        class: "text-2xl font-semibold text-fg-strong",
-                        "{outcome.diagonal_in:.1} inches"
-                    }
-                    div {
-                        class: "text-sm text-fg-muted",
-                        "{outcome.size_m[0] * 100.0:.0} × {outcome.size_m[1] * 100.0:.0} cm"
-                    }
-                    div { class: "mt-1 text-sm font-medium text-fg", {source} }
-                }
-                div {
-                    class: "card p-4",
-                    div { class: "text-sm text-fg-muted", "Will be saved as" }
-                    div { class: "text-2xl font-semibold text-fg-strong", {screen.as_str()} }
-                    div { class: "truncate text-sm text-fg-muted", {monitor} }
-                }
-            }
-
-            if confirming {
-                ReplaceConfirmation { wizard, screen }
-            }
-
-            if let Some(error) = save_error {
-                SaveError { error }
-            }
-
-            Details {
-                for check in quality.checks.iter() {
-                    Fact { key: "{check.label}", label: check.label.to_string(), value: check.value.clone() }
-                }
-                Fact {
-                    label: "Aligned to gravity",
-                    value: if outcome.gravity_aligned { "yes".to_string() } else { "no (camera has no motion sensor data)".to_string() },
-                }
-                if let Some(circle) = outcome.seed_circle {
-                    Fact { label: "Circle through markers 1, 2 and 3", value: circle_text(&circle) }
-                }
-            }
-            SaveAttempt { wizard }
-        }
+    let mut content = vec![
+        status_banner(p, tone(quality.verdict), glyph, title, quality.advice()).into_any_element(),
+    ];
+    if let Some(check) = disagreement {
+        content.push(disagreement_notice(
+            p,
+            wizard,
+            &check,
+            finished.size_origin,
+            can_use_measured,
+            difference_open,
+            cx,
+        ));
     }
+    if camera_sized_and_cropped {
+        content.push(overscan_notice(p));
+    }
+    if use_measured && can_use_measured {
+        content.push(using_measured_notice(p, wizard, cx));
+    }
+
+    content.push(
+        result_overlay(
+            p,
+            finished.image.clone(),
+            finished.width,
+            finished.height,
+            outcome.screen_quad,
+            outcome.markers,
+            outline_color(p, quality.verdict),
+        )
+        .into_any_element(),
+    );
+
+    content.push(
+        div()
+            .grid()
+            .grid_cols(2)
+            .gap_3()
+            .child(
+                stat_card(p)
+                    .child(div().text_sm().text_color(p.fg_muted).child("Screen size"))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.fg_strong)
+                            .child(format!("{:.1} inches", outcome.diagonal_in)),
+                    )
+                    .child(div().text_sm().text_color(p.fg_muted).child(format!(
+                        "{:.0} × {:.0} cm",
+                        outcome.size_m[0] * 100.0,
+                        outcome.size_m[1] * 100.0
+                    )))
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.fg)
+                            .child(source),
+                    ),
+            )
+            .child(
+                stat_card(p)
+                    .child(div().text_sm().text_color(p.fg_muted).child("Will be saved as"))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.fg_strong)
+                            .child(screen.clone()),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .text_color(p.fg_muted)
+                            .child(monitor),
+                    ),
+            )
+            .into_any_element(),
+    );
+
+    if confirming {
+        content.push(replace_confirmation(p, wizard, &screen, cx));
+    }
+    if let Some(error) = state.save_error.as_deref() {
+        content.push(save_error(p, error).into_any_element());
+    }
+
+    let mut facts: Vec<AnyElement> = quality
+        .checks
+        .iter()
+        .map(|check| fact(p, check.label, check.value.clone()))
+        .collect();
+    facts.push(fact(
+        p,
+        "Aligned to gravity",
+        if outcome.gravity_aligned {
+            "yes"
+        } else {
+            "no (camera has no motion sensor data)"
+        },
+    ));
+    if let Some(circle) = outcome.seed_circle {
+        facts.push(fact(p, "Circle through markers 1, 2 and 3", circle_text(&circle)));
+    }
+    content.push(details("review-details", p, "Details", facts, details_open, cx).into_any_element());
+    content.push(save_attempt(p, wizard, state).into_any_element());
+
+    step_page(
+        p,
+        "Check the result",
+        Some("This is what the camera measured.".into()),
+        content,
+        review_footer(p, wizard, poor, saving, confirming),
+    )
 }

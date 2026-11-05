@@ -72,7 +72,6 @@ fn run_session(
             SessionEvent::Opened | SessionEvent::Progress(_) => {}
             SessionEvent::Preview(frame) => {
                 worker.frame_consumed();
-                assert!(frame.image.starts_with("data:image/jpeg;base64,"));
                 let ready =
                     frame.hint == Hint::Ready && frame.ready_for >= Duration::from_millis(300);
                 if (ready || measure_anyway) && !measuring {
@@ -183,7 +182,7 @@ fn a_session_without_a_declared_size_measures_and_releases_the_camera() {
     let Ended::Finished(f) = run_session(demo(), SessionOptions::default(), None, false) else {
         panic!("failed")
     };
-    assert!(f.image.starts_with("data:image/jpeg"));
+    assert!(f.width > 0 && f.height > 0);
     assert!(
         (f.primary.diagonal_in - DEMO_DIAGONAL_IN).abs() < 0.5,
         "{}",

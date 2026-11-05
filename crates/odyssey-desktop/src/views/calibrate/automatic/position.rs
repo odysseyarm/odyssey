@@ -3,18 +3,21 @@
 
 use std::time::Duration;
 
-use dioxus::prelude::*;
+use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
+use gpui::{
+    AppContext as _,    AnyElement, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Window, div,
+};
 use odyssey_autocalib::session::Hint;
 
 use super::hints::{OVERSCAN_HELP, screen_hint};
 use super::settings::{COLOR_EXPOSURE_RANGE_US, COLOR_EXPOSURE_STEP_US};
-use super::ui::{
-    CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
-    focus_primary,
-};
+use super::ui::{act, camera_placeholder, details, fact, open_state, step_page};
 use super::wizard::Wizard;
 use super::worker::PreviewFrame;
-use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
+use crate::components::ui::{ButtonKind, button, card};
+use crate::components::wizard::{FrameSlot, Icon, Tone, overlay_image, slider, status_banner};
+use crate::theme::{Palette, palette};
 
 /// How long the brightness slider rests before the stream restarts with it.
 const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(450);
@@ -28,122 +31,153 @@ fn exposure_percent(us: u32) -> u32 {
     (us.clamp(lo, hi) - lo) * 100 / (hi - lo)
 }
 
-#[component]
-pub fn PositionStep(wizard: Wizard) -> Element {
-    let same_monitor = *wizard.same_monitor.read();
-    let ready = use_memo(move || wizard.position_ready());
-    let has_frame = use_memo(move || wizard.preview.read().is_some());
-    let mut generation = use_signal(|| 0u64);
+pub(super) struct PositionStep {
+    wizard: Entity<Wizard>,
+    exposure: Entity<SliderState>,
+    /// Bumped on every slider movement; a debounce that finds it changed gives up.
+    generation: u64,
+    frame: FrameSlot,
+    _subscriptions: Vec<Subscription>,
+}
 
-    // The primary button becomes available while the tech holds the camera, so
-    // Enter is the natural next move.
-    use_effect(move || {
-        let ready_now = if same_monitor { has_frame() } else { ready() };
-        if ready_now {
-            focus_primary();
-        }
-    });
-
-    let exposure = *wizard.color_exposure.read();
-    let restarting = *wizard.restarting.read();
-    let subtitle = if same_monitor {
-        "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
-    } else {
-        "Hold the camera in front of the screen so the whole dot pattern is in view."
-    };
-
-    rsx! {
-        StepPage {
-            title: "Point the camera at the screen",
-            subtitle,
-            footer: rsx! {
-                button {
-                    class: SECONDARY_BUTTON,
-                    r#type: "button",
-                    onclick: move |_| wizard.back_to_setup(),
-                    "Back"
-                }
-                if same_monitor {
-                    button {
-                        id: PRIMARY_ID,
-                        class: PRIMARY_BUTTON,
-                        r#type: "button",
-                        disabled: !has_frame(),
-                        onclick: move |_| wizard.start_countdown(),
-                        "Start"
-                    }
-                } else {
-                    button {
-                        id: PRIMARY_ID,
-                        class: PRIMARY_BUTTON,
-                        r#type: "button",
-                        disabled: !ready(),
-                        onclick: move |_| wizard.measure_screen(),
-                        "Next"
-                    }
-                }
-            },
-
-            Banner { wizard }
-
-            LivePreview { wizard }
-
-            div {
-                class: "card p-4",
-                Slider {
-                    id: "color-exposure",
-                    label: "Brightness",
-                    value: exposure,
-                    min: *COLOR_EXPOSURE_RANGE_US.start(),
-                    max: *COLOR_EXPOSURE_RANGE_US.end(),
-                    step: COLOR_EXPOSURE_STEP_US,
-                    value_text: if restarting { "Applying…".to_string() } else { format!("{}%", exposure_percent(exposure)) },
-                    help: "If the dots look washed out or too faint, adjust this until they are crisp white dots on black.",
-                    oninput: move |us| {
-                        wizard.set_color_exposure(us);
-                        let this = *generation.peek() + 1;
-                        generation.set(this);
-                        spawn(async move {
-                            tokio::time::sleep(EXPOSURE_DEBOUNCE).await;
-                            // A later movement of the slider supersedes this one.
-                            if *generation.peek() == this {
-                                wizard.restart_camera();
-                            }
-                        });
-                    },
-                }
-            }
-
-            PositionDetails { wizard }
+impl PositionStep {
+    pub(super) fn new(wizard: Entity<Wizard>, cx: &mut Context<Self>) -> Self {
+        let exposure = cx.new(|_| {
+            SliderState::new()
+                .max(*COLOR_EXPOSURE_RANGE_US.end() as f32)
+                .min(*COLOR_EXPOSURE_RANGE_US.start() as f32)
+                .step(COLOR_EXPOSURE_STEP_US as f32)
+        });
+        let subscriptions = vec![
+            cx.observe(&wizard, |_, _, cx| cx.notify()),
+            cx.subscribe(&exposure, |this, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(SliderValue::Single(value)) = event else {
+                    return;
+                };
+                let us = value.round().max(0.0) as u32;
+                this.wizard.update(cx, |wizard, cx| wizard.set_color_exposure(us, cx));
+                this.generation += 1;
+                let mine = this.generation;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(EXPOSURE_DEBOUNCE).await;
+                    this.update(cx, |this, cx| {
+                        // A later movement of the slider supersedes this one.
+                        if this.generation == mine {
+                            this.wizard.update(cx, |wizard, cx| wizard.restart_camera(cx));
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }),
+        ];
+        Self {
+            wizard,
+            exposure,
+            generation: 0,
+            frame: FrameSlot::default(),
+            _subscriptions: subscriptions,
         }
     }
 }
 
-#[component]
-fn Banner(wizard: Wizard) -> Element {
-    let same_monitor = *wizard.same_monitor.read();
-    let preview = wizard.preview.read();
+impl Render for PositionStep {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let wizard = self.wizard.clone();
+        let details_open = open_state("position-details", window, cx);
+        let target = SliderValue::Single(wizard.read(cx).color_exposure as f32);
+        if self.exposure.read(cx).value() != target {
+            self.exposure.update(cx, |slider, cx| slider.set_value(target, window, cx));
+        }
+        let state = wizard.read(cx);
+        let same_monitor = state.same_monitor;
+        let ready = state.position_ready();
+        let has_frame = state.preview.is_some();
+        let exposure = state.color_exposure;
+        let restarting = state.restarting;
+        let camera = state.camera().map(|c| c.name).unwrap_or_default();
+        self.frame.show(state.preview.as_ref().map(|f| &f.image), window);
 
-    if same_monitor {
-        return rsx! {
-            StatusBanner {
-                tone: if preview.is_some() { Tone::Good } else { Tone::Attention },
-                icon: if preview.is_some() { Icon::Camera } else { Icon::Viewfinder },
-                title: if preview.is_some() { "Aim the camera at the screen" } else { "Starting the camera…" },
-                detail: "The dot pattern appears after a short countdown, so there is nothing to line up yet. Make sure the whole screen is in the picture.",
-            }
+        let subtitle = if same_monitor {
+            "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
+        } else {
+            "Hold the camera in front of the screen so the whole dot pattern is in view."
         };
+
+        let primary = if same_monitor {
+            button("start", "Start", ButtonKind::Primary, p)
+                .disabled(!has_frame)
+                .on_click(act(&wizard, |w, cx| w.start_countdown(cx)))
+        } else {
+            button("next", "Next", ButtonKind::Primary, p)
+                .disabled(!ready)
+                .on_click(act(&wizard, |w, cx| w.measure_screen(cx)))
+        };
+        let footer = vec![
+            button("back", "Back", ButtonKind::Secondary, p)
+                .on_click(act(&wizard, |w, cx| w.back_to_setup(cx)))
+                .into_any_element(),
+            primary.into_any_element(),
+        ];
+
+        let value_text = if restarting {
+            "Applying…".to_string()
+        } else {
+            format!("{}%", exposure_percent(exposure))
+        };
+        let content = vec![
+            banner(p, state),
+            live_preview(p, state),
+            card(p)
+                .p_4()
+                .child(slider(
+                    p,
+                    &self.exposure,
+                    "Brightness",
+                    value_text,
+                    Some("If the dots look washed out or too faint, adjust this until they are crisp white dots on black."),
+                ))
+                .into_any_element(),
+            position_details(p, state, camera, exposure, &details_open, cx),
+        ];
+
+        step_page(
+            p,
+            "Point the camera at the screen",
+            Some(subtitle.into()),
+            content,
+            footer,
+        )
+    }
+}
+
+fn banner(p: Palette, wizard: &Wizard) -> AnyElement {
+    let preview = wizard.preview.as_ref();
+    if wizard.same_monitor {
+        return status_banner(
+            p,
+            if preview.is_some() { Tone::Good } else { Tone::Attention },
+            if preview.is_some() { Icon::Camera } else { Icon::Viewfinder },
+            if preview.is_some() {
+                "Aim the camera at the screen"
+            } else {
+                "Starting the camera…"
+            },
+            "The dot pattern appears after a short countdown, so there is nothing to line up yet. Make sure the whole screen is in the picture.",
+        )
+        .into_any_element();
     }
 
-    let Some(frame) = preview.as_ref() else {
-        return rsx! {
-            StatusBanner {
-                tone: Tone::Attention,
-                icon: Icon::Camera,
-                title: "Starting the camera…",
-                detail: "This takes a few seconds.",
-            }
-        };
+    let Some(frame) = preview else {
+        return status_banner(
+            p,
+            Tone::Attention,
+            Icon::Camera,
+            "Starting the camera…",
+            "This takes a few seconds.",
+        )
+        .into_any_element();
     };
 
     let message = if frame.hint == Hint::Ready && !wizard.position_ready() {
@@ -157,37 +191,18 @@ fn Banner(wizard: Wizard) -> Element {
     } else {
         screen_hint(frame.hint)
     };
-    rsx! {
-        StatusBanner { tone: message.tone, icon: message.icon, title: message.title, detail: message.detail }
-    }
+    status_banner(p, message.tone, message.icon, message.title, message.detail).into_any_element()
 }
 
-#[component]
-fn LivePreview(wizard: Wizard) -> Element {
-    let preview = wizard.preview.read();
-    let Some(frame) = preview.as_ref() else {
-        return rsx! {
-            div {
-                class: CAMERA_PLACEHOLDER,
-                "Waiting for the camera…"
-            }
-        };
+fn live_preview(p: Palette, wizard: &Wizard) -> AnyElement {
+    let Some(frame) = wizard.preview.as_ref() else {
+        return camera_placeholder(p, "Waiting for the camera…").into_any_element();
     };
-    let ready = frame.hint == Hint::Ready;
-    let color = if ready {
-        "var(--oa-success)"
-    } else {
-        "var(--oa-warning)"
-    };
-    let unit = f64::from(frame.width) / 640.0;
+    let color = if frame.hint == Hint::Ready { p.success } else { p.warning };
+    let unit = frame.width as f32 / 640.0;
     let dot_radius = 6.0 * unit;
     let line = 3.0 * unit;
-    let quad = frame.quad.map(|q| {
-        q.iter()
-            .map(|p| format!("{:.1},{:.1}", p[0], p[1]))
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
+    let quad = frame.quad;
     // Edges the display cuts off, drawn over the outline in red so the tech
     // sees which sides to look at. The quad runs top left, top right, bottom
     // right, bottom left.
@@ -204,46 +219,26 @@ fn LivePreview(wizard: Wizard) -> Element {
         .collect(),
         _ => Vec::new(),
     };
-    rsx! {
-        OverlayImage {
-            src: frame.image.clone(),
-            width: frame.width,
-            height: frame.height,
-            alt: "Live camera picture",
-            if let Some(points) = quad {
-                polygon {
-                    points: points,
-                    fill: "none",
-                    style: "stroke: {color}",
-                    stroke_width: "{line}",
-                    stroke_linejoin: "round",
-                }
+    let dots = frame.dots.clone();
+    let danger = p.danger;
+    overlay_image(
+        Some(frame.image.clone()),
+        frame.width,
+        frame.height,
+        move |canvas, window| {
+            if let Some(quad) = quad {
+                canvas.stroke_path(window, &quad, true, line, color);
             }
-            for (i, edge) in cropped_edges.iter().enumerate() {
-                line {
-                    key: "cropped-{i}",
-                    x1: "{edge[0][0]}",
-                    y1: "{edge[0][1]}",
-                    x2: "{edge[1][0]}",
-                    y2: "{edge[1][1]}",
-                    style: "stroke: var(--oa-danger)",
-                    stroke_width: "{line * 2.2}",
-                    stroke_linecap: "round",
-                }
+            for edge in &cropped_edges {
+                canvas.stroke_path(window, edge, false, line * 2.2, danger);
             }
-            for (i, dot) in frame.dots.iter().enumerate() {
-                circle {
-                    key: "{i}",
-                    cx: "{dot[0]}",
-                    cy: "{dot[1]}",
-                    r: "{dot_radius}",
-                    fill: "none",
-                    style: "stroke: {color}",
-                    stroke_width: "{line * 0.7}",
-                }
+            for dot in &dots {
+                canvas.stroke_circle(window, *dot, dot_radius, line * 0.7, color);
             }
-        }
-    }
+        },
+        Vec::new(),
+    )
+    .into_any_element()
 }
 
 fn depth_text(frame: &PreviewFrame) -> (String, String) {
@@ -255,46 +250,76 @@ fn depth_text(frame: &PreviewFrame) -> (String, String) {
     )
 }
 
-#[component]
-fn PositionDetails(wizard: Wizard) -> Element {
-    let preview = wizard.preview.read();
-    let exposure = *wizard.color_exposure.read();
-    let camera = wizard.camera().map(|c| c.name).unwrap_or_default();
-    rsx! {
-        Details {
-            Fact { label: "Camera", value: camera }
-            if let Some(frame) = preview.as_ref() {
-                {
-                    let (distance, coverage) = depth_text(frame);
-                    rsx! {
-                        Fact { label: "Distance to screen", value: distance }
-                        Fact { label: "Depth coverage on screen", value: coverage }
-                        Fact { label: "Dots found", value: format!("{} of {}", frame.dots_matched, frame.dots_expected) }
-                        Fact {
-                            label: "Camera tilt",
-                            value: frame.tilt_deg.map_or("—".into(), |(pitch, roll)| format!("pitch {pitch:.1}°, roll {roll:.1}°")),
-                        }
-                        Fact { label: "Picture size", value: format!("{} × {}", frame.width, frame.height) }
-                    }
-                }
-            }
-            Fact { label: "Color exposure", value: format!("{exposure} µs") }
-            if preview.as_ref().is_some_and(|f| f.hint == Hint::EdgesCropped) {
-                div {
-                    class: "mt-1 flex flex-col gap-2 border-t border-line pt-3",
-                    div { class: "font-medium text-fg-strong", "Where to turn off overscan" }
-                    p { class: "text-fg-muted", "Menu names differ between models and years. These are the usual places:" }
-                    for (brand, steps) in OVERSCAN_HELP {
-                        div {
-                            key: "{brand}",
-                            span { class: "font-semibold", "{brand}: " }
-                            {steps}
-                        }
-                    }
-                }
-            }
-        }
+fn position_details(
+    p: Palette,
+    wizard: &Wizard,
+    camera: String,
+    exposure: u32,
+    open: &Entity<bool>,
+    cx: &gpui::App,
+) -> AnyElement {
+    let preview = wizard.preview.as_ref();
+    let mut body = vec![fact(p, "Camera", camera)];
+    if let Some(frame) = preview {
+        let (distance, coverage) = depth_text(frame);
+        body.push(fact(p, "Distance to screen", distance));
+        body.push(fact(p, "Depth coverage on screen", coverage));
+        body.push(fact(
+            p,
+            "Dots found",
+            format!("{} of {}", frame.dots_matched, frame.dots_expected),
+        ));
+        body.push(fact(
+            p,
+            "Camera tilt",
+            frame.tilt_deg.map_or("—".into(), |(pitch, roll)| {
+                format!("pitch {pitch:.1}°, roll {roll:.1}°")
+            }),
+        ));
+        body.push(fact(
+            p,
+            "Picture size",
+            format!("{} × {}", frame.width, frame.height),
+        ));
     }
+    body.push(fact(p, "Color exposure", format!("{exposure} µs")));
+    if preview.is_some_and(|f| f.hint == Hint::EdgesCropped) {
+        let mut help = div()
+            .mt_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .border_t_1()
+            .border_color(p.line)
+            .pt_3()
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(p.fg_strong)
+                    .child("Where to turn off overscan"),
+            )
+            .child(
+                div()
+                    .text_color(p.fg_muted)
+                    .child("Menu names differ between models and years. These are the usual places:"),
+            );
+        for (brand, steps) in OVERSCAN_HELP {
+            help = help.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(format!("{brand}:")),
+                    )
+                    .child(steps),
+            );
+        }
+        body.push(help.into_any_element());
+    }
+    details("position-details", p, "Details", body, open, cx).into_any_element()
 }
 
 #[cfg(test)]
