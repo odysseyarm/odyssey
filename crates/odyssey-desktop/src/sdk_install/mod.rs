@@ -6,7 +6,7 @@
 //! loads at run time (see `odyssey_autocalib::orbbec::runtime`), and it can come
 //! from two places:
 //!
-//! * the offline installer, which carries it in `orbbec-sdk\` beside the app, or
+//! * the full installer, which carries it in `orbbec-sdk\` beside the app, or
 //! * a download the user asked for, kept in `orbbec-sdk\` under the app's data
 //!   folder. Only builds with the `sdk-download` feature contain that code.
 //!

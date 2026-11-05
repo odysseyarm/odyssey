@@ -4,11 +4,11 @@ use odyssey_autocalib::orbbec::LIBRARY_NAME;
 
 use crate::paths;
 
-/// Directory name of an SDK copy, under the app (offline installer) or under the
+/// Directory name of an SDK copy, under the app (full installer) or under the
 /// app's data folder (download).
 pub(super) const DIR_NAME: &str = "orbbec-sdk";
 
-/// The directory the offline installer puts the SDK in.
+/// The directory the full installer puts the SDK in.
 fn bundled_dir() -> Option<PathBuf> {
     Some(std::env::current_exe().ok()?.parent()?.join(DIR_NAME))
 }

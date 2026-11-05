@@ -23,9 +23,10 @@ Any one of these turns it on, and **nothing turns it off**: a stale file cannot 
 setting, and the other way round. A policy file that cannot be read or understood also turns it
 on (and the home screen says why).
 
-* **At install time (Windows).** `msiexec /i Odyssey-<version>-win-x64.msi OFFLINE_MODE=1`.
-  The offline installer (`...-win-x64-offline.msi`) has it on by default and also carries Orbbec's
-  camera software, so nothing needs downloading. `OFFLINE_MODE=0` leaves it off.
+* **At install time (Windows).** `msiexec /i Odyssey-<version>-win-x64-full.msi OFFLINE_MODE=1`.
+  Use the full installer (`...-win-x64-full.msi`): it carries Orbbec's camera software, so nothing
+  needs downloading, and its app has no downloader at all. The standard installer accepts
+  `OFFLINE_MODE=1` too. Neither turns offline mode on without it.
 * **Registry (Windows; Group Policy or Intune).** `HKLM\SOFTWARE\Policies\OdysseyArm\Odyssey`
   or `HKLM\SOFTWARE\OdysseyArm\Odyssey`: `OfflineMode` (DWORD) = `1`.
 * **Policy file (every platform).** `policy.json` in the machine-wide folder; it may contain
@@ -69,7 +70,7 @@ Where the folder is, in order: `ODYSSEY_FIRMWARE_PACK_DIR`, the registry value `
 
 | OS | Default folder |
 | --- | --- |
-| Windows | `%ProgramData%\OdysseyArm\Odyssey\firmware-pack` (the offline installer creates it) |
+| Windows | `%ProgramData%\OdysseyArm\Odyssey\firmware-pack` (installing with `OFFLINE_MODE=1` creates it) |
 | macOS | `/Library/Application Support/OdysseyArm/Odyssey/firmware-pack` |
 | Linux | `/var/lib/odyssey/firmware-pack` |
 

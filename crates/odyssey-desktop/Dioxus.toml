@@ -18,8 +18,8 @@ upgrade_code = "b881af96-4f5e-4bc7-99e7-f1c46f96c235"
 
 # The installer is built in two variants from one tree (see wix/main.wxs and
 # crates/xtask/src/desktop/orbbec.rs): online carries no camera SDK and the app
-# downloads it; offline carries it as an optional feature. The fragment below is
-# generated per variant by `cargo xtask desktop bundle online|offline`, which also
+# downloads it; full carries it as an optional feature. The fragment below is
+# generated per variant by `cargo xtask desktop bundle online|full`, which also
 # sets the environment the template reads.
 template = "wix/main.wxs"
 fragment_paths = ["target/orbbec-stage/orbbec.wxs"]

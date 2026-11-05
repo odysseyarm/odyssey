@@ -87,9 +87,10 @@ jobs:
           tool: cargo-binstall
       - name: Install dioxus-cli
         run: cargo binstall --no-confirm --locked dioxus-cli@${{ env.DIOXUS_CLI_VERSION }}
-      # Two installers come from this one job. They are the same app: the offline
+      # Two installers come from this one job. They are the same app: the full
       # one is built without the `sdk-download` feature and carries Orbbec's camera
-      # SDK, for customers who may only run offline software. Only the app crate
+      # SDK, for customers who may only run offline software. Neither turns offline
+      # mode on unless installed with OFFLINE_MODE=1. Only the app crate
       # is rebuilt for it. `cargo xtask desktop prepare-orbbec` stages what each
       # variant needs, and the WiX template reads the two environment variables
       # set here.
@@ -102,23 +103,23 @@ jobs:
           cargo xtask desktop prepare-orbbec online
           cd crates/odyssey-desktop
           dx bundle --desktop --package-types msi --out-dir dist/online
-      - name: Bundle the offline installer
+      - name: Bundle the full installer
         shell: bash
         env:
-          ODYSSEY_MSI_VARIANT: offline
+          ODYSSEY_MSI_VARIANT: full
           ODYSSEY_ORBBEC_STAGE: ${{ github.workspace }}\crates\odyssey-desktop\target\orbbec-stage
         run: |
-          cargo xtask desktop prepare-orbbec offline
+          cargo xtask desktop prepare-orbbec full
           cd crates/odyssey-desktop
-          dx bundle --desktop --package-types msi --no-default-features --out-dir dist/offline
+          dx bundle --desktop --package-types msi --no-default-features --out-dir dist/full
       - name: Collect the installers
         shell: bash
         run: |
           mkdir dist
-          for variant in online offline; do
+          for variant in online full; do
             set -- crates/odyssey-desktop/dist/$variant/*.msi
             if [ ! -f "$1" ]; then echo "dx bundle produced no $variant msi" >&2; exit 1; fi
-            suffix=""; [ "$variant" = offline ] && suffix="-offline"
+            suffix=""; [ "$variant" = full ] && suffix="-full"
             cp "$1" "dist/Odyssey-$VERSION-win-x64$suffix.msi"
           done
           ls -l dist
@@ -253,10 +254,10 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Odyssey Desktop v$VERSION" \
-              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and an offline Windows installer that includes Orbbec's camera software so the app never has to download it."
+              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and a full Windows installer that includes Orbbec's camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \
             "Odyssey-$VERSION-win-x64.msi" \
-            "Odyssey-$VERSION-win-x64-offline.msi" \
+            "Odyssey-$VERSION-win-x64-full.msi" \
             "Odyssey-$VERSION-x86_64.AppImage"

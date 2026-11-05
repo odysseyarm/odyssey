@@ -150,7 +150,7 @@ pub(super) fn CameraSupportNotice(wizard: Wizard, notice: Notice) -> Element {
                             p {
                                 class: "max-w-xl text-sm text-gray-600 dark:text-gray-300",
                                 "Offline mode is on, so Odyssey won't download the camera software. Install it from \
-                                 the offline Odyssey installer (the \"Orbbec camera support\" option), or ask your \
+                                 the full Odyssey installer (the \"Orbbec camera support\" option), or ask your \
                                  administrator."
                             }
                         },

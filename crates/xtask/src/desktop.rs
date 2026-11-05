@@ -17,7 +17,7 @@ const TAG_PREFIX: &str = "odyssey-desktop-v";
 #[derive(clap::Subcommand)]
 pub(crate) enum Cmd {
     /// Stage what the MSI needs for one variant: writes the WiX fragment
-    /// Dioxus.toml points at and, for offline, the SDK files and EULA it
+    /// Dioxus.toml points at and, for full, the SDK files and EULA it
     /// installs. The version, URLs, hashes and file list come only from
     /// crates/odyssey-desktop/orbbec-sdk.json, which the app reads too.
     PrepareOrbbec {
@@ -33,7 +33,7 @@ pub(crate) enum Cmd {
         eula: Option<PathBuf>,
     },
     /// Build the app and wrap it in an MSI in crates/odyssey-desktop/dist/<variant>.
-    /// The offline variant needs network access to fetch the pinned SDK.
+    /// The full variant needs network access to fetch the pinned SDK.
     Bundle {
         #[arg(default_value = "online")]
         variant: Variant,
@@ -54,15 +54,17 @@ pub(crate) enum Cmd {
 pub(crate) enum Variant {
     /// The app downloads the Orbbec SDK.
     Online,
-    /// Carries the SDK; the app never downloads it.
-    Offline,
+    /// Carries the SDK, so neither installing nor calibrating needs the
+    /// internet; the app is built without the downloader. Whether offline
+    /// mode is on is separate: OFFLINE_MODE=1 at install time, or policy.
+    Full,
 }
 
 impl Variant {
     fn name(self) -> &'static str {
         match self {
             Variant::Online => "online",
-            Variant::Offline => "offline",
+            Variant::Full => "full",
         }
     }
 }
@@ -94,8 +96,8 @@ fn bundle(variant: Variant) -> eros::Result<()> {
         // The installer template reads these (see wix/main.wxs).
         .env("ODYSSEY_MSI_VARIANT", variant.name())
         .env("ODYSSEY_ORBBEC_STAGE", &stage);
-    // The offline app is the same code without the SDK downloader.
-    if let Variant::Offline = variant {
+    // The full app is the same code without the SDK downloader.
+    if let Variant::Full = variant {
         dx.arg("--no-default-features");
     }
     cmd::run(&mut dx)?;
@@ -149,17 +151,17 @@ fn release(version: Option<String>, token: Option<String>) -> eros::Result<()> {
         );
     };
 
-    // What `bundle online` and `bundle offline` left in dist/.
+    // What `bundle online` and `bundle full` left in dist/.
     let dist = cmd::root().join(DIR).join("dist");
     let mut built = Vec::new();
-    for variant in [Variant::Online, Variant::Offline] {
+    for variant in [Variant::Online, Variant::Full] {
         if let Some(msi) = first_msi(&dist.join(variant.name()))? {
             built.push((variant, msi));
         }
     }
     if built.is_empty() {
         eros::bail!(
-            "No msi found (run: cargo xtask desktop bundle online, and/or cargo xtask desktop bundle offline)"
+            "No msi found (run: cargo xtask desktop bundle online, and/or cargo xtask desktop bundle full)"
         );
     }
 
@@ -226,6 +228,6 @@ fn json<T: serde::de::DeserializeOwned>(body: &mut ureq::Body) -> eros::Result<T
 fn asset_name(variant: Variant, version: &str) -> String {
     match variant {
         Variant::Online => format!("Odyssey-{version}-win-x64.msi"),
-        Variant::Offline => format!("Odyssey-{version}-win-x64-offline.msi"),
+        Variant::Full => format!("Odyssey-{version}-win-x64-full.msi"),
     }
 }
