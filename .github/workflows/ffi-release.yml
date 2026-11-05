@@ -100,7 +100,7 @@ jobs:
       - name: Bump port version
         working-directory: vcpkg-registry
         run: |
-          jq --arg v "$VERSION" '.version = $v' ports/odyssey-hub-client/vcpkg.json > /tmp/vcpkg.json.tmp
+          jq --arg v "$VERSION" '.version = $v | del(."port-version")' ports/odyssey-hub-client/vcpkg.json > /tmp/vcpkg.json.tmp
           mv /tmp/vcpkg.json.tmp ports/odyssey-hub-client/vcpkg.json
       - name: Add version entry
         working-directory: vcpkg-registry
