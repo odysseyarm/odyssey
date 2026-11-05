@@ -87,7 +87,7 @@ jobs:
         working-directory: firmware/dongle-fw
         run: |
           set -eu
-          for ext in hex uf2 -dfu.zip; do
+          for ext in .hex .uf2 -dfu.zip; do
             test -s "dist/dongle-fw-$VERSION$ext"
           done
           ls -l dist
