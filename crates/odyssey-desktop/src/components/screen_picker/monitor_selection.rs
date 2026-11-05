@@ -31,6 +31,15 @@ pub(crate) struct MonitorSelection {
 }
 
 impl MonitorSelection {
+    #[cfg(all(test, feature = "sim"))]
+    pub(crate) fn for_test(key: MonitorKey, writer: UiStateWriter) -> Self {
+        Self {
+            monitors: Signal::new(vec![MonitorInfo { key, primary: true }]),
+            chosen: Signal::new(None),
+            writer,
+        }
+    }
+
     pub(crate) fn monitors(&self) -> Vec<MonitorInfo> {
         self.monitors.read().clone()
     }

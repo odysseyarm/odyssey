@@ -149,6 +149,8 @@ for non-text use and placeholders. Check a new pair before shipping it.
 - Honour reduced motion: no lifts, reveals or looping animations when the
   system asks for less motion. Status pulses are the exception only when they
   are the sole sign that something is live.
+- Live detection messages must not move sliders or action buttons. Changes in
+  detection readiness must not take keyboard focus from the active control.
 
 ## Components
 

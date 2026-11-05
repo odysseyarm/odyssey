@@ -10,7 +10,6 @@ use super::hints::{MARKER_RULES, marker_hint};
 use super::settings::{IR_EXPOSURE_RANGE_US, IR_EXPOSURE_STEP_US};
 use super::ui::{
     CAMERA_PLACEHOLDER, Details, Fact, PRIMARY_BUTTON, PRIMARY_ID, SECONDARY_BUTTON, StepPage,
-    focus_primary,
 };
 use super::wizard::Wizard;
 use crate::components::wizard::{Icon, OverlayImage, Slider, StatusBanner, Tone};
@@ -20,19 +19,12 @@ const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[component]
 pub fn MarkersStep(wizard: Wizard) -> Element {
-    // Measuring starts only when the user presses Measure, which is live once all six
-    // markers are found.
     let all_found = use_memo(move || {
         wizard
             .markers
             .read()
             .as_ref()
             .is_some_and(|f| f.matched.is_some())
-    });
-    use_effect(move || {
-        if all_found() {
-            focus_primary();
-        }
     });
     let ir = *wizard.ir_exposure.read();
     let mut generation = use_signal(|| 0u64);
@@ -42,23 +34,29 @@ pub fn MarkersStep(wizard: Wizard) -> Element {
             title: "Turn on the tracker markers",
             subtitle: "The screen is dark now. Switch on all six markers and keep the camera where it is. Press Measure when you're ready.",
             footer: rsx! {
-                button {
-                    class: SECONDARY_BUTTON,
-                    r#type: "button",
-                    onclick: move |_| wizard.back_to_setup(),
-                    "Cancel"
-                }
-                button {
-                    id: PRIMARY_ID,
-                    class: PRIMARY_BUTTON,
-                    r#type: "button",
-                    disabled: !all_found(),
-                    onclick: move |_| wizard.measure_markers(),
-                    "Measure"
+                div {
+                    class: "flex w-full flex-col gap-5",
+                    div {
+                        class: "flex items-center justify-between gap-3",
+                        button {
+                            class: SECONDARY_BUTTON,
+                            r#type: "button",
+                            onclick: move |_| wizard.back_to_setup(),
+                            "Cancel"
+                        }
+                        button {
+                            id: PRIMARY_ID,
+                            class: PRIMARY_BUTTON,
+                            r#type: "button",
+                            disabled: !all_found(),
+                            onclick: move |_| wizard.measure_markers(),
+                            "Measure"
+                        }
+                    }
+                    MarkerBanner { wizard }
                 }
             },
 
-            MarkerBanner { wizard }
             MarkerPreviewView { wizard }
 
             div {

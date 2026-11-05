@@ -1,8 +1,12 @@
 //! Writing the calibration and the diagnostic bundle.
 
+use dioxus::core::Runtime;
 use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use odyssey_hub_common::config::{self};
+
+#[cfg(all(test, feature = "sim"))]
+mod tests;
 
 use super::{SavedInfo, Stage, Wizard};
 use crate::views::calibrate::automatic::worker::Command;
@@ -62,7 +66,7 @@ impl Wizard {
         let kind = self.kind();
         let use_measured = *self.use_measured.peek();
         let session = *self.session.peek();
-        spawn(async move {
+        let save = async move {
             let calibration = finished.outcome(use_measured).calibration.clone();
             let written = tokio::task::spawn_blocking(move || -> eros::Result<_> {
                 let dir = config::screens_dir()?;
@@ -114,6 +118,8 @@ impl Wizard {
                     *self.save_error.write() = Some(crate::error_message(&e));
                 }
             }
-        });
+        };
+        // The overwrite dialog unmounts on confirmation; the wizard owns its save.
+        Runtime::current().in_scope(self.stage.origin_scope(), || spawn(save));
     }
 }
