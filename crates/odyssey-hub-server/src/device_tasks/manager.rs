@@ -96,6 +96,9 @@ struct UsbDeviceManager {
     /// protocol. These are surfaced in the device list so the user can flash firmware
     /// even when normal communication is unavailable.
     bootloader_devices: HashMap<String, BootloaderDevice>,
+    /// Devices in the last scan whose list was logged; the timer rescans every
+    /// `SCAN_INTERVAL`, so an unchanged list is not logged again.
+    logged_device_ids: Vec<nusb::DeviceId>,
     #[cfg(feature = "sim")]
     simulated: Option<SimulatedDevices>,
 }
@@ -118,6 +121,7 @@ impl UsbDeviceManager {
             direct_usb_id_to_uuid: HashMap::new(),
             last_uuid_by_pid: HashMap::new(),
             bootloader_devices: HashMap::new(),
+            logged_device_ids: Vec::new(),
             #[cfg(feature = "sim")]
             simulated: None,
         }
@@ -184,7 +188,7 @@ impl UsbDeviceManager {
     }
 
     async fn scan(&mut self, devices: &[nusb::DeviceInfo]) {
-        log_scan(devices);
+        self.log_scan(devices);
         self.stop_hub_managers_of_removed_hubs(devices);
         self.forget_finished_handlers().await;
 
@@ -391,16 +395,24 @@ async fn wait_for_next_scan(hotplug: Option<&mut Pin<Box<HotplugWatch>>>) {
     }
 }
 
-fn log_scan(devices: &[nusb::DeviceInfo]) {
-    tracing::info!("USB scan: {} device(s) enumerated", devices.len());
-    for dev in devices {
-        tracing::info!(
-            "USB scan entry: id={:?} VID={:04x} PID={:04x} serial={:?}",
-            dev.id(),
-            dev.vendor_id(),
-            dev.product_id(),
-            dev.serial_number()
-        );
-        tracing::debug!("USB scan entry full: {:?}", dev);
+impl UsbDeviceManager {
+    fn log_scan(&mut self, devices: &[nusb::DeviceInfo]) {
+        let ids: Vec<_> = devices.iter().map(nusb::DeviceInfo::id).collect();
+        if ids == self.logged_device_ids {
+            tracing::trace!("USB scan: {} device(s), unchanged", devices.len());
+            return;
+        }
+        self.logged_device_ids = ids;
+        tracing::info!("USB scan: {} device(s) enumerated", devices.len());
+        for dev in devices {
+            tracing::info!(
+                "USB scan entry: id={:?} VID={:04x} PID={:04x} serial={:?}",
+                dev.id(),
+                dev.vendor_id(),
+                dev.product_id(),
+                dev.serial_number()
+            );
+            tracing::debug!("USB scan entry full: {:?}", dev);
+        }
     }
 }
