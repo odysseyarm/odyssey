@@ -22,7 +22,9 @@ const HELP: &str = "text-sm text-gray-600 dark:text-gray-300";
 fn unavailable(device: &Device, is_updating: bool) -> Option<&'static str> {
     if is_updating {
         Some("Image capture is unavailable during a firmware update.")
-    } else if device.capabilities.contains(DeviceCapabilities::DFU) {
+    } else if device.capabilities.contains(DeviceCapabilities::DFU)
+        && !device.capabilities.contains(DeviceCapabilities::CONTROL)
+    {
         Some("Image capture requires normal application firmware, not bootloader mode.")
     } else if !device.capabilities.contains(DeviceCapabilities::CONTROL)
         || !device.capabilities.contains(DeviceCapabilities::EVENTS)
