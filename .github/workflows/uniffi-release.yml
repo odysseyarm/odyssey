@@ -46,17 +46,19 @@ jobs:
     name: Publish Python to PyPI
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      # OIDC token for PyPI trusted publishing; the pypi.org publisher for
+      # odysseyhubclient is bound to this repo and this workflow filename.
+      id-token: write
     steps:
       - uses: actions/download-artifact@v6
         with:
           pattern: python-*
       - uses: astral-sh/setup-uv@v6
       - name: Publish to PyPI
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         # --check-url is uv's counterpart to maturin's --skip-existing: files
         # already on the index are skipped instead of failing the upload.
-        run: uv publish --check-url https://pypi.org/simple/ python-*/*
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ python-*/*
 
   publish-dotnet:
     name: Publish C# to NuGet
