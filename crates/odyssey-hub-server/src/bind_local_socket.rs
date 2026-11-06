@@ -59,7 +59,10 @@ pub(crate) async fn bind_local_socket(
         .try_overwrite(true)
         .max_spin_time(RECLAIM_MAX_SPIN_TIME);
     #[cfg(target_os = "windows")]
-    #[expect(unsafe_code, reason = "interprocess exposes DACL setup only as an unsafe fn")]
+    #[expect(
+        unsafe_code,
+        reason = "interprocess exposes DACL setup only as an unsafe fn"
+    )]
     let listener_opts = {
         let mut sd = SecurityDescriptor::new().map_err(|error| report_error(error, app_sender))?;
         // SAFETY: set_dacl's contract applies only to a non-null ACL pointer; a null

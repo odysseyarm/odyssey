@@ -34,9 +34,9 @@ use dioxus::logger::tracing;
 use engine::Engine;
 pub(crate) use event::{Event, SavedAttempt, SessionEvent};
 pub(crate) use failure::{Failure, FailureKind};
-pub(crate) use frame::{Finished, MarkerFrame, PreviewFrame};
 #[cfg(all(test, feature = "sim"))]
 pub(crate) use frame::Outcome;
+pub(crate) use frame::{Finished, MarkerFrame, PreviewFrame};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Handle to the camera thread. Dropping it stops the camera and the thread.
