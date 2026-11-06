@@ -1110,7 +1110,8 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                             } else {
                                 ImageStatusCode::CaptureError
                             };
-                            let _ = usb_replies.try_send(image_status(request.id, generation, status));
+                            let _ =
+                                usb_replies.try_send(image_status(request.id, generation, status));
                         }
                         ImageEnd::CaptureError => {
                             let _ = usb_replies.try_send(image_status(
@@ -1227,7 +1228,9 @@ async fn image_wait<F: Future>(
                     continue;
                 }
                 match request.command {
-                    ImageCommand::Renew { generation: renewed } => {
+                    ImageCommand::Renew {
+                        generation: renewed,
+                    } => {
                         if renewed == generation {
                             *lease = Instant::now() + Duration::from_millis(IMAGE_LEASE_TIMEOUT_MS);
                         }

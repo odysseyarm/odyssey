@@ -70,7 +70,11 @@ fn store(kind: CrashKind, pc: u32, lr: u32) {
     };
     record.check = record.checksum();
     // SAFETY: the record is static and only touched by this module's handlers.
-    unsafe { (&raw mut RECORD).cast::<CrashRecord>().write_volatile(record) };
+    unsafe {
+        (&raw mut RECORD)
+            .cast::<CrashRecord>()
+            .write_volatile(record)
+    };
 }
 
 /// Logs and clears the record left by the previous boot, with the reset reason.
