@@ -12,6 +12,8 @@ mod settings_region {
     }
 }
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use bt_hci::param::BdAddr;
 use cfg_noodle::flash::Flash;
 use cfg_noodle::minicbor::{CborLen, Decode, Encode};
@@ -33,6 +35,56 @@ use static_cell::StaticCell;
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
 static NODE_BONDS: StorageListNode<BondsSettings> = StorageListNode::new("settings/bonds");
+static NODE_ACCESSORY_BONDS: StorageListNode<AccessoryBondsSettings> =
+    StorageListNode::new("settings/accessory_bonds");
+static COMMIT_PENDING: AtomicBool = AtomicBool::new(false);
+static COMMIT_RESULT: Signal<ThreadModeRawMutex, Result<(), ()>> = Signal::new();
+static ACCESSORY_STORES: embassy_sync::channel::Channel<
+    ThreadModeRawMutex,
+    (BondData, usize, u64),
+    3,
+> = embassy_sync::channel::Channel::new();
+static ACCESSORY_STORE_RESULTS: [Signal<ThreadModeRawMutex, (u64, Result<(), ()>)>; 3] =
+    [const { Signal::new() }; 3];
+
+pub async fn persist_accessory_bond(bond: BondData, slot: usize, token: u64) -> Result<(), ()> {
+    ACCESSORY_STORES
+        .try_send((bond, slot, token))
+        .map_err(|_| ())?;
+    loop {
+        let (completed, result) = ACCESSORY_STORE_RESULTS[slot].wait().await;
+        if completed == token {
+            return result;
+        }
+    }
+}
+
+#[embassy_executor::task]
+pub async fn accessory_bond_worker(settings: &'static Settings) {
+    loop {
+        let (bond, slot, token) = ACCESSORY_STORES.receive().await;
+        let result = settings.store_accessory_bond(bond).await;
+        ACCESSORY_STORE_RESULTS[slot].signal((token, result));
+    }
+}
+
+pub const ACCESSORY_BOND_CAPACITY: usize = 6;
+
+#[derive(Debug, Clone, Encode, Decode, CborLen)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cbor(map)]
+pub struct AccessoryBondsSettings {
+    #[n(0)]
+    pub slots: [Option<BondData>; ACCESSORY_BOND_CAPACITY],
+}
+
+impl Default for AccessoryBondsSettings {
+    fn default() -> Self {
+        Self {
+            slots: [None; ACCESSORY_BOND_CAPACITY],
+        }
+    }
+}
 static NODE_DEVICE_NAMES: StorageListNode<DeviceNamesSettings> =
     StorageListNode::new("settings/device_names");
 
@@ -195,6 +247,7 @@ async fn settings_worker(
             }
             Either::Second(Either::First(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
+                let commit_started = COMMIT_PENDING.swap(false, Ordering::AcqRel);
                 let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
                 match &write_result {
                     Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
@@ -209,17 +262,20 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_garbage");
 
-                // A failed write (e.g. NeedsGarbageCollect) gets one retry after GC.
-                if write_result.is_err() {
-                    defmt::debug!("Storage: retrying process_writes after GC");
-                    match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
-                        Ok(rpt) => defmt::debug!("process_writes retry ok: {:?}", rpt),
-                        Err(e) => defmt::error!("process_writes retry err: {:?}", e),
-                    }
+                let committed = if write_result.is_err() {
+                    LIST.process_writes(&mut *flash, &mut buffer[..])
+                        .await
+                        .is_ok()
+                } else {
+                    true
+                };
+                if commit_started {
+                    COMMIT_RESULT.signal(if committed { Ok(()) } else { Err(()) });
                 }
             }
             Either::Second(Either::Second(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
+                let commit_started = COMMIT_PENDING.swap(false, Ordering::AcqRel);
                 let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
                 match &write_result {
                     Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
@@ -234,13 +290,15 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_garbage");
 
-                // A failed write (e.g. NeedsGarbageCollect) gets one retry after GC.
-                if write_result.is_err() {
-                    defmt::debug!("Storage: retrying process_writes after GC");
-                    match LIST.process_writes(&mut *flash, &mut buffer[..]).await {
-                        Ok(rpt) => defmt::debug!("process_writes retry ok: {:?}", rpt),
-                        Err(e) => defmt::error!("process_writes retry err: {:?}", e),
-                    }
+                let committed = if write_result.is_err() {
+                    LIST.process_writes(&mut *flash, &mut buffer[..])
+                        .await
+                        .is_ok()
+                } else {
+                    true
+                };
+                if commit_started {
+                    COMMIT_RESULT.signal(if committed { Ok(()) } else { Err(()) });
                 }
             }
         }
@@ -255,11 +313,54 @@ pub fn settings_flush_now() {
 pub struct Settings {
     #[allow(dead_code)]
     bonds: AsyncMutex<ThreadModeRawMutex, BondsSettings>,
+    accessory_bonds: AsyncMutex<ThreadModeRawMutex, AccessoryBondsSettings>,
     scan_list: AsyncMutex<ThreadModeRawMutex, ScanListSettings>,
     device_names: AsyncMutex<ThreadModeRawMutex, DeviceNamesSettings>,
 }
 
 impl Settings {
+    pub async fn get_accessory_bonds(&self) -> AccessoryBondsSettings {
+        self.accessory_bonds.lock().await.clone()
+    }
+
+    pub async fn get_accessory_bond(&self, address: [u8; 6]) -> Option<BondData> {
+        self.accessory_bonds
+            .lock()
+            .await
+            .slots
+            .iter()
+            .flatten()
+            .find(|b| b.bd_addr == address)
+            .copied()
+    }
+
+    async fn store_accessory_bond(&self, bond: BondData) -> Result<(), ()> {
+        let mut saved = self.accessory_bonds.lock().await;
+        let mut next = saved.clone();
+        let slot = next
+            .slots
+            .iter()
+            .position(|s| s.as_ref().is_some_and(|b| b.bd_addr == bond.bd_addr))
+            .or_else(|| next.slots.iter().position(Option::is_none))
+            .ok_or(())?;
+        next.slots[slot] = Some(bond);
+        let mut node = NODE_ACCESSORY_BONDS.attach(&LIST).await.map_err(|_| ())?;
+        node.write(&next).await.map_err(|_| ())?;
+        COMMIT_RESULT.reset();
+        COMMIT_PENDING.store(true, Ordering::Release);
+        settings_flush_now();
+        let result = COMMIT_RESULT.wait().await;
+        if result.is_ok() {
+            *saved = next;
+            Ok(())
+        } else {
+            COMMIT_PENDING.store(false, Ordering::Release);
+            node.write(&*saved).await.map_err(|_| ())?;
+            settings_flush_now();
+            Err(())
+        }
+    }
+
     #[allow(dead_code)]
     async fn bonds_write(&self) {
         let bonds = self.bonds.lock().await;
@@ -529,6 +630,10 @@ pub async fn init_settings(
         .attach_with_default(&LIST, DeviceNamesSettings::default)
         .await
         .unwrap();
+    let h_accessory_bonds = NODE_ACCESSORY_BONDS
+        .attach_with_default(&LIST, AccessoryBondsSettings::default)
+        .await
+        .unwrap();
 
     let bonds_data = h_bonds.load();
     let bond_count = bonds_data.slots.iter().filter(|b| b.is_some()).count();
@@ -553,6 +658,7 @@ pub async fn init_settings(
 
     let settings = Settings {
         bonds: AsyncMutex::new(bonds_data),
+        accessory_bonds: AsyncMutex::new(h_accessory_bonds.load()),
         scan_list: AsyncMutex::new(scan_list_data),
         device_names: AsyncMutex::new(names_data),
     };

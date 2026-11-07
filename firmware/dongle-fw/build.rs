@@ -12,6 +12,18 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", memory_file);
     println!("cargo:rerun-if-env-changed=BOARD");
+    // Reruns on source or HEAD changes only; a dirty edit elsewhere can leave a stale string.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    let describe = std::process::Command::new("git")
+        .args(["describe", "--always", "--dirty"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map_or_else(|| "unknown".to_owned(), |s| s.trim().to_owned());
+    println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let memory_kdl_path = manifest_dir.join(&memory_file);

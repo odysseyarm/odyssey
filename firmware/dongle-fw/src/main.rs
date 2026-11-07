@@ -33,7 +33,7 @@ use nrf_sdc::{self as sdc, mpsl};
 use odyssey_protocol::control::usb_mux::{
     BondStoreError, ClearBondsResult, PairingError, PairingOutcome, UsbMuxCtrlMsg,
 };
-use odyssey_protocol::mux::{DevicePacket, MAX_DEVICES, MuxMsg, Version};
+use odyssey_protocol::mux::{DevicePacket, MuxMsg, Version};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use static_cell::StaticCell;
@@ -71,6 +71,13 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 let mut addr = [0u8; 6];
                 addr.copy_from_slice(raw);
                 let name = crate::ble::central::extract_local_name(rep.data);
+                crate::ble::accessories::advertisement(
+                    trouble_host::Address {
+                        kind: rep.addr_kind,
+                        addr: rep.addr,
+                    },
+                    rep.data,
+                );
                 // Cache names even outside pairing; ListBondsResponse reads them.
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
@@ -90,6 +97,13 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                 let mut addr = [0u8; 6];
                 addr.copy_from_slice(raw);
                 let name = crate::ble::central::extract_local_name(rep.data);
+                crate::ble::accessories::advertisement(
+                    trouble_host::Address {
+                        kind: rep.addr_kind,
+                        addr: rep.addr,
+                    },
+                    rep.data,
+                );
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
@@ -160,7 +174,11 @@ unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
 
 #[embassy_executor::main]
 async fn main(mut spawner: Spawner) {
-    defmt::info!("Booted");
+    defmt::info!(
+        "Booted {=str} build {=str}",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_DESCRIBE")
+    );
     let p = embassy_nrf::init(Default::default());
 
     // "Red" status LED on P0.08, "blue" pairing LED on P0.14. The nRF52840-DK's
@@ -235,7 +253,9 @@ async fn main(mut spawner: Spawner) {
         p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
         p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
     );
-    static SDC_MEM: StaticCell<sdc::Mem<22648>> = StaticCell::new();
+    // SDC requires 72,328 bytes for six central links with this buffer configuration.
+    const SDC_MEMORY_SIZE: usize = 72_328;
+    static SDC_MEM: StaticCell<sdc::Mem<SDC_MEMORY_SIZE>> = StaticCell::new();
     let sdc_mem = SDC_MEM.init(sdc::Mem::new());
 
     use embassy_nrf::mode::Async as RngAsync;
@@ -251,22 +271,23 @@ async fn main(mut spawner: Spawner) {
         .support_ext_central()
         .support_phy_update_central()
         .support_le_2m_phy()
-        .central_count(MAX_DEVICES as u8)
+        .central_count(odyssey_protocol::accessory::TOTAL_CAPACITY as u8)
         .unwrap()
         .buffer_cfg(
             DefaultPacketPool::MTU as u16,
             DefaultPacketPool::MTU as u16,
-            (MAX_DEVICES * 3) as u8, // TX buffers
-            (MAX_DEVICES * 3) as u8, // RX buffers
+            (odyssey_protocol::accessory::TOTAL_CAPACITY * 3) as u8,
+            (odyssey_protocol::accessory::TOTAL_CAPACITY * 3) as u8,
         )
         .unwrap()
         .build(sdc_p, rng, mpsl, &mut *sdc_mem)
         .unwrap();
 
-    // 8 L2CAP channels rather than 16 to save RAM.
+    // Six tracker CoCs plus headroom for all six links' ATT/signalling channels.
     info!("trouble-host initialization");
-    static RESOURCES: StaticCell<trouble_host::HostResources<Pool, { MAX_DEVICES }, 8>> =
-        StaticCell::new();
+    static RESOURCES: StaticCell<
+        trouble_host::HostResources<Pool, { odyssey_protocol::accessory::TOTAL_CAPACITY }, 24>,
+    > = StaticCell::new();
     let resources = RESOURCES.init(trouble_host::HostResources::new());
     static STACK_CELL: StaticCell<trouble_host::Stack<'static, Controller, Pool>> =
         StaticCell::new();
@@ -311,6 +332,14 @@ async fn main(mut spawner: Spawner) {
             }
         }
     }
+    for bond in settings.get_accessory_bonds().await.slots.iter().flatten() {
+        if stack
+            .add_bond_information(ble::security::info_from_bonddata(bond))
+            .is_err()
+        {
+            warn!("Failed to preload accessory bond");
+        }
+    }
 
     let host = stack.build();
     let (rx, control, tx) = host.runner.split();
@@ -321,7 +350,7 @@ async fn main(mut spawner: Spawner) {
     info!("Spawning host_tx_task");
     spawner.spawn(unwrap!(host_tx_task(tx)));
     info!("Spawning host_mgmt_task");
-    spawner.spawn(unwrap!(host_mgmt_task(stack)));
+    spawner.spawn(unwrap!(host_mgmt_task(stack, settings)));
 
     static DEVICE_PACKETS: StaticCell<DevicePacketChannel> = StaticCell::new();
     let device_packets = DEVICE_PACKETS.init(Channel::new());
@@ -341,6 +370,13 @@ async fn main(mut spawner: Spawner) {
     spawner.spawn(unwrap!(host_responses_tx_task(ep_mutex)));
     spawner.spawn(unwrap!(device_packets_tx_task(ep_mutex, device_packets)));
     spawner.spawn(unwrap!(control_exec_task(settings)));
+    spawner.spawn(unwrap!(ble::accessories::dispatcher(
+        stack,
+        settings,
+        active_connections,
+        spawner
+    )));
+    spawner.spawn(unwrap!(storage::accessory_bond_worker(settings)));
     info!("Starting BLE manager task");
     spawner.spawn(unwrap!(ble_task(
         device_packets,
@@ -471,7 +507,10 @@ async fn host_ctrl_task(
 }
 
 #[embassy_executor::task]
-async fn host_mgmt_task(stack: &'static trouble_host::Stack<'static, Controller, Pool>) -> ! {
+async fn host_mgmt_task(
+    stack: &'static trouble_host::Stack<'static, Controller, Pool>,
+    settings: &'static Settings,
+) -> ! {
     defmt::info!("host_mgmt_task: starting");
     loop {
         match HOST_MGMT_CH.receive().await {
@@ -482,6 +521,9 @@ async fn host_mgmt_task(stack: &'static trouble_host::Stack<'static, Controller,
                 defmt::info!("host_mgmt: purging {} bond(s) from host DB", bonds.len());
                 for info in bonds {
                     let _ = stack.remove_bond_information(info.identity);
+                }
+                for bond in settings.get_accessory_bonds().await.slots.iter().flatten() {
+                    let _ = stack.add_bond_information(ble::security::info_from_bonddata(bond));
                 }
                 HOST_MGMT_DONE.signal(());
             }
@@ -595,14 +637,19 @@ async fn host_responses_tx_task(
         info!("USB TX host task: configured");
 
         loop {
+            let generation = ble::accessories::EPOCH.load(Ordering::Acquire);
             // Bounded wait so a deconfigure is noticed while idle.
             let response = match embassy_time::with_timeout(
                 embassy_time::Duration::from_millis(250),
-                HOST_RESPONSES.receive(),
+                embassy_futures::select::select(
+                    ble::accessories::TX_RESET.wait(),
+                    HOST_RESPONSES.receive(),
+                ),
             )
             .await
             {
-                Ok(msg) => msg,
+                Ok(embassy_futures::select::Either::First(())) => break,
+                Ok(embassy_futures::select::Either::Second(msg)) => msg,
                 Err(_) => {
                     if let Some(v) = cfg.try_get() {
                         if !v {
@@ -615,7 +662,18 @@ async fn host_responses_tx_task(
 
             // Hold the lock across the write. The other task then waits for the
             // endpoint instead of finding None and dropping its message.
-            let mut ep_guard = ep_mutex.lock().await;
+            let mut ep_guard = match embassy_futures::select::select(
+                ble::accessories::TX_RESET.wait(),
+                ep_mutex.lock(),
+            )
+            .await
+            {
+                embassy_futures::select::Either::First(()) => break,
+                embassy_futures::select::Either::Second(guard) => guard,
+            };
+            if ble::accessories::EPOCH.load(Ordering::Acquire) != generation {
+                continue;
+            }
             if let Some(ref mut endpoint) = *ep_guard {
                 let result = send_mux_msg(&response, &mut write_buf, endpoint).await;
                 drop(ep_guard);
@@ -744,6 +802,7 @@ async fn handle_usb_msg(
     }
 
     match msg {
+        MuxMsg::AccessoryRequest(request) => ble::accessories::submit(request).await,
         MuxMsg::RequestDevices() => {
             let devices = active_connections.get_all().await;
             let response = MuxMsg::DevicesSnapshot(devices.into());

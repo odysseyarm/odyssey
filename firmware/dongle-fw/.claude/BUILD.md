@@ -8,11 +8,11 @@ Run `cargo xtask dongle ...` from the repository root (`cargo xtask dongle --hel
 
 ### For Dongle (Default)
 ```bash
-# Release artifacts (.hex, .uf2, signed -dfu.zip) in firmware/dongle-fw/dist
+# Release artifacts (.hex, .uf2, signed -dfu-fanstel.zip and -dfu-laird.zip) in firmware/dongle-fw/dist
 cargo xtask dongle dist
 
 # Build the DFU package and flash it over serial (put dongle in bootloader mode first)
-cargo xtask dongle flash --port COM78
+cargo xtask dongle flash --vendor fanstel --port COM78
 ```
 
 ### For DK

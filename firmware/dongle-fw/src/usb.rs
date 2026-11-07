@@ -102,12 +102,20 @@ pub fn usb_device(
 struct MyHandler;
 
 impl embassy_usb::Handler for MyHandler {
+    fn enabled(&mut self, enabled: bool) {
+        if !enabled {
+            USB_CONFIG_WATCH.sender().send(false);
+            crate::ble::accessories::usb_lost();
+        }
+    }
+
     fn reset(&mut self) {
         defmt::warn!("USB bus reset");
         // Report deconfigured on bus reset so the tasks re-arm and re-enumeration
         // starts clean when the dongle is plugged in before the PC boots or after a
         // failed enumeration.
         USB_CONFIG_WATCH.sender().send(false);
+        crate::ble::accessories::usb_lost();
     }
 
     fn addressed(&mut self, addr: u8) {
@@ -117,6 +125,9 @@ impl embassy_usb::Handler for MyHandler {
     fn configured(&mut self, configured: bool) {
         defmt::info!("USB configured: {}", configured);
         USB_CONFIG_WATCH.sender().send(configured);
+        if !configured {
+            crate::ble::accessories::usb_lost();
+        }
     }
 
     fn suspended(&mut self, suspended: bool) {

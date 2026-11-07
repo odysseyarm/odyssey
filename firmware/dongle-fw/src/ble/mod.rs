@@ -3,6 +3,7 @@
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 
+pub mod accessories;
 pub mod central;
 pub mod device_task;
 pub mod pairing_scanner;

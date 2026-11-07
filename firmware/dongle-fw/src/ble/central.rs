@@ -73,13 +73,15 @@ pub static CONNECT_PENDING: AtomicU8 = AtomicU8::new(0);
 pub static SCAN_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static SCAN_STOPPED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub static SCAN_RESUME: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static CONNECT_LOCK: AsyncMutex<ThreadModeRawMutex, ()> = AsyncMutex::new(());
 
 /// Registers a pending connect and waits until the background scanner has
 /// stopped its scan session. Call before `central.connect()` and drop the
 /// returned lease once it returns, success or failure.
 pub async fn begin_connect() -> ConnectLease {
+    let guard = CONNECT_LOCK.lock().await;
     CONNECT_PENDING.fetch_add(1, Ordering::Release);
-    let lease = ConnectLease(());
+    let lease = ConnectLease { _guard: guard };
     while SCAN_ACTIVE.load(Ordering::Acquire) {
         SCAN_STOPPED.wait().await;
     }
@@ -89,7 +91,9 @@ pub async fn begin_connect() -> ConnectLease {
 /// A pending connect counted in [`CONNECT_PENDING`]. Dropping it releases the
 /// count, also when the device task is stopped mid-connect; the last one out
 /// resumes the background scanner.
-pub struct ConnectLease(());
+pub struct ConnectLease {
+    _guard: embassy_sync::mutex::MutexGuard<'static, ThreadModeRawMutex, ()>,
+}
 
 impl Drop for ConnectLease {
     fn drop(&mut self) {
