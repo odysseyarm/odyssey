@@ -80,7 +80,10 @@ fn selected_monitor_name(wizard: &Wizard, cx: &App) -> String {
     monitors
         .selected()
         .and_then(|index| monitors.monitors().get(index))
-        .map_or_else(|| "this screen".into(), |monitor| monitor.display_name().to_string())
+        .map_or_else(
+            || "this screen".into(),
+            |monitor| monitor.display_name().to_string(),
+        )
 }
 
 fn stat_card(p: Palette) -> Div {
@@ -178,7 +181,12 @@ pub(in crate::views::calibrate::automatic) fn review_step(
             )
             .child(
                 stat_card(p)
-                    .child(div().text_sm().text_color(p.fg_muted).child("Will be saved as"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(p.fg_muted)
+                            .child("Will be saved as"),
+                    )
                     .child(
                         div()
                             .text_2xl()
@@ -219,9 +227,14 @@ pub(in crate::views::calibrate::automatic) fn review_step(
         },
     ));
     if let Some(circle) = outcome.seed_circle {
-        facts.push(fact(p, "Circle through markers 1, 2 and 3", circle_text(&circle)));
+        facts.push(fact(
+            p,
+            "Circle through markers 1, 2 and 3",
+            circle_text(&circle),
+        ));
     }
-    content.push(details("review-details", p, "Details", facts, details_open, cx).into_any_element());
+    content
+        .push(details("review-details", p, "Details", facts, details_open, cx).into_any_element());
     content.push(save_attempt(p, wizard, state).into_any_element());
 
     step_page(

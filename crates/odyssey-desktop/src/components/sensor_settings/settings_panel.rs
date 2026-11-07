@@ -1,4 +1,3 @@
-use odyssey_hub_client::client::Client;
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui::component::button::{Button, ButtonVariants as _};
@@ -10,6 +9,7 @@ use gpui::{
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
     WeakEntity, Window, div, px,
 };
+use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::{Device, DeviceCapabilities};
 
 use super::field_issue::{FieldIssue, visible_issue};
@@ -19,9 +19,7 @@ use super::op_status::{rpc_failure, status_line};
 use super::pag_sensor_panel::PagPanel;
 use super::paj_sensor_panel::PajPanel;
 use super::product_ids::SensorFamily;
-use super::settings_form::{
-    LoadTarget, SettingsForm, read_from_device, write_to_device,
-};
+use super::settings_form::{LoadTarget, SettingsForm, read_from_device, write_to_device};
 use crate::hub::HubHandle;
 use crate::runtime;
 use crate::theme::{Palette, RADIUS_SM, palette};
@@ -141,11 +139,18 @@ impl SensorSettings {
     /// Shows the form's text in every widget after the form changed underneath
     /// them.
     fn push_all(&self, window: &mut Window, cx: &mut Context<Self>) {
-        push_text(&self.impact_threshold, &self.form.impact_threshold, window, cx);
+        push_text(
+            &self.impact_threshold,
+            &self.form.impact_threshold,
+            window,
+            cx,
+        );
         push_text(&self.suppress_ms, &self.form.suppress_ms, window, cx);
         push_text(&self.shot_delay, &self.form.shot_delay, window, cx);
-        self.paj_near_field.push(&self.form.paj_near_field, window, cx);
-        self.paj_wide_field.push(&self.form.paj_wide_field, window, cx);
+        self.paj_near_field
+            .push(&self.form.paj_near_field, window, cx);
+        self.paj_wide_field
+            .push(&self.form.paj_wide_field, window, cx);
         self.pag.push(&self.form.pag, window, cx);
     }
 
@@ -153,7 +158,13 @@ impl SensorSettings {
         cx.global::<HubHandle>().0.read(cx).client()
     }
 
-    fn render_actions(&self, busy: bool, has_invalid: bool, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_actions(
+        &self,
+        busy: bool,
+        has_invalid: bool,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let key = &self.key;
         let button = |name: &str, label: &'static str, tip: &'static str| {
             Button::new(SharedString::from(format!("sensor-{name}-{key}")))
@@ -191,14 +202,10 @@ impl SensorSettings {
                 })),
             )
             .child(
-                button(
-                    "reload",
-                    "Reload",
-                    "Discard edits and re-read the device",
-                )
-                .outline()
-                .disabled(busy)
-                .on_click(cx.listener(|this, _, _, _| this.send(SettingsOperation::Load))),
+                button("reload", "Reload", "Discard edits and re-read the device")
+                    .outline()
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, _| this.send(SettingsOperation::Load))),
             )
             .child(
                 button(
@@ -235,52 +242,48 @@ impl SensorSettings {
             .flex()
             .flex_col()
             .gap_3()
-            .child(
-                section(
-                    "Impact detection",
-                    palette,
-                    [
-                        number_row(
-                            IMPACT_THRESHOLD_FIELD,
-                            &self.impact_threshold,
-                            None,
-                            issue(IMPACT_THRESHOLD_FIELD),
-                            palette,
-                        )
-                        .into_any_element(),
-                        number_row(
-                            SUPPRESS_FIELD,
-                            &self.suppress_ms,
-                            Some("ms".into()),
-                            issue(SUPPRESS_FIELD),
-                            palette,
-                        )
-                        .into_any_element(),
-                    ],
-                ),
-            )
+            .child(section(
+                "Impact detection",
+                palette,
+                [
+                    number_row(
+                        IMPACT_THRESHOLD_FIELD,
+                        &self.impact_threshold,
+                        None,
+                        issue(IMPACT_THRESHOLD_FIELD),
+                        palette,
+                    )
+                    .into_any_element(),
+                    number_row(
+                        SUPPRESS_FIELD,
+                        &self.suppress_ms,
+                        Some("ms".into()),
+                        issue(SUPPRESS_FIELD),
+                        palette,
+                    )
+                    .into_any_element(),
+                ],
+            ))
             // Shot delay lives on this computer, not on the device.
-            .child(
-                section(
-                    "This computer",
-                    palette,
-                    [
-                        number_row(
-                            SHOT_DELAY_FIELD,
-                            &self.shot_delay,
-                            Some("ms".into()),
-                            issue(SHOT_DELAY_FIELD),
-                            palette,
-                        )
+            .child(section(
+                "This computer",
+                palette,
+                [
+                    number_row(
+                        SHOT_DELAY_FIELD,
+                        &self.shot_delay,
+                        Some("ms".into()),
+                        issue(SHOT_DELAY_FIELD),
+                        palette,
+                    )
+                    .into_any_element(),
+                    div()
+                        .text_xs()
+                        .text_color(palette.fg_muted)
+                        .child("Stored on this computer, not on the device.")
                         .into_any_element(),
-                        div()
-                            .text_xs()
-                            .text_color(palette.fg_muted)
-                            .child("Stored on this computer, not on the device.")
-                            .into_any_element(),
-                    ],
-                ),
-            )
+                ],
+            ))
     }
 
     /// The per-sensor panels, or a pointer to USB when register access is down.
@@ -316,15 +319,10 @@ impl SensorSettings {
                 .border_color(palette.line)
                 .pt_2()
                 .child(heading("Sensor tuning", palette))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(palette.fg_muted)
-                        .child(
-                            "Sensor tuning needs an active sensor data connection. Connect \
+                .child(div().text_xs().text_color(palette.fg_muted).child(
+                    "Sensor tuning needs an active sensor data connection. Connect \
                              over USB or Bluetooth, then reload the settings.",
-                        ),
-                )
+                ))
                 .into_any_element(),
         }
     }
@@ -370,7 +368,10 @@ impl Render for SensorSettings {
         let show_issues = self.form.hydrated;
 
         let summary = div()
-            .id(SharedString::from(format!("sensor-settings-toggle-{}", self.key)))
+            .id(SharedString::from(format!(
+                "sensor-settings-toggle-{}",
+                self.key
+            )))
             .text_sm()
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(palette.fg)
@@ -389,24 +390,21 @@ impl Render for SensorSettings {
                 cx.notify();
             }));
 
-        div()
-            .mt_2()
-            .child(summary)
-            .when(self.is_open, |this| {
-                this.child(
-                    div()
-                        .mt_2()
-                        .p_3()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .bg(palette.surface_alt)
-                        .rounded(px(RADIUS_SM))
-                        .child(self.render_actions(busy, has_invalid, palette, cx))
-                        .child(self.render_general(&general_issues, show_issues, palette))
-                        .child(self.render_tuning(tunable_sensors, show_issues, palette)),
-                )
-            })
+        div().mt_2().child(summary).when(self.is_open, |this| {
+            this.child(
+                div()
+                    .mt_2()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .bg(palette.surface_alt)
+                    .rounded(px(RADIUS_SM))
+                    .child(self.render_actions(busy, has_invalid, palette, cx))
+                    .child(self.render_general(&general_issues, show_issues, palette))
+                    .child(self.render_tuning(tunable_sensors, show_issues, palette)),
+            )
+        })
     }
 }
 
@@ -465,10 +463,12 @@ async fn run_operation(
             let Some(job) = job else {
                 return Some(());
             };
-            let status = runtime::spawn(write_to_device(job)).await.unwrap_or_else(|error| {
-                tracing::error!("writing settings task failed: {error}");
-                rpc_failure("write the settings", &error)
-            });
+            let status = runtime::spawn(write_to_device(job))
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::error!("writing settings task failed: {error}");
+                    rpc_failure("write the settings", &error)
+                });
             this.update_in(cx, |this, _, cx| {
                 this.form.finish_write(status);
                 cx.notify();

@@ -92,13 +92,11 @@ pub(super) fn kind_chooser(
             card = card.hover(move |s| s.border_color(p.accent_ink));
         }
         if selected {
-            card = card.child(
-                div()
-                    .absolute()
-                    .right_3()
-                    .top_3()
-                    .child(icon(Icon::Check, 28.0, p.accent_ink)),
-            );
+            card = card.child(div().absolute().right_3().top_3().child(icon(
+                Icon::Check,
+                28.0,
+                p.accent_ink,
+            )));
         }
         let art = match kind {
             DisplayKind::Flat => tv_illustration(p, 112.0).into_any_element(),
@@ -113,7 +111,12 @@ pub(super) fn kind_chooser(
                         .text_color(p.fg_strong)
                         .child(kind_title(kind)),
                 )
-                .child(div().text_base().text_color(p.fg_muted).child(kind_blurb(kind))),
+                .child(
+                    div()
+                        .text_base()
+                        .text_color(p.fg_muted)
+                        .child(kind_blurb(kind)),
+                ),
         );
     }
     row

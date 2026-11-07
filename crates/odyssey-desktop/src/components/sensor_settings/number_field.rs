@@ -69,16 +69,27 @@ pub(super) fn bind_select(
 
 /// Shows `value` in the input. Programmatic sets do not emit `Change`, so the
 /// form is not written back.
-pub(super) fn push_text(input: &Entity<InputState>, value: &str, window: &mut Window, cx: &mut App) {
+pub(super) fn push_text(
+    input: &Entity<InputState>,
+    value: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if input.read(cx).value() != value {
-        input.update(cx, |state, cx| state.set_value(value.to_owned(), window, cx));
+        input.update(cx, |state, cx| {
+            state.set_value(value.to_owned(), window, cx)
+        });
     }
 }
 
 /// Selects the option whose index is the text `value`, or none when it is not
 /// a valid index.
 pub(super) fn push_select(select: &OptionSelect, value: &str, window: &mut Window, cx: &mut App) {
-    let index = value.trim().parse::<usize>().ok().map(|row| IndexPath::default().row(row));
+    let index = value
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .map(|row| IndexPath::default().row(row));
     select.update(cx, |state, cx| state.set_selected_index(index, window, cx));
 }
 
@@ -106,12 +117,21 @@ fn outlined(invalid: bool, palette: Palette, widget: impl IntoElement) -> impl I
         .flex_1()
         .rounded(px(RADIUS_SM))
         .border_1()
-        .border_color(if invalid { palette.danger } else { gpui::transparent_black().into() })
+        .border_color(if invalid {
+            palette.danger
+        } else {
+            gpui::transparent_black().into()
+        })
         .child(widget)
 }
 
 fn issue_line(issue: Option<String>, palette: Palette) -> Option<impl IntoElement> {
-    issue.map(|message| div().text_xs().text_color(palette.danger_ink).child(message))
+    issue.map(|message| {
+        div()
+            .text_xs()
+            .text_color(palette.danger_ink)
+            .child(message)
+    })
 }
 
 /// A labelled numeric field with an optional unit hint and validation message.
@@ -134,7 +154,11 @@ pub(super) fn number_row(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(outlined(issue.is_some(), palette, Input::new(input).small()))
+                .child(outlined(
+                    issue.is_some(),
+                    palette,
+                    Input::new(input).small(),
+                ))
                 .children(hint.map(|hint| {
                     div()
                         .text_xs()
@@ -158,7 +182,11 @@ pub(super) fn select_row(
         .flex()
         .flex_col()
         .gap_0p5()
-        .child(outlined(issue.is_some(), palette, Select::new(select).small()))
+        .child(outlined(
+            issue.is_some(),
+            palette,
+            Select::new(select).small(),
+        ))
         .children(issue_line(issue, palette));
     row(label, field, palette)
 }

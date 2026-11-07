@@ -2,8 +2,8 @@
 
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::{
-    AppContext as _,    Context, Entity, FontWeight, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, Window, div, px,
+    AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
+    Styled as _, Subscription, Window, div, px,
 };
 
 use crate::theme::palette;
@@ -82,7 +82,8 @@ impl Render for SizeBox {
         };
         let text = wizard.size_text.clone();
         if self.input.read(cx).value() != text.as_str() {
-            self.input.update(cx, |input, cx| input.set_value(text, window, cx));
+            self.input
+                .update(cx, |input, cx| input.set_value(text, window, cx));
         }
 
         let mut col = div()
@@ -102,7 +103,12 @@ impl Render for SizeBox {
                     .items_center()
                     .gap_2()
                     .child(div().w(px(192.0)).child(Input::new(&self.input)))
-                    .child(div().text_lg().text_color(p.fg_muted).child(format!("{unit} ({range})"))),
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(p.fg_muted)
+                            .child(format!("{unit} ({range})")),
+                    ),
             );
         if let Some(error) = error {
             col = col.child(div().text_sm().text_color(p.danger_ink).child(error));

@@ -115,15 +115,12 @@ impl Render for ScaleBoardInfo {
 
         let viewport = window.viewport_size();
         let status = match &self.status {
-            Some(Ok(Done::Opened(path))) => Some(
-                div()
-                    .text_sm()
-                    .text_color(p.fg_muted)
-                    .child(format!(
-                        "Opened {}. Print or save it from your PDF viewer.",
-                        path.display()
-                    )),
-            ),
+            Some(Ok(Done::Opened(path))) => {
+                Some(div().text_sm().text_color(p.fg_muted).child(format!(
+                    "Opened {}. Print or save it from your PDF viewer.",
+                    path.display()
+                )))
+            }
             Some(Ok(Done::Saved(path))) => Some(
                 div()
                     .text_sm()
@@ -286,12 +283,7 @@ impl Render for ScaleBoardInfo {
             .child(dialog);
 
         root.child(
-            deferred(
-                anchored()
-                    .position(point(px(0.0), px(0.0)))
-                    .child(overlay),
-            )
-            .with_priority(1),
+            deferred(anchored().position(point(px(0.0), px(0.0))).child(overlay)).with_priority(1),
         )
     }
 }

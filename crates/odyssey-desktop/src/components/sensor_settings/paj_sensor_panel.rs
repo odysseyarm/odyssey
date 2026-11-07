@@ -1,7 +1,7 @@
 use gpui::component::input::InputState;
 use gpui::{
-    App, Context, Entity, IntoElement, ParentElement as _, SharedString, Styled as _,
-    Subscription, Window, div,
+    App, Context, Entity, IntoElement, ParentElement as _, SharedString, Styled as _, Subscription,
+    Window, div,
 };
 
 use super::field_issue::visible_issue;
@@ -112,7 +112,12 @@ impl PajPanel {
         push_select(&self.operation_mode, &state.operation_mode, window, cx);
         push_text(&self.exposure, &state.exposure_time, window, cx);
         push_text(&self.frame_period, &state.frame_period, window, cx);
-        push_select(&self.frame_subtraction, &state.frame_subtraction, window, cx);
+        push_select(
+            &self.frame_subtraction,
+            &state.frame_subtraction,
+            window,
+            cx,
+        );
         push_select(&self.gain, &state.gain_index, window, cx);
         push_text(&self.resolution_x, &state.resolution_x, window, cx);
         push_text(&self.resolution_y, &state.resolution_y, window, cx);

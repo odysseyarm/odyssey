@@ -1,8 +1,6 @@
 //! The size question for a projector: optional, as a diagonal or a width.
 
-use gpui::{
-    App, Div, Entity, FontWeight, ParentElement as _, Styled as _, div,
-};
+use gpui::{App, Div, Entity, FontWeight, ParentElement as _, Styled as _, div};
 
 use super::size_box::SizeBox;
 use crate::theme::Palette;
@@ -17,22 +15,25 @@ pub(super) fn projector_size(
     cx: &App,
 ) -> Div {
     let field = wizard.read(cx).field();
-    let options = [(SizeField::Diagonal, "Diagonal"), (SizeField::Width, "Width")]
-        .into_iter()
-        .map(|(option, label)| {
-            (
-                label.into(),
-                option == field,
-                act_boxed(wizard, move |w, cx| {
-                    if w.size_field != option {
-                        w.size_text.clear();
-                        w.size_field = option;
-                        cx.notify();
-                    }
-                }),
-            )
-        })
-        .collect();
+    let options = [
+        (SizeField::Diagonal, "Diagonal"),
+        (SizeField::Width, "Width"),
+    ]
+    .into_iter()
+    .map(|(option, label)| {
+        (
+            label.into(),
+            option == field,
+            act_boxed(wizard, move |w, cx| {
+                if w.size_field != option {
+                    w.size_text.clear();
+                    w.size_field = option;
+                    cx.notify();
+                }
+            }),
+        )
+    })
+    .collect();
     div()
         .flex()
         .flex_col()

@@ -5,8 +5,7 @@ use odyssey_hub_common::device::Device;
 
 use super::field_issue::{FieldIssue, invalid_status};
 use super::general_config::{
-    GeneralValues, IMPACT_THRESHOLD_CONFIG, SUPPRESS_CONFIG, general_validate,
-    write_general_config,
+    GeneralValues, IMPACT_THRESHOLD_CONFIG, SUPPRESS_CONFIG, general_validate, write_general_config,
 };
 use super::op_status::{OpStatus, rpc_failure};
 use super::pag_state::{
@@ -260,16 +259,18 @@ impl SettingsForm {
             }
             .into(),
         );
-        let snapshot = general_validate(&self.impact_threshold, &self.suppress_ms, &self.shot_delay)
-            .and_then(|general| {
-                SensorValues::validate(
-                    target.tunable_sensors(),
-                    &self.paj_near_field,
-                    &self.paj_wide_field,
-                    &self.pag,
-                )
-                .map(|sensors| (general, sensors))
-            });
+        let snapshot =
+            general_validate(&self.impact_threshold, &self.suppress_ms, &self.shot_delay).and_then(
+                |general| {
+                    SensorValues::validate(
+                        target.tunable_sensors(),
+                        &self.paj_near_field,
+                        &self.paj_wide_field,
+                        &self.pag,
+                    )
+                    .map(|sensors| (general, sensors))
+                },
+            );
         match snapshot {
             Ok((general, sensors)) => Some(WriteJob {
                 client,
@@ -395,9 +396,8 @@ pub(super) async fn write_to_device(job: WriteJob) -> OpStatus {
 }
 
 async fn try_write(job: WriteJob) -> Result<OpStatus, OpStatus> {
-    let not_connected = |log_context, action| {
-        write_failure(log_context, action, &"not connected to the hub")
-    };
+    let not_connected =
+        |log_context, action| write_failure(log_context, action, &"not connected to the hub");
     let client = job
         .client
         .ok_or_else(|| not_connected("writing general config", "write the general settings"))?
@@ -462,7 +462,6 @@ async fn write_sensors(
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

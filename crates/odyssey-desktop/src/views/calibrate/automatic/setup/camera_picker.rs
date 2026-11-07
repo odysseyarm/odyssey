@@ -29,7 +29,8 @@ pub(super) fn camera_picker(
         CameraList::Failed(error) => no_camera(
             p,
             "Couldn't look for cameras".into(),
-            "Unplug the camera and plug it back in. If this keeps happening, restart the app.".into(),
+            "Unplug the camera and plug it back in. If this keeps happening, restart the app."
+                .into(),
             vec![error.clone()],
             None,
             details_open,
@@ -59,17 +60,13 @@ pub(super) fn camera_picker(
                 };
                 let id = camera.id.clone();
                 let wizard = wizard.clone();
-                let mut info = div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.fg_strong)
-                            .child(camera.name.clone()),
-                    );
+                let mut info = div().flex().flex_col().min_w_0().child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.fg_strong)
+                        .child(camera.name.clone()),
+                );
                 if !camera.serial.is_empty() {
                     info = info.child(
                         div()
@@ -103,9 +100,7 @@ pub(super) fn camera_picker(
                     row = row.hover(move |s| s.border_color(p.accent_ink));
                 }
                 if selected {
-                    row = row.child(
-                        div().ml_auto().child(icon(Icon::Check, 24.0, p.accent_ink)),
-                    );
+                    row = row.child(div().ml_auto().child(icon(Icon::Check, 24.0, p.accent_ink)));
                 }
                 col = col.child(row);
                 if let Some(warning) = camera.link.warning() {
@@ -155,12 +150,14 @@ fn no_camera(
             .into_iter()
             .map(|line| div().child(line).into_any_element())
             .collect();
-        col = col.child(
-            div()
-                .w_full()
-                .text_left()
-                .child(plain_details("camera-details", p, "Details", lines, details_open, cx)),
-        );
+        col = col.child(div().w_full().text_left().child(plain_details(
+            "camera-details",
+            p,
+            "Details",
+            lines,
+            details_open,
+            cx,
+        )));
     }
     col.into_any_element()
 }

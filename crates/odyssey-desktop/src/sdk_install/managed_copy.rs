@@ -216,9 +216,7 @@ fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
     // A removal asked for after a download wins over it.
     if removal_marker(dir).exists() {
         if let Err(e) = remove_at_with(dir, rename) {
-            tracing::warn!(
-                "Could not finish removing the downloaded Orbbec SDK: {e}"
-            );
+            tracing::warn!("Could not finish removing the downloaded Orbbec SDK: {e}");
         }
         return;
     }
@@ -230,9 +228,7 @@ fn finish_pending_at(dir: &Path, rename: Rename<'_>) {
                 "The downloaded Orbbec SDK is still in use; its update remains pending"
             ),
             Err(e) => {
-                tracing::warn!(
-                    "Could not switch to the downloaded Orbbec SDK: {e}"
-                );
+                tracing::warn!("Could not switch to the downloaded Orbbec SDK: {e}");
             }
         }
     }

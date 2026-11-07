@@ -28,7 +28,8 @@ impl ZeroView {
                 }
                 None => {
                     let hub = self.hub.clone();
-                    let controls = cx.new(|cx| DeviceControls::new(device.clone(), hub, window, cx));
+                    let controls =
+                        cx.new(|cx| DeviceControls::new(device.clone(), hub, window, cx));
                     self.controls.insert(device.uuid, controls);
                 }
             }

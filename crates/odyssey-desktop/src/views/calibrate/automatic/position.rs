@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui::{
-    AppContext as _,    AnyElement, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, Window, div,
+    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
+    Styled as _, Subscription, Window, div,
 };
 use odyssey_autocalib::session::Hint;
 
@@ -55,7 +55,8 @@ impl PositionStep {
                     return;
                 };
                 let us = value.round().max(0.0) as u32;
-                this.wizard.update(cx, |wizard, cx| wizard.set_color_exposure(us, cx));
+                this.wizard
+                    .update(cx, |wizard, cx| wizard.set_color_exposure(us, cx));
                 this.generation += 1;
                 let mine = this.generation;
                 cx.spawn(async move |this, cx| {
@@ -63,7 +64,8 @@ impl PositionStep {
                     this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
-                            this.wizard.update(cx, |wizard, cx| wizard.restart_camera(cx));
+                            this.wizard
+                                .update(cx, |wizard, cx| wizard.restart_camera(cx));
                         }
                     })
                     .ok();
@@ -88,7 +90,8 @@ impl Render for PositionStep {
         let details_open = open_state("position-details", window, cx);
         let target = SliderValue::Single(wizard.read(cx).color_exposure as f32);
         if self.exposure.read(cx).value() != target {
-            self.exposure.update(cx, |slider, cx| slider.set_value(target, window, cx));
+            self.exposure
+                .update(cx, |slider, cx| slider.set_value(target, window, cx));
         }
         let state = wizard.read(cx);
         let same_monitor = state.same_monitor;
@@ -97,7 +100,8 @@ impl Render for PositionStep {
         let exposure = state.color_exposure;
         let restarting = state.restarting;
         let camera = state.camera().map(|c| c.name).unwrap_or_default();
-        self.frame.show(state.preview.as_ref().map(|f| &f.image), window);
+        self.frame
+            .show(state.preview.as_ref().map(|f| &f.image), window);
 
         let subtitle = if same_monitor {
             "Aim the camera at the screen, then press Start. The screen counts down and then shows the pattern, over this window, while it is measured."
@@ -198,7 +202,11 @@ fn live_preview(p: Palette, wizard: &Wizard) -> AnyElement {
     let Some(frame) = wizard.preview.as_ref() else {
         return camera_placeholder(p, "Waiting for the camera…").into_any_element();
     };
-    let color = if frame.hint == Hint::Ready { p.success } else { p.warning };
+    let color = if frame.hint == Hint::Ready {
+        p.success
+    } else {
+        p.warning
+    };
     let unit = frame.width as f32 / 640.0;
     let dot_radius = 6.0 * unit;
     let line = 3.0 * unit;
@@ -284,25 +292,24 @@ fn position_details(
     }
     body.push(fact(p, "Color exposure", format!("{exposure} µs")));
     if preview.is_some_and(|f| f.hint == Hint::EdgesCropped) {
-        let mut help = div()
-            .mt_1()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .border_t_1()
-            .border_color(p.line)
-            .pt_3()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(p.fg_strong)
-                    .child("Where to turn off overscan"),
-            )
-            .child(
-                div()
-                    .text_color(p.fg_muted)
-                    .child("Menu names differ between models and years. These are the usual places:"),
-            );
+        let mut help =
+            div()
+                .mt_1()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .border_t_1()
+                .border_color(p.line)
+                .pt_3()
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(p.fg_strong)
+                        .child("Where to turn off overscan"),
+                )
+                .child(div().text_color(p.fg_muted).child(
+                    "Menu names differ between models and years. These are the usual places:",
+                ));
         for (brand, steps) in OVERSCAN_HELP {
             help = help.child(
                 div()

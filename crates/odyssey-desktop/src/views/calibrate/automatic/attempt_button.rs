@@ -21,12 +21,11 @@ pub(super) fn save_attempt(p: Palette, wizard: &Entity<Wizard>, state: &Wizard) 
         "Save details for support\u{2026}"
     };
     let status = match &state.attempt_status {
-        Some(Ok(saved)) => Some(
-            div()
-                .text_sm()
-                .text_color(p.fg)
-                .child(format!("Saved {} ({}).", saved.path.display(), megabytes(saved.bytes))),
-        ),
+        Some(Ok(saved)) => Some(div().text_sm().text_color(p.fg).child(format!(
+            "Saved {} ({}).",
+            saved.path.display(),
+            megabytes(saved.bytes)
+        ))),
         Some(Err(error)) => Some(
             div()
                 .text_sm()

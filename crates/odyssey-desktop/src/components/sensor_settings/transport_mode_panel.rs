@@ -80,8 +80,10 @@ impl TransportModePanel {
         let device = self.device.clone();
         cx.spawn(async move |this, cx| {
             let result =
-                runtime::spawn(async move { client.device(device).set_transport_mode(usb_mode).await })
-                    .await;
+                runtime::spawn(
+                    async move { client.device(device).set_transport_mode(usb_mode).await },
+                )
+                .await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(confirmed_usb)) => {
@@ -123,7 +125,9 @@ impl Render for TransportModePanel {
         let palette = palette(cx);
         // The displayed mode prefers the user's request while the reboot is
         // pending, and otherwise follows the device.
-        let pending_usb = self.user_pending_usb.unwrap_or_else(|| self.device_is_usb());
+        let pending_usb = self
+            .user_pending_usb
+            .unwrap_or_else(|| self.device_is_usb());
         let key = &self.key;
         let mode_button = |name: &str, label: &'static str, usb_mode: bool| {
             let active = pending_usb == usb_mode;
@@ -132,25 +136,35 @@ impl Render for TransportModePanel {
                 .small()
                 .disabled(self.switching || active)
                 .on_click(cx.listener(move |this, _, _, cx| this.switch_mode(usb_mode, cx)));
-            if active { button.primary() } else { button.outline() }
+            if active {
+                button.primary()
+            } else {
+                button.outline()
+            }
         };
 
-        div().mt_2().child(
-            div()
-                .id(SharedString::from(format!("transport-toggle-{key}")))
-                .text_sm()
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(palette.fg)
-                .cursor_pointer()
-                .hover(|style| style.text_color(palette.accent_ink))
-                .child(if self.is_open { "▾ Connection" } else { "▸ Connection" })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.is_open = !this.is_open;
-                    cx.notify();
-                })),
-        )
-        .when(self.is_open, |this| {
-            this.child(
+        div()
+            .mt_2()
+            .child(
+                div()
+                    .id(SharedString::from(format!("transport-toggle-{key}")))
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(palette.fg)
+                    .cursor_pointer()
+                    .hover(|style| style.text_color(palette.accent_ink))
+                    .child(if self.is_open {
+                        "▾ Connection"
+                    } else {
+                        "▸ Connection"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.is_open = !this.is_open;
+                        cx.notify();
+                    })),
+            )
+            .when(self.is_open, |this| {
+                this.child(
                 div()
                     .mt_2()
                     .p_3()
@@ -195,6 +209,6 @@ impl Render for TransportModePanel {
                         palette,
                     )),
             )
-        })
+            })
     }
 }

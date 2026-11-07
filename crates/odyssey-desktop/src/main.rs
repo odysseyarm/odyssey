@@ -7,8 +7,8 @@
 use std::io::Write as _;
 
 mod cli;
-mod config_corruption;
 mod components;
+mod config_corruption;
 mod hub;
 mod logging;
 mod paths;
@@ -60,6 +60,11 @@ fn main() {
             let _ = writeln!(std::io::stderr(), "odyssey-desktop: {e}\n\n{}", cli::USAGE);
             std::process::exit(2);
         }
+    }
+
+    if let Err(error) = runtime::start() {
+        tracing::error!("Could not start the async runtime: {error}");
+        std::process::exit(1);
     }
 
     // A downloaded camera SDK that could not be removed or replaced while it was

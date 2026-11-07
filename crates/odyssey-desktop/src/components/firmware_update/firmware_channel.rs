@@ -25,7 +25,8 @@ impl FirmwareChannelModel {
             let load = runtime::spawn(FirmwareChannel::load());
             cx.spawn(async move |this, cx| {
                 let Ok(saved) = load.await else { return };
-                this.update(cx, |this, cx| this.set_if_unset(saved, cx)).ok();
+                this.update(cx, |this, cx| this.set_if_unset(saved, cx))
+                    .ok();
             })
             .detach();
             Self { channel: None }

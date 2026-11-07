@@ -55,6 +55,10 @@ ksni = "0.3.6"
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.21", default-features = false }
 
+# Puts the icon into the .exe, which Explorer, the taskbar and the shortcuts read.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
 [[bin]]
 name = "odyssey-sim-control"
 path = "src/bin/odyssey-sim-control.rs"

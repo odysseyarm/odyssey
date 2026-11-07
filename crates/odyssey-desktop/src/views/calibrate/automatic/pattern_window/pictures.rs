@@ -5,9 +5,10 @@
 
 use std::rc::Rc;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Bounds, Corners, Hsla, IntoElement, ParentElement as _, Pixels, Rgba, Styled as _,
-    canvas, div, fill, point, px, size, white, prelude::FluentBuilder as _,
+    canvas, div, fill, point, px, size, white,
 };
 use odyssey_autocalib::pattern::Pattern;
 
@@ -83,8 +84,7 @@ pub(super) fn pattern_picture(pattern: Rc<Pattern>) -> AnyElement {
             let sx = w / pattern.aspect() as f32;
             let white: Hsla = white();
             for rect in pattern.frame_rects() {
-                let origin = bounds.origin
-                    + point(px(rect.x as f32 * sx), px(rect.y as f32 * h));
+                let origin = bounds.origin + point(px(rect.x as f32 * sx), px(rect.y as f32 * h));
                 let extent = size(px(rect.width as f32 * sx), px(rect.height as f32 * h));
                 window.paint_quad(fill(Bounds::new(origin, extent), white));
             }
@@ -93,8 +93,11 @@ pub(super) fn pattern_picture(pattern: Rc<Pattern>) -> AnyElement {
                 let center = bounds.origin + point(px(dot.u as f32 * w), px(dot.v as f32 * h));
                 let corner = point(center.x - px(radius), center.y - px(radius));
                 window.paint_quad(
-                    fill(Bounds::new(corner, size(px(2.0 * radius), px(2.0 * radius))), white)
-                        .corner_radii(Corners::all(px(radius))),
+                    fill(
+                        Bounds::new(corner, size(px(2.0 * radius), px(2.0 * radius))),
+                        white,
+                    )
+                    .corner_radii(Corners::all(px(radius))),
                 );
             }
         },

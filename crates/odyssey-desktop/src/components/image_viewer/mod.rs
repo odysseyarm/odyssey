@@ -73,7 +73,9 @@ impl ImageViewer {
     fn open(&mut self, cx: &mut Context<Self>) {
         if let Some((window, dialog)) = &self.dialog
             && dialog.upgrade().is_some()
-            && window.update(cx, |_, window, _| window.activate_window()).is_ok()
+            && window
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
         {
             return;
         }

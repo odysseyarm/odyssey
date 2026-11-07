@@ -16,13 +16,15 @@ pub(super) const PREVIEW_MAX_WIDTH: u32 = 800;
 /// the overlays.
 pub(super) fn encode_rgb(image: &RgbImage, max_width: u32) -> (Arc<RenderImage>, u32, u32) {
     let (w, h) = image.dimensions();
+    let resized;
     let shown = if w > max_width && max_width > 0 {
         let scaled_h = (u64::from(h) * u64::from(max_width) / u64::from(w)).max(1) as u32;
-        image::imageops::resize(image, max_width, scaled_h, FilterType::Triangle)
+        resized = image::imageops::resize(image, max_width, scaled_h, FilterType::Triangle);
+        &resized
     } else {
-        image.clone()
+        image
     };
-    (render_image(&shown), w, h)
+    (render_image(shown), w, h)
 }
 
 /// Encodes an infrared frame as gray pixels.
@@ -46,7 +48,7 @@ fn render_image(image: &RgbImage) -> Arc<RenderImage> {
 }
 
 fn bgra_image(w: u32, h: u32, bgra: Vec<u8>) -> Arc<RenderImage> {
-    let buffer = RgbaImage::from_raw(w, h, bgra)
-        .unwrap_or_else(|| RgbaImage::new(w.max(1), h.max(1)));
+    let buffer =
+        RgbaImage::from_raw(w, h, bgra).unwrap_or_else(|| RgbaImage::new(w.max(1), h.max(1)));
     Arc::new(RenderImage::new(vec![Frame::new(buffer)]))
 }

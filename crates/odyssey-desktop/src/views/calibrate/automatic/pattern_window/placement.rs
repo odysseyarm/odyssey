@@ -1,6 +1,6 @@
 //! Whether the pattern window would cover the wizard's own window.
 
-use gpui::{Bounds, DisplayId, PlatformDisplay, Pixels, Point};
+use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Point};
 
 /// A rectangle in desktop pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

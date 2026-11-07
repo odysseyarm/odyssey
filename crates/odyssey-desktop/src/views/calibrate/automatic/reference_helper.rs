@@ -9,8 +9,8 @@
 use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::component::slider::{Slider, SliderEvent, SliderState};
 use gpui::{
-    AnyElement, AppContext as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement as _, Render, Rgba,
-    SharedString, Styled as _, Subscription, Window, div, px,
+    AnyElement, AppContext as _, Context, Div, Entity, FontWeight, IntoElement, ParentElement as _,
+    Render, Rgba, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
 use super::kind::DisplayKind;
@@ -53,7 +53,8 @@ impl ReferenceHelper {
             cx.subscribe(&card, |this, _, event: &SliderEvent, cx| {
                 if let SliderEvent::Change(value) = event {
                     let px = f64::from(value.start());
-                    this.wizard.update(cx, |wizard, cx| wizard.set_card_px(px, cx));
+                    this.wizard
+                        .update(cx, |wizard, cx| wizard.set_card_px(px, cx));
                 }
             }),
         ];
@@ -71,12 +72,18 @@ impl ReferenceHelper {
     fn sync(&mut self, helper: &Helper, window: &mut Window, cx: &mut Context<Self>) {
         if self.tape.read(cx).value() != helper.tape_text.as_str() {
             let text = helper.tape_text.clone();
-            self.tape.update(cx, |state, cx| state.set_value(text, window, cx));
+            self.tape
+                .update(cx, |state, cx| state.set_value(text, window, cx));
         }
         if self.placeholder_unit.replace(helper.tape_unit) != Some(helper.tape_unit) {
-            let placeholder = if helper.tape_unit == Unit::Inches { "47 5/8" } else { "121.0" };
-            self.tape
-                .update(cx, |state, cx| state.set_placeholder(placeholder, window, cx));
+            let placeholder = if helper.tape_unit == Unit::Inches {
+                "47 5/8"
+            } else {
+                "121.0"
+            };
+            self.tape.update(cx, |state, cx| {
+                state.set_placeholder(placeholder, window, cx)
+            });
         }
 
         let (lo, hi) = (helper.card_bounds.0 as f32, helper.card_bounds.1 as f32);
@@ -95,7 +102,8 @@ impl ReferenceHelper {
                 cx.notify();
             });
         } else if (self.card.read(cx).value().start() - value).abs() > SLIDER_EPSILON {
-            self.card.update(cx, |state, cx| state.set_value(value, window, cx));
+            self.card
+                .update(cx, |state, cx| state.set_value(value, window, cx));
         }
     }
 }
@@ -120,12 +128,22 @@ impl Render for ReferenceHelper {
         let body = match helper {
             Some(helper) => {
                 self.sync(&helper, window, cx);
-                Some(self.open_helper(p, &helper, reading, key.as_ref().map(|k| (k.width, k.height)), panel))
+                Some(self.open_helper(
+                    p,
+                    &helper,
+                    reading,
+                    key.as_ref().map(|k| (k.width, k.height)),
+                    panel,
+                ))
             }
             None => match (reference, &key) {
-                (Some(reading), Some(key)) => {
-                    Some(measured(p, &self.wizard, reading, (key.width, key.height), panel))
-                }
+                (Some(reading), Some(key)) => Some(measured(
+                    p,
+                    &self.wizard,
+                    reading,
+                    (key.width, key.height),
+                    panel,
+                )),
                 _ => finding.map(|finding| prompt(p, &self.wizard, projected, finding.is_found())),
             },
         };
@@ -196,7 +214,12 @@ fn steps(p: Palette, items: Vec<&'static str>) -> Div {
             div()
                 .flex()
                 .gap_2()
-                .child(div().w(px(20.0)).flex_shrink_0().child(format!("{}.", i + 1)))
+                .child(
+                    div()
+                        .w(px(20.0))
+                        .flex_shrink_0()
+                        .child(format!("{}.", i + 1)),
+                )
                 .child(div().flex_1().child(text))
         }))
 }
@@ -255,12 +278,20 @@ fn prompt(p: Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> 
                 .flex_wrap()
                 .gap_3()
                 .child(
-                    button("helper-tape", "Use a tape measure", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, |wizard, cx| wizard.open_helper(Method::Tape, cx))),
+                    button(
+                        "helper-tape",
+                        "Use a tape measure",
+                        ButtonKind::Secondary,
+                        p,
+                    )
+                    .on_click(act(wizard, |wizard, cx| {
+                        wizard.open_helper(Method::Tape, cx)
+                    })),
                 )
                 .child(
-                    button("helper-card", "Use a credit card", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, |wizard, cx| wizard.open_helper(Method::Card, cx))),
+                    button("helper-card", "Use a credit card", ButtonKind::Secondary, p).on_click(
+                        act(wizard, |wizard, cx| wizard.open_helper(Method::Card, cx)),
+                    ),
                 ),
         )
         .child(
@@ -367,16 +398,21 @@ impl ReferenceHelper {
         let method_choice = segmented(
             p,
             "helper-method",
-            [(Method::Tape, "Tape measure"), (Method::Card, "Credit card")]
-                .into_iter()
-                .map(|(option, label)| {
-                    (
-                        SharedString::from(label),
-                        option == method,
-                        act_boxed(wizard, move |wizard, cx| wizard.set_helper_method(option, cx)),
-                    )
-                })
-                .collect(),
+            [
+                (Method::Tape, "Tape measure"),
+                (Method::Card, "Credit card"),
+            ]
+            .into_iter()
+            .map(|(option, label)| {
+                (
+                    SharedString::from(label),
+                    option == method,
+                    act_boxed(wizard, move |wizard, cx| {
+                        wizard.set_helper_method(option, cx)
+                    }),
+                )
+            })
+            .collect(),
             16.0,
         );
         let how = match method {
@@ -490,8 +526,13 @@ impl ReferenceHelper {
             .child(steps(p, list))
             .children(helper.covers.then(|| {
                 div().child(
-                    button("helper-show-line", "Show the line", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
+                    button(
+                        "helper-show-line",
+                        "Show the line",
+                        ButtonKind::Secondary,
+                        p,
+                    )
+                    .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
                 )
             }))
             .child(
@@ -532,8 +573,13 @@ impl ReferenceHelper {
                 .items_center()
                 .gap_3()
                 .child(
-                    button("helper-show-frame", "Show the frame", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
+                    button(
+                        "helper-show-frame",
+                        "Show the frame",
+                        ButtonKind::Secondary,
+                        p,
+                    )
+                    .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
                 )
                 .child(width)
         } else {
@@ -543,21 +589,31 @@ impl ReferenceHelper {
                 .items_center()
                 .gap_3()
                 .child(
-                    button("helper-smaller", "\u{2212}", ButtonKind::Secondary, p).on_click(act(
-                        wizard,
-                        move |wizard, cx| wizard.set_card_px(card_px - CARD_STEP_PX, cx),
-                    )),
+                    button("helper-smaller", "\u{2212}", ButtonKind::Secondary, p)
+                        .on_click(act(wizard, move |wizard, cx| {
+                            wizard.set_card_px(card_px - CARD_STEP_PX, cx)
+                        })),
                 )
-                .child(div().w(px(256.0)).max_w_full().child(Slider::new(&self.card)))
                 .child(
-                    button("helper-larger", "+", ButtonKind::Secondary, p).on_click(act(
-                        wizard,
-                        move |wizard, cx| wizard.set_card_px(card_px + CARD_STEP_PX, cx),
-                    )),
+                    div()
+                        .w(px(256.0))
+                        .max_w_full()
+                        .child(Slider::new(&self.card)),
+                )
+                .child(
+                    button("helper-larger", "+", ButtonKind::Secondary, p)
+                        .on_click(act(wizard, move |wizard, cx| {
+                            wizard.set_card_px(card_px + CARD_STEP_PX, cx)
+                        })),
                 )
                 .child(width)
         };
-        div().flex().flex_col().gap_3().child(steps(p, list)).child(controls)
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(steps(p, list))
+            .child(controls)
     }
 }
 

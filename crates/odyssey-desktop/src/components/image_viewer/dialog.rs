@@ -85,7 +85,12 @@ impl ImageDialog {
             .map(|&name| SharedString::from(name))
             .collect();
         let camera_select = cx.new(|cx| {
-            SelectState::new(camera_options, Some(IndexPath::default().row(0)), window, cx)
+            SelectState::new(
+                camera_options,
+                Some(IndexPath::default().row(0)),
+                window,
+                cx,
+            )
         });
         let fps_options: Vec<SharedString> = (1..=MAX_FPS)
             .map(|value| SharedString::from(value.to_string()))
@@ -131,7 +136,9 @@ impl ImageDialog {
         // Updates receive age even when no new frames arrive or the view is paused.
         let clock = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(250)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
                 }

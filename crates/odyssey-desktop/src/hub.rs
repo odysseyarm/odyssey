@@ -102,7 +102,13 @@ enum Change {
     Connected(Client),
     Devices(Vec<Device>),
     Dongles(Vec<DongleInfo>),
-    Event(oe::Event),
+    /// The only device event that changes model state; the rest go over the
+    /// broadcast channels so the UI is not woken at IMU rate.
+    Battery {
+        uuid: [u8; 6],
+        percent: u8,
+        charging: bool,
+    },
 }
 
 /// Tags a stream's items with `wrap` and appends a [`HubUpdate::Closed`] marker.
@@ -283,17 +289,24 @@ impl Follower {
         if is_pairing_result(&event) {
             let _ = self.pairing_events.send(event.clone());
         }
-        let _ = self.changes.send(Change::Event(event));
+        if let oe::Event::DeviceEvent(oe::DeviceEvent(
+            device,
+            oe::DeviceEventKind::BatteryEvent(battery),
+        )) = &event
+        {
+            let _ = self.changes.send(Change::Battery {
+                uuid: device.uuid,
+                percent: battery.percent,
+                charging: battery.charging,
+            });
+        }
     }
 }
 
 impl Hub {
     /// Creates the model and starts following the server once `server_ready`
     /// turns true. The follower task ends when the model is dropped.
-    pub(crate) fn new(
-        server_ready: watch::Receiver<bool>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn new(server_ready: watch::Receiver<bool>, cx: &mut Context<Self>) -> Self {
         let (tracking_events, _) = broadcast::channel(TRACKING_CHANNEL_CAPACITY);
         let (impact_events, _) = broadcast::channel(IMPACT_CHANNEL_CAPACITY);
         let (pairing_events, _) = broadcast::channel(PAIRING_CHANNEL_CAPACITY);
@@ -309,7 +322,7 @@ impl Hub {
 
         cx.spawn(async move |this, cx| {
             // Aborts the follower when the model drops this task.
-            let _stop = scopeguard_abort(task);
+            let _stop = AbortOnDrop(task);
             while let Some(change) = receiver.recv().await {
                 let applied = this.update(cx, |hub, cx| hub.apply(change, cx));
                 if applied.is_err() {
@@ -335,19 +348,15 @@ impl Hub {
             Change::Connected(client) => self.client = Some(client),
             Change::Devices(list) => self.devices = list,
             Change::Dongles(list) => self.dongles = list,
-            Change::Event(event) => {
-                if let oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) = &event
-                    && let oe::DeviceEventKind::BatteryEvent(battery) = kind
-                {
-                    tracing::info!(
-                        "BatteryEvent received for {:02x?}: {}% charging={}",
-                        device.uuid,
-                        battery.percent,
-                        battery.charging
-                    );
-                    self.battery_states
-                        .insert(device.uuid, (battery.percent, battery.charging));
-                }
+            Change::Battery {
+                uuid,
+                percent,
+                charging,
+            } => {
+                tracing::info!(
+                    "BatteryEvent received for {uuid:02x?}: {percent}% charging={charging}"
+                );
+                self.battery_states.insert(uuid, (percent, charging));
             }
         }
         cx.notify();
@@ -378,10 +387,6 @@ impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
     }
-}
-
-fn scopeguard_abort(task: tokio::task::JoinHandle<()>) -> AbortOnDrop {
-    AbortOnDrop(task)
 }
 
 #[cfg(test)]

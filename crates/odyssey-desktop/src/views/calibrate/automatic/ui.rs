@@ -48,7 +48,13 @@ pub(super) fn step_page(
             .child(title.into()),
     );
     if let Some(subtitle) = subtitle {
-        head = head.child(div().mt_1().text_lg().text_color(p.fg_muted).child(subtitle));
+        head = head.child(
+            div()
+                .mt_1()
+                .text_lg()
+                .text_color(p.fg_muted)
+                .child(subtitle),
+        );
     }
     div()
         .flex()
@@ -107,7 +113,10 @@ pub(super) fn details(
                 .text_base()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(p.fg)
-                .child(format!("{} {summary}", if is_open { "\u{25be}" } else { "\u{25b8}" }))
+                .child(format!(
+                    "{} {summary}",
+                    if is_open { "\u{25be}" } else { "\u{25b8}" }
+                ))
                 .on_click(move |_, _, cx| {
                     open.update(cx, |open, cx| {
                         *open = !*open;
@@ -146,7 +155,10 @@ pub(super) fn plain_details(
             .id(ElementId::Name(format!("{id}-summary").into()))
             .cursor_pointer()
             .font_weight(FontWeight::MEDIUM)
-            .child(format!("{} {summary}", if is_open { "\u{25be}" } else { "\u{25b8}" }))
+            .child(format!(
+                "{} {summary}",
+                if is_open { "\u{25be}" } else { "\u{25b8}" }
+            ))
             .on_click(move |_, _, cx| {
                 open.update(cx, |open, cx| {
                     *open = !*open;
@@ -161,7 +173,11 @@ pub(super) fn plain_details(
 }
 
 /// A label and value on one line inside [`details`].
-pub(super) fn fact(p: Palette, label: impl Into<SharedString>, value: impl Into<SharedString>) -> AnyElement {
+pub(super) fn fact(
+    p: Palette,
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+) -> AnyElement {
     div()
         .flex()
         .justify_between()

@@ -140,7 +140,9 @@ impl DeviceControls {
         self.run_command(
             async move {
                 match client.device(device.clone()).set_shot_delay(delay_ms).await {
-                    Ok(()) => tracing::info!("Set shot delay {}ms for {:x?}", delay_ms, device.uuid),
+                    Ok(()) => {
+                        tracing::info!("Set shot delay {}ms for {:x?}", delay_ms, device.uuid)
+                    }
                     Err(e) => tracing::error!("Failed to set shot delay {:x?}: {}", device.uuid, e),
                 }
             },
@@ -201,7 +203,9 @@ impl DeviceControls {
                 tracing::info!("Set shot delay {}ms for {:x?}", delay_ms, device.uuid);
                 match client.save_shot_delay().await {
                     Ok(()) => tracing::info!("Saved shot delay for {:x?}", device.uuid),
-                    Err(e) => tracing::error!("Failed to save shot delay {:x?}: {}", device.uuid, e),
+                    Err(e) => {
+                        tracing::error!("Failed to save shot delay {:x?}: {}", device.uuid, e)
+                    }
                 }
             },
             |_, (), _| {},
@@ -209,7 +213,11 @@ impl DeviceControls {
         );
     }
 
-    pub(super) fn shot_delay_row(&mut self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn shot_delay_row(
+        &mut self,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let id = cx.entity_id();
         let pending = self.pending;
         let decrement = step_button(("zero-delay-decrement", id), "−", Side::Left, pending, p)

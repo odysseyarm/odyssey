@@ -36,8 +36,7 @@ impl Wizard {
             return None;
         };
         let chosen = self.camera_choice.as_deref();
-        let by_choice =
-            chosen.and_then(|id| list.iter().find(|c| c.id == id || c.serial == id));
+        let by_choice = chosen.and_then(|id| list.iter().find(|c| c.id == id || c.serial == id));
         match (by_choice, list.as_slice()) {
             (Some(camera), _) => Some(camera.clone()),
             (None, [only]) if chosen.is_none() => Some(only.clone()),

@@ -25,30 +25,34 @@ pub(super) fn disagreement_notice(
     cx: &App,
 ) -> AnyElement {
     let saving = wizard.read(cx).saving;
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(
-            div()
-                .flex()
-                .items_start()
-                .gap_3()
-                .child(div().mt_0p5().child(icon(Icon::Warning, 24.0, p.warning_ink)))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_lg()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("The camera and the screen's size don't agree"),
-                        )
-                        .child(div().text_base().child(disagreement_message(check, size_origin))),
-                ),
-        );
+    let mut body = div().flex().flex_col().gap_3().child(
+        div()
+            .flex()
+            .items_start()
+            .gap_3()
+            .child(
+                div()
+                    .mt_0p5()
+                    .child(icon(Icon::Warning, 24.0, p.warning_ink)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("The camera and the screen's size don't agree"),
+                    )
+                    .child(
+                        div()
+                            .text_base()
+                            .child(disagreement_message(check, size_origin)),
+                    ),
+            ),
+    );
     if can_use_measured {
         body = body
             .child(
@@ -192,6 +196,8 @@ pub(super) fn save_error(p: Palette, error: &str) -> Div {
     div().child(alert(
         AlertKind::Danger,
         p,
-        div().text_base().child(format!("Couldn't save the calibration: {error}")),
+        div()
+            .text_base()
+            .child(format!("Couldn't save the calibration: {error}")),
     ))
 }

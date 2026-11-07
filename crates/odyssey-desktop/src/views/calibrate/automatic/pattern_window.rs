@@ -2,8 +2,8 @@
 //! monitor.
 //!
 //! The pattern is an SVG in the pattern's own unit space (`Pattern::dots`), so
-//! it fills whatever resolution the monitor has. The window lives exactly as
-//! long as its [`PatternDisplay`]: dropping the display closes the window.
+//! it fills whatever resolution the monitor has. The window stays open until
+//! [`PatternDisplay::close`]; dropping the display does not close it.
 
 mod display;
 mod mode;

@@ -166,7 +166,9 @@ mod platform {
     use gpui::Global;
     use tokio_util::sync::CancellationToken;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-    use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+    use tray_icon::{
+        Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    };
 
     use super::{Commands, TrayCommand, tray_image};
 
@@ -174,7 +176,9 @@ mod platform {
     const QUIT_ID: &str = "quit";
 
     /// Dropping the icon unregisters it, so it lives as long as the app.
-    struct TrayHolder(#[expect(dead_code, reason = "held only to keep the icon registered")] TrayIcon);
+    struct TrayHolder(
+        #[expect(dead_code, reason = "held only to keep the icon registered")] TrayIcon,
+    );
 
     impl Global for TrayHolder {}
 

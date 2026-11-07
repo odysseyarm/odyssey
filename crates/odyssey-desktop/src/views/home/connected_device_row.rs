@@ -5,17 +5,18 @@
 
 use std::time::Duration;
 
+use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AppContext as _, Context, Entity,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
-    pulsating_between,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, pulsating_between, px,
 };
-use gpui::component::input::{Input, InputEvent, InputState};
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 
 use super::firmware_state::FirmwareManifestModel;
-use crate::components::firmware_update::{FirmwareUpdateManager, UpdateTicker, device_firmware_update};
+use crate::components::firmware_update::{
+    FirmwareUpdateManager, UpdateTicker, device_firmware_update,
+};
 use crate::components::image_viewer::ImageViewer;
 use crate::components::sensor_settings::{SensorSettings, TransportModePanel};
 use crate::hub::Hub;
@@ -244,18 +245,18 @@ impl ConnectedDeviceRow {
                 .into_any_element();
         }
 
-        let mut name = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .text_sm()
-                    .font_family("monospace")
-                    .text_color(p.fg)
-                    .child(crate::views::device_label(&self.device)),
-            );
-        if self.device.capabilities.contains(DeviceCapabilities::CONTROL) {
+        let mut name = div().flex().items_center().gap_3().child(
+            div()
+                .text_sm()
+                .font_family("monospace")
+                .text_color(p.fg)
+                .child(crate::views::device_label(&self.device)),
+        );
+        if self
+            .device
+            .capabilities
+            .contains(DeviceCapabilities::CONTROL)
+        {
             let pending = self.rename_pending;
             let mut pencil = div()
                 .id("rename")
@@ -282,7 +283,12 @@ impl ConnectedDeviceRow {
             );
         }
         if let Some(error) = &self.rename_error {
-            name = name.child(div().text_xs().text_color(p.danger_ink).child(error.clone()));
+            name = name.child(
+                div()
+                    .text_xs()
+                    .text_color(p.danger_ink)
+                    .child(error.clone()),
+            );
         }
         name.into_any_element()
     }

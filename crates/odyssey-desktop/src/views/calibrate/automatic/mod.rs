@@ -32,14 +32,13 @@ pub(crate) mod wizard;
 pub(crate) mod worker;
 
 pub(crate) use calibrate_automatic::CalibrateAutomaticView;
-
 use gpui::{
-    App, AppContext as _, AnyWindowHandle, Bounds, Global, TitlebarOptions, WindowBounds,
+    AnyWindowHandle, App, AppContext as _, Bounds, Global, TitlebarOptions, WindowBounds,
     WindowOptions, px, size,
 };
+use wizard::Wizard;
 
 use crate::cli::CalibrateArgs;
-use wizard::Wizard;
 
 const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
 

@@ -114,10 +114,20 @@ fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
             .child(headline),
     );
     if let Some(advice) = finding.advice() {
-        text = text.child(div().text_base().text_color(p.fg_muted).child(advice.to_string()));
+        text = text.child(
+            div()
+                .text_base()
+                .text_color(p.fg_muted)
+                .child(advice.to_string()),
+        );
     }
     if let Some(aside) = finding.projector_aside() {
-        text = text.child(div().text_base().text_color(p.fg_muted).child(aside.to_string()));
+        text = text.child(
+            div()
+                .text_base()
+                .text_color(p.fg_muted)
+                .child(aside.to_string()),
+        );
     }
     div()
         .flex()

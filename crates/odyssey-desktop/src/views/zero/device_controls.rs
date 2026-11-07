@@ -94,11 +94,15 @@ impl DeviceControls {
                 .default_value(state.shot_delay_ms().to_string())
                 .validate(|typed, _| typed.chars().all(|c| c.is_ascii_digit()))
         });
-        let input_events = cx.subscribe_in(&shot_delay_input, window, |controls, _, event, window, cx| {
-            if matches!(event, InputEvent::Change) {
-                controls.shot_delay_typed(window, cx);
-            }
-        });
+        let input_events = cx.subscribe_in(
+            &shot_delay_input,
+            window,
+            |controls, _, event, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    controls.shot_delay_typed(window, cx);
+                }
+            },
+        );
         Self {
             device,
             hub,
@@ -174,8 +178,16 @@ impl Render for DeviceControls {
         }));
         let key_button = pill(
             ("zero-on-key", id),
-            if zeroing_on_key { "Cancel [Z]" } else { "Zero on [Z]" },
-            if zeroing_on_key { Tone::Danger } else { Tone::Plain },
+            if zeroing_on_key {
+                "Cancel [Z]"
+            } else {
+                "Zero on [Z]"
+            },
+            if zeroing_on_key {
+                Tone::Danger
+            } else {
+                Tone::Plain
+            },
             false,
             p,
         )

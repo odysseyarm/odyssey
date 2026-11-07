@@ -1,10 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, DisplayId, PlatformDisplay, Subscription, WindowBounds, WindowKind,
-    WindowOptions,
+    App, Context, DisplayId, PlatformDisplay, Subscription, WindowBounds, WindowKind, WindowOptions,
 };
-
 use odyssey_hub_common::config::{self, MonitorKey};
 
 use super::monitor_layout::{MonitorInfo, resolve_selected};
@@ -78,9 +76,8 @@ impl MonitorSelection {
             this.update(cx, Self::refresh).ok();
         });
 
-        let remembered = runtime::spawn(async {
-            config::ui_state_async().await.into_value().selected_monitor
-        });
+        let remembered =
+            runtime::spawn(async { config::ui_state_async().await.into_value().selected_monitor });
         cx.spawn(async move |this, cx| {
             let remembered = match remembered.await {
                 Ok(remembered) => remembered,

@@ -70,7 +70,8 @@ impl Wizard {
         let host = self.host;
         // Deferred: this may run inside an update of the host window.
         cx.defer(move |cx| {
-            host.update(cx, |_, window, _| window.activate_window()).ok();
+            host.update(cx, |_, window, _| window.activate_window())
+                .ok();
         });
     }
 

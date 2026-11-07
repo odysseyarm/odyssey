@@ -43,12 +43,11 @@ pub(super) fn screen_number_picker(p: Palette, wizard: &Entity<Wizard>, cx: &App
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(screen_label(id)),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(sub)
-                    .child(if taken { "Calibrated" } else { "Empty" }),
-            )
+            .child(div().text_xs().text_color(sub).child(if taken {
+                "Calibrated"
+            } else {
+                "Empty"
+            }))
             .on_click(move |_, _, cx| {
                 wizard.update(cx, |w, cx| {
                     w.screen_choice = Some(id);

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
 use gpui::{
-    AppContext as _,    AnyElement, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
-    Styled as _, Subscription, Window, div,
+    AnyElement, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _,
+    Render, Styled as _, Subscription, Window, div,
 };
 
 use super::hints::{MARKER_RULES, marker_hint};
@@ -47,7 +47,8 @@ impl MarkersStep {
                     return;
                 };
                 let us = value.round().max(0.0) as u32;
-                this.wizard.update(cx, |wizard, cx| wizard.set_ir_exposure(us, cx));
+                this.wizard
+                    .update(cx, |wizard, cx| wizard.set_ir_exposure(us, cx));
                 this.generation += 1;
                 let mine = this.generation;
                 cx.spawn(async move |this, cx| {
@@ -55,7 +56,8 @@ impl MarkersStep {
                     this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
-                            this.wizard.update(cx, |wizard, cx| wizard.apply_ir_exposure(cx));
+                            this.wizard
+                                .update(cx, |wizard, cx| wizard.apply_ir_exposure(cx));
                         }
                     })
                     .ok();
@@ -81,10 +83,12 @@ impl Render for MarkersStep {
         let rules_open = open_state("marker-rules", window, cx);
         let target = SliderValue::Single(wizard.read(cx).ir_exposure as f32);
         if self.exposure.read(cx).value() != target {
-            self.exposure.update(cx, |slider, cx| slider.set_value(target, window, cx));
+            self.exposure
+                .update(cx, |slider, cx| slider.set_value(target, window, cx));
         }
         let state = wizard.read(cx);
-        self.frame.show(state.markers.as_ref().map(|f| &f.image), window);
+        self.frame
+            .show(state.markers.as_ref().map(|f| &f.image), window);
         let ir = state.ir_exposure;
         let all_found = state.markers.as_ref().is_some_and(|f| f.matched.is_some());
 
@@ -120,7 +124,11 @@ impl Render for MarkersStep {
             facts.push(fact(
                 p,
                 "Matched to the marker layout",
-                if frame.matched.is_some() { "6 of 6" } else { "not all six" },
+                if frame.matched.is_some() {
+                    "6 of 6"
+                } else {
+                    "not all six"
+                },
             ));
             facts.push(fact(
                 p,

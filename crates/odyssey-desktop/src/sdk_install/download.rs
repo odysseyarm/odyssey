@@ -62,9 +62,7 @@ pub(crate) async fn install(mut progress: impl FnMut(Phase)) -> Result<Installed
         .and_then(|()| std::fs::write(staging.join(STAGED_OK), b"").map_err(Into::into));
     if let Err(e) = unpacked {
         if let Err(cleanup) = remove_dir_if_present(&staging) {
-            tracing::warn!(
-                "Could not clean the unfinished SDK download: {cleanup}"
-            );
+            tracing::warn!("Could not clean the unfinished SDK download: {cleanup}");
         }
         return Err(e);
     }

@@ -45,17 +45,31 @@ const PROJECTOR_SPARKLE: &[u8] =
 const PROJECTOR_BEAM: &[u8] = mono!(r#"<polygon points="65,55 98,22 98,84 65,68.3"/>"#);
 
 fn byte(channel: f32) -> u8 {
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "rounded 0..=255")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rounded 0..=255"
+    )]
     let byte = (channel * 255.0).round() as u8;
     byte
 }
 
 fn hex(color: Rgba) -> String {
-    format!("#{:02x}{:02x}{:02x}", byte(color.r), byte(color.g), byte(color.b))
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        byte(color.r),
+        byte(color.g),
+        byte(color.b)
+    )
 }
 
 fn tv_svg(p: Palette) -> String {
-    let (soft, faint, muted, accent) = (hex(p.accent_soft), hex(p.fg_faint), hex(p.fg_muted), hex(p.accent));
+    let (soft, faint, muted, accent) = (
+        hex(p.accent_soft),
+        hex(p.fg_faint),
+        hex(p.fg_muted),
+        hex(p.accent),
+    );
     format!(
         r##"{SVG_OPEN}
 <ellipse cx="80" cy="66" rx="70" ry="48" fill="{soft}"/>
@@ -72,12 +86,19 @@ fn tv_svg(p: Palette) -> String {
 }
 
 fn projector_svg(p: Palette) -> String {
-    let (soft, faint, muted, accent) = (hex(p.accent_soft), hex(p.fg_faint), hex(p.fg_muted), hex(p.accent));
+    let (soft, faint, muted, accent) = (
+        hex(p.accent_soft),
+        hex(p.fg_faint),
+        hex(p.fg_muted),
+        hex(p.accent),
+    );
     let (surface, line, strong) = (hex(p.surface), hex(p.line_strong), hex(p.fg_strong));
     let mut dots = String::new();
     for y in [38, 52, 66] {
         for x in [110, 124, 138] {
-            dots.push_str(&format!(r#"<circle cx="{x}" cy="{y}" r="3.2" fill="{strong}"/>"#));
+            dots.push_str(&format!(
+                r#"<circle cx="{x}" cy="{y}" r="3.2" fill="{strong}"/>"#
+            ));
         }
     }
     format!(
@@ -107,7 +128,16 @@ fn picture(tv: bool, p: Palette) -> Arc<Image> {
     let pack = |c: Rgba| u32::from_be_bytes([0, byte(c.r), byte(c.g), byte(c.b)]);
     let key = (
         tv,
-        [p.accent_soft, p.fg_faint, p.fg_muted, p.accent, p.surface, p.line_strong, p.fg_strong].map(pack),
+        [
+            p.accent_soft,
+            p.fg_faint,
+            p.fg_muted,
+            p.accent,
+            p.surface,
+            p.line_strong,
+            p.fg_strong,
+        ]
+        .map(pack),
     );
     let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
     cache
@@ -136,11 +166,9 @@ fn overlay(
         .inset_0()
         .size_full()
         .text_color(color)
-        .with_animation(
-            id,
-            Animation::new(period).repeat(),
-            move |el, delta| el.opacity(low + (1.0 - low) * fade((delta + delay).fract())),
-        )
+        .with_animation(id, Animation::new(period).repeat(), move |el, delta| {
+            el.opacity(low + (1.0 - low) * fade((delta + delay).fract()))
+        })
         .into_any_element()
 }
 
@@ -161,7 +189,14 @@ pub(super) fn tv_illustration(p: Palette, height: f32) -> impl IntoElement {
         true,
         p,
         vec![
-            overlay("tv-sparkle", TV_SPARKLE, gpui::rgb(BRAND_OCHRE), TWINKLE, 0.35, 0.0),
+            overlay(
+                "tv-sparkle",
+                TV_SPARKLE,
+                gpui::rgb(BRAND_OCHRE),
+                TWINKLE,
+                0.35,
+                0.0,
+            ),
             overlay("tv-dot", TV_DOT, p.accent, TWINKLE, 0.35, 0.42),
         ],
     )
@@ -174,8 +209,22 @@ pub(super) fn projector_illustration(p: Palette, height: f32) -> impl IntoElemen
         false,
         p,
         vec![
-            overlay("projector-beam", PROJECTOR_BEAM, with_alpha(p.accent, 0.5), BEAM, 0.55, 0.0),
-            overlay("projector-sparkle", PROJECTOR_SPARKLE, gpui::rgb(BRAND_FLAME), TWINKLE, 0.35, 0.0),
+            overlay(
+                "projector-beam",
+                PROJECTOR_BEAM,
+                with_alpha(p.accent, 0.5),
+                BEAM,
+                0.55,
+                0.0,
+            ),
+            overlay(
+                "projector-sparkle",
+                PROJECTOR_SPARKLE,
+                gpui::rgb(BRAND_FLAME),
+                TWINKLE,
+                0.35,
+                0.0,
+            ),
         ],
     )
 }

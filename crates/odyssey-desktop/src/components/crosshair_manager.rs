@@ -42,7 +42,8 @@ fn load_sprites() -> Vec<Sprite> {
     CROSSHAIR_IMAGES
         .iter()
         .filter_map(|bytes| {
-            let reader = image::ImageReader::with_format(Cursor::new(*bytes), image::ImageFormat::Png);
+            let reader =
+                image::ImageReader::with_format(Cursor::new(*bytes), image::ImageFormat::Png);
             match reader.into_dimensions() {
                 Ok((width, height)) => Some(Sprite {
                     image: Arc::new(Image::from_bytes(ImageFormat::Png, bytes.to_vec())),
@@ -168,18 +169,14 @@ impl Render for CrosshairManager {
         let crosshairs = self.positions.values().filter_map(|&(x, y, slot)| {
             let sprite = self.sprites.get(palette_slot(slot))?;
             Some(
-                div()
-                    .absolute()
-                    .left(relative(x))
-                    .top(relative(y))
-                    .child(
-                        img(Arc::clone(&sprite.image))
-                            .absolute()
-                            .left(px(-sprite.width / 2.0))
-                            .top(px(-sprite.height / 2.0))
-                            .w(px(sprite.width))
-                            .h(px(sprite.height)),
-                    ),
+                div().absolute().left(relative(x)).top(relative(y)).child(
+                    img(Arc::clone(&sprite.image))
+                        .absolute()
+                        .left(px(-sprite.width / 2.0))
+                        .top(px(-sprite.height / 2.0))
+                        .w(px(sprite.width))
+                        .h(px(sprite.height)),
+                ),
             )
         });
         div()

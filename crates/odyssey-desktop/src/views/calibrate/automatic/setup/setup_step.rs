@@ -2,8 +2,8 @@
 //! it is (known from the display, typed in, or left to the camera).
 
 use gpui::{
-    AppContext as _,    AnyElement, Context, Entity, FocusHandle, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, Window, div,
+    AnyElement, AppContext as _, Context, Entity, FocusHandle, IntoElement, ParentElement as _,
+    Render, Styled as _, Subscription, Window, div,
 };
 
 use super::camera_picker::camera_picker;
@@ -17,7 +17,9 @@ use crate::theme::{Palette, palette};
 use crate::views::calibrate::automatic::kind::DisplayKind;
 use crate::views::calibrate::automatic::reference_helper::ReferenceHelper;
 use crate::views::calibrate::automatic::scale_board_info::ScaleBoardInfo;
-use crate::views::calibrate::automatic::sdk_download::{DownloadSdk, DownloadedSdkRow, SdkVersionNote};
+use crate::views::calibrate::automatic::sdk_download::{
+    DownloadSdk, DownloadedSdkRow, SdkVersionNote,
+};
 use crate::views::calibrate::automatic::ui::{act, amber_alert, heading, plain_details, step_page};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
@@ -70,7 +72,11 @@ impl SetupStep {
 
     fn section(p: Palette, title: impl Into<gpui::SharedString>, gap: bool) -> gpui::Div {
         let section = card(p);
-        let section = if gap { section.gap_4() } else { section.gap_3() };
+        let section = if gap {
+            section.gap_4()
+        } else {
+            section.gap_3()
+        };
         section.child(heading(p, title))
     }
 }
@@ -105,7 +111,13 @@ impl Render for SetupStep {
         );
         content.push(
             Self::section(p, "3. Which camera?", false)
-                .child(camera_picker(p, &wizard, &self.sdk_download, &self.opens.camera, cx))
+                .child(camera_picker(
+                    p,
+                    &wizard,
+                    &self.sdk_download,
+                    &self.opens.camera,
+                    cx,
+                ))
                 .child(self.sdk_note.clone())
                 .child(self.sdk_row.clone())
                 .into_any_element(),

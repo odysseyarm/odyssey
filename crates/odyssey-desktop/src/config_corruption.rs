@@ -67,9 +67,10 @@ impl ConfigCorruptionModal {
         }
         self.deleting = true;
         let reported = self.corruptions.clone();
+        let unchanged = reported.clone();
         let deletion = runtime::spawn(delete_corrupted_files(reported));
         cx.spawn(async move |this, cx| {
-            let remaining = deletion.await.unwrap_or_default();
+            let remaining = deletion.await.unwrap_or(unchanged);
             this.update(cx, |this, cx| {
                 this.delete_failed = !remaining.is_empty();
                 this.corruptions = remaining;
@@ -97,32 +98,35 @@ impl Render for ConfigCorruptionModal {
         };
         let deleting = self.deleting;
 
-        let list = self.corruptions.iter().fold(div().flex().flex_col().gap_3(), |list, corruption| {
-            list.child(
-                div()
-                    .bg(palette.surface_alt)
-                    .rounded(px(RADIUS))
-                    .p_4()
-                    .child(
+        let list =
+            self.corruptions
+                .iter()
+                .fold(div().flex().flex_col().gap_3(), |list, corruption| {
+                    list.child(
                         div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(palette.fg_strong)
-                            .child(format!("{:?}", corruption.file_type)),
+                            .bg(palette.surface_alt)
+                            .rounded(px(RADIUS))
+                            .p_4()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(palette.fg_strong)
+                                    .child(format!("{:?}", corruption.file_type)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette.fg_muted)
+                                    .child(format!("Path: {}", corruption.file_path)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette.danger_ink)
+                                    .child(format!("Error: {}", corruption.error_message)),
+                            ),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(palette.fg_muted)
-                            .child(format!("Path: {}", corruption.file_path)),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(palette.danger_ink)
-                            .child(format!("Error: {}", corruption.error_message)),
-                    ),
-            )
-        });
+                });
 
         let mut card = div()
             .id("config-corruption-card")
@@ -188,14 +192,28 @@ impl Render for ConfigCorruptionModal {
                 .justify_end()
                 .gap_3()
                 .child(
-                    ui::button("delete-corrupted", if deleting { "Deleting…" } else { "Delete Files" }, ui::ButtonKind::Danger, palette)
-                        .disabled(deleting)
-                        .on_click(cx.listener(|this, _, _, cx| this.delete_files(cx))),
+                    ui::button(
+                        "delete-corrupted",
+                        if deleting {
+                            "Deleting…"
+                        } else {
+                            "Delete Files"
+                        },
+                        ui::ButtonKind::Danger,
+                        palette,
+                    )
+                    .disabled(deleting)
+                    .on_click(cx.listener(|this, _, _, cx| this.delete_files(cx))),
                 )
                 .child(
-                    ui::button("continue-defaults", "Continue with Defaults", ui::ButtonKind::Primary, palette)
-                        .disabled(deleting)
-                        .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                    ui::button(
+                        "continue-defaults",
+                        "Continue with Defaults",
+                        ui::ButtonKind::Primary,
+                        palette,
+                    )
+                    .disabled(deleting)
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
                 ),
         );
 
@@ -248,10 +266,7 @@ mod tests {
             1,
             "only the undeletable path remains for retry"
         );
-        assert!(
-            !removable.exists(),
-            "the corrupted file is removed"
-        );
+        assert!(!removable.exists(), "the corrupted file is removed");
         assert_eq!(remaining[0].error_message, "invalid JSON");
         std::fs::remove_dir_all(root).expect("clean scratch directory");
     }

@@ -3,7 +3,8 @@ use std::io::ErrorKind;
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 use odyssey_hub_server::Message;
-use tokio::sync::{mpsc::UnboundedReceiver, watch};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::watch;
 
 /// Why the status stream ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

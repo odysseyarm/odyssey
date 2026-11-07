@@ -9,9 +9,9 @@ use std::time::Duration;
 use gpui::component::slider::{Slider as SliderWidget, SliderState};
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, BorderStyle, Bounds, Div, Entity, FontWeight,
-    IntoElement, ObjectFit, ParentElement as _, PathBuilder, Pixels, RenderImage,
-    Rgba, SharedString, Styled as _, StyledImage as _, Svg, Transformation, Window, canvas, div,
-    img, percentage, px, relative, svg,
+    IntoElement, ObjectFit, ParentElement as _, PathBuilder, Pixels, RenderImage, Rgba,
+    SharedString, Styled as _, StyledImage as _, Svg, Transformation, Window, canvas, div, img,
+    percentage, px, relative, svg,
 };
 
 use crate::theme::{Palette, RADIUS_LG};
@@ -164,31 +164,29 @@ pub(crate) fn stepper(p: Palette, steps: &[&'static str], current: usize) -> Div
             dot.child((i + 1).to_string())
         };
         let mut item = div().flex().items_center().child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(dot)
-                .child(
-                    div()
-                        .text_sm()
-                        .whitespace_nowrap()
-                        .font_weight(if active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                        .text_color(text)
-                        .child(label),
-                ),
+            div().flex().items_center().gap_2().child(dot).child(
+                div()
+                    .text_sm()
+                    .whitespace_nowrap()
+                    .font_weight(if active {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(text)
+                    .child(label),
+            ),
         );
         if i == last {
             row = row.child(item);
         } else {
-            item = item.flex_1().child(
-                div()
-                    .mx_3()
-                    .h(px(2.0))
-                    .flex_1()
-                    .rounded_full()
-                    .bg(if done { p.success } else { p.line_strong }),
-            );
+            item =
+                item.flex_1()
+                    .child(div().mx_3().h(px(2.0)).flex_1().rounded_full().bg(if done {
+                        p.success
+                    } else {
+                        p.line_strong
+                    }));
             row = row.child(item);
         }
     }
@@ -220,7 +218,12 @@ pub(crate) fn slider(
                         .text_color(p.fg_strong)
                         .child(label),
                 )
-                .child(div().text_sm().text_color(p.fg_muted).child(value_text.into())),
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(p.fg_muted)
+                        .child(value_text.into()),
+                ),
         )
         .child(SliderWidget::new(state));
     if let Some(help) = help {
@@ -254,7 +257,10 @@ pub(crate) struct OverlayCanvas {
 
 impl OverlayCanvas {
     pub(crate) fn point(&self, x: f32, y: f32) -> gpui::Point<Pixels> {
-        gpui::point(self.origin.x + px(x * self.scale), self.origin.y + px(y * self.scale))
+        gpui::point(
+            self.origin.x + px(x * self.scale),
+            self.origin.y + px(y * self.scale),
+        )
     }
 
     /// A polyline through `points` (picture pixels), closed when `closed`.

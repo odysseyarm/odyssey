@@ -70,13 +70,13 @@ pub(crate) fn updating_device_row(
                 .child(div().text_xs().text_color(ink).child(state_display(&state))),
         );
     if let Some((progress, total)) = state.flash_progress() {
-        row = row.child(ui::progress_bar(p, percent_complete(progress, total))).child(
-            div().text_xs().text_color(p.fg_muted).child(format!(
+        row = row
+            .child(ui::progress_bar(p, percent_complete(progress, total)))
+            .child(div().text_xs().text_color(p.fg_muted).child(format!(
                 "{} / {} KB",
                 progress / BYTES_PER_KB,
                 total / BYTES_PER_KB
-            )),
-        );
+            )));
     }
     row.into_any_element()
 }

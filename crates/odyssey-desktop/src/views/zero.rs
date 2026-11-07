@@ -15,12 +15,14 @@ mod zeroing;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use device_controls::DeviceControls;
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Hsla, Image, ImageFormat,
-    InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, Window, WindowKind, div, img, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, WindowKind, div, img,
+    px,
 };
+use history::HistoryByDevice;
 use odyssey_hub_common::config::MonitorKey;
 use odyssey_hub_common::device::Device;
 
@@ -28,8 +30,6 @@ use crate::components::crosshair_manager::CrosshairManager;
 use crate::components::screen_picker::{display_for_key, fullscreen_options};
 use crate::hub::{Hub, HubHandle};
 use crate::theme::palette;
-use device_controls::DeviceControls;
-use history::HistoryByDevice;
 
 /// Zero point in screen space. The target layer covers the window, the window
 /// is fullscreen on the screen the hub resolves against, and the target image
@@ -83,8 +83,9 @@ impl ZeroView {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
 
-        let hub_changed =
-            cx.observe_in(&hub, window, |zero, _, window, cx| zero.sync_devices(window, cx));
+        let hub_changed = cx.observe_in(&hub, window, |zero, _, window, cx| {
+            zero.sync_devices(window, cx)
+        });
         let history = history::follow_tracking(&hub, cx);
         let impacts = zeroing::zero_on_impact(&hub, cx);
         let crosshairs = cx.new(CrosshairManager::new);

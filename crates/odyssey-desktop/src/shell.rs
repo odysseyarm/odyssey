@@ -4,8 +4,8 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window,
-    WindowAppearance, WindowOptions, div, px, size,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    WindowOptions, div, px, size,
 };
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 use tokio::sync::{mpsc, watch};
@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config_corruption::ConfigCorruptionModal;
 use crate::hub::{Hub, HubHandle};
 use crate::server_status::{ServerExit, ShellMessage, handle_server_status};
-use crate::theme::{ActivePalette, Palette, RADIUS};
+use crate::theme::{self, ActivePalette, Palette, RADIUS};
 use crate::ui_state::UiStateWriter;
 use crate::{cli, runtime, tray, views};
 
@@ -42,14 +42,18 @@ struct Shell {
     page: Page,
     view: AnyView,
     corruption: Entity<ConfigCorruptionModal>,
+    _appearance: Subscription,
 }
 
 impl Shell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        apply_appearance(window, cx);
         Self {
             page: Page::Home,
             view: Self::build(Page::Home, window, cx),
             corruption: cx.new(|_| ConfigCorruptionModal::new()),
+            _appearance: window
+                .observe_window_appearance(|window, cx| apply_appearance(window, cx)),
         }
     }
 
@@ -59,13 +63,17 @@ impl Shell {
         match page {
             Page::Home => {
                 let home = cx.new(|cx| views::HomeView::new(window, cx));
-                cx.subscribe_in(&home, window, |this, _, event: &views::HomeEvent, window, cx| {
-                    let page = match event {
-                        views::HomeEvent::OpenPairing => Page::Pairing,
-                        views::HomeEvent::OpenCalibrate => Page::Calibrate,
-                    };
-                    this.navigate(page, window, cx);
-                })
+                cx.subscribe_in(
+                    &home,
+                    window,
+                    |this, _, event: &views::HomeEvent, window, cx| {
+                        let page = match event {
+                            views::HomeEvent::OpenPairing => Page::Pairing,
+                            views::HomeEvent::OpenCalibrate => Page::Calibrate,
+                        };
+                        this.navigate(page, window, cx);
+                    },
+                )
                 .detach();
                 home.into()
             }
@@ -86,11 +94,17 @@ impl Shell {
     }
 }
 
-impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::for_appearance(window.appearance());
-        cx.set_global(ActivePalette(palette));
+/// Points the app palette and the gpui-component widgets at the window's
+/// appearance. Other windows read the same globals, so this runs from the main
+/// window's observer rather than from any one render.
+fn apply_appearance(window: &mut Window, cx: &mut App) {
+    cx.set_global(ActivePalette(Palette::for_appearance(window.appearance())));
+    gpui::component::Theme::sync_system_appearance(Some(window), cx);
+}
 
+impl Render for Shell {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = theme::palette(cx);
         let links = Page::ALL.into_iter().fold(
             div().flex().flex_col().gap_1().text_sm(),
             |links, (label, page)| {
@@ -114,8 +128,7 @@ impl Render for Shell {
                         })
                         .when(!active, |link| {
                             link.text_color(palette.fg_muted).hover(|link| {
-                                link.bg(palette.surface_hover)
-                                    .text_color(palette.fg_strong)
+                                link.bg(palette.surface_hover).text_color(palette.fg_strong)
                             })
                         })
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -166,11 +179,31 @@ impl Render for Shell {
     }
 }
 
+struct MainWindow {
+    window: gpui::AnyWindowHandle,
+    shell: Entity<Shell>,
+}
+
+impl gpui::Global for MainWindow {}
+
+/// Brings the main window forward on Home, where Zero lives.
+pub(crate) fn show_home(cx: &mut App) {
+    let main = cx.global::<MainWindow>();
+    let (window, shell) = (main.window, main.shell.clone());
+    cx.activate(true);
+    window
+        .update(cx, |_, window, cx| {
+            shell.update(cx, |shell, cx| shell.navigate(Page::Home, window, cx));
+            window.activate_window();
+        })
+        .ok();
+}
+
 /// Opens the main window and starts the services behind it.
 pub(crate) fn launch(cx: &mut App) {
     gpui::init(cx);
     cx.set_global(ActivePalette(Palette::for_appearance(
-        WindowAppearance::Light,
+        cx.window_appearance(),
     )));
     cx.set_global(UiStateWriter::start());
 
@@ -188,6 +221,7 @@ pub(crate) fn launch(cx: &mut App) {
             size(px(1100.0), px(760.0)),
             cx,
         ))),
+        app_id: Some("odyssey-desktop".into()),
         ..Default::default()
     };
     let (window, shell) = match gpui::open_window(options, cx, |window, cx| {
@@ -206,6 +240,10 @@ pub(crate) fn launch(cx: &mut App) {
         }
     };
 
+    cx.set_global(MainWindow {
+        window,
+        shell: shell.clone(),
+    });
     let cancel = CancellationToken::new();
     let corruption = shell.read(cx).corruption.clone();
     tray::start(cancel.clone(), window, cx);

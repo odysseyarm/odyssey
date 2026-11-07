@@ -197,15 +197,21 @@ pub(crate) fn page(
     if let Some(description) = description {
         header = header.child(div().text_sm().text_color(p.fg_muted).child(description));
     }
-    div().w_full().min_h_full().bg(p.canvas).px_6().py_8().child(
-        div()
-            .mx_auto()
-            .w_full()
-            .max_w(px(672.0))
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(header)
-            .children(children),
-    )
+    div()
+        .w_full()
+        .min_h_full()
+        .bg(p.canvas)
+        .px_6()
+        .py_8()
+        .child(
+            div()
+                .mx_auto()
+                .w_full()
+                .max_w(px(672.0))
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(header)
+                .children(children),
+        )
 }

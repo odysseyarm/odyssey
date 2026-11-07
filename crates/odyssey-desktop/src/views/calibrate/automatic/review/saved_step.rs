@@ -1,8 +1,6 @@
 //! Shown after a successful save.
 
-use gpui::{
-    App, Div, Entity, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div,
-};
+use gpui::{App, Div, Entity, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use crate::components::ui::{AlertKind, ButtonKind, alert, button, card};
 use crate::components::wizard::{Icon, icon};

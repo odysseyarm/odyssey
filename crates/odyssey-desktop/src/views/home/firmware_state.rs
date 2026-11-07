@@ -119,4 +119,3 @@ impl Drop for FirmwareManifestModel {
         self.stop();
     }
 }
-

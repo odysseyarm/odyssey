@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use gpui::{
     App, AppContext as _, Context, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render,
-    SharedString, Styled as _, Task, Window, WindowKind, div, px, relative,
+    ParentElement as _, Render, SharedString, Styled as _, Task, Window, WindowKind, div, px,
+    relative,
 };
 
 use super::monitor_layout::MonitorInfo;
@@ -67,7 +67,9 @@ impl Render for IdentifyOverlay {
             .bg(p.accent)
             .text_color(p.on_accent)
             .cursor_pointer()
-            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| window.remove_window())
+            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                window.remove_window()
+            })
             .child(
                 div()
                     .text_size(px(256.0))
@@ -75,11 +77,6 @@ impl Render for IdentifyOverlay {
                     .font_weight(FontWeight::BOLD)
                     .child(self.number.to_string()),
             )
-            .child(
-                div()
-                    .text_2xl()
-                    .opacity(0.9)
-                    .child(self.label.clone()),
-            )
+            .child(div().text_2xl().opacity(0.9).child(self.label.clone()))
     }
 }

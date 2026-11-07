@@ -12,14 +12,21 @@ use tokio::task::JoinHandle;
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
+/// Builds the runtime. Must run once before the first [`spawn`].
+pub(crate) fn start() -> std::io::Result<()> {
+    let runtime = Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("odyssey-tokio")
+        .build()?;
+    // A second call keeps the first runtime.
+    let _ = RUNTIME.set(runtime);
+    Ok(())
+}
+
 fn runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| {
-        Builder::new_multi_thread()
-            .enable_all()
-            .thread_name("odyssey-tokio")
-            .build()
-            .expect("the tokio runtime must start for the app to talk to the hub")
-    })
+    RUNTIME
+        .get()
+        .expect("runtime::start runs before anything spawns")
 }
 
 /// Runs `future` on the tokio runtime.

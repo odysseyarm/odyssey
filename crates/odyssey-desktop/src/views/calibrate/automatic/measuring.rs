@@ -47,7 +47,12 @@ pub(super) fn measuring_step(
                         .text_color(p.fg_strong)
                         .child(shown.text),
                 )
-                .child(div().w_full().max_w(px(448.0)).child(progress_bar(p, percent)))
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(448.0))
+                        .child(progress_bar(p, percent)),
+                )
                 .into_any_element(),
         ],
         vec![

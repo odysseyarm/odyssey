@@ -68,9 +68,10 @@ impl Wizard {
         });
     }
 
-    /// Zero lives on Home, in the main window; the wizard gets out of the way.
+    /// Zero lives on Home, in the main window: close the wizard and show it.
     pub(crate) fn go_home(&mut self, cx: &mut Context<Self>) {
         self.exit(cx);
+        cx.defer(crate::shell::show_home);
     }
 
     pub(super) fn problem(&mut self, failure: Failure, cx: &mut Context<Self>) {

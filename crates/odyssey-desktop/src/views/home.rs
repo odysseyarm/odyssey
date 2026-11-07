@@ -10,8 +10,7 @@ mod screen_actions;
 use std::collections::HashMap;
 
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, IntoElement, Render,
-    Subscription, Window,
+    AppContext as _, Context, Entity, EventEmitter, IntoElement, Render, Subscription, Window,
 };
 
 use self::connected_device_row::ConnectedDeviceRow;
@@ -85,9 +84,13 @@ impl HomeView {
                 continue;
             }
             let uuid = device.uuid;
-            let (hub, manifest, manager) =
-                (self.hub.clone(), self.manifest.clone(), self.manager.clone());
-            let row = cx.new(|cx| ConnectedDeviceRow::new(device, hub, manifest, manager, window, cx));
+            let (hub, manifest, manager) = (
+                self.hub.clone(),
+                self.manifest.clone(),
+                self.manager.clone(),
+            );
+            let row =
+                cx.new(|cx| ConnectedDeviceRow::new(device, hub, manifest, manager, window, cx));
             self.rows.insert(uuid, row);
         }
         cx.notify();

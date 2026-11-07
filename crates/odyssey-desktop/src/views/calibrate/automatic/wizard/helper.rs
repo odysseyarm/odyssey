@@ -190,8 +190,7 @@ impl Wizard {
 
     /// Takes the helper's reading as the screen's size.
     pub(crate) fn apply_helper(&mut self, cx: &mut Context<Self>) {
-        let (Some(Ok(reading)), Some(key)) = (self.helper_reading(), self.selected.clone())
-        else {
+        let (Some(Ok(reading)), Some(key)) = (self.helper_reading(), self.selected.clone()) else {
             return;
         };
         self.reference = Some((key, reading));

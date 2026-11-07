@@ -8722,6 +8722,7 @@ dependencies = [
  "backon",
  "btleplug",
  "dfu-nusb",
+ "embed-resource",
  "eros",
  "futures",
  "futures-concurrency",

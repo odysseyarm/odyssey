@@ -141,7 +141,10 @@ impl Wizard {
     fn pump_camera(mut receiver: UnboundedReceiver<Event>, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             while let Some(event) = receiver.recv().await {
-                if this.update(cx, |this, cx| this.on_event(event, cx)).is_err() {
+                if this
+                    .update(cx, |this, cx| this.on_event(event, cx))
+                    .is_err()
+                {
                     break;
                 }
             }

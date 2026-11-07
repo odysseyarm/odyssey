@@ -115,14 +115,14 @@ for non-text use and placeholders. Check a new pair before shipping it.
 ## Type
 
 - **Inter** (variable, weights 100–900), with the system UI font as fallback.
-  Ship the font with the product; the desktop app bundles the Latin subset
-  (`crates/odyssey-desktop/assets/fonts/`, SIL OFL 1.1), because the offline
-  installer never fetches anything. Monospace: the platform's UI monospace.
+  The website ships it. The desktop app does not bundle a font and uses the
+  system UI font, because GPUI has no font loader wired up yet. Monospace: the
+  platform's UI monospace.
 - Headings: bold, tracking `-0.03em`, balanced wrapping, `fg-strong`.
-- Body: 15–17 px, line height 1.5–1.6. Desktop UI text is 14 px (`text-sm`)
-  with 12 px (`text-xs`) for captions and badges.
+- Body: 15–17 px, line height 1.5–1.6. Desktop UI text is 14 px with 12 px for
+  captions and badges.
 - Numbers that update live (battery, distances, counters) use tabular figures
-  (`tabular-nums`) so they do not jitter.
+  so they do not jitter, where the toolkit offers them.
 - Small uppercase labels ("eyebrows") are 12 px, semibold, letter-spaced, `fg-muted`.
 - Sentence case everywhere, buttons included: "Save zero", not "Save Zero".
 

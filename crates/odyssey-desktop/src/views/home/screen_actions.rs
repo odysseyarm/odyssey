@@ -21,8 +21,13 @@ impl HomeView {
                     .justify_end()
                     .gap_3()
                     .child(
-                        button("calibrate-screen", "Calibrate screen", ButtonKind::Secondary, p)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(HomeEvent::OpenCalibrate))),
+                        button(
+                            "calibrate-screen",
+                            "Calibrate screen",
+                            ButtonKind::Secondary,
+                            p,
+                        )
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(HomeEvent::OpenCalibrate))),
                     )
                     .child(
                         button("zero", "Zero", ButtonKind::Primary, p)

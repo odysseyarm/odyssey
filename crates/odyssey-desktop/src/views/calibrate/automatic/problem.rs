@@ -1,9 +1,7 @@
 //! A step failed. Says what happened in plain words and offers the one sensible
 //! retry; the raw error stays under Details for support.
 
-use gpui::{
-    AnyElement, App, Div, Entity, IntoElement as _, ParentElement as _, Styled as _, div,
-};
+use gpui::{AnyElement, App, Div, Entity, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::attempt_button::save_attempt;
 use super::hints::{failure_message, retry_label};
@@ -24,7 +22,10 @@ pub(super) fn problem_step(
         return div();
     };
     let message = failure_message(failure.kind, failure.size_origin);
-    let raw: AnyElement = div().text_sm().child(failure.details.clone()).into_any_element();
+    let raw: AnyElement = div()
+        .text_sm()
+        .child(failure.details.clone())
+        .into_any_element();
     step_page(
         p,
         "That didn't work",

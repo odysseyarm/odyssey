@@ -2,16 +2,16 @@
 
 use gpui::component::tooltip::Tooltip;
 use gpui::{
-    AppContext as _,    AnyElement, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, div, px,
+    AnyElement, AppContext as _, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, div, px,
 };
 
 use super::quality::{Verdict, assess};
 use super::wizard::{Stage, Wizard};
 use super::{markers, measuring, position, problem, review, setup};
 use crate::components::ui::{ButtonKind, button};
-use crate::components::wizard::stepper;
+use crate::components::wizard::{FrameSlot, stepper};
 use crate::theme::{Palette, palette};
 
 /// Open/closed state of the collapsibles on the stages drawn without a view of
@@ -34,15 +34,12 @@ pub(crate) struct CalibrateAutomaticView {
     /// "focused", so Enter does the obvious thing.
     armed: bool,
     shown_stage: Stage,
+    review_frame: FrameSlot,
     _subscriptions: Vec<Subscription>,
 }
 
 impl CalibrateAutomaticView {
-    pub(crate) fn new(
-        wizard: Entity<Wizard>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn new(wizard: Entity<Wizard>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
@@ -58,6 +55,7 @@ impl CalibrateAutomaticView {
             },
             armed: false,
             shown_stage: Stage::Setup,
+            review_frame: FrameSlot::default(),
             _subscriptions: vec![cx.observe(&wizard, |_, _, cx| cx.notify())],
             wizard,
         }
@@ -127,6 +125,8 @@ impl Render for CalibrateAutomaticView {
             return div().into_any_element();
         }
 
+        let review_image = wizard.read(cx).finished.as_ref().map(|f| f.image.clone());
+        self.review_frame.show(review_image.as_ref(), window);
         if stage != self.shown_stage {
             self.shown_stage = stage;
             self.armed = false;
@@ -189,23 +189,15 @@ impl CalibrateAutomaticView {
                 "Keep the camera still and the markers on.",
             )
             .into_any_element(),
-            Stage::Review => review::review_step(
-                p,
-                wizard,
-                &self.opens.review,
-                &self.opens.difference,
-                cx,
-            )
-            .into_any_element(),
+            Stage::Review => {
+                review::review_step(p, wizard, &self.opens.review, &self.opens.difference, cx)
+                    .into_any_element()
+            }
             Stage::Saved => review::saved_step(p, wizard, &self.opens.saved, cx).into_any_element(),
-            Stage::Problem => problem::problem_step(
-                p,
-                wizard,
-                wizard.read(cx),
-                &self.opens.problem,
-                cx,
-            )
-            .into_any_element(),
+            Stage::Problem => {
+                problem::problem_step(p, wizard, wizard.read(cx), &self.opens.problem, cx)
+                    .into_any_element()
+            }
         }
     }
 }
@@ -232,8 +224,10 @@ fn header(p: Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
                 .text_color(p.accent_ink)
                 .child("Demo · simulated camera")
                 .tooltip(|window, cx| {
-                    Tooltip::new("A simulated camera and screen are used. Nothing real is measured.")
-                        .build(window, cx)
+                    Tooltip::new(
+                        "A simulated camera and screen are used. Nothing real is measured.",
+                    )
+                    .build(window, cx)
                 }),
         );
     }

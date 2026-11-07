@@ -7,8 +7,8 @@
 //! `sdk_install::delivery` tells Setup to point at the installer instead.
 
 use gpui::{
-    AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Subscription, Window, div,
 };
 
 use super::wizard::{CameraList, Wizard};
@@ -98,7 +98,8 @@ mod online {
                 let _ = this.update(cx, |this, cx| {
                     this.state = match result {
                         Ok(Installed::Ready) => {
-                            this.wizard.update(cx, |wizard, cx| wizard.request_camera_list(cx));
+                            this.wizard
+                                .update(cx, |wizard, cx| wizard.request_camera_list(cx));
                             State::Ready
                         }
                         Ok(Installed::AfterRestart) => State::Waiting,
@@ -296,7 +297,10 @@ pub(super) struct DownloadedSdkRow {
 
 impl DownloadedSdkRow {
     pub(super) fn new(wizard: Entity<Wizard>, _: &mut Context<Self>) -> Self {
-        Self { wizard, error: None }
+        Self {
+            wizard,
+            error: None,
+        }
     }
 
     fn remove(&mut self, cx: &mut Context<Self>) {
@@ -305,7 +309,8 @@ impl DownloadedSdkRow {
             Ok(Removal::Removed | Removal::AfterRestart) => None,
             Err(e) => Some(format!("Couldn't remove it: {e}")),
         };
-        self.wizard.update(cx, |wizard, cx| wizard.request_camera_list(cx));
+        self.wizard
+            .update(cx, |wizard, cx| wizard.request_camera_list(cx));
         cx.notify();
     }
 }

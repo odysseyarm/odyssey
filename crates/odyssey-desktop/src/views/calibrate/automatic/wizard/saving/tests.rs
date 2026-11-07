@@ -74,6 +74,7 @@ fn saving_replaces_a_screen_and_a_rejected_calibration_keeps_it() {
     const ROOT_ENV: &str = "ODYSSEY_CALIBRATION_SAVE_TEST_ROOT";
     if let Some(root) = std::env::var_os(ROOT_ENV) {
         config::set_simulation_config_root(root.into()).unwrap();
+        crate::runtime::start().unwrap();
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -89,97 +89,93 @@ impl Render for ScreenPicker {
                     .on_click(cx.listener(|picker, _, _, cx| picker.identify(cx))),
             );
 
-        let body = match diagram {
-            Some(diagram) => {
-                let tiles = monitors
-                    .iter()
-                    .zip(&diagram.tiles)
-                    .enumerate()
-                    .map(|(i, (monitor, tile))| {
-                        let selection = self.selection.clone();
-                        monitor_tile(
-                            i,
-                            monitor,
-                            tile,
-                            diagram.width,
-                            diagram.height,
-                            selected == Some(i),
-                            p,
-                            move |cx| selection.update(cx, |selection, cx| selection.select(i, cx)),
-                        )
-                    });
-                let diagram_box = div()
-                    .flex()
-                    .justify_center()
+        let body =
+            match diagram {
+                Some(diagram) => {
+                    let tiles = monitors.iter().zip(&diagram.tiles).enumerate().map(
+                        |(i, (monitor, tile))| {
+                            let selection = self.selection.clone();
+                            monitor_tile(
+                                i,
+                                monitor,
+                                tile,
+                                diagram.width,
+                                diagram.height,
+                                selected == Some(i),
+                                p,
+                                move |cx| {
+                                    selection.update(cx, |selection, cx| selection.select(i, cx))
+                                },
+                            )
+                        },
+                    );
+                    let diagram_box = div()
+                        .flex()
+                        .justify_center()
+                        .rounded(px(RADIUS))
+                        .bg(p.surface_alt)
+                        .p_3()
+                        .child(
+                            div()
+                                .relative()
+                                .w(px(diagram.width as f32))
+                                .max_w(relative(1.0))
+                                .aspect_ratio((diagram.width / diagram.height) as f32)
+                                .children(tiles),
+                        );
+
+                    // A tile too small for its name and resolution gets them spelled out here.
+                    let selected_detail = selected
+                        .filter(|&i| {
+                            diagram
+                                .tiles
+                                .get(i)
+                                .is_some_and(|tile| detail_for(tile) != Detail::Full)
+                        })
+                        .and_then(|i| monitors.get(i).map(|m| (i, m)))
+                        .map(|(i, monitor)| {
+                            let primary = if monitor.primary { " — Primary" } else { "" };
+                            div()
+                                .text_sm()
+                                .text_color(p.fg_muted)
+                                .text_center()
+                                .child(format!(
+                                    "{}. {} — {}{primary}",
+                                    i + 1,
+                                    monitor.display_name(),
+                                    monitor.resolution()
+                                ))
+                        });
+                    let primary_legend = monitors
+                        .iter()
+                        .zip(&diagram.tiles)
+                        .any(|(m, t)| m.primary && detail_for(t) != Detail::Full)
+                        .then(|| {
+                            div()
+                                .text_xs()
+                                .text_color(p.fg_muted)
+                                .text_center()
+                                .child("★ primary display")
+                        });
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(diagram_box)
+                        .children(selected_detail)
+                        .children(primary_legend)
+                }
+                None => div()
                     .rounded(px(RADIUS))
                     .bg(p.surface_alt)
-                    .p_3()
-                    .child(
-                        div()
-                            .relative()
-                            .w(px(diagram.width as f32))
-                            .max_w(relative(1.0))
-                            .aspect_ratio((diagram.width / diagram.height) as f32)
-                            .children(tiles),
-                    );
+                    .p_6()
+                    .text_center()
+                    .text_sm()
+                    .text_color(p.fg_muted)
+                    .child("No displays found."),
+            };
 
-                // A tile too small for its name and resolution gets them spelled out here.
-                let selected_detail = selected
-                    .filter(|&i| {
-                        diagram
-                            .tiles
-                            .get(i)
-                            .is_some_and(|tile| detail_for(tile) != Detail::Full)
-                    })
-                    .and_then(|i| monitors.get(i).map(|m| (i, m)))
-                    .map(|(i, monitor)| {
-                        let primary = if monitor.primary { " — Primary" } else { "" };
-                        div()
-                            .text_sm()
-                            .text_color(p.fg_muted)
-                            .text_center()
-                            .child(format!(
-                                "{}. {} — {}{primary}",
-                                i + 1,
-                                monitor.display_name(),
-                                monitor.resolution()
-                            ))
-                    });
-                let primary_legend = monitors
-                    .iter()
-                    .zip(&diagram.tiles)
-                    .any(|(m, t)| m.primary && detail_for(t) != Detail::Full)
-                    .then(|| {
-                        div()
-                            .text_xs()
-                            .text_color(p.fg_muted)
-                            .text_center()
-                            .child("★ primary display")
-                    });
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(diagram_box)
-                    .children(selected_detail)
-                    .children(primary_legend)
-            }
-            None => div()
-                .rounded(px(RADIUS))
-                .bg(p.surface_alt)
-                .p_6()
-                .text_center()
-                .text_sm()
-                .text_color(p.fg_muted)
-                .child("No displays found."),
-        };
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(header)
-            .child(body)
+        div().flex().flex_col().gap_3().child(header).child(body)
     }
 }
 
@@ -201,9 +197,21 @@ fn monitor_tile(
     let detail = detail_for(tile);
     let number = index + 1;
     let (bg, border, fg, hover_bg, hover_border) = if selected {
-        (p.accent, p.accent_strong, p.on_accent, p.accent_strong, p.accent_strong)
+        (
+            p.accent,
+            p.accent_strong,
+            p.on_accent,
+            p.accent_strong,
+            p.accent_strong,
+        )
     } else {
-        (p.surface, p.line_strong, p.fg, p.surface_hover, p.accent_ink)
+        (
+            p.surface,
+            p.line_strong,
+            p.fg,
+            p.surface_hover,
+            p.accent_ink,
+        )
     };
     let badge_bg: Hsla = if selected {
         gpui::black().opacity(0.15)

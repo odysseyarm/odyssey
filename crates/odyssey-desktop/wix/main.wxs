@@ -119,6 +119,7 @@
                             Id="ApplicationShortcut"
                             Name="{{product_name}}"
                             Description="Odyssey PC application"
+                            Icon="ProductIcon"
                             Target="[#MainExe]"
                             WorkingDirectory="INSTALLDIR" />
                         <RemoveFolder Id="RemoveProgramMenuSubfolder" On="uninstall" />
@@ -139,6 +140,7 @@
                         Id="DesktopShortcut"
                         Name="{{product_name}}"
                         Description="Odyssey PC application"
+                        Icon="ProductIcon"
                         Target="[#MainExe]"
                         WorkingDirectory="INSTALLDIR" />
                     <RegistryValue

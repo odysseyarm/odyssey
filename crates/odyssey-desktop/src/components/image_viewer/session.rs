@@ -52,8 +52,9 @@ impl LiveSession {
         let stream = crate::runtime::spawn(stream_images(client, device, camera, fps, events));
         let pump = cx.spawn_in(window, async move |this, cx| {
             while let Some(event) = received.next().await {
-                let delivered =
-                    this.update_in(cx, |dialog, window, cx| dialog.on_session_event(event, window, cx));
+                let delivered = this.update_in(cx, |dialog, window, cx| {
+                    dialog.on_session_event(event, window, cx)
+                });
                 if delivered.is_err() {
                     break;
                 }
