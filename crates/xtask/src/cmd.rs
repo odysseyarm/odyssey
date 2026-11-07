@@ -70,6 +70,16 @@ pub(crate) fn output(command: &mut Command) -> eros::Result<String> {
     Ok(stdout.trim().to_owned())
 }
 
+/// Fails when tracked files differ from HEAD. Release artifacts must be
+/// reproducible from a commit, and the firmware reports no dirty marker.
+pub(crate) fn require_clean_tree(dir: impl AsRef<Path>) -> eros::Result<()> {
+    let changes = output(at(dir, "git").args(["status", "--porcelain", "--untracked-files=no"]))?;
+    if !changes.is_empty() {
+        eros::bail!("uncommitted changes; release artifacts must be built from a commit.");
+    }
+    Ok(())
+}
+
 /// The `[package]` version of the manifest in `dir` (relative to the repository
 /// root): the first `version = "..."` line, which every manifest here puts in
 /// its `[package]` table.

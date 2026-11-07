@@ -87,7 +87,7 @@ jobs:
         working-directory: firmware/dongle-fw
         run: |
           set -eu
-          for ext in .hex .uf2 -dfu.zip; do
+          for ext in .hex .uf2 -dfu-fanstel.zip -dfu-laird.zip; do
             test -s "dist/dongle-fw-$VERSION$ext"
           done
           ls -l dist
@@ -120,10 +120,11 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Dongle firmware v$VERSION" \
-              --notes "Dongle firmware $VERSION. The app updates over serial DFU with the signed zip; the hex and uf2 are for flashing by hand."
+              --notes "Dongle firmware $VERSION. The app updates over serial DFU: use the -dfu-fanstel.zip or -dfu-laird.zip that matches the dongle's bootloader (a mismatched package is rejected). The hex and uf2 are for flashing by hand."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \
             "dongle-fw-$VERSION.hex" \
             "dongle-fw-$VERSION.uf2" \
-            "dongle-fw-$VERSION-dfu.zip"
+            "dongle-fw-$VERSION-dfu-fanstel.zip" \
+            "dongle-fw-$VERSION-dfu-laird.zip"

@@ -139,18 +139,11 @@ pub(super) fn publish(board: &Board, part: Part) -> eros::Result<()> {
         let dual = board.dual_core()?;
         (dual.device, dual.product)
     };
+    cmd::require_clean_tree(board.dir)?;
     super::dist(board, part)?;
     let main_rs = part.krate(board)?.main_rs();
     let release = read_counter(&main_rs)?;
     let tag = part.tag(device, release);
-    let changes = cmd::output(cmd::at(board.dir, "git").args([
-        "status",
-        "--porcelain",
-        "--untracked-files=no",
-    ]))?;
-    if !changes.is_empty() {
-        eros::bail!("uncommitted changes; the release must be built from a commit.");
-    }
     let commit = cmd::output(cmd::at(board.dir, "git").args(["rev-parse", "HEAD"]))?;
     let branches =
         cmd::output(cmd::at(board.dir, "git").args(["branch", "-r", "--contains", &commit]))?;
@@ -358,6 +351,51 @@ fn gen_single_release(
             "requires_netcore": 0,
             "min_desktop": min_desktop,
             "files": { "app": { "sha256": app.sha256, "size": app.size } },
+            "released": today,
+        }),
+    )?;
+    manifest::write(&path, &manifest)
+}
+
+/// Adds `device`'s alpha entry for a release whose images this repo only
+/// announces, not installs: each file is a published asset, hashed as downloaded.
+/// `assets` pairs a manifest file key with its asset name in release `tag`.
+pub(crate) fn gen_asset_release(
+    device: &str,
+    tag: &str,
+    version: &str,
+    min_desktop: &str,
+    assets: &[(String, String)],
+) -> eros::Result<()> {
+    if !is_plain_version(min_desktop) {
+        eros::bail!("min_desktop must be a version like 0.6.0, got '{min_desktop}'.");
+    }
+    let base = std::env::var("RELEASES_BASE_URL").unwrap_or_else(|_| RELEASES_BASE_URL.to_owned());
+    let mut files = serde_json::Map::new();
+    for (key, asset) in assets {
+        let data = download(&format!("{base}/{tag}/{asset}"))
+            .with_context(|| format!("no published asset {asset} in {tag}"))?;
+        if data.is_empty() {
+            eros::bail!("published {asset} is empty");
+        }
+        let digest = FileDigest::of(&data);
+        files.insert(
+            key.clone(),
+            json!({ "sha256": digest.sha256, "size": digest.size }),
+        );
+    }
+    let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
+    let path = cmd::root().join(manifest::MANIFESTS).join(ALPHA);
+    let mut manifest = manifest::read(&path)?;
+    manifest::prepend(
+        &mut manifest,
+        device,
+        json!({
+            "version": version,
+            "requires_bootloader": 0,
+            "requires_netcore": 0,
+            "min_desktop": min_desktop,
+            "files": files,
             "released": today,
         }),
     )?;

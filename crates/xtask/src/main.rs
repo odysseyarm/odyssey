@@ -36,6 +36,40 @@ enum Command {
     /// Scale-board artwork and the Orbbec FFI bindings.
     #[command(subcommand)]
     Autocalib(autocalib::Cmd),
+    /// Flash a device over SWD with sector erase only: bootloader and app, or
+    /// the app alone. Select a probe with PROBE_RS_PROBE=VID:PID:SERIAL.
+    Flash {
+        device: Device,
+        /// Program the app image only, not the bootloader. Boards that keep swap state clear it.
+        #[arg(long)]
+        app_only: bool,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Device {
+    Lite1,
+    LegacyAtslite,
+    LegacyVm,
+    MarkerControlBoard,
+    /// The app only: its Fanstel bootloader is not built here, so SWD never touches it.
+    Dongle,
+}
+
+fn flash(device: Device, app_only: bool) -> eros::Result<()> {
+    use firmware::{Cmd, Task};
+    let task = if app_only {
+        Task::FlashApp
+    } else {
+        Task::Flash
+    };
+    match device {
+        Device::Lite1 => firmware::run(Cmd::Lite1(task)),
+        Device::LegacyAtslite => firmware::run(Cmd::LegacyAtslite(task)),
+        Device::LegacyVm => firmware::run(Cmd::LegacyVm(task)),
+        Device::MarkerControlBoard => firmware::run(Cmd::MarkerControlBoard(task)),
+        Device::Dongle => dongle::run(dongle::Cmd::FlashSwd),
+    }
 }
 
 fn main() -> eros::Result<()> {
@@ -44,6 +78,7 @@ fn main() -> eros::Result<()> {
         Command::Dongle(command) => dongle::run(command),
         Command::Desktop(command) => desktop::run(command),
         Command::Sdk(command) => sdk::run(command),
+        Command::Flash { device, app_only } => flash(device, app_only),
         Command::Autocalib(command) => autocalib::run(command),
     }
 }

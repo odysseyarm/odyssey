@@ -41,14 +41,14 @@ pub(super) fn write(path: &Path, manifest: &Value) -> eros::Result<()> {
 
 /// Put `entry` first in the device's firmwares, creating the list if needed.
 pub(super) fn prepend(manifest: &mut Value, device: &str, entry: Value) -> eros::Result<()> {
-    if device == "marker-control-board"
+    if matches!(device, "marker-control-board" | "dongle")
         && let Some(head) = entries(manifest, device).first()
         && version_cmp(
             entry["version"].as_str().unwrap_or_default(),
             head["version"].as_str().unwrap_or_default(),
         ) != Ordering::Greater
     {
-        eros::bail!("marker-control-board release must be newer than current head");
+        eros::bail!("{device} release must be newer than current head");
     }
     match &mut manifest["devices"][device]["firmwares"] {
         Value::Array(firmwares) => firmwares.insert(0, entry),
@@ -617,6 +617,22 @@ mod tests {
         assert_eq!(
             source["devices"]["marker-control-board"]["firmwares"][1]["version"],
             "0.2.0"
+        );
+    }
+
+    #[test]
+    fn dongle_prepend_refuses_a_version_that_is_not_newer() {
+        let mut source = json!({"devices": {}});
+        prepend(&mut source, "dongle", json!({"version": "0.2.0"})).unwrap();
+        let before = source.clone();
+        for version in ["0.1.9", "0.2.0"] {
+            assert!(prepend(&mut source, "dongle", json!({"version": version})).is_err());
+            assert_eq!(source, before, "{version}");
+        }
+        prepend(&mut source, "dongle", json!({"version": "0.10.0"})).unwrap();
+        assert_eq!(
+            source["devices"]["dongle"]["firmwares"][0]["version"],
+            "0.10.0"
         );
     }
 }
