@@ -36,6 +36,10 @@ macro_rules! release {
 }
 const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
 
+embassy_nrf::bind_interrupts!(struct VbusIrqs {
+    CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
+});
+
 #[entry]
 fn main() -> ! {
     force_markers_off();
@@ -43,11 +47,25 @@ fn main() -> ! {
     config.hfclk_source = HfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
     let mut twi_buffer = [0; 2];
-    let (mut markers, button, usbd, nvmc) = Markers::new(p, &mut twi_buffer);
+    let mut markers = Markers::new(
+        hardware::MarkerPins {
+            output_1: p.P0_15,
+            output_2: p.P1_09,
+            output_3: p.P0_17,
+            output_4: p.P0_20,
+            twi: p.TWISPI0,
+            scl: p.P0_10,
+            sda: p.P0_09,
+        },
+        &mut twi_buffer,
+    );
+    let button = embassy_nrf::gpio::Input::new(p.P0_11, embassy_nrf::gpio::Pull::Up);
+    let (usbd, nvmc) = (p.USBD, p.NVMC);
     let hardware_ready = markers.configure_off().is_ok();
     let held = button.is_low();
     cortex_m::asm::delay(1_280_000);
-    let physical_dfu = held && button.is_low() && hardware::usb_powered();
+    let physical_dfu =
+        held && button.is_low() && embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect();
 
     let flash = Mutex::new(RefCell::new(Nvmc::new(nvmc)));
     let config = BootLoaderConfig::from_linkerfile_blocking(&flash, &flash, &flash);
@@ -86,10 +104,10 @@ fn main() -> ! {
     config.serial_number = Some(serial);
     config.device_release = BOOTLOADER_BCD_DEVICE;
     config.max_packet_size_0 = 64;
-    let driver = Driver::new(usbd, Irqs, HardwareVbusDetect::new(Irqs));
+    let driver = Driver::new(usbd, Irqs, HardwareVbusDetect::new(VbusIrqs));
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
-    let mut msos_descriptor = [0; 256];
+    let mut msos_descriptor = [0; 512];
     let mut control_buf = [0; 4096];
     let mut state = Control::<_, _, _, NullForwarder, NullDualBankWriter, 4096>::new_single_bank(
         updater,

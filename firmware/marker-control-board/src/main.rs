@@ -5,71 +5,112 @@
     reason = "Cortex-M exception entrypoints require unsafe signatures"
 )]
 
+mod ble;
 mod hardware;
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use better_dfu::consts::DfuAttributes;
-use better_dfu::{ResetImmediate, application};
-use embassy_boot::{AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdaterConfig};
+use better_dfu::{Reset, application};
+use embassy_boot::{
+    AlignedBuffer, BlockingFirmwareUpdater, FirmwareUpdater, FirmwareUpdaterConfig,
+};
+use embassy_embedded_hal::flash::partition::Partition;
 use embassy_executor::Spawner;
 use embassy_nrf::config::HfclkSource;
+use embassy_nrf::interrupt::Priority;
+use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::pac;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_time::{Duration, Timer};
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::mutex::Mutex as AsyncMutex;
+use embassy_sync::signal::Signal;
+use embassy_time::Duration;
 use embassy_usb::{Builder, msos};
-use embedded_storage::nor_flash::NorFlash;
 use hardware::{DEVICE_INTERFACE_GUIDS, Irqs, Markers, force_markers_off, reset_safe};
-use marker_control_board::PowerButton;
+use nrf_sdc::{self as sdc, mpsl};
+use static_cell::StaticCell;
 
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
+include!(concat!(env!("OUT_DIR"), "/owner_bonds.rs"));
 const FIRMWARE_BCD_DEVICE: u16 =
     odyssey_protocol::UsbDeviceRelease::from_version(FIRMWARE_VERSION).raw_value();
 
-struct SafeDfuMarker<'d, DFU: NorFlash, STATE: NorFlash>(BlockingFirmwareUpdater<'d, DFU, STATE>);
+struct SafeDfuMarker;
+struct DeferredDfuReset;
+static DFU_PENDING: AtomicBool = AtomicBool::new(false);
+static DFU_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-impl<DFU: NorFlash, STATE: NorFlash> application::DfuMarker for SafeDfuMarker<'_, DFU, STATE> {
-    fn mark_dfu(&mut self) {
-        force_markers_off();
-        if self.0.mark_dfu().is_err() {
-            reset_safe();
-        }
+impl Reset for DeferredDfuReset {
+    fn sys_reset(&self) {
+        DFU_REQUEST.signal(());
     }
 }
 
-fn sleep_until_button() -> ! {
-    force_markers_off();
-    pac::P0
-        .pin_cnf(11)
-        .modify(|w| w.set_sense(pac::gpio::vals::Sense::LOW));
-    pac::POWER.systemoff().write(|w| w.set_systemoff(true));
-    loop {
-        cortex_m::asm::wfe();
+impl application::DfuMarker for SafeDfuMarker {
+    fn mark_dfu(&mut self) {
+        DFU_PENDING.store(true, Ordering::Relaxed);
+        force_markers_off();
+        // Expander-driven current source and status LED only clear from the outputs task.
+        ble::CHANGED.signal(());
     }
+}
+
+embassy_nrf::bind_interrupts!(struct RadioIrqs {
+    CLOCK_POWER => mpsl::ClockInterruptHandler, embassy_nrf::usb::vbus_detect::InterruptHandler;
+    EGU0_SWI0 => mpsl::LowPrioInterruptHandler;
+    RADIO => mpsl::HighPrioInterruptHandler;
+    TIMER0 => mpsl::HighPrioInterruptHandler;
+    RTC0 => mpsl::HighPrioInterruptHandler;
+});
+
+#[embassy_executor::task]
+async fn mpsl_task(mpsl: &'static mpsl::MultiprotocolServiceLayer<'static>) -> ! {
+    mpsl.run().await
 }
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     force_markers_off();
-    let button_wake = pac::POWER.resetreas().read().off();
     hardware::clear_reset_reason();
     let mut config = embassy_nrf::config::Config::default();
     config.hfclk_source = HfclkSource::ExternalXtal;
+    config.gpiote_interrupt_priority = Priority::P6;
+    config.time_interrupt_priority = Priority::P6;
     let p = embassy_nrf::init(config);
+    embassy_nrf::interrupt::typelevel::USBD::set_priority(Priority::P6);
+    embassy_nrf::interrupt::typelevel::TWISPI0::set_priority(Priority::P6);
     let mut twi_buffer = [0; 2];
-    let (mut markers, mut button, usbd, nvmc) = Markers::new(p, &mut twi_buffer);
-    let hardware_ready = markers.configure_off().is_ok();
+    let mut markers = Markers::new(
+        hardware::MarkerPins {
+            output_1: p.P0_15,
+            output_2: p.P1_09,
+            output_3: p.P0_17,
+            output_4: p.P0_20,
+            twi: p.TWISPI0,
+            scl: p.P0_10,
+            sda: p.P0_09,
+        },
+        &mut twi_buffer,
+    );
+    let button = embassy_nrf::gpio::Input::new(p.P0_11, embassy_nrf::gpio::Pull::Up);
+    let (usbd, mut nvmc) = (p.USBD, p.NVMC);
+    // A single NAK here would leave the image unconfirmed and the radio parked,
+    // so the bus gets a few attempts before the board gives up on it.
+    let hardware_ready = (0..3).any(|_| markers.configure_off().is_ok());
 
-    let flash = Mutex::new(RefCell::new(Nvmc::new(nvmc)));
-    let fw_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
-    let mut aligned = AlignedBuffer([0; 4]);
-    let mut updater = BlockingFirmwareUpdater::new(fw_config, &mut aligned.0);
-    // Confirm only after safe output and current-driver initialization succeeded.
-    if hardware_ready && updater.mark_booted().is_err() {
-        reset_safe();
+    {
+        let flash = Mutex::new(RefCell::new(Nvmc::new(nvmc.reborrow())));
+        let fw_config = FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
+        let mut aligned = AlignedBuffer([0; 4]);
+        let mut updater = BlockingFirmwareUpdater::new(fw_config, &mut aligned.0);
+        // Confirm before MPSL starts and only after safe current-driver initialization.
+        if hardware_ready && updater.mark_booted().is_err() {
+            reset_safe();
+        }
     }
 
     let serial = hardware::serial_number();
@@ -82,16 +123,13 @@ async fn main(_spawner: Spawner) {
     config.serial_number = Some(serial);
     config.device_release = FIRMWARE_BCD_DEVICE;
     config.max_packet_size_0 = 64;
-    let driver = Driver::new(usbd, Irqs, HardwareVbusDetect::new(Irqs));
+    let driver = Driver::new(usbd, Irqs, HardwareVbusDetect::new(RadioIrqs));
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
-    let mut msos_descriptor = [0; 256];
+    let mut msos_descriptor = [0; 512];
     let mut control_buf = [0; 64];
-    let mut state = application::Control::new(
-        SafeDfuMarker(updater),
-        DfuAttributes::WILL_DETACH,
-        ResetImmediate,
-    );
+    let mut state =
+        application::Control::new(SafeDfuMarker, DfuAttributes::WILL_DETACH, DeferredDfuReset);
     let mut builder = Builder::new(
         driver,
         config,
@@ -119,37 +157,83 @@ async fn main(_spawner: Spawner) {
         },
     );
     let mut usb = builder.build();
-    let power = async {
-        if !hardware_ready {
-            core::future::pending::<()>().await;
-        }
-        let mut state = if button_wake {
-            PowerButton::woken_by_button()
-        } else {
-            PowerButton::default()
+    let automatic = async {
+        let mpsl_p =
+            mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
+        let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
+            source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
+            rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
+            rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
+            accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+            skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
         };
-        loop {
-            let is_low = button.is_low();
-            Timer::after_millis(30).await;
-            if button.is_low() != is_low {
-                continue;
+        static MPSL: StaticCell<mpsl::MultiprotocolServiceLayer> = StaticCell::new();
+        static TIMESLOTS: StaticCell<mpsl::SessionMem<1>> = StaticCell::new();
+        let Ok(service) = mpsl::MultiprotocolServiceLayer::with_timeslots(
+            mpsl_p,
+            RadioIrqs,
+            lfclk_cfg,
+            TIMESLOTS.init(mpsl::SessionMem::new()),
+        ) else {
+            reset_safe();
+        };
+        let mpsl = MPSL.init(service);
+        let Ok(task) = mpsl_task(mpsl) else {
+            reset_safe();
+        };
+        spawner.spawn(task);
+        let flash = AsyncMutex::<NoopRawMutex, _>::new(mpsl::Flash::take(mpsl, nvmc));
+        let fw_config = FirmwareUpdaterConfig::from_linkerfile(&flash, &flash);
+        let mut aligned = AlignedBuffer([0; 4]);
+        let mut updater = FirmwareUpdater::new(fw_config, &mut aligned.0);
+        let radio = async {
+            if !hardware_ready {
+                core::future::pending::<()>().await;
             }
-            if let Some(on) = state.observe(is_low) {
-                if markers.set(on).is_err() {
-                    reset_safe();
-                }
-                if !on && !hardware::usb_powered() {
-                    sleep_until_button();
-                }
+            let sdc_p = sdc::Peripherals::new(
+                p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+                p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+            );
+            let mut rng = embassy_nrf::rng::Rng::new_blocking(p.RNG);
+            let mut seed = [0; 32];
+            rng.blocking_fill_bytes(&mut seed);
+            let mut mem = sdc::Mem::<8192>::new();
+            let Ok(builder) = sdc::Builder::new()
+                .and_then(|builder| {
+                    builder
+                        .support_adv()
+                        .support_peripheral()
+                        .peripheral_count(1)
+                })
+                .and_then(|builder| builder.buffer_cfg(27, 27, 3, 3))
+            else {
+                reset_safe();
+            };
+            let Ok(controller) = builder.build(sdc_p, &mut rng, mpsl, &mut mem) else {
+                reset_safe();
+            };
+            embassy_futures::join::join3(
+                ble::run(
+                    controller,
+                    Partition::new(&flash, OWNER_BONDS_START, 8192),
+                    seed,
+                ),
+                ble::outputs(markers),
+                ble::button(button),
+            )
+            .await;
+        };
+        let detach = async {
+            DFU_REQUEST.wait().await;
+            force_markers_off();
+            if updater.mark_dfu().await.is_err() {
+                reset_safe();
             }
-            if is_low {
-                button.wait_for_high().await;
-            } else {
-                button.wait_for_low().await;
-            }
-        }
+            reset_safe();
+        };
+        embassy_futures::join::join(radio, detach).await;
     };
-    embassy_futures::join::join(usb.run(), power).await;
+    embassy_futures::join::join(usb.run(), automatic).await;
     reset_safe();
 }
 

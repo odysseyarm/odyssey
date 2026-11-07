@@ -18,15 +18,18 @@ pub fn build(bootloader: bool) -> io::Result<()> {
     let dfu = &flash["dfu"];
     let state = &flash["bootloader_state"];
     let loader = &flash["bootloader"];
+    let bonds = &flash["owner_bonds"];
     let ram = &regions["ram"];
     assert_eq!(loader.origin(), flash.origin());
-    assert_eq!(loader.end(), state.origin());
+    assert_eq!(loader.end(), bonds.origin());
+    assert_eq!(bonds.end(), state.origin());
+    assert_eq!(bonds.length(), 8192);
     assert_eq!(state.end(), active.origin());
     assert_eq!(active.end(), dfu.origin());
     assert_eq!(dfu.end(), flash.end());
     assert_eq!(dfu.length(), active.length() + 4096);
     assert!(state.length() >= (2 + 4 * (active.length() / 4096)) * 4);
-    for region in [loader, state, active, dfu] {
+    for region in [loader, bonds, state, active, dfu] {
         assert_eq!(region.origin() % 4096, 0);
         assert_eq!(region.length() % 4096, 0);
     }
@@ -53,6 +56,13 @@ pub fn build(bootloader: bool) -> io::Result<()> {
             active.end(),
             ram.origin(),
             ram.end(),
+        ),
+    )?;
+    fs::write(
+        out.join("owner_bonds.rs"),
+        format!(
+            "pub const OWNER_BONDS_START: u32 = {:#x};\n",
+            bonds.origin()
         ),
     )?;
     let mut version = [0; 3];

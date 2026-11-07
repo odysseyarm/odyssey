@@ -16,10 +16,62 @@ ported from [marker-control-board](https://github.com/odysseyarm/marker-control-
 GPIO mapping and PCAL6408A current selection match that revision.
 
 Cold start, reset, DFU entry and fault handlers force all four IR outputs low.
-Cold start stays off until a complete debounced power-button click. Later clicks
-toggle outputs. With no USB power, switching off enters Nordic System OFF;
-button wake turns on only after release. USB-powered off state keeps DFU runtime
-available. An initially held button on cold start cannot turn markers on.
+Cold start selects **Auto** with outputs off. A complete debounced power-button
+click cycles **Auto → On → Off → Auto**; an initially held button is ignored
+until release. Manual On overrides automatic demand. Returning to Auto discards
+old demand and stays off until a fresh lease arrives. The radio remains available
+in Auto and Off, including without USB power; these modes do not enter System OFF.
+USB DFU runtime remains available when USB is attached.
+
+Application and bootloader each reserve 512 bytes for Microsoft OS descriptors:
+WinUSB IDs and interface GUIDs appear at both device and DFU-function level.
+A 256-byte buffer overflows during USB setup and triggers a reset loop before
+application advertising starts.
+
+The board advertises **Odyssey Markers** with a stable FICR-derived static-random
+address and accepts one GATT central. The shared wire contract is
+[`odyssey_protocol::marker_control`](../crates/odyssey-protocol/src/marker_control.rs):
+
+| GATT attribute | UUID | Value |
+|---|---|---|
+| Service | `9b7a0001-4f4e-4f44-5953-53455941524d` | Marker control |
+| Demand | `9b7a0002-4f4e-4f44-5953-53455941524d` | Acknowledged one-byte write: `0` clears, `1` renews |
+| Mode | `9b7a0003-4f4e-4f44-5953-53455941524d` | One byte: Auto `0`, Off `1`, On `2` |
+
+In Auto, active demand enables outputs for **6 seconds**. The hub renews every
+**2 seconds**; disconnect, explicit clear or lease expiry switches outputs off.
+The hub sends demand only for registered boards whose assigned screen has an
+active event subscriber. Unassigned boards stay off. Multiple boards may share
+one of the six screen IDs.
+
+Control writes require an encrypted link from the single approved owner bond;
+unencrypted writes get `INSUFFICIENT_ENCRYPTION`, encrypted non-owners
+`INSUFFICIENT_AUTHORISATION`. A **3-second power-button hold** (after boot, from
+a released button) opens a 30-second enrollment window. The host pairs inside it
+(BlueZ, WinRT or the Odyssey dongle) and enrollment succeeds only when the
+board acknowledges the OFF write, after the owner bond is committed to flash and
+read back. A new owner replaces the old one only after that commit.
+
+Locked boards remain discoverable. The advertisement carries 128-bit service
+data (AD type `0x21`) for the marker service UUID: version `1`, followed by one
+byte of remaining enrollment seconds (`0..=30`; zero means closed). The full
+**Odyssey Markers** name is in the scan response. During advertising, physical
+window changes and countdown boundaries refresh that service data. Desktop
+enrollment uses the selected radio's reported deadline, not mere discovery.
+
+The RGB status LED (PCAL6408A P5 red, P6 green, P7 blue; schematic 117-27606
+rev B) shows **blue** while the enrollment window is open, otherwise **green**
+while outputs are on from hub demand, **yellow** in manual On, **magenta** in
+manual Off, and dark in idle Auto. The expander has no PWM, so colours are
+on/off mixes. A short button click that leaves yellow or magenta on explains
+markers that stay lit or dark while the hub shows Idle.
+
+Pairing is LE Secure Connections **Just Works**: encrypted and bonded, but not
+protected against an active attacker who races the 30-second window. The lease
+limits stale demand after a host failure. Hosts keep the stale OS bond when a
+board is enrolled elsewhere; forget it in the OS before re-enrolling.
+Desktop connects to a board only while its screen has demand or during
+enrollment, and disconnects after acknowledging OFF.
 
 Build without writing hardware:
 
@@ -45,9 +97,11 @@ Only `APP` alternate 0 is exposed; bootloader replacement requires SWD.
 DFU requests persist in flash; incomplete downloads remain in DFU across resets.
 
 [`memory/memory-marker-control-board.kdl`](memory/memory-marker-control-board.kdl)
-defines bootloader `0x00000..0x10000`, state `0x10000..0x11000`,
+defines bootloader `0x00000..0x0e000` (56 KiB), owner-bond pages
+`0x0e000..0x10000`, state `0x10000..0x11000`,
 application `0x11000..0x48000` (220 KiB), and DFU `0x48000..0x80000`
-(224 KiB, including scratch). Interrupted swaps resume. A trial image is
+(224 KiB, including scratch). SWD programming must preserve `0x0e000..0x10000`;
+a full-chip erase clears the owner and requires physical re-enrollment. Interrupted swaps resume. A trial image is
 confirmed only after outputs and current-driver initialization succeed;
 unconfirmed images revert on reset. Vector checks validate address ranges and
 Thumb entry, not image authenticity or integrity. DFU images are unsigned.

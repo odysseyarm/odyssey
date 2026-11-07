@@ -1,15 +1,16 @@
 // Ported from https://github.com/odysseyarm/marker-control-board
 // revision 9c0779478329d84e9bfaafd6b11119c7a6ee3dea (main.rs and pinout.rs).
-use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::twim::{self, Twim};
 use embassy_nrf::{pac, peripherals};
 use embassy_time::Duration;
+
+const LED_MASK: u8 = 0xE0;
 
 pub const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C}"];
 
 embassy_nrf::bind_interrupts!(pub struct Irqs {
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
 });
 
@@ -35,10 +36,6 @@ pub fn reset_safe() -> ! {
     cortex_m::peripheral::SCB::sys_reset()
 }
 
-pub fn usb_powered() -> bool {
-    pac::POWER.usbregstatus().read().vbusdetect()
-}
-
 pub fn clear_reset_reason() {
     let reason = pac::POWER.resetreas().read();
     pac::POWER.resetreas().write_value(reason);
@@ -56,44 +53,43 @@ pub fn serial_number() -> [u8; 12] {
     serial
 }
 
+pub struct MarkerPins {
+    pub output_1: embassy_nrf::Peri<'static, peripherals::P0_15>,
+    pub output_2: embassy_nrf::Peri<'static, peripherals::P1_09>,
+    pub output_3: embassy_nrf::Peri<'static, peripherals::P0_17>,
+    pub output_4: embassy_nrf::Peri<'static, peripherals::P0_20>,
+    pub twi: embassy_nrf::Peri<'static, peripherals::TWISPI0>,
+    pub scl: embassy_nrf::Peri<'static, peripherals::P0_10>,
+    pub sda: embassy_nrf::Peri<'static, peripherals::P0_09>,
+}
+
 pub struct Markers<'d> {
     outputs: [Output<'d>; 4],
     twi: Twim<'d>,
 }
 
 impl<'d> Markers<'d> {
-    pub fn new(
-        p: embassy_nrf::Peripherals,
-        tx_ram_buffer: &'d mut [u8],
-    ) -> (
-        Self,
-        Input<'static>,
-        embassy_nrf::Peri<'static, peripherals::USBD>,
-        embassy_nrf::Peri<'static, peripherals::NVMC>,
-    ) {
+    pub fn new(p: MarkerPins, tx_ram_buffer: &'d mut [u8]) -> Self {
         let outputs = [
-            Output::new(p.P0_15, Level::Low, OutputDrive::Standard),
-            Output::new(p.P1_09, Level::Low, OutputDrive::Standard),
-            Output::new(p.P0_17, Level::Low, OutputDrive::Standard),
-            Output::new(p.P0_20, Level::Low, OutputDrive::Standard),
+            Output::new(p.output_1, Level::Low, OutputDrive::Standard),
+            Output::new(p.output_2, Level::Low, OutputDrive::Standard),
+            Output::new(p.output_3, Level::Low, OutputDrive::Standard),
+            Output::new(p.output_4, Level::Low, OutputDrive::Standard),
         ];
         let twi = Twim::new(
-            p.TWISPI0,
+            p.twi,
             Irqs,
-            p.P0_10,
-            p.P0_09,
+            p.scl,
+            p.sda,
             twim::Config::default(),
             tx_ram_buffer,
         );
-        (
-            Self { outputs, twi },
-            Input::new(p.P0_11, Pull::Up),
-            p.USBD,
-            p.NVMC,
-        )
+        Self { outputs, twi }
     }
     /// PCAL6408A ADDR=false (0x20): io0 ISET1=1, io1 ISET0=0, io2 DRIVEV=0.
     pub fn configure_off(&mut self) -> Result<(), twim::Error> {
+        // Output register powers up as 0xFF: clear the LED bits before they become outputs.
+        self.set_led(0)?;
         self.set(false)?;
         let mut direction = [0];
         self.twi.blocking_write_read_timeout(
@@ -104,9 +100,23 @@ impl<'d> Markers<'d> {
         )?;
         self.twi.blocking_write_timeout(
             0x20,
-            &[0x03, direction[0] & !0x07],
+            &[0x03, direction[0] & !(0x07 | LED_MASK)],
             Duration::from_millis(100),
         )
+    }
+
+    /// `bits` are the PCAL6408A P5..P7 positions of the RGB LED; other pins keep their value.
+    pub fn set_led(&mut self, bits: u8) -> Result<(), twim::Error> {
+        let mut value = [0];
+        self.twi.blocking_write_read_timeout(
+            0x20,
+            &[0x01],
+            &mut value,
+            Duration::from_millis(100),
+        )?;
+        let value = (value[0] & !LED_MASK) | bits;
+        self.twi
+            .blocking_write_timeout(0x20, &[0x01, value], Duration::from_millis(100))
     }
 
     pub fn set(&mut self, on: bool) -> Result<(), twim::Error> {
