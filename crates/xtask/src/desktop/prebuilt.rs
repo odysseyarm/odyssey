@@ -48,10 +48,12 @@ pub(super) fn packager(variant: Variant, dir: &Path, out_dir: &str) -> eros::Res
     let config = verify(variant, &dir, &manifest, &app_version, &pinned)?;
 
     let mut command = cmd::at(DIR, dir.join(PACKAGER));
-    command
-        .arg("--config")
-        .arg(config.to_string())
-        .args(["--formats", "wix", "--out-dir", out_dir]);
+    command.arg("--config").arg(config.to_string()).args([
+        "--formats",
+        "wix",
+        "--out-dir",
+        out_dir,
+    ]);
     Ok(command)
 }
 
@@ -87,7 +89,10 @@ fn verify(
     let mut config_json = Vec::new();
     for relative in [app.as_str(), PACKAGER, config] {
         let Some(expected) = manifest.sha256.get(relative) else {
-            eros::bail!("{} does not list {relative}", dir.join("prebuilt.json").display());
+            eros::bail!(
+                "{} does not list {relative}",
+                dir.join("prebuilt.json").display()
+            );
         };
         let bytes = orbbec::read(&dir.join(relative))?;
         orbbec::verify(&bytes, expected, relative)?;
@@ -163,11 +168,7 @@ mod tests {
         (dir, manifest)
     }
 
-    fn check(
-        variant: Variant,
-        dir: &Path,
-        manifest: &Manifest,
-    ) -> eros::Result<serde_json::Value> {
+    fn check(variant: Variant, dir: &Path, manifest: &Manifest) -> eros::Result<serde_json::Value> {
         verify(variant, dir, manifest, "1.2.3", "0.11.8")
     }
 
@@ -187,7 +188,10 @@ mod tests {
         let (dir, manifest) = fixture("tampered");
         fs::write(dir.join("tools/cargo-packager.exe"), b"not the packager").unwrap();
         let error = check(Variant::Online, &dir, &manifest).unwrap_err();
-        assert!(format!("{error:?}").contains("tools/cargo-packager.exe"), "{error:?}");
+        assert!(
+            format!("{error:?}").contains("tools/cargo-packager.exe"),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -199,7 +203,10 @@ mod tests {
         )
         .unwrap();
         let error = check(Variant::Full, &dir, &manifest).unwrap_err();
-        assert!(format!("{error:?}").contains("full/odyssey-desktop.exe"), "{error:?}");
+        assert!(
+            format!("{error:?}").contains("full/odyssey-desktop.exe"),
+            "{error:?}"
+        );
         assert!(check(Variant::Online, &dir, &manifest).is_ok());
     }
 

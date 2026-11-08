@@ -58,8 +58,10 @@ let
   };
 
   # manylinux2014's glibc. The released cross images were newer (2.23+), so
-  # everything that loaded the old libs loads these.
-  glibcFloor = "2.17";
+  # everything that loaded the old libs loads these. zig ships no ppc64le stubs
+  # below 2.19 and auditwheel defines no manylinux_2_19/2_20-2_23 policy, so the
+  # ppc64le row is manylinux_2_24.
+  glibcFloor = triple: if lib.hasPrefix "powerpc64le" triple then "2.24" else "2.17";
 
   # Writable HOME/cache dirs: the sandbox HOME does not exist and zig, maturin
   # and cargo-xwin all want a cache directory.
@@ -100,6 +102,9 @@ let
         export CARGO_UNSTABLE_TARGET_APPLIES_TO_HOST=true
         export CARGO_TARGET_APPLIES_TO_HOST=false
         export CARGO_HOST_LINKER=cc
+        # rustc's default release `strip = "debuginfo"` reaches zig as a full
+        # strip, dropping .symtab; uniffi-bindgen reads UniFFI metadata from it.
+        export CARGO_PROFILE_RELEASE_STRIP=none
       '' + lib.optionalString (lib.hasInfix "musl" triple) ''
         # A cdylib needs a dynamic musl (musllinux wheels load into CPython).
         export RUSTFLAGS="-C target-feature=-crt-static"
@@ -107,9 +112,13 @@ let
       build = "cargo zigbuild --release --locked --offline --target ${
         if lib.hasInfix "-gnu" triple then "${triple}.${glibc}" else triple
       }";
-      maturin = "--zig --compatibility ${if lib.hasInfix "musl" triple then "musllinux_1_2" else "manylinux2014"}";
+      maturin = "--zig --compatibility ${
+        if lib.hasInfix "musl" triple then "musllinux_1_2"
+        else if glibc == "2.17" then "manylinux2014"
+        else "manylinux_${lib.replaceStrings [ "." ] [ "_" ] glibc}"
+      }";
     };
-  backendFor = backendWith glibcFloor;
+  backendFor = triple: backendWith (glibcFloor triple) triple;
 
   # (workspace, target) -> the cached dependency build and a derivation helper
   # that reuses it.
