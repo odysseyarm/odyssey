@@ -978,6 +978,23 @@
           "min_desktop": "0.6.0"
         }
       ]
+    },
+    "marker-control-board": {
+      "firmwares": [
+        {
+          "version": "0.1.1",
+          "requires_bootloader": 1,
+          "requires_netcore": 0,
+          "min_desktop": "0.7.3",
+          "files": {
+            "app": {
+              "sha256": "daf68bb14ca6ce3cb350a7a549dceea3ee02abe52b09e51fb5577bb4103e6884",
+              "size": 171216
+            }
+          },
+          "released": "2026-11-08"
+        }
+      ]
     }
   }
 }
