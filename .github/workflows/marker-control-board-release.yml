@@ -46,8 +46,7 @@ jobs:
             firmware/marker-control-board-bootloader -> target
       - name: Check startup and DFU boundaries
         run: |
-          rustc --edition=2024 --test firmware/marker-control-board/src/lib.rs -o "$RUNNER_TEMP/marker-policy-tests"
-          "$RUNNER_TEMP/marker-policy-tests"
+          cargo test --manifest-path firmware/marker-control-board/Cargo.toml --lib --target x86_64-unknown-linux-gnu
           cargo test --manifest-path firmware/better-dfu/Cargo.toml --features dfu,application,embassy-time/std
       - name: Build application and factory images
         run: cargo xtask firmware marker-control-board build
