@@ -261,7 +261,26 @@ fn check(board: &Board) -> eros::Result<()> {
     Ok(())
 }
 
+/// A tree laid out like the checkout (`<crate dir>/<target dir>/<triple>/release/<bin>`)
+/// that already holds the ELFs, as the Nix packages build them. With it set, the
+/// build steps only check that their ELF is there instead of running cargo, so
+/// the conversion and packaging below are the same code a local build runs.
+pub(crate) fn prebuilt() -> Option<PathBuf> {
+    std::env::var_os("ODYSSEY_PREBUILT").map(PathBuf::from)
+}
+
+/// The ELF a build step would have produced, or an error naming it.
+fn require_prebuilt(elf: &Path) -> eros::Result<()> {
+    if !elf.is_file() {
+        eros::bail!("ODYSSEY_PREBUILT has no {}", elf.display());
+    }
+    Ok(())
+}
+
 fn build(krate: &Crate) -> eros::Result<()> {
+    if prebuilt().is_some() {
+        return require_prebuilt(&krate.elf());
+    }
     cmd::run(cmd::at(krate.dir, "cargo").arg("build").args(krate.build))
 }
 
@@ -290,6 +309,9 @@ impl Bank {
 
 fn build_bank(board: &Board, bank: Bank) -> eros::Result<()> {
     board.dual_core()?;
+    if prebuilt().is_some() {
+        return require_prebuilt(&board.app.elf_in(bank.target_dir()));
+    }
     cmd::run(
         cmd::at(board.app.dir, "cargo")
             .env("APP_BANK", bank.app_bank())

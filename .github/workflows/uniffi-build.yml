@@ -8,6 +8,13 @@ name: UniFFI Build
 # Not to be confused with ffi-build.yml, which builds the separate cbindgen
 # based C/C++ FFI library (odyssey-hub-client-ffi).
 #
+# Every Rust artifact (wheels, C# natives, the C# bindings) is a Nix derivation
+# from nix/sdk.nix, built with Crane: linux through cargo-zigbuild against a
+# glibc 2.17 / musl baseline (manylinux2014 / musllinux_1_2, audited by maturin),
+# windows through cargo-xwin against a hash-pinned MSVC CRT + Windows SDK, macos
+# natively on a darwin builder. The public setup-nix cache is safe here: the SDK
+# lockfiles do not resolve the private odyssey-cv dependency.
+#
 # All artifacts follow the naming scheme: <language>-<platform>-<target>
 
 on:
@@ -27,7 +34,7 @@ jobs:
   # workspace bin and runs `cargo run --bin uniffi-bindgen`, so bindings match
   # the uniffi version in Cargo.lock. The pip pin in pyproject.toml only covers
   # builds where that bin is unavailable, so this job fails if it drifts from
-  # the lockfile.
+  # the lockfile. (Pure text check; needs no Nix.)
   check-pyproject-pin:
     name: Check pyproject uniffi-bindgen pin
     runs-on: ubuntu-latest
@@ -76,28 +83,22 @@ jobs:
             manylinux: musllinux_1_2
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/setup-nix
         with:
-          python-version: 3.x
-      - name: Install Protoc
-        id: protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          public-cache: 'true'
+      # maturin (in the sandbox) builds the wheel with zig as the linker and
+      # audits it against the manylinux2014 / musllinux_1_2 policy.
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
-          sccache: 'true'
-          manylinux: ${{ matrix.platform.manylinux }}
-          docker-options: --mount type=bind,source=${{ steps.protoc.outputs.path }}/bin/protoc,destination=/protoc/protoc -e PROTOC=/protoc/protoc
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }})" >> "$GITHUB_OUTPUT"
+      - name: Collect wheels
+        run: |
+          mkdir -p dist
+          cp -L "${{ steps.build.outputs.out }}"/dist/*.whl dist/
+      # pip install + import, in a derivation, for the wheel the builder can run.
       - name: Test wheel
         if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
-        run: |
-          pip install dist/*.whl
-          python -c "import ohc_uniffi"
+        run: nix build -L --no-link .#checks.x86_64-linux.sdk-python-wheel-import
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -112,24 +113,18 @@ jobs:
         target: [x86_64-pc-windows-msvc]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/setup-nix
         with:
-          python-version: 3.x
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # maturin cross-compiles this target through cargo-xwin on the host, so
-      # it needs llvm-lib for the same reason the native builds do.
-      - name: Put LLVM on PATH
-        run: ls -d /usr/lib/llvm-*/bin | sort -V | tail -1 >> "$GITHUB_PATH"
+          public-cache: 'true'
+      # maturin cross-compiles this target through its cargo-xwin backend; the
+      # sysroot is the hash-pinned one from nix/xwin.nix.
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
-          sccache: 'true'
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-windows-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+      - name: Collect wheels
+        run: |
+          mkdir -p dist
+          cp -L "${{ steps.build.outputs.out }}"/dist/*.whl dist/
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -144,25 +139,19 @@ jobs:
         target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: ./.github/actions/setup-nix
         with:
-          python-version: 3.x
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          public-cache: 'true'
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path sdk/odyssey-hub-client-uniffi/Cargo.toml
-          sccache: 'true'
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-macos-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+      - name: Collect wheels
+        run: |
+          mkdir -p dist
+          cp -L "${{ steps.build.outputs.out }}"/dist/*.whl dist/
       - name: Test wheel
         if: matrix.target == 'aarch64'
-        run: |
-          pip install dist/*.whl
-          python -c "import ohc_uniffi"
+        run: nix build -L --no-link .#checks.aarch64-darwin.sdk-python-wheel-import
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -170,79 +159,61 @@ jobs:
           path: dist
 
   # C# NuGet ships one package with all native libs (runtimes/<rid>/native).
-  # Natives: linux via cross (Cross.toml drives the containers, same as
-  # `cargo xtask sdk dotnet build-lib`), windows via cargo-xwin, macos on the macos runner.
+  # Natives: linux via cargo-zigbuild and windows via cargo-xwin in Nix
+  # derivations on one linux runner, macos via Nix on the macos runner.
   dotnet-natives-linux:
     name: DotNet natives linux + windows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cross
-      - name: Install cargo-xwin
-        run: pip install cargo-xwin
-      # cc-rs archives the MSVC target with llvm-lib. The runner image keeps
-      # LLVM under /usr/lib/llvm-<major>/bin and symlinks only a few versioned
-      # tools into /usr/bin, so that directory has to go on PATH whole.
-      - name: Put LLVM on PATH
-        run: ls -d /usr/lib/llvm-*/bin | sort -V | tail -1 >> "$GITHUB_PATH"
-      - name: Add windows target
-        run: rustup target add x86_64-pc-windows-msvc
-      - name: Build linux natives (cross)
-        working-directory: sdk/odyssey-hub-client-uniffi
-        # See Cross.toml: cross has to mount the root Cargo.toml the crates inherit from.
-        env:
-          ODYSSEY_REPO: ${{ github.workspace }}
+          public-cache: 'true'
+      - name: Build natives (nix)
         run: |
-          cross build --release -p odyssey-hub-client-uniffi --target x86_64-unknown-linux-gnu
-          cross build --release -p odyssey-hub-client-uniffi --target aarch64-unknown-linux-gnu
-      - name: Build windows native (xwin)
-        working-directory: sdk/odyssey-hub-client-uniffi
-        run: cargo xwin build --release -p odyssey-hub-client-uniffi --target x86_64-pc-windows-msvc
+          set -eu
+          for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+            out=$(nix build -L --no-link --print-out-paths ".#sdk-dotnet-native-$triple")
+            mkdir -p "natives/$triple"
+            cp -L "$out"/* "natives/$triple/"
+          done
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-unknown-linux-gnu
-          path: sdk/odyssey-hub-client-uniffi/target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so
+          path: natives/x86_64-unknown-linux-gnu/libohc_uniffi.so
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-aarch64-unknown-linux-gnu
-          path: sdk/odyssey-hub-client-uniffi/target/aarch64-unknown-linux-gnu/release/libohc_uniffi.so
+          path: natives/aarch64-unknown-linux-gnu/libohc_uniffi.so
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-pc-windows-msvc
-          path: sdk/odyssey-hub-client-uniffi/target/x86_64-pc-windows-msvc/release/ohc_uniffi.dll
+          path: natives/x86_64-pc-windows-msvc/ohc_uniffi.dll
 
   dotnet-natives-macos:
     name: DotNet natives macos
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Add x86_64 target
-        run: rustup target add x86_64-apple-darwin
-      - name: Build macos natives
-        working-directory: sdk/odyssey-hub-client-uniffi
+          public-cache: 'true'
+      - name: Build macos natives (nix)
         run: |
-          cargo build --release -p odyssey-hub-client-uniffi --target aarch64-apple-darwin
-          cargo build --release -p odyssey-hub-client-uniffi --target x86_64-apple-darwin
+          set -eu
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            out=$(nix build -L --no-link --print-out-paths ".#sdk-dotnet-native-$triple")
+            mkdir -p "natives/$triple"
+            cp -L "$out"/* "natives/$triple/"
+          done
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-aarch64-apple-darwin
-          path: sdk/odyssey-hub-client-uniffi/target/aarch64-apple-darwin/release/libohc_uniffi.dylib
+          path: natives/aarch64-apple-darwin/libohc_uniffi.dylib
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-apple-darwin
-          path: sdk/odyssey-hub-client-uniffi/target/x86_64-apple-darwin/release/libohc_uniffi.dylib
+          path: natives/x86_64-apple-darwin/libohc_uniffi.dylib
 
   dotnet-package:
     name: DotNet pack NuGet
@@ -250,11 +221,9 @@ jobs:
     needs: [dotnet-natives-linux, dotnet-natives-macos]
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          public-cache: 'true'
       - name: Download natives
         uses: actions/download-artifact@v6
         with:
@@ -265,23 +234,21 @@ jobs:
             mkdir -p "sdk/odyssey-hub-client-uniffi/target/$triple/release"
             mv dotnet-native-"$triple"/* "sdk/odyssey-hub-client-uniffi/target/$triple/release/"
           done
-      # Keep the tag in sync with UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs
-      - name: Install uniffi-bindgen-cs
-        run: cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.11.0+v0.31.0
+      # uniffi-bindgen-cs is built from the pinned NordSecurity tag in nix/sdk.nix
+      # (keep it in sync with UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs);
+      # the derivation reads the metadata of the Nix-built x86_64 linux native.
       - name: Generate C# bindings
-        working-directory: sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient
-        run: cargo run --manifest-path ../../Cargo.toml --release --bin cs_bindgen -- ../../target/x86_64-unknown-linux-gnu/release/libohc_uniffi.so OdysseyHubClient/generated
-      # Explicit Release build first: GeneratePackageOnBuild makes `dotnet pack`
-      # skip its implicit build, and pack looks in bin/Release.
-      - name: Pack
-        working-directory: sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient
         run: |
-          version_props=()
-          if [ -n "${{ inputs.version }}" ]; then
-            version_props=(-p:Version="${{ inputs.version }}")
-          fi
-          dotnet build OdysseyHubClient -c Release "${version_props[@]}"
-          dotnet pack OdysseyHubClient -o nugets "${version_props[@]}"
+          set -eu
+          out=$(nix build -L --no-link --print-out-paths .#sdk-dotnet-csharp-bindings)
+          mkdir -p sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient/OdysseyHubClient/generated
+          cp -rL "$out"/. sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient/OdysseyHubClient/generated/
+          chmod -R u+w sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient/OdysseyHubClient/generated
+      # Packing is host-native: the macOS natives above come from another runner,
+      # so the package cannot be one derivation. The .NET SDK and every NuGet
+      # package it restores are pinned by Nix (sdk-dotnet-sdk, sdk-dotnet-nuget-deps).
+      - name: Pack
+        run: nix run .#sdk-dotnet-pack -- "${{ inputs.version }}"
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-nuget

@@ -1335,6 +1335,7 @@ dependencies = [
  "eros",
  "futures",
  "interprocess",
+ "odyssey-common",
  "odyssey-hub-common",
  "odyssey-hub-server-interface",
  "odyssey-protocol",

@@ -3,9 +3,6 @@ name: Desktop Release
 # Build and publish the Windows installer when an odyssey-desktop-vX.Y.Z tag is
 # pushed. The tag version must match crates/odyssey-desktop/Cargo.toml.
 #
-# WiX runs on Windows only, so the bundle is built on a windows runner rather
-# than cross-compiled the way the FFI libraries are.
-#
 # odyssey-hub-server reaches odyssey-cv over an SSH git URL that this runner
 # has no key for, so job-scoped Git config rewrites that URL to an authenticated HTTPS
 # one. ODYSSEY_CV_TOKEN is a fine-grained PAT scoped to odysseyarm/odyssey-cv,
@@ -46,56 +43,46 @@ jobs:
           fi
           echo "version=$crate_version" >> "$GITHUB_OUTPUT"
 
-  bundle:
-    name: Bundle MSI
+  windows-build:
+    name: Cross-build Windows executables
     needs: check-version
-    # Set the DESKTOP_RUNNER repository variable to a self-hosted Windows
-    # runner's label to build there instead. A hosted runner starts empty and
-    # compiles all ~670 crates every time, around 20 minutes; a self-hosted one
-    # keeps target/ and ~/.cargo between runs and only rebuilds what changed.
-    runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
+    runs-on: ubuntu-latest
     env:
-      VERSION: ${{ needs.check-version.outputs.version }}
-      # Do not persist the PAT in a self-hosted runner's global Git config.
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
+      - name: Build both variants and packaging tools
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#desktop-windows)
+          mkdir prebuilt-windows
+          cp -rL "$out"/. prebuilt-windows/
+      - uses: actions/upload-artifact@v6
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # A self-hosted runner keeps its own target/, so the cache round-trip is
-      # pure overhead there. On a hosted one the shared key keeps a single
-      # cache across tags instead of one per build, so only app crates rebuild.
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ !vars.DESKTOP_RUNNER }}
+          name: odyssey-desktop-windows-prebuilt
+          path: prebuilt-windows
+
+  bundle:
+    name: Bundle MSI
+    needs: [check-version, windows-build]
+    runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      ODYSSEY_REPO: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
         with:
-          workspaces: ". -> target"
-          cache-all-crates: true
-          shared-key: desktop-windows
-      - name: Install cargo-binstall
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-binstall
-      # cargo-packager, at the version pinned in [workspace.metadata.bin] in Cargo.toml.
-      - name: Install cargo-packager
-        run: cargo bin --install
-      # Two installers come from this one job. They are the same app: the full
-      # one is built without the `sdk-download` feature and carries Orbbec's camera
-      # SDK, for customers who may only run offline software. Neither turns offline
-      # mode on unless installed with OFFLINE_MODE=1. Only the app crate
-      # is rebuilt for it. `cargo xtask desktop bundle` stages what each variant
-      # needs (prepare-orbbec), builds the app and runs cargo-packager with the
-      # environment the WiX template reads.
+          name: odyssey-desktop-windows-prebuilt
+          path: prebuilt-windows
       - name: Bundle the online installer
         shell: bash
-        run: cargo xtask desktop bundle online
+        run: ./prebuilt-windows/tools/xtask.exe desktop bundle online --prebuilt prebuilt-windows
       - name: Bundle the full installer
         shell: bash
-        run: cargo xtask desktop bundle full
+        run: ./prebuilt-windows/tools/xtask.exe desktop bundle full --prebuilt prebuilt-windows
       - name: Collect the installers
         shell: bash
         run: |
@@ -123,73 +110,54 @@ jobs:
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
-      - name: Install build dependencies
+      - uses: ./.github/actions/setup-nix
+      - name: Build and verify AppImage
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc g++ clang cmake libfontconfig-dev libwayland-dev \
-            libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev \
-            libvulkan1 libudev-dev libdbus-1-dev pkg-config fuse3 mold
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The workspace links a GPUI app and a gRPC server, so linking is
-      # a real slice of the build; mold cuts it to a fraction of GNU ld.
-      - name: Link with mold
-        run: echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> "$GITHUB_ENV"
-      # save-if keeps one cache per lockfile rather than one per tag build, so
-      # a release that only moves app code reuses the dependency objects.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          cache-all-crates: true
-          shared-key: desktop-linux
-      - name: Install cargo-binstall
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-binstall
-      # cargo-packager, at the version pinned in [workspace.metadata.bin] in Cargo.toml.
-      - name: Install cargo-packager
-        run: cargo bin --install
-      # cargo-packager packages a finished binary; it does not build one.
-      - name: Build
-        run: cargo build --release --package odyssey-desktop
-      # The libraries GPUI loads from the host (Wayland, xkbcommon, Vulkan and
-      # the EGL/GL driver stack) are excluded from the image through
-      # appimage.excludedLibs in crates/odyssey-desktop/Cargo.toml: a bundled
-      # copy shadows the host's and breaks Vulkan against its driver.
-      - name: Bundle
-        working-directory: crates/odyssey-desktop
-        run: cargo bin cargo-packager --release --formats appimage --packages odyssey-desktop --out-dir dist
-      # Unpack the image to prove it is well formed and that none of the host
-      # libraries slipped in, so a silent packaging change cannot ship an image
-      # that dies on a clean machine.
-      - name: Collect the AppImage
-        run: |
-          set -eu
-          set -- crates/odyssey-desktop/dist/*.AppImage
-          if [ ! -f "$1" ]; then echo "cargo-packager produced no AppImage" >&2; exit 1; fi
+          nix build -L .#desktop-appimage .#checks.x86_64-linux.desktop-appimage-contract
           mkdir -p dist
-          cp "$1" "dist/Odyssey-$VERSION-x86_64.AppImage"
-          chmod +x "dist/Odyssey-$VERSION-x86_64.AppImage"
-
-          cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/dist/Odyssey-$VERSION-x86_64.AppImage" --appimage-extract >/dev/null
-          test -x squashfs-root/usr/bin/odyssey-desktop
-          leaked=$(find squashfs-root -name 'libwayland-*' -o -name 'libxkbcommon*' -o -name 'libvulkan*' \
-            -o -name 'libEGL*' -o -name 'libGL.so*' -o -name 'libGLX*' -o -name 'libgbm*' -o -name 'libdrm*')
-          if [ -n "$leaked" ]; then echo "host libraries bundled:" >&2; echo "$leaked" >&2; exit 1; fi
+          cp "result/Odyssey-$VERSION-x86_64.AppImage" dist/
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-appimage
           path: dist
 
+
+  nixos-prebuilt:
+    name: Build and cache NixOS desktop
+    needs: check-version
+    runs-on: ubuntu-latest
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-nix
+      - name: Build and verify NixOS package
+        id: build
+        run: |
+          set -eu
+          test -n "$CACHIX_AUTH_TOKEN" || { echo "CACHIX_AUTH_TOKEN secret is required to publish the trusted NixOS output" >&2; exit 1; }
+          out=$(nix build -L --no-link --print-out-paths .#desktop-nixos)
+          nix build -L --no-link .#checks.x86_64-linux.desktop-nixos-glibc
+          printf '%s\n' "$out" > odyssey-desktop-nixos-store-path.txt
+          echo "out=$out" >> "$GITHUB_OUTPUT"
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
+        with:
+          name: odysseyarm
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pathsToPush: ${{ steps.build.outputs.out }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odyssey-desktop-nixos-store-path
+          path: odyssey-desktop-nixos-store-path.txt
+          if-no-files-found: error
+
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [check-version, bundle, appimage]
+    needs: [check-version, bundle, appimage, nixos-prebuilt]
     if: github.ref_type == 'tag'
     permissions:
       contents: write
@@ -202,6 +170,9 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: odyssey-desktop-appimage
+      - uses: actions/download-artifact@v6
+        with:
+          name: odyssey-desktop-nixos-store-path
       # Re-running a tag has to replace the artifacts rather than fail on the
       # release that already exists, so create only when it does not.
       - name: Publish release
@@ -213,14 +184,14 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Odyssey Desktop v$VERSION" \
-              --notes "Odyssey $VERSION — Windows installer, Linux AppImage, and a full Windows installer that includes Orbbec's camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
+              --notes "Odyssey $VERSION — Windows installers, Linux AppImage, and a NixOS prebuilt package. Full Windows installer includes Orbbec camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \
             "Odyssey-$VERSION-win-x64.msi" \
             "Odyssey-$VERSION-win-x64-full.msi" \
-            "Odyssey-$VERSION-x86_64.AppImage"
-
+            "Odyssey-$VERSION-x86_64.AppImage" \
+            "odyssey-desktop-nixos-store-path.txt"
   # A release created with GITHUB_TOKEN starts no workflows, so docs-site.yml's
   # `release` trigger never sees this one; call it directly instead.
   website:

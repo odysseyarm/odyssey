@@ -1,0 +1,80 @@
+--- a/build.rs
++++ b/build.rs
+@@ -1,17 +1,22 @@
+ #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
+ 
+ fn main() {
+-    #[cfg(not(all(target_os = "windows", not(debug_assertions))))]
+-    println!("cargo:rerun-if-changed=build.rs");
+-    #[cfg(target_os = "windows")]
+-    {
++    // Upstream gates this script on `target_os = "windows"`, which inside a build
++    // script is the HOST. Cross-compiling from Linux/macOS for windows-msvc then
++    // skips the shaders and the renderer's `include!` of shaders_bytes.rs fails.
++    // The target is what decides whether HLSL is needed. (gpui-pre-windows 0.3.11)
++    let target_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
++    if !(target_windows && cfg!(not(debug_assertions))) {
++        println!("cargo:rerun-if-changed=build.rs");
++    }
++    if target_windows {
+         // Compile HLSL shaders
+         #[cfg(not(debug_assertions))]
+         compile_shaders();
+     }
+ }
+ 
+-#[cfg(all(target_os = "windows", not(debug_assertions)))]
++#[cfg(not(debug_assertions))]
+ mod shader_compilation {
+     use std::{
+         fs,
+@@ -71,6 +76,7 @@
+     }
+ 
+     /// Locate `binary` in the newest installed Windows SDK.
++    #[cfg(windows)]
+     pub fn find_latest_windows_sdk_binary(
+         binary: &str,
+     ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+@@ -122,19 +128,23 @@
+             return path;
+         }
+ 
+-        // Try to find in PATH
+-        // NOTE: This has to be `where.exe` on Windows, not `where`, it must be ended with `.exe`
+-        if let Ok(output) = std::process::Command::new("where.exe")
+-            .arg("fxc.exe")
+-            .output()
+-            && output.status.success()
++        // Try to find in PATH. Host lookups: only a Windows host has where.exe, the
++        // registry and an installed SDK; a cross build must set GPUI_FXC_PATH.
++        #[cfg(windows)]
+         {
+-            let path = String::from_utf8_lossy(&output.stdout);
+-            return path.trim().to_string();
+-        }
++            // NOTE: This has to be `where.exe` on Windows, not `where`, it must be ended with `.exe`
++            if let Ok(output) = std::process::Command::new("where.exe")
++                .arg("fxc.exe")
++                .output()
++                && output.status.success()
++            {
++                let path = String::from_utf8_lossy(&output.stdout);
++                return path.trim().to_string();
++            }
+ 
+-        if let Ok(Some(path)) = find_latest_windows_sdk_binary("fxc.exe") {
+-            return path.to_string_lossy().into_owned();
++            if let Ok(Some(path)) = find_latest_windows_sdk_binary("fxc.exe") {
++                return path.to_string_lossy().into_owned();
++            }
+         }
+ 
+         panic!("Failed to find fxc.exe");
+@@ -240,5 +250,5 @@
+     }
+ }
+ 
+-#[cfg(all(target_os = "windows", not(debug_assertions)))]
++#[cfg(not(debug_assertions))]
+ use shader_compilation::compile_shaders;

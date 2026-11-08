@@ -240,3 +240,20 @@ and launched with `--sim` (modern) or `--sim-legacy` (PAJ7025 reboot lifecycle).
 Images are explicitly synthetic, not sensor observations. The legacy profile
 exposes native NF/WF images without object samples, requires reboot after Stop,
 and reconnects with a new USB endpoint; modern simulation remains reboot-free.
+## Nix builds
+
+`nix/firmware.nix` builds every board without rustup: one package per firmware ELF
+(`firmware-<board>-<part>`, with `app-a`/`app-b` for the dual-bank boards), and
+packages that run the same `cargo xtask` conversion and packaging on those ELFs:
+`firmware-<board>-images` (`build`), `firmware-<board>-images-dual-bank`,
+`bootloader-dist-<board>`, `netcore-dist-<board>` and `dongle-dist`. The release
+workflows build these. xtask takes the ELFs from `ODYSSEY_PREBUILT` (a tree laid
+out like the checkout) instead of running cargo; `ODYSSEY_REPO` names the scratch
+checkout it writes into. `cargo xtask dongle check-clean` is the clean-tree check
+a Nix build cannot do, so the dongle workflow runs it on the real checkout first.
+
+The git dependencies are fetched by hash from `nix/firmware-git-hashes.json`; run
+`nix/update-firmware-git-hashes.sh` after changing one. `nix develop .#firmware`
+is the flashing and signing shell (probe-rs, nrfutil with nrf5sdk-tools).
+`dongle-fw/fanstel-debug.pem` and `laird-dongle.pem` are tracked private keys
+(vendors' published DFU signing keys); only `dongle-dist` receives them.

@@ -3,7 +3,7 @@ use crate::cmd;
 const DOTNET_DIR: &str = "sdk/odyssey-hub-client-uniffi/dotnet/OdysseyHubClient";
 /// The uniffi-bindgen-cs tag must match the uniffi crate version in
 /// sdk/odyssey-hub-client-uniffi/Cargo.toml (tag format: v<tool>+v<uniffi>).
-/// .github/workflows/uniffi-build.yml installs the same tag.
+/// nix/sdk.nix pins the same tag (and commit) for CI.
 const UNIFFI_BINDGEN_CS_TAG: &str = "v0.11.0+v0.31.0";
 const UNIFFI_BINDGEN_CS_GIT: &str = "https://github.com/NordSecurity/uniffi-bindgen-cs";
 const LINUX_TARGETS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];

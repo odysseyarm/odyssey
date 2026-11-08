@@ -54,37 +54,23 @@ jobs:
       VERSION: ${{ needs.check-version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
-      - name: Install the thumbv7em target
-        run: |
-          rustup target add thumbv7em-none-eabihf
-          rustup component add llvm-tools
-      # nrf-sdc-sys and nrf-mpsl-sys run bindgen over the SoftDevice headers,
-      # which include the CMSIS ones and so need the bare-metal libc headers.
-      - name: Install the ARM toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libclang-dev
-          arm=/usr/lib/arm-none-eabi
-          echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$arm -I$arm/include" >> "$GITHUB_ENV"
-          echo "LIBCLANG_PATH=$(ls -d /usr/lib/llvm-*/lib | sort -V | tail -1)" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-nix
         with:
-          workspaces: firmware/dongle-fw -> target
-          shared-key: dongle-fw
-      # Nordic's nrfutil binary; the DFU package is signed by its nrf5sdk-tools
-      # extension, pinned to the version the nix shell uses.
-      - name: Install nrfutil
+          public-cache: 'true'
+      # The Nix build has no git metadata, so the clean-tree check of
+      # `cargo xtask dongle dist` runs here, on the real checkout.
+      - name: Check the tree is clean
         run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL -o "$HOME/.local/bin/nrfutil" \
-            https://files.nordicsemi.com/artifactory/swtools/external/nrfutil/executables/x86_64-unknown-linux-gnu/nrfutil
-          chmod +x "$HOME/.local/bin/nrfutil"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/nrfutil" install nrf5sdk-tools=1.1.0
+          xtask=$(nix build --no-link --print-out-paths .#xtask)/bin/xtask
+          ODYSSEY_REPO="$PWD" "$xtask" dongle check-clean
+      # nrfutil with its nrf5sdk-tools extension (1.1.0) comes from the Nix package.
       - name: Build the release artifacts
-        run: cargo xtask dongle dist
+        run: |
+          set -eu
+          out=$(nix build -L --no-link --print-out-paths .#dongle-dist)
+          mkdir dist
+          cp -rL "$out"/. dist/
       - name: Check the artifacts carry the tag version
-        working-directory: firmware/dongle-fw
         run: |
           set -eu
           for ext in .hex .uf2 -dfu-fanstel.zip -dfu-laird.zip; do
@@ -94,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: dongle-fw
-          path: firmware/dongle-fw/dist
+          path: dist
 
   github-release:
     name: Create GitHub Release

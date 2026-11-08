@@ -1,4 +1,5 @@
 mod orbbec;
+mod prebuilt;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,10 @@ pub(crate) enum Cmd {
     Bundle {
         #[arg(default_value = "online")]
         variant: Variant,
+        /// Wrap the binaries of the Nix `desktop-windows` package (see desktop/prebuilt.rs)
+        /// instead of compiling the app and cargo-packager here.
+        #[arg(long)]
+        prebuilt: Option<PathBuf>,
     },
     /// Publish the MSIs in crates/odyssey-desktop/dist/ to a GitHub release
     /// tagged odyssey-desktop-v<version>.
@@ -81,30 +86,41 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             orbbec::prepare(variant, &stage, archive.as_deref(), eula.as_deref())?;
             Ok(())
         }
-        Cmd::Bundle { variant } => bundle(variant),
+        Cmd::Bundle { variant, prebuilt } => bundle(variant, prebuilt),
         Cmd::Release { version, token } => release(version, token),
     }
 }
 
-fn bundle(variant: Variant) -> eros::Result<()> {
+fn bundle(variant: Variant, prebuilt: Option<PathBuf>) -> eros::Result<()> {
+    let out_dir = format!("dist/{}", variant.name());
+    // Check the prebuilt directory before the (large) SDK download.
+    let prebuilt = prebuilt
+        .map(|dir| prebuilt::packager(variant, &dir, &out_dir))
+        .transpose()?;
     let stage = orbbec::prepare(variant, &orbbec::default_stage(), None, None)?;
 
-    // cargo-packager packages a finished binary, it does not build one.
-    let mut build = cmd::at(DIR, "cargo");
-    build.args(["build", "--release", "--package", "odyssey-desktop"]);
-    // The full app is the same code without the SDK downloader.
-    if let Variant::Full = variant {
-        build.arg("--no-default-features");
-    }
-    cmd::run(&mut build)?;
+    let mut packager = match prebuilt {
+        Some(packager) => packager,
+        None => {
+            // cargo-packager packages a finished binary, it does not build one.
+            let mut build = cmd::at(DIR, "cargo");
+            build.args(["build", "--release", "--package", "odyssey-desktop"]);
+            // The full app is the same code without the SDK downloader.
+            if let Variant::Full = variant {
+                build.arg("--no-default-features");
+            }
+            cmd::run(&mut build)?;
 
-    let out_dir = format!("dist/{}", variant.name());
-    let mut packager = cmd::at(DIR, "cargo");
+            let mut packager = cmd::at(DIR, "cargo");
+            packager
+                .args(["bin", "cargo-packager", "--release", "--formats", "wix"])
+                .args(["--packages", "odyssey-desktop", "--out-dir", &out_dir]);
+            packager
+        }
+    };
+    // The installer template reads these (see wix/main.wxs); cargo-packager
+    // only forwards variables with this prefix to WiX.
     packager
-        .args(["bin", "cargo-packager", "--release", "--formats", "wix"])
-        .args(["--packages", "odyssey-desktop", "--out-dir", &out_dir])
-        // The installer template reads these (see wix/main.wxs); cargo-packager
-        // only forwards variables with this prefix to WiX.
         .env("CARGO_PACKAGER_ODYSSEY_MSI_VARIANT", variant.name())
         .env("CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE", &stage);
     cmd::run(&mut packager)?;

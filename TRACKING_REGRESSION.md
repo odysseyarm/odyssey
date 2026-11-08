@@ -169,9 +169,10 @@ The isolated tool shell pins Blender, the Rerun SDK and native viewer without
 adding them to production Rust dependencies:
 
 ```sh
-nix-shell tools/tracking_scene/shell.nix
-export VALIDATOR="$PWD/target/debug/tracking-regression"
-tracking-regression scenes /tmp/tracking-scenes
+nix build .#tracking
+nix develop .#tracking
+export VALIDATOR="$PWD/result/bin/tracking-regression"
+"$VALIDATOR" scenes /tmp/tracking-scenes
 blender -b --python-exit-code 1 --python tools/tracking_scene/blender_scene.py -- \
   --validator "$VALIDATOR" build /tmp/tracking-scenes/wavy-grid.json /tmp/wavy.blend
 blender -b --python-exit-code 1 --python tools/tracking_scene/blender_scene.py -- \
@@ -180,8 +181,7 @@ blender -b --python-exit-code 1 --python tools/tracking_scene/blender_scene.py -
   --validator "$VALIDATOR" export /tmp/wavy.blend /tmp/wavy-edited.json
 ```
 
-Build the regression binary first and add its directory to `PATH`. Output files
-and render directories must be new. Edit calibrated screen vertices and marker
+Output files and render directories must be new. Edit calibrated screen vertices and marker
 positions in Blender; preserve their IDs, UVs and grid topology. General static
 environment meshes travel through native GLB rather than custom primitive types.
 Author camera trajectories and intrinsics in scene JSON; unsupported camera edits

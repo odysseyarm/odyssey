@@ -1,7 +1,8 @@
 # protoc comes from the pinned release binary, not the distro package: cross
 # base images can carry a proto2-only protoc, and the distro package would be
-# target-arch while protoc must run on the build host. Keep the version in
-# sync with the setup-protoc pin in .github/workflows/ffi-build.yml.
+# target-arch while protoc must run on the build host. Only local cross builds
+# (`cargo xtask sdk dotnet build-lib`) use this file; CI builds in Nix
+# (nix/sdk.nix, cargo-zigbuild) with the protoc from nix/common.nix.
 #
 # Mirrors odyssey-hub-client-uniffi/Cross.toml. odyssey-hub-client-ffi is its
 # own workspace (excluded from the root one, see root Cargo.toml) so its

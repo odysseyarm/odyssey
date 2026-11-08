@@ -54,7 +54,8 @@ ksni = "0.3.6"
 tray-icon = { version = "0.21", default-features = false }
 
 # Puts the icon into the .exe, which Explorer, the taskbar and the shortcuts read.
-[target.'cfg(windows)'.build-dependencies]
+# Unconditional: a build script's `cfg(windows)` is the host, and Linux cross-builds the exe.
+[build-dependencies]
 embed-resource = "3"
 
 [[bin]]

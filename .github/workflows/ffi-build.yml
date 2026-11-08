@@ -1,6 +1,6 @@
 name: FFI Build
 
-# Reusable workflow that cross-builds the C/C++ FFI library
+# Reusable workflow that builds the C/C++ FFI library
 # (odyssey-hub-client-ffi) for every platform and bundles CMakeLists.txt, the
 # headers and the prebuilt libs for every platform and linkage into one
 # self-contained "odyssey-hub-client" zip. That zip is attached to a GitHub
@@ -10,11 +10,18 @@ name: FFI Build
 #
 # Called by ffi-ci.yml (PRs / pushes) and ffi-release.yml (tags).
 #
+# Every library is a Nix derivation (nix/sdk.nix, Crane): linux links against a
+# glibc 2.17 baseline through cargo-zigbuild (older than the cross images it
+# replaces, so every consumer of the old libs can load these), windows through
+# cargo-xwin against a hash-pinned MSVC CRT + Windows SDK, macos natively on a
+# darwin builder. The public setup-nix cache is safe here: the SDK lockfiles do
+# not resolve the private odyssey-cv dependency, so nothing private is built.
+#
 # odyssey-hub-client-ffi is its own workspace (excluded from the root one, see
-# root Cargo.toml) with its own Cargo.lock and Cross.toml. Building it in the
-# root workspace would make cargo resolve odyssey-hub-server's odyssey-cv SSH
-# git dependency, which CI cannot authenticate to, even though
-# odyssey-hub-client-ffi does not depend on it.
+# root Cargo.toml) with its own Cargo.lock. Building it in the root workspace
+# would make cargo resolve odyssey-hub-server's odyssey-cv SSH git dependency,
+# which CI cannot authenticate to, even though odyssey-hub-client-ffi does not
+# depend on it.
 
 on:
   workflow_call:
@@ -29,8 +36,9 @@ permissions:
   contents: read
 
 jobs:
-  # crate-type = ["staticlib", "cdylib"], so one cargo/cross/xwin build
-  # produces both linkages and the jobs below package both.
+  # crate-type = ["staticlib", "cdylib"], so one derivation per platform
+  # produces both linkages (libs/ holds the final bundle file names) and the
+  # cbindgen headers (include/).
   ffi-linux:
     name: FFI linux ${{ matrix.triplet }} (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -43,62 +51,53 @@ jobs:
             triplet: linux_arm64
     steps:
       - uses: actions/checkout@v5
-      - uses: taiki-e/install-action@v2
+      - uses: ./.github/actions/setup-nix
         with:
-          tool: cross
-      - name: Build (cross)
-        working-directory: sdk/odyssey-hub-client-ffi
-        # See Cross.toml: cross has to mount the root Cargo.toml the crates inherit from.
-        env:
-          ODYSSEY_REPO: ${{ github.workspace }}
-        run: cross build --release -p odyssey-hub-client-ffi --target ${{ matrix.target }}
-      - name: Rename libs
+          public-cache: 'true'
+      - name: Build (nix, cargo-zigbuild)
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+      - name: Collect libs
         run: |
           set -eu
           mkdir -p libs
-          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
-          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.so" "libs/libohc__${{ matrix.triplet }}.so"
+          cp -L "${{ steps.build.outputs.out }}"/libs/* libs/
+          chmod u+w libs/*
+          # The headers are identical for every target, so one copy is uploaded.
+          if [ "${{ matrix.triplet }}" = linux_x64 ]; then
+            mkdir -p headers
+            cp -rL "${{ steps.build.outputs.out }}"/include/. headers/
+          fi
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-${{ matrix.triplet }}
           path: libs
-      # The headers are identical for every target, so one copy is uploaded.
       - name: Upload headers
         if: matrix.triplet == 'linux_x64'
         uses: actions/upload-artifact@v6
         with:
           name: ohc-headers
-          path: sdk/odyssey-hub-client-ffi/generated/include
+          path: headers
 
   ffi-windows:
     name: FFI windows x64 (cross via xwin)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install cargo-xwin
-        run: pip install cargo-xwin
-      # cc-rs archives the MSVC target with llvm-lib. The runner image keeps
-      # LLVM under /usr/lib/llvm-<major>/bin and symlinks only a few versioned
-      # tools into /usr/bin, so that directory has to go on PATH whole.
-      - name: Put LLVM on PATH
-        run: ls -d /usr/lib/llvm-*/bin | sort -V | tail -1 >> "$GITHUB_PATH"
-      - name: Add windows target
-        run: rustup target add x86_64-pc-windows-msvc
-      - name: Build (xwin)
-        working-directory: sdk/odyssey-hub-client-ffi
-        run: cargo xwin build --release -p odyssey-hub-client-ffi --target x86_64-pc-windows-msvc
-      - name: Rename libs
+          public-cache: 'true'
+      # The MSVC CRT and Windows SDK are a hash-pinned fixed-output derivation
+      # (nix/xwin.nix); nothing is downloaded by the build itself.
+      - name: Build (nix, cargo-xwin)
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-win_x64)" >> "$GITHUB_OUTPUT"
+      - name: Collect libs
         run: |
           set -eu
           mkdir -p libs
-          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.lib libs/ohc__win_x64.lib
-          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.dll libs/ohc__win_x64.dll
-          cp sdk/odyssey-hub-client-ffi/target/x86_64-pc-windows-msvc/release/ohc.dll.lib libs/ohc__win_x64.dll.lib
+          cp -L "${{ steps.build.outputs.out }}"/libs/* libs/
+          chmod u+w libs/*
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-win_x64
@@ -116,22 +115,18 @@ jobs:
             triplet: macos_arm64
     steps:
       - uses: actions/checkout@v5
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+      - uses: ./.github/actions/setup-nix
         with:
-          version: "26.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Add target
-        run: rustup target add ${{ matrix.target }}
-      - name: Build
-        working-directory: sdk/odyssey-hub-client-ffi
-        run: cargo build --release -p odyssey-hub-client-ffi --target ${{ matrix.target }}
-      - name: Rename libs
+          public-cache: 'true'
+      - name: Build (nix)
+        id: build
+        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+      - name: Collect libs
         run: |
           set -eu
           mkdir -p libs
-          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.a" "libs/libohc__${{ matrix.triplet }}.a"
-          cp "sdk/odyssey-hub-client-ffi/target/${{ matrix.target }}/release/libohc.dylib" "libs/libohc__${{ matrix.triplet }}.dylib"
+          cp -L "${{ steps.build.outputs.out }}"/libs/* libs/
+          chmod u+w libs/*
       - uses: actions/upload-artifact@v6
         with:
           name: ohc-libs-${{ matrix.triplet }}

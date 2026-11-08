@@ -1,0 +1,27 @@
+name: Host CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    env:
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
+      GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-nix
+      - name: Build host applications and repository tools
+        run: nix build -L --no-link .#host .#xtask
+      - name: Test host applications and repository tools
+        run: nix build -L --no-link .#checks.x86_64-linux.host-tests .#checks.x86_64-linux.xtask-tests
+      - name: Lint host applications
+        run: nix build -L --no-link .#checks.x86_64-linux.host-lint .#checks.x86_64-linux.host-lint-bins

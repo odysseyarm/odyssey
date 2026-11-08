@@ -149,7 +149,7 @@ pub(super) fn prepare(
     Ok(stage)
 }
 
-fn read(path: &Path) -> eros::Result<Vec<u8>> {
+pub(super) fn read(path: &Path) -> eros::Result<Vec<u8>> {
     Ok(fs::read(path).with_context(|| format!("reading {}", path.display()))?)
 }
 
@@ -181,7 +181,7 @@ fn write_text(path: &Path, text: &str) -> eros::Result<()> {
     Ok(fs::write(path, text).with_context(|| format!("writing {}", path.display()))?)
 }
 
-fn verify(data: &[u8], expected: &str, what: &str) -> eros::Result<()> {
+pub(super) fn verify(data: &[u8], expected: &str, what: &str) -> eros::Result<()> {
     let actual = hex::encode(Sha256::digest(data));
     if !actual.eq_ignore_ascii_case(expected) {
         eros::bail!("{what}: expected sha256 {expected}, got {actual}");

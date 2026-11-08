@@ -64,6 +64,11 @@ pub(crate) enum Cmd {
     /// per vendor bootloader (Fanstel, Laird) for serial DFU, which is what the
     /// app updates over.
     Dist,
+    /// Fail when tracked files differ from HEAD: the check `dist` runs before
+    /// building. A build from a prebuilt tree (`ODYSSEY_PREBUILT`) cannot run it,
+    /// because that tree is built from a source copy without git metadata, so the
+    /// release workflow runs this on the real checkout first.
+    CheckClean,
     /// Build the DFU package and flash it over the bootloader's serial port.
     /// The vendor must match the dongle's bootloader or it rejects the package.
     Flash {
@@ -141,6 +146,7 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             )
         }
         Cmd::Dist => dist(),
+        Cmd::CheckClean => cmd::require_clean_tree(DIR),
         Cmd::Flash { vendor, port, baud } => {
             hex()?;
             dfu_pkg(&[vendor])?;
@@ -202,7 +208,23 @@ fn dfu_zip(vendor: Vendor) -> String {
 
 fn hex() -> eros::Result<()> {
     println!("==> Building and converting to HEX (llvm-objcopy)");
-    cmd::run(cmd::at(DIR, "cargo").args(["build", "--release", "--bin", BIN, "--target", TARGET]))?;
+    match crate::firmware::prebuilt() {
+        // The ELF is already built; put it where a cargo build would have.
+        Some(tree) => {
+            let to = cmd::root().join(DIR).join(BUILT).join(BIN);
+            let parent = to.parent().expect("the ELF path has a parent");
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+            copy(&tree.join(DIR).join(BUILT).join(BIN), &to)?;
+        }
+        None => cmd::run(cmd::at(DIR, "cargo").args([
+            "build",
+            "--release",
+            "--bin",
+            BIN,
+            "--target",
+            TARGET,
+        ]))?,
+    }
     let hex = hex_file();
     cmd::run(
         cmd::at(DIR, cmd::llvm_objcopy()?)
@@ -260,7 +282,9 @@ fn uf2() -> eros::Result<()> {
 }
 
 fn dist() -> eros::Result<()> {
-    cmd::require_clean_tree(DIR)?;
+    if crate::firmware::prebuilt().is_none() {
+        cmd::require_clean_tree(DIR)?;
+    }
     hex()?;
     uf2()?;
     dfu_pkg(&Vendor::ALL)?;

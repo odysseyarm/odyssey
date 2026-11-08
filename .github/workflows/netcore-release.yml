@@ -58,6 +58,10 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      - uses: ./.github/actions/setup-nix
+        if: steps.exists.outputs.skip != 'true'
+        with:
+          public-cache: 'true'
       - name: Check the tag against the net-core source
         id: parse
         if: steps.exists.outputs.skip != 'true'
@@ -74,7 +78,8 @@ jobs:
             ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
           esac
           crate_dir="firmware/$board-net-core"
-          source_release=$(cargo xtask firmware release-counter "$crate_dir/src/main.rs")
+          xtask=$(nix build --no-link --print-out-paths .#xtask)/bin/xtask
+          source_release=$("$xtask" firmware release-counter "$crate_dir/src/main.rs")
           if [ "$release" != "$source_release" ]; then
             echo "Tag release ($release) does not match $crate_dir/src/main.rs ($source_release)" >&2
             exit 1
@@ -94,34 +99,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # rustup resolves the repo's rust-toolchain.toml from here, so the target and
-      # tools are added to the pinned nightly.
-      - name: Install the target and tools
-        working-directory: ${{ needs.resolve.outputs.crate_dir }}
-        run: |
-          rustup target add thumbv8m.main-none-eabi
-          rustup component add llvm-tools
-      # nrf-sdc-sys and nrf-mpsl-sys run bindgen over headers that need the
-      # bare-metal libc headers.
-      - name: Install the ARM toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libclang-dev
-          arm=/usr/lib/arm-none-eabi
-          echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=$arm -I$arm/include" >> "$GITHUB_ENV"
-          echo "LIBCLANG_PATH=$(printf '%s\n' /usr/lib/llvm-*/lib | sort -V | tail -n 1)" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-nix
         with:
-          workspaces: ${{ needs.resolve.outputs.crate_dir }} -> target
-          shared-key: netcore-${{ needs.resolve.outputs.device }}
+          public-cache: 'true'
       - name: Build the release artifacts
         env:
           BOARD: ${{ needs.resolve.outputs.board }}
-        run: cargo xtask firmware "$BOARD" dist-netcore
+        run: |
+          set -eu
+          out=$(nix build -L --no-link --print-out-paths ".#netcore-dist-$BOARD")
+          mkdir dist-netcore
+          cp -rL "$out"/. dist-netcore/
+          ls -l dist-netcore
       - uses: actions/upload-artifact@v6
         with:
           name: netcore
-          path: ${{ needs.resolve.outputs.board_dir }}/dist-netcore
+          path: dist-netcore
 
   github-release:
     name: Create GitHub Release

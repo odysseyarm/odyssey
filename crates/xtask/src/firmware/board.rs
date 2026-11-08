@@ -26,9 +26,11 @@ impl Crate {
         self.elf_in("target")
     }
 
-    /// The ELF under another `--target-dir`, relative to `dir`.
+    /// The ELF under another `--target-dir`, relative to `dir`. With
+    /// `ODYSSEY_PREBUILT` set it is looked up there instead of in the checkout.
     pub(super) fn elf_in(&self, target_dir: &str) -> PathBuf {
-        cmd::root()
+        super::prebuilt()
+            .unwrap_or_else(cmd::root)
             .join(self.dir)
             .join(target_dir)
             .join(self.target)

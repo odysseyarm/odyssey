@@ -20,29 +20,23 @@ jobs:
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
-      - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libudev-dev libdbus-1-dev libssl-dev pkg-config protobuf-compiler
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-          shared-key: tracking-regression
+      - uses: ./.github/actions/setup-nix
       - name: Test regression contracts
+        run: nix build -L --no-link .#checks.x86_64-linux.tracking-tests
+      - name: Build tracking runner
         run: |
-          cargo test --locked -p odyssey-sim
-          cargo test --locked -p odyssey-hub-server --features tracking-regression
+          runner=$(nix build -L --no-link --print-out-paths .#tracking)
+          echo "TRACKING_REGRESSION=$runner/bin/tracking-regression" >> "$GITHUB_ENV"
       - name: Run deterministic tracking suite
-        run: cargo run --locked -p odyssey-hub-server --features tracking-regression --bin tracking-regression -- suite tracking-report.json
+        run: '"$TRACKING_REGRESSION" suite tracking-report.json'
       - name: Run display-mapping suite
-        run: cargo run --locked -p odyssey-hub-server --features tracking-regression --bin tracking-regression -- surface-suite surface-report.json
-      - uses: cachix/install-nix-action@v31
+        run: '"$TRACKING_REGRESSION" surface-suite surface-report.json'
       - name: Check Rerun recording semantics
-        run: nix-shell tools/tracking_scene/shell.nix --run 'TRACKING_REGRESSION="$PWD/target/debug/tracking-regression" python3 -m unittest discover -s tools/tracking_scene -p test_rerun_export.py -v'
+        run: nix develop .#tracking --command python3 -m unittest discover -s tools/tracking_scene -p test_rerun_export.py -v
       - name: Render and round-trip calibrated Blender scenes
         run: |
-          nix-shell tools/tracking_scene/shell.nix --run '
-            V="$PWD/target/debug/tracking-regression"
+          nix develop .#tracking --command bash -euc '
+            V="$TRACKING_REGRESSION"
             blender -b --python-exit-code 1 --python tools/tracking_scene/blender_scene.py -- \
               --validator "$V" selfcheck scene-tool-evidence &&
             python3 tools/tracking_scene/rerun_export.py \

@@ -4,8 +4,11 @@ use std::process::Command;
 
 use eros::Context as _;
 
-/// The repository root, independent of the directory `cargo xtask` ran from.
+/// The repository root; ODYSSEY_REPO selects the checkout for a prebuilt xtask.
 pub(crate) fn root() -> PathBuf {
+    if let Some(root) = std::env::var_os("ODYSSEY_REPO") {
+        return PathBuf::from(root);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)

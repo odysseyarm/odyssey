@@ -1,0 +1,22 @@
+name: Set up Odyssey Nix
+description: Install pinned Nix action and optionally cache public store paths
+inputs:
+  public-cache:
+    description: Enable store uploads only for builds without private source inputs
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b
+      with:
+        extra_nix_config: |
+          max-jobs = 2
+          cores = 2
+    - uses: DeterminateSystems/magic-nix-cache-action@f69a2d3e148e90223fe63ab6e3f6331f2e7e33dc
+      if: inputs.public-cache == 'true'
+      with:
+        source-revision: cd88146e8de45fc50afaee98634fea04249c3c13
+        use-gha-cache: 'true'
+        use-flakehub: 'false'
+        diagnostic-endpoint: ''

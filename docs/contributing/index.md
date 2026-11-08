@@ -8,6 +8,64 @@ fits together, how to build and test it, and how releases are made.
 
 ## Developer tools
 
+The repository's `flake.lock` pins Nixpkgs, Crane and the Rust overlay. Enter the
+default environment with `nix develop`; `direnv` users can run `direnv allow`
+instead. No sibling Nix checkout is needed. `nix-shell` remains available through
+the locked flake-compat entry point.
+
+```sh
+nix develop
+cargo build --locked --offline --package odyssey-desktop
+nix build .#host
+nix build .#xtask
+nix build .#checks.x86_64-linux.tracking-tests
+```
+
+Crane builds dependencies separately from application sources. Nix fetches pinned
+sources before sandboxed Cargo builds run offline. Host builds need access to the
+private `odyssey-cv` revision in `flake.lock`; its revision must match `Cargo.lock`.
+Public SDK and firmware workspaces do not need that private source.
+
+Specialized environments are `nix develop .#sdk`, `.#firmware` and `.#tracking`.
+Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
+Release workflows consume those outputs; Windows WiX assembly and macOS builds
+still need their respective operating systems.
+
+Public SDK and firmware CI jobs can upload build results to the shared cache.
+Host and desktop jobs disable automatic store uploads because their closures can
+contain private source. Local builds stay local unless explicitly uploaded to a
+trusted cache; a warm local store does not automatically warm hosted CI runners.
+
+NixOS desktop releases publish the `desktop-nixos` store path to the signed
+`odysseyarm` Cachix cache and attach that path as
+`odyssey-desktop-nixos-store-path.txt`. The release job pushes only the package
+runtime closure, not Cargo dependency outputs or private source derivations.
+CI needs `CACHIX_AUTH_TOKEN` with write access to that cache.
+
+NixOS users can install the prebuilt output without evaluating this flake (which
+references private `odyssey-cv`). Add the cache and its signing key to the NixOS
+configuration:
+
+```nix
+nix.settings.substituters = [ "https://odysseyarm.cachix.org" ];
+nix.settings.trusted-public-keys = [
+  "odysseyarm.cachix.org-1:T5qjafUaELSGbQgRNZu5nMdk55uyRIEv4IQn92RMsR8="
+];
+```
+
+After applying that configuration, download the store path from the desired
+desktop release, copy its signed closure, then install it:
+
+```sh
+release=odyssey-desktop-v0.7.5  # choose a release tag that includes this asset
+store_path=$(curl -fsSL "https://github.com/odysseyarm/odyssey/releases/download/$release/odyssey-desktop-nixos-store-path.txt")
+nix copy --from https://odysseyarm.cachix.org "$store_path"
+nix profile install "$store_path"
+```
+
+The cache publishes future desktop releases only. The existing `0.7.4` release
+does not gain this asset retroactively.
+
 Run the pinned Dioxus CLI with `cargo bin dx` inside the project's development
 shell; no global installation is needed. Its Subsecond tooling supports Rust
 hot patching independently of Dioxus UI. The registry entry alone does not enable

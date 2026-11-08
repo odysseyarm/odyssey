@@ -16,13 +16,20 @@ fn main() {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=../../.git/HEAD");
-    let describe = std::process::Command::new("git")
-        .args(["describe", "--always", "--dirty"])
-        .output()
+    println!("cargo:rerun-if-env-changed=GIT_DESCRIBE");
+    // A build outside a checkout (the Nix package) names its commit here.
+    let describe = env::var("GIT_DESCRIBE")
         .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map_or_else(|| "unknown".to_owned(), |s| s.trim().to_owned());
+        .filter(|describe| !describe.is_empty())
+        .unwrap_or_else(|| {
+            std::process::Command::new("git")
+                .args(["describe", "--always", "--dirty"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map_or_else(|| "unknown".to_owned(), |s| s.trim().to_owned())
+        });
     println!("cargo:rustc-env=GIT_DESCRIBE={describe}");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
