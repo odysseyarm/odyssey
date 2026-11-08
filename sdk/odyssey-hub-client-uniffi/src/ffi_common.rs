@@ -260,12 +260,8 @@ impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
         result.screen_id = info.screen_id;
         result.radio = match info.radio {
             None => common::accessory::AccessoryRadio::System,
-            Some(AccessoryRadio::Native { id }) => {
-                common::accessory::AccessoryRadio::Native { id }
-            }
-            Some(AccessoryRadio::Dongle { id }) => {
-                common::accessory::AccessoryRadio::Dongle { id }
-            }
+            Some(AccessoryRadio::Native { id }) => common::accessory::AccessoryRadio::Native { id },
+            Some(AccessoryRadio::Dongle { id }) => common::accessory::AccessoryRadio::Dongle { id },
         };
         if let common::accessory::AccessoryRadio::Native { id }
         | common::accessory::AccessoryRadio::Dongle { id } = &result.radio
@@ -558,7 +554,10 @@ mod tests {
                     screen_id: Some(5),
                     radio: Some(radio),
                 });
-                assert!(matches!(result, Err(ClientError::InvalidArgument { .. })), "{id:?}");
+                assert!(
+                    matches!(result, Err(ClientError::InvalidArgument { .. })),
+                    "{id:?}"
+                );
             }
         }
     }
