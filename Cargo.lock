@@ -8717,7 +8717,7 @@ dependencies = [
 
 [[package]]
 name = "odyssey-desktop"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "backon",
  "dfu-nusb",
