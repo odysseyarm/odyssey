@@ -873,8 +873,7 @@ mod tests {
         );
         let overlapping = merge_hex(&[bootloader.to_owned(), bootloader.to_owned()]);
         assert!(
-            overlapping
-                .is_err_and(|error| error.to_string().contains("overlap")),
+            overlapping.is_err_and(|error| error.to_string().contains("overlap")),
             "a byte claimed by two images must not be silently dropped"
         );
     }
