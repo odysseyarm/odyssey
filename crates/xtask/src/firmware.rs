@@ -2,6 +2,7 @@ mod board;
 mod manifest;
 mod release;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -432,8 +433,7 @@ fn build_dual_bank(board: &Board) -> eros::Result<()> {
 fn package(board: &Board, images: &[Image], merged: &str) -> eros::Result<()> {
     create_dir(&board.path(OUTPUT_DIR))?;
     let tool = cmd::llvm_objcopy()?;
-    let mut merge = cmd::at(board.dir, "mergehex");
-    merge.arg("-o").arg(output(merged)).arg("-m");
+    let mut hexes = Vec::new();
     for image in images {
         let elf = output(&format!("{}.elf", image.name));
         let hex = output(&format!("{}.hex", image.name));
@@ -443,9 +443,129 @@ fn package(board: &Board, images: &[Image], merged: &str) -> eros::Result<()> {
             let bin = output(&format!("{}.bin", image.name));
             objcopy(board, &tool, "binary", Path::new(&elf), Path::new(&bin))?;
         }
-        merge.arg(hex);
+        hexes.push(read_to_string(&board.path(&hex))?);
     }
-    cmd::run(&mut merge)
+    write(&board.path(&output(merged)), merge_hex(&hexes)?)
+}
+
+/// The bytes of `parts`, in order, as one Intel HEX file the way `mergehex -m`
+/// writes it: linear addressing only.
+///
+/// `llvm-objcopy` emits segmented records (types 02 and 03) for these images, so
+/// the parts cannot be concatenated as text; the addresses have to be resolved
+/// first. Start-address records are dropped, matching `mergehex`.
+///
+/// # Errors
+/// A malformed record, a bad checksum, or two parts claiming the same address.
+fn merge_hex(parts: &[String]) -> eros::Result<String> {
+    let mut bytes = BTreeMap::new();
+    for part in parts {
+        for (address, byte) in hex_bytes(part)? {
+            if bytes.insert(address, byte).is_some() {
+                eros::bail!("images overlap at {address:#x}");
+            }
+        }
+    }
+    Ok(write_hex(&bytes))
+}
+
+/// Address and value of every data byte in one Intel HEX file.
+fn hex_bytes(hex: &str) -> eros::Result<Vec<(u32, u8)>> {
+    let mut bytes = Vec::new();
+    let mut offset: u32 = 0;
+    for (number, line) in hex.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((address, kind, data)) = line.strip_prefix(':').and_then(hex_record) else {
+            eros::bail!("line {}: malformed record {line:?}", number + 1);
+        };
+        match kind {
+            // Data, relative to the offset the last 02 or 04 record set.
+            0x00 => bytes.extend(
+                data.iter()
+                    .enumerate()
+                    .map(|(i, byte)| (offset + u32::from(address) + i as u32, *byte)),
+            ),
+            0x01 => break,
+            // Extended segment address: paragraphs of 16 bytes.
+            0x02 => offset = u32::from(u16::from_be_bytes([data[0], data[1]])) * 16,
+            0x04 => offset = u32::from(u16::from_be_bytes([data[0], data[1]])) << 16,
+            // Start address: an entry point, not content.
+            0x03 | 0x05 => {}
+            _ => eros::bail!("line {}: unsupported record type {kind:#x}", number + 1),
+        }
+    }
+    Ok(bytes)
+}
+
+/// Address, type and data of one record body, if its length and checksum agree.
+fn hex_record(body: &str) -> Option<(u16, u8, Vec<u8>)> {
+    let raw: Vec<u8> = (0..body.len() / 2)
+        .map(|i| u8::from_str_radix(body.get(i * 2..i * 2 + 2)?, 16).ok())
+        .collect::<Option<_>>()?;
+    let count = usize::from(*raw.first()?);
+    if body.len() % 2 != 0 || raw.len() != count + 5 {
+        return None;
+    }
+    if raw.iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)) != 0 {
+        return None;
+    }
+    let address = u16::from_be_bytes([raw[1], raw[2]]);
+    let data = raw[4..4 + count].to_vec();
+    Some((address, raw[3], data))
+}
+
+/// Up to 16 bytes per data record, with an extended-linear-address record
+/// whenever the upper half of the address changes.
+fn write_hex(bytes: &BTreeMap<u32, u8>) -> String {
+    let mut hex = String::new();
+    let mut upper = None;
+    let mut run: Vec<u8> = Vec::with_capacity(16);
+    let mut start = 0;
+    let flush = |hex: &mut String, start: u32, run: &mut Vec<u8>| {
+        if !run.is_empty() {
+            hex.push_str(&hex_line(start as u16, 0x00, run));
+            run.clear();
+        }
+    };
+    for (&address, &byte) in bytes {
+        let contiguous = !run.is_empty() && address == start + run.len() as u32;
+        if !contiguous || run.len() == 16 {
+            flush(&mut hex, start, &mut run);
+            start = address;
+        }
+        if upper != Some(address >> 16) {
+            flush(&mut hex, start, &mut run);
+            start = address;
+            upper = Some(address >> 16);
+            hex.push_str(&hex_line(0, 0x04, &(address >> 16).to_be_bytes()[2..]));
+        }
+        run.push(byte);
+    }
+    flush(&mut hex, start, &mut run);
+    hex.push_str(&hex_line(0, 0x01, &[]));
+    hex
+}
+
+fn hex_line(address: u16, kind: u8, data: &[u8]) -> String {
+    let mut raw = vec![data.len() as u8];
+    raw.extend(address.to_be_bytes());
+    raw.push(kind);
+    raw.extend(data);
+    let checksum = raw
+        .iter()
+        .fold(0u8, |sum, byte| sum.wrapping_add(*byte))
+        .wrapping_neg();
+    raw.push(checksum);
+    let mut line = String::with_capacity(raw.len() * 2 + 2);
+    line.push(':');
+    for byte in raw {
+        line.push_str(&format!("{byte:02X}"));
+    }
+    line.push('\n');
+    line
 }
 
 /// `name` inside the output directory, relative to the board directory.
@@ -661,6 +781,15 @@ fn copy(from: &Path, to: &Path) -> eros::Result<()> {
     Ok(())
 }
 
+fn read_to_string(path: &Path) -> eros::Result<String> {
+    Ok(fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?)
+}
+
+fn write(path: &Path, contents: String) -> eros::Result<()> {
+    fs::write(path, contents).with_context(|| format!("could not write {}", path.display()))?;
+    Ok(())
+}
+
 fn create_dir(dir: &Path) -> eros::Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     Ok(())
@@ -716,6 +845,38 @@ mod tests {
             Ok(()) => panic!("{} accepted a recipe it lacks", board.name),
             Err(error) => error.to_string(),
         }
+    }
+
+    #[test]
+    fn merged_hex_resolves_segmented_addresses_and_rejects_overlap() {
+        // Segmented records, as llvm-objcopy writes them: 03 start address, then
+        // 02 paragraphs. The merged file must address the same bytes linearly.
+        let bootloader = concat!(
+            ":0400000300000101F7\n",
+            ":0400000001020304F2\n",
+            ":00000001FF\n",
+        );
+        let app = concat!(
+            ":020000021000EC\n",
+            ":040000000506070AE0\n",
+            ":00000001FF\n",
+        );
+        assert_eq!(
+            merge_hex(&[bootloader.to_owned(), app.to_owned()]).unwrap(),
+            concat!(
+                ":020000040000FA\n",
+                ":0400000001020304F2\n",
+                ":020000040001F9\n",
+                ":040000000506070AE0\n",
+                ":00000001FF\n",
+            )
+        );
+        let overlapping = merge_hex(&[bootloader.to_owned(), bootloader.to_owned()]);
+        assert!(
+            overlapping
+                .is_err_and(|error| error.to_string().contains("overlap")),
+            "a byte claimed by two images must not be silently dropped"
+        );
     }
 
     #[test]

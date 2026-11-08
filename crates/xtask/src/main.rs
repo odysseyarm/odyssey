@@ -1,6 +1,6 @@
 //! Repository automation: `cargo xtask <command>`, run from the repository root.
 //!
-//! External tools (probe-rs, mergehex, nrfutil, gh, git, cargo-packager, dotnet)
+//! External tools (probe-rs, nrfutil, gh, git, cargo-packager, dotnet)
 //! are still invoked as programs; this crate replaces the shell glue around them.
 
 mod autocalib;
