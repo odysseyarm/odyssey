@@ -42,6 +42,7 @@ pub(super) struct PairingControls {
     // Clearing forgets every bond, and re-pairing each device takes a trip to
     // it, so the first click only asks.
     confirming_clear: bool,
+    advanced_open: bool,
     /// Pairing results arrive once, so they come over their own channel.
     _results: Task<()>,
 }
@@ -49,6 +50,19 @@ pub(super) struct PairingControls {
 impl PairingControls {
     pub(super) fn new(hub: Entity<Hub>, target: PairTarget, cx: &mut Context<'_, Self>) -> Self {
         let mut results = hub.read(cx).subscribe_pairing();
+        cx.on_release(|this, cx| {
+            if this.state.pairing
+                && let Some(client) = this.hub.read(cx).client()
+            {
+                let target = this.target.clone();
+                runtime::spawn(async move {
+                    if let Err(error) = target.cancel(&client).await {
+                        tracing::warn!("Failed to cancel pairing while leaving: {error}");
+                    }
+                });
+            }
+        })
+        .detach();
         let watched = target.clone();
         let task = cx.spawn(async move |this, cx| {
             loop {
@@ -74,6 +88,7 @@ impl PairingControls {
             target,
             state: PairingState::default(),
             confirming_clear: false,
+            advanced_open: false,
             _results: task,
         }
     }
@@ -113,6 +128,8 @@ impl PairingControls {
         let target = self.target.clone();
         cx.spawn(async move |this, cx| {
             let noun = target.pairing_noun();
+            let cleanup_target = target.clone();
+            let cleanup_client = client.clone();
             let outcome = match client {
                 Some(client) => call(Op::Start, target, client).await,
                 None => Err(NOT_CONNECTED.to_string()),
@@ -120,12 +137,20 @@ impl PairingControls {
             if let Err(error) = &outcome {
                 tracing::error!("Failed to start {noun}: {error}");
             }
-            let _ = this.update(cx, |this, cx| {
-                if let Err(error) = outcome {
-                    this.state.start_failed(error);
-                }
-                this.release(cx);
-            });
+            let released = this
+                .update(cx, |this, cx| {
+                    if let Err(error) = &outcome {
+                        this.state.start_failed(error);
+                    }
+                    this.release(cx);
+                })
+                .is_err();
+            if released
+                && outcome.is_ok()
+                && let Some(client) = cleanup_client
+            {
+                let _ = call(Op::Cancel, cleanup_target, client).await;
+            }
         })
         .detach();
         cx.notify();
@@ -135,6 +160,7 @@ impl PairingControls {
         if !self.reserve(cx) {
             return;
         }
+        self.state.status = "Cancelling pairing…".into();
         let client = self.hub.read(cx).client();
         let target = self.target.clone();
         cx.spawn(async move |this, cx| {
@@ -161,6 +187,7 @@ impl PairingControls {
         if !self.reserve(cx) {
             return;
         }
+        self.state.status = "Clearing bonds…".into();
         let client = self.hub.read(cx).client();
         let was_pairing = self.state.pairing;
         let target = self.target.clone();
@@ -247,19 +274,48 @@ impl Render for PairingControls {
                 .disabled(pending)
                 .on_click(cx.listener(|this, _, _, cx| this.cancel(cx)))
         } else {
-            button(("start-pairing", id), "Pair", ButtonKind::Secondary, p)
-                .small()
-                .disabled(pending)
-                .on_click(cx.listener(|this, _, _, cx| this.start(cx)))
+            button(
+                ("start-pairing", id),
+                if self.state.status.is_empty() {
+                    "Pair"
+                } else {
+                    "Pair again"
+                },
+                ButtonKind::Secondary,
+                p,
+            )
+            .small()
+            .disabled(pending)
+            .on_click(cx.listener(|this, _, _, cx| this.start(cx)))
         };
-        row.child(pair).child(
-            button(("clear-bonds", id), label, ButtonKind::Secondary, p)
-                .small()
-                .disabled(pending)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.confirming_clear = true;
-                    cx.notify();
-                })),
-        )
+        let mut row = row.child(pair).child(
+            button(
+                ("pairing-advanced", id),
+                if self.advanced_open {
+                    "Hide Advanced"
+                } else {
+                    "Advanced"
+                },
+                ButtonKind::Secondary,
+                p,
+            )
+            .small()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.advanced_open = !this.advanced_open;
+                cx.notify();
+            })),
+        );
+        if self.advanced_open {
+            row = row.child(
+                button(("clear-bonds", id), label, ButtonKind::Secondary, p)
+                    .small()
+                    .disabled(pending)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.confirming_clear = true;
+                        cx.notify();
+                    })),
+            );
+        }
+        row
     }
 }

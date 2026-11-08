@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use device_row::DeviceRow;
 use dongle_row::DongleRow;
 use gpui::{
-    AppContext as _, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled as _,
-    Window, div,
+    AppContext as _, Context, Entity, EventEmitter, IntoElement as _, ParentElement as _, Render,
+    Styled as _, Window, div,
 };
 
-use crate::components::ui::{card, card_title, page};
+use crate::components::ui::{ButtonKind, button, card, card_title, page};
 use crate::hub::{Hub, HubHandle};
 use crate::theme::palette;
 
@@ -24,6 +24,12 @@ const MONO_FONT: &str = if cfg!(windows) {
 } else {
     "monospace"
 };
+
+pub(crate) enum PairingEvent {
+    Done,
+}
+
+impl EventEmitter<PairingEvent> for PairingView {}
 
 pub(crate) struct PairingView {
     hub: Entity<Hub>,
@@ -60,6 +66,19 @@ impl Render for PairingView {
             .retain(|uuid, _| devices.iter().any(|device| device.uuid == *uuid));
 
         let mut sections = Vec::new();
+        sections.push(
+            div()
+                .child(
+                    button(
+                        "pairing-done",
+                        "Back to setup / Done",
+                        ButtonKind::Secondary,
+                        p,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PairingEvent::Done))),
+                )
+                .into_any_element(),
+        );
 
         if dongles.is_empty() && devices.is_empty() {
             sections.push(
@@ -101,7 +120,7 @@ impl Render for PairingView {
             });
             sections.push(
                 card(p)
-                    .child(card_title(p, "Devices").mb_3())
+                    .child(card_title(p, "Trackers").mb_3())
                     .child(div().flex().flex_col().gap_2().children(rows))
                     .into_any_element(),
             );
@@ -109,8 +128,8 @@ impl Render for PairingView {
 
         page(
             p,
-            "Pairing",
-            Some("Pair a device with a dongle to use it without a cable. A dongle remembers the devices it has bonded with.".into()),
+            "Pair tracker",
+            Some("Connect the dongle and tracker. Start Pair on the dongle, then start pairing on the tracker using its button or the controls below. Keep both nearby until a result appears. Pairing can take up to two minutes; retry Pair after a failure. Return to setup when finished.".into()),
             sections,
         )
     }

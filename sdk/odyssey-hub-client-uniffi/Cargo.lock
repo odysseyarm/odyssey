@@ -1276,6 +1276,7 @@ dependencies = [
  "eros",
  "futures",
  "interprocess",
+ "odyssey-common",
  "odyssey-hub-common",
  "odyssey-hub-server-interface",
  "odyssey-protocol",
@@ -1293,6 +1294,7 @@ version = "0.3.0"
 dependencies = [
  "futures",
  "nalgebra",
+ "odyssey-common",
  "odyssey-hub-client",
  "odyssey-hub-common",
  "odyssey-hub-server-interface",

@@ -44,7 +44,7 @@ impl Render for DeviceRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let p = palette(cx);
         let status = self.controls.read(cx).status().to_string();
-        let mut label = div().flex().items_center().gap_2().child(
+        let mut label = div().flex().flex_col().flex_1().min_w_0().gap_1().child(
             div()
                 .text_sm()
                 .font_family(MONO_FONT)
@@ -62,6 +62,7 @@ impl Render for DeviceRow {
         }
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .justify_between()
             .gap_2()

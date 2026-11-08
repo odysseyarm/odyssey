@@ -531,6 +531,8 @@ mod tests {
                     name: "accessory".to_string(),
                     ty: AccessoryType::DryFireMag,
                     assignment: None,
+                    screen_id: None,
+                    radio: None,
                 },
             },
         ]));

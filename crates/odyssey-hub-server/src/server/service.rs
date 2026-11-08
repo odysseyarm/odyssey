@@ -1,3 +1,6 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use odyssey_hub_common as common;
 use odyssey_hub_server_interface::service_server::Service;
 use odyssey_hub_server_interface::{
@@ -22,11 +25,25 @@ use super::HubServer;
 use super::device_uuid::{requested_uuid, uuid_from_bytes};
 use super::hub_server::SUBSCRIPTION_BUFFER;
 use super::rpc_error::RpcError;
+use crate::accessories::ResetMarkerModeError;
 use crate::device_tasks::{DeviceTaskMessage, DongleTaskMessage};
 
 /// Capacity of the event stream. Tracking events arrive fast, so it is deeper
 /// than the other subscriptions.
 const EVENT_SUBSCRIPTION_BUFFER: usize = 128;
+
+pub(crate) struct EventSubscription {
+    events: ReceiverStream<Result<Event, Status>>,
+    _demand: Option<crate::accessories::MarkerDemandGuard>,
+}
+
+impl futures::Stream for EventSubscription {
+    type Item = Result<Event, Status>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        futures::Stream::poll_next(Pin::new(&mut self.get_mut().events), cx)
+    }
+}
 
 /// Shot delay a device falls back to when reset.
 const DEFAULT_SHOT_DELAY_MS: u16 = 0;
@@ -80,7 +97,9 @@ impl Service for HubServer {
     // Concrete tokio_stream wrappers, so the crate needs no futures_core.
     type SubscribeDeviceListStream = ReceiverStream<Result<DeviceListReply, Status>>;
     type SubscribeAccessoryMapStream = ReceiverStream<Result<AccessoryMapReply, Status>>;
-    type SubscribeEventsStream = ReceiverStream<Result<Event, Status>>;
+    type SubscribeAccessoryRadiosStream =
+        ReceiverStream<Result<odyssey_hub_server_interface::AccessoryRadiosReply, Status>>;
+    type SubscribeEventsStream = EventSubscription;
     type SubscribeShotDelayStream = ReceiverStream<Result<GetShotDelayReply, Status>>;
     type SubscribeDongleListStream = ReceiverStream<Result<DongleListReply, Status>>;
     type StreamImagesStream = crate::device_tasks::image_stream::ImageResponseStream;
@@ -145,6 +164,88 @@ impl Service for HubServer {
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
+    async fn get_accessory_radios(
+        &self,
+        _req: tonic::Request<EmptyRequest>,
+    ) -> Result<Response<odyssey_hub_server_interface::AccessoryRadiosReply>, Status> {
+        Ok(Response::new(
+            self.accessory_radios.snapshots.borrow().clone().into(),
+        ))
+    }
+
+    async fn subscribe_accessory_radios(
+        &self,
+        _req: tonic::Request<EmptyRequest>,
+    ) -> Result<Response<Self::SubscribeAccessoryRadiosStream>, Status> {
+        let mut snapshots = self.accessory_radios.snapshots.subscribe();
+        let (tx, rx) = mpsc::channel(SUBSCRIPTION_BUFFER);
+        let initial = snapshots.borrow_and_update().clone();
+        let _ = tx.try_send(Ok(initial.into()));
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = tx.closed() => break,
+                    changed = snapshots.changed() => if changed.is_err() { break; },
+                }
+                let snapshot = snapshots.borrow_and_update().clone();
+                if tx.send(Ok(snapshot.into())).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn enroll_accessory(
+        &self,
+        req: tonic::Request<odyssey_hub_server_interface::EnrollAccessoryRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let (address, mut info): ([u8; 6], common::accessory::AccessoryInfo) = req
+            .into_inner()
+            .try_into()
+            .map_err(Status::invalid_argument)?;
+        info.radio = self
+            .accessory_radios
+            .enroll(address, info.clone())
+            .await
+            .map_err(Status::failed_precondition)?;
+        let _guard = self.accessory_config_lock.lock().await;
+        let mut incoming = self.accessory_info_sender.borrow().clone();
+        incoming.insert(address, info);
+        common::config::accessory_map_save_async(&incoming)
+            .await
+            .map_err(|error| {
+                Status::internal(format!("failed to save accessory info map: {error}"))
+            })?;
+        self.merge_accessory_info(incoming.clone());
+        self.accessory_info_sender.send_replace(incoming);
+        let _ = self
+            .accessory_map_sender
+            .send(self.accessory_map_snapshot());
+        ok_empty()
+    }
+
+    async fn reset_marker_mode(
+        &self,
+        req: tonic::Request<odyssey_hub_server_interface::ResetMarkerModeRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let address: [u8; 6] = req
+            .into_inner()
+            .try_into()
+            .map_err(Status::invalid_argument)?;
+        let configured = self.accessory_info_sender.borrow().clone();
+        self.accessory_radios
+            .reset_marker_mode(address, &configured)
+            .await
+            .map_err(|error| match error {
+                ResetMarkerModeError::NotConfigured => Status::not_found(error.to_string()),
+                ResetMarkerModeError::NotMarker | ResetMarkerModeError::Failed(_) => {
+                    Status::failed_precondition(error.to_string())
+                }
+            })?;
+        ok_empty()
+    }
+
     async fn update_accessory_info_map(
         &self,
         req: tonic::Request<AccessoryInfoMap>,
@@ -153,6 +254,7 @@ impl Service for HubServer {
             .into_inner()
             .try_into()
             .map_err(Status::invalid_argument)?;
+        let _guard = self.accessory_config_lock.lock().await;
 
         common::config::accessory_map_save_async(&incoming)
             .await
@@ -302,8 +404,14 @@ impl Service for HubServer {
 
     async fn subscribe_events(
         &self,
-        _req: tonic::Request<SubscribeEventsRequest>,
+        req: tonic::Request<SubscribeEventsRequest>,
     ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
+        let req = req.into_inner();
+        let screen_id = req
+            .screen_id
+            .map(|id| request_byte(id, odyssey_common::MAX_SCREEN_ID, "screen id"))
+            .transpose()?;
+        let demand = (!req.passive_tracking).then(|| self.marker_demand.acquire(screen_id));
         let mut rx = self.event_sender.subscribe();
         let (tx, out) = mpsc::channel::<Result<Event, Status>>(EVENT_SUBSCRIPTION_BUFFER);
 
@@ -334,7 +442,10 @@ impl Service for HubServer {
                 }
             }
         });
-        Ok(Response::new(ReceiverStream::new(out)))
+        Ok(Response::new(EventSubscription {
+            events: ReceiverStream::new(out),
+            _demand: demand,
+        }))
     }
 
     async fn stream_images(

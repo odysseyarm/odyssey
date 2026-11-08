@@ -51,7 +51,8 @@ impl TransportModePanel {
         let device_is_usb = self.device_is_usb();
         if self.user_pending_usb == Some(device_is_usb) {
             self.user_pending_usb = None;
-            self.status = OpStatus::Idle;
+            let mode = if device_is_usb { "USB" } else { "Bluetooth" };
+            self.status = OpStatus::Done(format!("Connected using {mode}."));
         }
         cx.notify();
     }
@@ -87,11 +88,16 @@ impl TransportModePanel {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(confirmed_usb)) => {
-                        this.user_pending_usb = Some(confirmed_usb);
                         let mode = if confirmed_usb { "USB" } else { "Bluetooth" };
-                        this.status = OpStatus::Busy(format!(
-                            "Switching to {mode}. The device restarts and reconnects on its own."
-                        ));
+                        if this.device_is_usb() == confirmed_usb {
+                            this.user_pending_usb = None;
+                            this.status = OpStatus::Done(format!("Connected using {mode}."));
+                        } else {
+                            this.user_pending_usb = Some(confirmed_usb);
+                            this.status = OpStatus::Busy(format!(
+                                "Switching to {mode}. The device restarts and reconnects on its own."
+                            ));
+                        }
                     }
                     Ok(Err(error)) => {
                         tracing::error!("set_transport_mode failed: {error:#}");
@@ -198,17 +204,17 @@ impl Render for TransportModePanel {
                     } else {
                         "Bluetooth carries sensor data and tuning through a paired Odyssey dongle."
                     }))
-                    .child(status_line(
-                        &self.status,
-                        format!("transport-details-{key}"),
-                        self.details_open,
-                        cx.listener(|this, _, _, cx| {
-                            this.details_open = !this.details_open;
-                            cx.notify();
-                        }),
-                        palette,
-                    )),
             )
             })
+            .child(status_line(
+                &self.status,
+                format!("transport-details-{key}"),
+                self.details_open,
+                cx.listener(|this, _, _, cx| {
+                    this.details_open = !this.details_open;
+                    cx.notify();
+                }),
+                palette,
+            ))
     }
 }

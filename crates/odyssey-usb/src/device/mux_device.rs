@@ -4,11 +4,14 @@ use std::time::{Duration, Instant};
 use backon::{ConstantBuilder, Retryable as _};
 use heapless::Vec as HVec;
 use nusb::{DeviceInfo, Interface};
+use odyssey_protocol::accessory::{
+    Command, Event, MARKER_MODE_MUX_PROTOCOL, MIN_MUX_PROTOCOL, Reply,
+};
 use odyssey_protocol::control::usb_mux::{
     ClearBondsError, ClearBondsResult, PairingError, PairingOutcome, StartPairing, UsbMuxCtrlMsg,
 };
 use odyssey_protocol::control::{AddBondResult, BondEntry, BondedDevice};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, warn};
@@ -16,6 +19,7 @@ use tracing::{debug, warn};
 use super::control_transfer::{
     ControlLink, FLASH_WRITE_REPLY_TIMEOUT, REPLY_TIMEOUT, UndecodableReply,
 };
+use super::mux_accessory::AccessoryDispatcher;
 use super::mux_transport::{
     DevicePacketRoutes, DeviceSnapshot, MuxTransport, MuxTransportParts, lock_routes,
 };
@@ -44,6 +48,9 @@ pub struct MuxDevice {
     writer: mpsc::Sender<MuxMsg>,
     snapshots_rx: Arc<tokio::sync::Mutex<ReceiverStream<DeviceSnapshot>>>,
     msg_rx: Arc<tokio::sync::Mutex<ReceiverStream<MuxMsg>>>,
+    accessories: Arc<AccessoryDispatcher>,
+    versions: watch::Receiver<Option<crate::packets::mux::Version>>,
+    version_read: Arc<tokio::sync::Mutex<()>>,
     pub(super) device_packets_tx: Arc<DevicePacketRoutes>,
     ctrl_if: ControlLink<UsbMuxCtrlMsg>,
     _lifetime: Arc<tokio_util::sync::DropGuard>,
@@ -92,6 +99,8 @@ impl MuxDevice {
             snapshots,
             control,
             device_packets_tx,
+            accessories,
+            versions,
             lifetime,
         } = transport.split();
 
@@ -100,6 +109,9 @@ impl MuxDevice {
             snapshots_rx: Arc::new(tokio::sync::Mutex::new(snapshots)),
             msg_rx: Arc::new(tokio::sync::Mutex::new(control)),
             device_packets_tx,
+            accessories,
+            versions,
+            version_read: Arc::new(tokio::sync::Mutex::new(())),
             ctrl_if,
             _lifetime: lifetime,
             ctrl: Arc::new(tokio::sync::Mutex::new(None)),
@@ -220,21 +232,52 @@ impl MuxDevice {
         Ok(())
     }
 
-    /// Asks the dongle for its mux protocol and firmware versions.
-    ///
-    /// # Errors
-    /// Fails when the request cannot be queued, the link closes, or no answer
-    /// arrives within `REPLY_TIMEOUT` (two seconds).
+    /// Reads and caches mux versions across clones; concurrent callers share one request.
     pub async fn read_version(&self) -> Result<crate::packets::mux::Version> {
-        self.send_msg(MuxMsg::ReadVersion()).await?;
-
-        let reply = tokio::time::timeout(REPLY_TIMEOUT, self.receive_msg())
-            .await
-            .map_err(|_elapsed| Error::Timeout(REPLY_TIMEOUT))??;
-        match reply {
-            MuxMsg::ReadVersionResponse(version) => Ok(version),
-            other => Err(Error::unexpected(&other)),
+        let _read = self.version_read.lock().await;
+        if self.accessories.cancel.is_cancelled() {
+            return Err(Error::Closed);
         }
+        let mut versions = self.versions.clone();
+        if let Some(version) = *versions.borrow_and_update() {
+            return Ok(version);
+        }
+        let operation = async {
+            self.send_msg(MuxMsg::ReadVersion()).await?;
+            loop {
+                versions.changed().await.map_err(|_closed| Error::Closed)?;
+                if let Some(version) = *versions.borrow_and_update() {
+                    return Ok(version);
+                }
+            }
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, async {
+            tokio::select! {
+                biased;
+                () = self.accessories.cancel.cancelled() => Err(Error::Closed),
+                result = operation => result,
+            }
+        })
+        .await
+        .map_err(|_elapsed| Error::Timeout(REPLY_TIMEOUT))?
+    }
+
+    /// Waits for actual BLE completion; at most eight requests may be in flight.
+    pub async fn accessory_request(&self, command: Command) -> Result<Reply> {
+        let version = self.read_version().await?.protocol_semver;
+        if version < MIN_MUX_PROTOCOL {
+            return Err(Error::AccessoryUnsupported);
+        }
+        // Older firmware cannot decode the command and would drop it without a completion.
+        if matches!(command, Command::MarkerMode { .. }) && version < MARKER_MODE_MUX_PROTOCOL {
+            return Err(Error::MarkerModeUnsupported);
+        }
+        self.accessories.request(&self.writer, command).await
+    }
+
+    /// Subscribes without blocking USB reads; slow subscribers receive `RecvError::Lagged`.
+    pub fn subscribe_accessory_events(&self) -> broadcast::Receiver<Event> {
+        self.accessories.subscribe()
     }
 
     pub async fn read_ctrl_version(&self) -> Result<odyssey_protocol::Version> {

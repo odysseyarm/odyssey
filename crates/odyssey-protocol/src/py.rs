@@ -85,3 +85,40 @@ impl<'a, 'py> FromPyObject<'a, 'py> for GeneralConfig {
         Ok(obj.extract::<crate::wire::GeneralConfig>()?.into())
     }
 }
+
+/// Completion uses `(id, reply, error)` because Python has no Rust `Result`.
+impl<'py> IntoPyObject<'py> for crate::accessory::Completion {
+    type Target = pyo3::types::PyTuple;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        let (reply, error) = match self.result {
+            Ok(reply) => (Some(reply), None),
+            Err(error) => (None, Some(error)),
+        };
+        (self.id, reply, error).into_pyobject(py)
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for crate::accessory::Completion {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let (id, reply, error): (
+            u32,
+            Option<crate::accessory::Reply>,
+            Option<crate::accessory::Error>,
+        ) = obj.extract()?;
+        let result = match (reply, error) {
+            (Some(reply), None) => Ok(reply),
+            (None, Some(error)) => Err(error),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "completion needs exactly one reply or error",
+                ));
+            }
+        };
+        Ok(Self { id, result })
+    }
+}

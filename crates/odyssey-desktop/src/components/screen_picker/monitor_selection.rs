@@ -105,16 +105,6 @@ impl MonitorSelection {
         }
     }
 
-    #[cfg(all(test, feature = "sim"))]
-    pub(crate) fn for_test(key: MonitorKey, writer: UiStateWriter) -> Self {
-        Self {
-            monitors: vec![MonitorInfo { key, primary: true }],
-            chosen: None,
-            writer,
-            _displays: None,
-        }
-    }
-
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let latest = enumerate_monitors(cx);
         if self.monitors != latest {

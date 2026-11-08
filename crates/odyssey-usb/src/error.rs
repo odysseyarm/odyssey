@@ -40,6 +40,12 @@ pub enum Error {
     /// Every request id is waiting on a reply. Transient.
     #[error("too many requests in flight")]
     Busy,
+    #[error("dongle firmware does not support accessories; update required")]
+    AccessoryUnsupported,
+    #[error("dongle firmware does not support resetting marker mode; update required")]
+    MarkerModeUnsupported,
+    #[error("dongle accessory operation failed: {0}")]
+    Accessory(odyssey_protocol::accessory::Error),
     /// No reply arrived in time.
     #[error("no reply within {0:?}")]
     Timeout(Duration),

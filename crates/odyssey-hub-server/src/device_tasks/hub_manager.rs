@@ -1,3 +1,4 @@
+mod commands;
 mod dongle;
 mod snapshot;
 
@@ -17,6 +18,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, warn};
 
+use self::commands::ControlCommand;
 use self::dongle::DongleIdentity;
 use super::context::{DeviceAddress, DeviceHandles, DeviceTaskContext};
 use super::messages::{DeviceTaskMessage, DongleTaskMessage, Message};
@@ -51,7 +53,7 @@ enum HubEvent {
     Snapshot(Result<DeviceSnapshot>),
     /// Timer tick; re-drives snapshot processing for devices that failed to connect.
     Retry,
-    Command(DongleTaskMessage),
+    Command(ControlCommand),
 }
 
 struct ManagedDevice {
@@ -136,6 +138,7 @@ impl HubManager {
         commands: mpsc::Receiver<DongleTaskMessage>,
         mut shutdown: oneshot::Receiver<()>,
     ) {
+        let (commands, commands_lifetime) = commands::dispatch(self.hub.clone(), commands);
         let initial_devices = self.request_initial_devices().await;
         let mut events = self.event_stream(initial_devices, commands);
 
@@ -164,6 +167,7 @@ impl HubManager {
             }
         }
 
+        drop(commands_lifetime);
         self.shut_down().await;
     }
 
@@ -202,7 +206,7 @@ impl HubManager {
     fn event_stream(
         &self,
         initial_devices: Option<DeviceSnapshot>,
-        commands: mpsc::Receiver<DongleTaskMessage>,
+        commands: mpsc::Receiver<ControlCommand>,
     ) -> BoxStream<'static, HubEvent> {
         // The dongle sends a snapshot whenever its device list changes.
         info!("Creating snapshot stream for hub");
@@ -279,9 +283,9 @@ impl HubManager {
         }
     }
 
-    async fn on_dongle_command(&mut self, command: DongleTaskMessage) {
+    async fn on_dongle_command(&mut self, command: ControlCommand) {
         match command {
-            DongleTaskMessage::StartPairing { timeout_ms, reply } => {
+            ControlCommand::StartPairing { timeout_ms, reply } => {
                 let result = self
                     .hub
                     .start_pairing(timeout_ms)
@@ -292,11 +296,11 @@ impl HubManager {
                 }
                 let _ = reply.send(result);
             }
-            DongleTaskMessage::CancelPairing { reply } => {
+            ControlCommand::CancelPairing { reply } => {
                 let result = self.hub.cancel_pairing().await.map_err(|e| e.to_string());
                 let _ = reply.send(result);
             }
-            DongleTaskMessage::ClearBonds { reply } => {
+            ControlCommand::ClearBonds { reply } => {
                 let result = self.hub.clear_bonds().await.map_err(|e| e.to_string());
                 if result.is_ok() {
                     self.context

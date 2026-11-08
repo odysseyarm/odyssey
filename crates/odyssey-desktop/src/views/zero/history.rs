@@ -3,13 +3,16 @@
 
 use std::collections::HashMap;
 
-use gpui::{Context, Entity, Task};
+use futures::StreamExt as _;
+use gpui::{Context, Task};
+use odyssey_hub_client::client::Client;
 use odyssey_hub_client::tracking_history::TrackingHistory;
-use odyssey_hub_common::events::TrackingEvent;
-use tokio::sync::broadcast::error::RecvError;
+use odyssey_hub_common::device::Device;
+use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event, TrackingEvent};
+use tokio::sync::{mpsc, watch};
 
 use super::ZeroView;
-use crate::hub::Hub;
+use crate::runtime;
 
 /// Samples kept per device, about 2 seconds at 100 Hz.
 const TRACKING_HISTORY_CAP: usize = 200;
@@ -27,23 +30,98 @@ fn record(history: &mut HistoryByDevice, uuid: [u8; 6], event: TrackingEvent) {
         .push(event);
 }
 
-/// Buffers every tracking event the hub broadcasts into `ZeroView::history`.
-/// Nothing is repainted: the history is only read when a zero is sent.
-pub(super) fn follow_tracking(hub: &Entity<Hub>, cx: &mut Context<ZeroView>) -> Task<()> {
-    let mut receiver = hub.read(cx).subscribe_tracking();
-    cx.spawn(async move |this, cx| {
-        loop {
-            match receiver.recv().await {
-                Ok((device, event)) => {
-                    let recorded = this.update(cx, |zero, _| {
-                        record(&mut zero.history, device.uuid, event);
-                    });
-                    if recorded.is_err() {
-                        break;
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn stream_tracking(
+    updates: mpsc::Sender<(Device, TrackingEvent)>,
+    mut screen: watch::Receiver<Option<u8>>,
+) {
+    loop {
+        let selected = *screen.borrow_and_update();
+        let Some(selected) = selected else {
+            if screen.changed().await.is_err() {
+                return;
+            }
+            continue;
+        };
+        let result = tokio::select! {
+            changed = screen.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                continue;
+            }
+            result = async {
+                let client = Client::connect().await?;
+                let mut events = client.subscribe_events_for_screen(selected).await?;
+                while let Some(event) = events.next().await {
+                    if let Event::DeviceEvent(DeviceEvent(
+                        device,
+                        DeviceEventKind::TrackingEvent(tracking),
+                    )) = event?
+                        && tracking.screen_id == u32::from(selected)
+                        && updates.send((device, tracking)).await.is_err()
+                    {
+                        return Ok::<_, eros::ErrorUnion>(());
                     }
                 }
-                Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => break,
+                Ok(())
+            } => result,
+        };
+        if updates.is_closed() {
+            return;
+        }
+        if let Err(error) = result {
+            tracing::warn!("Zero tracking stream disconnected: {error}");
+        }
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+            changed = screen.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Window-owned RPC stream keeps markers active only while Zero is open.
+pub(super) fn follow_tracking(
+    screen: watch::Receiver<Option<u8>>,
+    cx: &mut Context<ZeroView>,
+) -> Task<()> {
+    let (updates, mut receiver) = mpsc::channel(128);
+    let stream = AbortOnDrop(runtime::spawn(stream_tracking(updates, screen)));
+    cx.spawn(async move |this, cx| {
+        let _stream = stream;
+        while let Some((device, event)) = receiver.recv().await {
+            let recorded = this.update(cx, |zero, cx| {
+                if zero
+                    .devices
+                    .iter()
+                    .any(|known| known.uuid == device.uuid && known.events_connected)
+                    && zero
+                        .tracking_screen
+                        .borrow()
+                        .is_some_and(|screen| event.screen_id == u32::from(screen))
+                {
+                    record(&mut zero.history, device.uuid, event);
+                    zero.tracking
+                        .insert(device.uuid, (event, std::time::Instant::now()));
+                    if zero.selected_device == Some(device.uuid) {
+                        zero.refresh_readiness(cx);
+                        cx.notify();
+                    }
+                }
+            });
+            if recorded.is_err() {
+                break;
             }
         }
     })

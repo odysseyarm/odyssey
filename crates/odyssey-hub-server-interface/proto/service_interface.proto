@@ -9,6 +9,11 @@ service Service {
   rpc GetAccessoryMap(AccessoryMapRequest) returns (AccessoryMapReply) {}
   rpc SubscribeAccessoryMap(SubscribeAccessoryMapRequest) returns (stream AccessoryMapReply) {}
   rpc UpdateAccessoryInfoMap(AccessoryInfoMap) returns (EmptyReply) {}
+  rpc GetAccessoryRadios(EmptyRequest) returns (AccessoryRadiosReply) {}
+  rpc SubscribeAccessoryRadios(EmptyRequest) returns (stream AccessoryRadiosReply) {}
+  rpc EnrollAccessory(EnrollAccessoryRequest) returns (EmptyReply) {}
+  // Briefly connects to a configured marker control board and sets its Mode to Auto.
+  rpc ResetMarkerMode(ResetMarkerModeRequest) returns (EmptyReply) {}
 
   rpc GetScreenInfoById(ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
 
@@ -243,6 +248,7 @@ message DeviceListReply {
 enum AccessoryType {
   DRY_FIRE_MAG = 0;
   MANTIS_X = 1;
+  MARKER_CONTROL_BOARD = 2;
 }
 enum AccessoryFeature {
   IMPACT = 0;
@@ -253,6 +259,8 @@ message AccessoryInfo {
   AccessoryType ty = 2;
   uint64 assignment = 3; // 0 = unassigned.
   repeated AccessoryFeature features = 4;
+  optional uint32 screen_id = 5;
+  AccessoryRadio radio = 6;
 }
 
 message AccessoryStatus {
@@ -267,6 +275,59 @@ message AccessoryMapReply {
 }
 message AccessoryInfoMap {
   map<uint64, AccessoryInfo> accessory_info_map = 1;
+}
+
+enum AccessoryRadioKind {
+  SYSTEM = 0;
+  NATIVE = 1;
+  DONGLE = 2;
+}
+message AccessoryRadio {
+  AccessoryRadioKind kind = 1;
+  string id = 2;
+}
+enum AccessoryConnectionState {
+  IDLE = 0;
+  CONNECTING = 1;
+  CONNECTED = 2;
+  FAILED = 3;
+  RADIO_UNAVAILABLE = 4;
+}
+message AccessoryConnectionInfo {
+  uint64 address = 1;
+  AccessoryConnectionState state = 2;
+  optional string error = 3;
+}
+message DiscoveredAccessory {
+  uint64 address = 1;
+  string name = 2;
+  AccessoryType ty = 3;
+  optional uint64 pairing_window_expires_at_ms = 4;
+}
+message AccessoryRadioInfo {
+  AccessoryRadio radio = 1;
+  string name = 2;
+  bool is_default = 3;
+  bool available = 4;
+  bool accessory_supported = 5;
+  uint32 connected_accessories = 6;
+  uint32 connecting_accessories = 7;
+  uint32 connected_trackers = 8;
+  optional uint32 capacity = 9;
+  optional uint32 accessory_capacity = 10;
+  repeated AccessoryConnectionInfo connections = 11;
+  repeated DiscoveredAccessory nearby = 12;
+  optional string error = 13;
+}
+message AccessoryRadiosReply {
+  repeated AccessoryRadioInfo radios = 1;
+}
+message EnrollAccessoryRequest {
+  uint64 address = 1;
+  AccessoryInfo info = 2;
+}
+message ResetMarkerModeRequest {
+  uint64 address = 1;
 }
 
 message SubscribeShotDelayRequest {
@@ -390,6 +451,11 @@ message SetDeviceNameRequest {
   string name = 2;
 }
 
-message SubscribeEventsRequest {}
+message SubscribeEventsRequest {
+  // Passive UI monitoring does not request marker illumination. Existing clients
+  // keep active tracking demand by leaving this false.
+  bool passive_tracking = 1;
+  optional uint32 screen_id = 2; // Omitted requests all screens; event payloads remain unfiltered.
+}
 message EmptyRequest {}
 message EmptyReply {}

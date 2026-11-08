@@ -17,9 +17,9 @@ use gpui::component::checkbox::Checkbox;
 use gpui::component::input::{Input, InputState};
 use gpui::component::{Disableable as _, Sizable as _};
 use gpui::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, WindowOptions, div, px,
-    rgb, size,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, WindowOptions, div,
+    px, rgb, size,
 };
 use odyssey_hub_server::sim;
 use odyssey_sim::{Command, ScenarioStep, Snapshot};
@@ -69,7 +69,6 @@ fn main() {
         std::process::exit(1);
     }
 }
-
 
 fn run() -> eros::Result<()> {
     let mut enabled = std::env::var("ODYSSEY_SIM").is_ok_and(|value| {
@@ -276,7 +275,9 @@ struct Controls {
 
 fn field(initial: &str, window: &mut Window, cx: &mut Context<'_, Controls>) -> Entity<InputState> {
     let input = cx.new(|cx| InputState::new(window, cx));
-    input.update(cx, |state, cx| state.set_value(initial.to_owned(), window, cx));
+    input.update(cx, |state, cx| {
+        state.set_value(initial.to_owned(), window, cx)
+    });
     input
 }
 
@@ -410,7 +411,10 @@ impl Render for Controls {
         let known = self.snapshot.is_some() && self.connection_error.is_empty();
         let unit_usb = self.snapshot.as_ref().is_some_and(|state| state.unit_usb);
         let dongle_usb = self.snapshot.as_ref().is_some_and(|state| state.dongle_usb);
-        let in_range = self.snapshot.as_ref().is_some_and(|state| state.ble_in_range);
+        let in_range = self
+            .snapshot
+            .as_ref()
+            .is_some_and(|state| state.ble_in_range);
         let state_text = match self.snapshot.as_ref() {
             Some(state) => serde_json::to_string_pretty(state)
                 .unwrap_or_else(|error| format!("Cannot display state: {error}")),
@@ -421,7 +425,10 @@ impl Render for Controls {
         };
         let row = || div().flex().flex_row().flex_wrap().items_center().gap_2();
         let fixed = |command: Command| {
-            move |this: &mut Self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<'_, Self>| {
+            move |this: &mut Self,
+                  _: &gpui::ClickEvent,
+                  _: &mut Window,
+                  _: &mut Context<'_, Self>| {
                 this.send(command.clone());
             }
         };

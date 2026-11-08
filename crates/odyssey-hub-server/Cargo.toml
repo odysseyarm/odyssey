@@ -59,6 +59,10 @@ thiserror = "2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+windows = { version = "0.61", features = ["Devices_Bluetooth", "Devices_Enumeration", "Foundation"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluez-async = "0.8.2"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winres = "0.1.12"

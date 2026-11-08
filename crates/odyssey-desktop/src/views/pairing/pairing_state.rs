@@ -28,7 +28,9 @@ pub(super) fn result_status(
     error: &str,
 ) -> String {
     if !success {
-        return error.to_string();
+        return format!(
+            "Pairing failed: {error}. Check both devices are nearby and in pairing mode, then choose Pair again."
+        );
     }
     let label = if paired_name.is_empty() {
         format_address(paired_address)
@@ -41,7 +43,7 @@ pub(super) fn result_status(
 impl PairingState {
     pub(super) fn started(&mut self) {
         self.pairing = true;
-        self.status = "Pairing...".into();
+        self.status = "Pairing… keep both devices nearby (up to two minutes).".into();
     }
 
     pub(super) fn start_failed(&mut self, error: impl std::fmt::Display) {
@@ -180,5 +182,23 @@ impl PairTarget {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_start_can_retry_and_finish_without_stale_running_state() {
+        let mut state = PairingState::default();
+        state.started();
+        assert!(state.pairing);
+        state.start_failed("Disconnected");
+        assert!(!state.pairing);
+        state.started();
+        assert!(state.pairing);
+        state.finished(result_status(true, &[1; 6], "Tracker", ""));
+        assert!(!state.pairing);
     }
 }

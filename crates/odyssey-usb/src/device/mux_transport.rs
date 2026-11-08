@@ -4,14 +4,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use heapless::Vec as HVec;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, info, trace};
 
 use super::hex_address::HexAddress;
+use super::mux_accessory::AccessoryDispatcher;
 use super::usb_bulk_io::{MessageReader, spawn_writer};
-use crate::packets::mux::{MAX_DEVICES, MuxMsg};
+use crate::packets::mux::{MAX_DEVICES, MuxMsg, Version};
 use crate::packets::vm::Packet;
 
 /// Messages queued towards the dongle before `send` waits.
@@ -72,6 +73,8 @@ pub struct MuxTransport {
     writer: mpsc::Sender<MuxMsg>,
     snapshots_rx: mpsc::Receiver<DeviceSnapshot>,
     msg_rx: mpsc::Receiver<MuxMsg>,
+    accessories: Arc<AccessoryDispatcher>,
+    versions: watch::Receiver<Option<Version>>,
     device_packets_tx: Arc<DevicePacketRoutes>,
     lifetime: Arc<DropGuard>,
 }
@@ -81,6 +84,8 @@ pub(super) struct MuxTransportParts {
     pub(super) writer: mpsc::Sender<MuxMsg>,
     pub(super) snapshots: ReceiverStream<DeviceSnapshot>,
     pub(super) control: ReceiverStream<MuxMsg>,
+    pub(super) accessories: Arc<AccessoryDispatcher>,
+    pub(super) versions: watch::Receiver<Option<Version>>,
     pub(super) device_packets_tx: Arc<DevicePacketRoutes>,
     pub(super) lifetime: Arc<DropGuard>,
 }
@@ -94,6 +99,9 @@ impl MuxTransport {
         let routes = Arc::clone(&device_packets_tx);
 
         let cancel = CancellationToken::new();
+        let accessories = AccessoryDispatcher::new(cancel.clone());
+        let reader_accessories = accessories.clone();
+        let (versions_tx, versions) = watch::channel(None);
         spawn_writer(out_ep, writer_rx, "mux usb", cancel.clone());
         let lifetime = Arc::new(cancel.clone().drop_guard());
 
@@ -108,13 +116,21 @@ impl MuxTransport {
                         None => break,
                     },
                 };
-                let route_message = route_message(msg, &snapshots_tx, &msg_tx, &routes);
+                let route_message = route_message(
+                    msg,
+                    &snapshots_tx,
+                    &msg_tx,
+                    &routes,
+                    &reader_accessories,
+                    &versions_tx,
+                );
                 tokio::select! {
                     () = cancel.cancelled() => break,
                     () = route_message => {}
                 }
             }
             cancel.cancel();
+            reader_accessories.close();
             for (_, route) in lock_routes(&routes).drain() {
                 route.cancel.cancel();
             }
@@ -125,6 +141,8 @@ impl MuxTransport {
             writer,
             snapshots_rx,
             msg_rx,
+            accessories,
+            versions,
             device_packets_tx,
             lifetime,
         }
@@ -141,6 +159,9 @@ impl MuxTransport {
         let device_packets_tx = Arc::new(DevicePacketRoutes::default());
         let routes = Arc::clone(&device_packets_tx);
         let cancel = CancellationToken::new();
+        let accessories = AccessoryDispatcher::new(cancel.clone());
+        let reader_accessories = accessories.clone();
+        let (versions_tx, versions) = watch::channel(None);
         let lifetime = Arc::new(cancel.clone().drop_guard());
         tokio::spawn(async move {
             loop {
@@ -153,10 +174,11 @@ impl MuxTransport {
                 };
                 tokio::select! {
                     () = cancel.cancelled() => break,
-                    () = route_message(msg, &snapshots_tx, &msg_tx, &routes) => {}
+                    () = route_message(msg, &snapshots_tx, &msg_tx, &routes, &reader_accessories, &versions_tx) => {}
                 }
             }
             cancel.cancel();
+            reader_accessories.close();
             for (_, route) in lock_routes(&routes).drain() {
                 route.cancel.cancel();
             }
@@ -165,6 +187,8 @@ impl MuxTransport {
             writer,
             snapshots_rx,
             msg_rx,
+            accessories,
+            versions,
             device_packets_tx,
             lifetime,
         }
@@ -175,6 +199,8 @@ impl MuxTransport {
             writer,
             snapshots_rx,
             msg_rx,
+            accessories,
+            versions,
             device_packets_tx,
             lifetime,
         } = self;
@@ -182,6 +208,8 @@ impl MuxTransport {
             writer,
             snapshots: ReceiverStream::new(snapshots_rx),
             control: ReceiverStream::new(msg_rx),
+            accessories,
+            versions,
             device_packets_tx,
             lifetime,
         }
@@ -193,8 +221,18 @@ async fn route_message(
     snapshots_tx: &mpsc::Sender<DeviceSnapshot>,
     msg_tx: &mpsc::Sender<MuxMsg>,
     routes: &DevicePacketRoutes,
+    accessories: &AccessoryDispatcher,
+    versions: &watch::Sender<Option<Version>>,
 ) {
     match msg {
+        MuxMsg::AccessoryCompletion(completion) => accessories.complete(completion),
+        MuxMsg::AccessoryEvent(event) => accessories.event(event),
+        MuxMsg::AccessoryRequest(_) => {
+            trace!("mux reader: ignoring host-directed accessory request")
+        }
+        MuxMsg::ReadVersionResponse(version) => {
+            versions.send_replace(Some(version));
+        }
         MuxMsg::DevicesSnapshot(devices) => {
             debug!("mux reader: routing DevicesSnapshot");
             let _ = snapshots_tx.send(devices.0).await;

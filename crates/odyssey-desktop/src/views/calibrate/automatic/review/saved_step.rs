@@ -64,7 +64,7 @@ pub(in crate::views::calibrate::automatic) fn saved_step(
                         .child("re-zero your devices so aiming matches the new calibration."),
                 )
                 .child(
-                    button("go-to-zero", "Go to Zero", ButtonKind::Secondary, p)
+                    button("go-to-zero", "Zero tracker", ButtonKind::Secondary, p)
                         .on_click(act(wizard, |w, cx| w.go_home(cx))),
                 )
                 .into_any_element(),

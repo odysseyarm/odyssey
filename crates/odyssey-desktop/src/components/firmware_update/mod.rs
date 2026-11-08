@@ -9,6 +9,7 @@
 mod bootloader;
 mod device_firmware_update;
 mod dfu_session;
+mod dongle_update;
 mod downloads;
 mod firmware_channel;
 mod netcore;
@@ -22,6 +23,7 @@ mod update_task;
 mod updating_device_row;
 
 pub(crate) use device_firmware_update::device_firmware_update;
+pub(crate) use dongle_update::dongle_update_card;
 pub(crate) use firmware_channel::FirmwareChannelModel;
 pub(crate) use update_manager::{FirmwareUpdateManager, UpdateTicker};
 pub(crate) use updating_device_row::updating_device_row;

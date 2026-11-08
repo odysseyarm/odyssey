@@ -21,6 +21,7 @@ mod theme;
 mod tray;
 mod ui_state;
 mod views;
+mod workspace;
 
 /// Renders diagnostics only when an error becomes a cloneable UI-state message.
 fn error_message(error: &eros::ErrorUnion) -> String {

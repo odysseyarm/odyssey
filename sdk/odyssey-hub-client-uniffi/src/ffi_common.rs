@@ -149,6 +149,13 @@ pub struct ScreenInfo {
 pub enum AccessoryType {
     DryFireMag,
     MantisX,
+    MarkerControlBoard,
+}
+
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum AccessoryRadio {
+    Native { id: String },
+    Dongle { id: String },
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -156,6 +163,12 @@ pub struct AccessoryInfo {
     pub name: String,
     pub ty: AccessoryType,
     pub assignment: Option<u64>,
+    /// Zero-based screen index; `None` leaves a marker board unassigned.
+    #[uniffi(default = None)]
+    pub screen_id: Option<u8>,
+    /// `None` selects the system Bluetooth radio.
+    #[uniffi(default = None)]
+    pub radio: Option<AccessoryRadio>,
 }
 
 #[derive(uniffi::Record, Clone)]
@@ -186,6 +199,7 @@ impl From<common::accessory::AccessoryType> for AccessoryType {
         match accessory_type {
             common::accessory::AccessoryType::DryFireMag => Self::DryFireMag,
             common::accessory::AccessoryType::MantisX => Self::MantisX,
+            common::accessory::AccessoryType::MarkerControlBoard => Self::MarkerControlBoard,
         }
     }
 }
@@ -196,6 +210,16 @@ impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
             name: info.name,
             ty: info.ty.into(),
             assignment: info.assignment.map(|nz| nz.get()),
+            screen_id: info.screen_id,
+            radio: match info.radio {
+                common::accessory::AccessoryRadio::System => None,
+                common::accessory::AccessoryRadio::Native { id } => {
+                    Some(AccessoryRadio::Native { id })
+                }
+                common::accessory::AccessoryRadio::Dongle { id } => {
+                    Some(AccessoryRadio::Dongle { id })
+                }
+            },
         }
     }
 }
@@ -205,6 +229,9 @@ impl From<AccessoryType> for common::accessory::AccessoryType {
         match accessory_type {
             AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
             AccessoryType::MantisX => common::accessory::AccessoryType::MantisX,
+            AccessoryType::MarkerControlBoard => {
+                common::accessory::AccessoryType::MarkerControlBoard
+            }
         }
     }
 }
@@ -213,6 +240,14 @@ impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
     type Error = crate::client::ClientError;
 
     fn try_from(info: AccessoryInfo) -> Result<Self, Self::Error> {
+        if info
+            .screen_id
+            .is_some_and(|id| id > odyssey_common::MAX_SCREEN_ID)
+        {
+            return Err(Self::Error::InvalidArgument {
+                message: "accessory screen ID is out of range".to_string(),
+            });
+        }
         let mut result = Self::with_defaults(info.name, info.ty.into());
         result.assignment = info
             .assignment
@@ -222,6 +257,24 @@ impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
                 })
             })
             .transpose()?;
+        result.screen_id = info.screen_id;
+        result.radio = match info.radio {
+            None => common::accessory::AccessoryRadio::System,
+            Some(AccessoryRadio::Native { id }) => {
+                common::accessory::AccessoryRadio::Native { id }
+            }
+            Some(AccessoryRadio::Dongle { id }) => {
+                common::accessory::AccessoryRadio::Dongle { id }
+            }
+        };
+        if let common::accessory::AccessoryRadio::Native { id }
+        | common::accessory::AccessoryRadio::Dongle { id } = &result.radio
+            && id.trim().is_empty()
+        {
+            return Err(Self::Error::InvalidArgument {
+                message: "accessory radio.id must not be blank".to_string(),
+            });
+        }
         Ok(result)
     }
 }
@@ -457,7 +510,56 @@ mod tests {
             name: "accessory".to_string(),
             ty: AccessoryType::DryFireMag,
             assignment: Some(0),
+            screen_id: None,
+            radio: None,
         });
         assert!(matches!(result, Err(ClientError::InvalidArgument { .. })));
+    }
+
+    #[test]
+    fn marker_screen_assignments_preserve_six_slots_and_reject_overflow() {
+        for screen_id in 0..=odyssey_common::MAX_SCREEN_ID {
+            let converted = common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+                name: "markers".to_string(),
+                ty: AccessoryType::MarkerControlBoard,
+                assignment: None,
+                screen_id: Some(screen_id),
+                radio: None,
+            })
+            .expect("supported screen");
+            assert_eq!(converted.screen_id, Some(screen_id));
+        }
+        for screen_id in [odyssey_common::MAX_SCREEN_ID + 1, u8::MAX] {
+            let converted = common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+                name: "markers".to_string(),
+                ty: AccessoryType::MarkerControlBoard,
+                assignment: None,
+                screen_id: Some(screen_id),
+                radio: None,
+            });
+            assert!(matches!(
+                converted,
+                Err(ClientError::InvalidArgument { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn radio_ids_reject_empty_and_whitespace() {
+        for id in ["", " \t"] {
+            for radio in [
+                AccessoryRadio::Native { id: id.to_string() },
+                AccessoryRadio::Dongle { id: id.to_string() },
+            ] {
+                let result = common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+                    name: "markers".to_string(),
+                    ty: AccessoryType::MarkerControlBoard,
+                    assignment: None,
+                    screen_id: Some(5),
+                    radio: Some(radio),
+                });
+                assert!(matches!(result, Err(ClientError::InvalidArgument { .. })), "{id:?}");
+            }
+        }
     }
 }

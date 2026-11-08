@@ -133,9 +133,23 @@ pub(crate) struct DeviceChannels {
 
 /// Commands for a dongle's hub manager task.
 pub(crate) enum DongleTaskMessage {
-    StartPairing { timeout_ms: u32, reply: Reply<()> },
-    CancelPairing { reply: Reply<()> },
-    ClearBonds { reply: Reply<()> },
+    StartPairing {
+        timeout_ms: u32,
+        reply: Reply<()>,
+    },
+    CancelPairing {
+        reply: Reply<()>,
+    },
+    ClearBonds {
+        reply: Reply<()>,
+    },
+    Accessory {
+        command: odyssey_protocol::accessory::Command,
+        reply: Reply<odyssey_protocol::accessory::Reply>,
+    },
+    SubscribeAccessoryEvents {
+        reply: Reply<tokio::sync::broadcast::Receiver<odyssey_protocol::accessory::Event>>,
+    },
 }
 
 /// A dongle as the dongle list shows it.

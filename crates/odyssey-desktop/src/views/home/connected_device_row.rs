@@ -19,6 +19,7 @@ use crate::components::firmware_update::{
 };
 use crate::components::image_viewer::ImageViewer;
 use crate::components::sensor_settings::{SensorSettings, TransportModePanel};
+use crate::components::ui::{ButtonKind, button};
 use crate::hub::Hub;
 use crate::runtime;
 use crate::theme::{self, Palette, RADIUS};
@@ -68,6 +69,7 @@ pub(super) struct ConnectedDeviceRow {
     renamed: bool,
     rename_error: Option<String>,
     rename_pending: bool,
+    details_open: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -112,6 +114,7 @@ impl ConnectedDeviceRow {
             renamed: false,
             rename_error: None,
             rename_pending: false,
+            details_open: false,
             _subscriptions: subscriptions,
         }
     }
@@ -320,7 +323,13 @@ impl Render for ConnectedDeviceRow {
             });
 
         let manifest = self.manifest.read(cx).manifest.clone();
-        let update = device_firmware_update(device, manifest.as_ref(), &self.manager, p);
+        let update = device_firmware_update(
+            device,
+            manifest.as_ref(),
+            &self.manager,
+            p,
+            self.details_open,
+        );
 
         let mut row = div()
             .relative()
@@ -371,16 +380,44 @@ impl Render for ConnectedDeviceRow {
                     ),
             );
         }
-        row = row.child(update);
-        if !device
-            .capabilities
-            .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
-        {
-            row = row.child(self.image_viewer.clone());
+        row = row.child(update).child(
+            button(
+                ("device-details", cx.entity_id()),
+                if self.details_open {
+                    "Hide Advanced"
+                } else {
+                    "Advanced device details"
+                },
+                ButtonKind::Secondary,
+                p,
+            )
+            .small()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.details_open = !this.details_open;
+                cx.notify();
+            })),
+        );
+        if self.details_open {
+            let mut details = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().text_color(p.fg).child("Advanced"))
+                .child(div().text_xs().text_color(p.fg_muted).child(
+                    "Connection, image diagnostics and sensor tuning. Transport changes restart the tracker; save settings only when ready.",
+                ));
+            if !device
+                .capabilities
+                .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
+            {
+                details = details.child(self.image_viewer.clone());
+            }
+            row = row.child(
+                details
+                    .child(self.transport_panel.clone())
+                    .child(self.sensor_settings.clone()),
+            );
         }
-        // Transport mode first: it decides whether sensor tuning is reachable
-        // at all, so it belongs above the settings it gates.
-        row.child(self.transport_panel.clone())
-            .child(self.sensor_settings.clone())
+        row
     }
 }

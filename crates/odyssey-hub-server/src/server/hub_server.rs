@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use odyssey_hub_common as common;
 use odyssey_hub_common::accessory::{AccessoryInfoMap, AccessoryMap};
 use odyssey_hub_server_interface::{DeviceListReply, Dongle, DongleListReply, FirmwareVersion};
+use parking_lot::{Mutex, MutexGuard};
 use tokio::sync::{RwLock, broadcast, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Status;
@@ -28,6 +29,7 @@ pub(crate) struct HubServer {
 
     /// Low-level device events for every subscriber.
     pub event_sender: broadcast::Sender<common::events::Event>,
+    pub marker_demand: crate::accessories::MarkerDemand,
 
     /// Fires on every device list change (connect, disconnect, update).
     pub device_list_change_sender: broadcast::Sender<()>,
@@ -41,6 +43,8 @@ pub(crate) struct HubServer {
     /// Accessory state, and the broadcast of the whole map to subscribers.
     pub accessory_map: Arc<Mutex<AccessoryMap>>,
     pub accessory_map_sender: broadcast::Sender<AccessoryMap>,
+    pub accessory_radios: crate::accessories::AccessoryRadios,
+    pub accessory_config_lock: Arc<tokio::sync::Mutex<()>>,
 
     /// Live dongles, kept apart from `device_list`.
     pub dongle_list: DongleList,
@@ -147,11 +151,7 @@ impl HubServer {
     }
 
     fn lock_accessory_map(&self) -> MutexGuard<'_, AccessoryMap> {
-        // The map is only ever replaced entry by entry, so a panic elsewhere
-        // cannot leave it half updated; carry on with what is there.
-        self.accessory_map
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.accessory_map.lock()
     }
 
     pub(super) fn accessory_map_snapshot(&self) -> AccessoryMap {
@@ -164,9 +164,9 @@ impl HubServer {
         let mut map = self.lock_accessory_map();
         map.retain(|id, _| info.contains_key(id));
         for (id, info) in info {
-            let connected = map
-                .get(&id)
-                .is_some_and(|(previous, connected)| previous.ty == info.ty && *connected);
+            let connected = map.get(&id).is_some_and(|(previous, connected)| {
+                previous.ty == info.ty && previous.radio == info.radio && *connected
+            });
             map.insert(id, (info, connected));
         }
     }
@@ -257,17 +257,124 @@ mod tests {
         HubServer {
             device_list: Default::default(),
             event_sender: broadcast::channel(1).0,
+            marker_demand: Default::default(),
             device_list_change_sender: broadcast::channel(1).0,
             screen_calibrations: Arc::new(ArcSwap::from_pointee(Calibrations::default())),
             device_shot_delays: Default::default(),
             shot_delay_watch: Default::default(),
             accessory_map: Default::default(),
             accessory_map_sender: broadcast::channel(1).0,
+            accessory_radios: crate::accessories::AccessoryRadios::new().0,
+            accessory_config_lock: Default::default(),
             dongle_list: Default::default(),
             dongle_list_change_sender: broadcast::channel(1).0,
             app_message_sender: mpsc::unbounded_channel().0,
             accessory_info_sender: watch::channel(AccessoryInfoMap::new()).0,
         }
+    }
+    #[tokio::test]
+    async fn radio_rpc_stream_preserves_unknown_capacity_fixed_route_errors_and_clone_connection() {
+        use common::accessory::{
+            AccessoryConnectionInfo, AccessoryConnectionState, AccessoryRadio, AccessoryRadioInfo,
+        };
+        use odyssey_hub_server_interface::service_client::ServiceClient;
+        use odyssey_hub_server_interface::service_server::ServiceServer;
+        use odyssey_hub_server_interface::{EmptyRequest, EnrollAccessoryRequest};
+        use tokio_stream::wrappers::TcpListenerStream;
+        use tokio_util::sync::CancellationToken;
+
+        let server = server();
+        let snapshots = server.accessory_radios.snapshots.clone();
+        let mut native = AccessoryRadioInfo {
+            radio: AccessoryRadio::Native {
+                id: "00:11:22:33:44:55".into(),
+            },
+            name: "native".into(),
+            is_default: true,
+            available: true,
+            accessory_supported: true,
+            connected_accessories: 8,
+            connecting_accessories: 1,
+            connected_trackers: 0,
+            capacity: None,
+            accessory_capacity: None,
+            connections: Vec::new(),
+            nearby: Vec::new(),
+            error: None,
+        };
+        snapshots.send_replace(vec![native.clone()]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancel = CancellationToken::new();
+        let shutdown = cancel.clone();
+        let task = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(ServiceServer::new(server))
+                .serve_with_incoming_shutdown(
+                    TcpListenerStream::new(listener),
+                    shutdown.cancelled(),
+                )
+                .await
+                .unwrap();
+        });
+        let original = ServiceClient::connect(format!("http://{address}"))
+            .await
+            .unwrap();
+        let mut client = original.clone();
+        drop(original);
+        let decoded: Vec<AccessoryRadioInfo> = client
+            .get_accessory_radios(EmptyRequest {})
+            .await
+            .unwrap()
+            .into_inner()
+            .try_into()
+            .unwrap();
+        assert_eq!(decoded[0].connected_accessories, 8);
+        assert_eq!(decoded[0].connecting_accessories, 1);
+        assert_eq!(decoded[0].capacity, None);
+        let mut stream = client
+            .subscribe_accessory_radios(EmptyRequest {})
+            .await
+            .unwrap()
+            .into_inner();
+        stream.message().await.unwrap().unwrap();
+        native.available = false;
+        native.connected_accessories = 0;
+        native.connecting_accessories = 0;
+        native.error = Some("org.bluez.Error.NotReady: adapter powered off".into());
+        native.connections.push(AccessoryConnectionInfo {
+            address: [7; 6],
+            state: AccessoryConnectionState::RadioUnavailable,
+            error: Some("org.bluez.Error.NotReady: adapter powered off".into()),
+        });
+        snapshots.send_replace(vec![native.clone()]);
+        let decoded: Vec<AccessoryRadioInfo> =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.message())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .try_into()
+                .unwrap();
+        assert_eq!(decoded, vec![native]);
+        let error = client
+            .enroll_accessory(EnrollAccessoryRequest {
+                address: 1 << 48,
+                info: Some(
+                    common::accessory::AccessoryInfo::with_defaults(
+                        "markers",
+                        common::accessory::AccessoryType::MarkerControlBoard,
+                    )
+                    .into(),
+                ),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        drop(stream);
+        drop(client);
+        cancel.cancel();
+        task.await.unwrap();
     }
 
     #[tokio::test]
@@ -394,6 +501,120 @@ mod tests {
         server.set_shot_delay_live(uuid, 20).await;
         let subscription = server.subscribe_shot_delay_watch(uuid).await;
         assert_eq!(*subscription.borrow(), 20);
+    }
+
+    #[tokio::test]
+    async fn event_rpc_demand_aggregates_screens_and_releases_idle_disconnected_clients() {
+        use odyssey_hub_server_interface::SubscribeEventsRequest;
+        use odyssey_hub_server_interface::service_client::ServiceClient;
+        use odyssey_hub_server_interface::service_server::ServiceServer;
+        use tokio_stream::wrappers::TcpListenerStream;
+        use tokio_util::sync::CancellationToken;
+
+        use crate::accessories::MarkerDemandCounts;
+
+        async fn expect_counts(
+            demand: &mut watch::Receiver<MarkerDemandCounts>,
+            expected: MarkerDemandCounts,
+        ) {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                demand.wait_for(|counts| *counts == expected),
+            )
+            .await
+            .expect("RPC demand transition timed out")
+            .unwrap();
+        }
+
+        let server = server();
+        let mut demand = server.marker_demand.subscribe();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancel = CancellationToken::new();
+        let shutdown = cancel.clone();
+        let task = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(ServiceServer::new(server))
+                .serve_with_incoming_shutdown(
+                    TcpListenerStream::new(listener),
+                    shutdown.cancelled(),
+                )
+                .await
+                .unwrap();
+        });
+        let mut client = ServiceClient::connect(format!("http://{address}"))
+            .await
+            .unwrap();
+        let passive = client
+            .subscribe_events(SubscribeEventsRequest {
+                passive_tracking: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        expect_counts(&mut demand, [0; 6]).await;
+        let all = client
+            .subscribe_events(SubscribeEventsRequest::default())
+            .await
+            .unwrap()
+            .into_inner();
+        expect_counts(&mut demand, [1; 6]).await;
+        let last_screen = odyssey_common::MAX_SCREEN_ID;
+        let scoped = client
+            .subscribe_events(SubscribeEventsRequest {
+                screen_id: Some(u32::from(last_screen)),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        let mut expected = [1; 6];
+        expected[usize::from(last_screen)] = 2;
+        expect_counts(&mut demand, expected).await;
+        let invalid = client
+            .subscribe_events(SubscribeEventsRequest {
+                screen_id: Some(u32::from(last_screen) + 1),
+                ..Default::default()
+            })
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(invalid.code(), tonic::Code::InvalidArgument);
+        expect_counts(&mut demand, expected).await;
+        drop(all);
+        let mut expected = [0; 6];
+        expected[usize::from(last_screen)] = 1;
+        expect_counts(&mut demand, expected).await;
+        drop(scoped);
+        expect_counts(&mut demand, [0; 6]).await;
+        drop(passive);
+        drop(client);
+        cancel.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_event_consumer_releases_demand_without_device_events() {
+        use odyssey_hub_server_interface::SubscribeEventsRequest;
+        use odyssey_hub_server_interface::service_server::Service as _;
+        use tonic::Request;
+
+        let server = server();
+        let mut demand = server.marker_demand.subscribe();
+        let stream = server
+            .subscribe_events(Request::new(SubscribeEventsRequest::default()))
+            .await
+            .unwrap()
+            .into_inner();
+        let task = tokio::spawn(async move {
+            let _stream = stream;
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(*demand.borrow_and_update(), [1; 6]);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(*demand.borrow(), [0; 6]);
     }
 
     #[tokio::test]

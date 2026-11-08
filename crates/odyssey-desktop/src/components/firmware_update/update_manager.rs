@@ -43,7 +43,7 @@ pub(super) struct UpdateClaim {
 
 impl Drop for UpdateClaim {
     fn drop(&mut self) {
-        self.manager.clear_state(&self.uuid);
+        self.manager.release_claim(&self.uuid);
     }
 }
 
@@ -163,16 +163,57 @@ impl FirmwareUpdateManager {
         self.updating.lock().contains(uuid)
     }
 
-    /// The devices being updated, in a stable order.
-    pub(crate) fn get_all_updating(&self) -> Vec<[u8; 6]> {
+    pub(crate) fn get_visible_updates(&self) -> Vec<[u8; 6]> {
         let mut uuids: Vec<_> = self.updating.lock().iter().copied().collect();
+        uuids.extend(self.states.lock().iter().filter_map(|(uuid, state)| {
+            matches!(
+                state,
+                FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete
+            )
+            .then_some(*uuid)
+        }));
         uuids.sort_unstable();
+        uuids.dedup();
         uuids
     }
 
-    fn clear_state(&self, uuid: &[u8; 6]) {
-        self.states.lock().remove(uuid);
-        self.updating.lock().remove(uuid);
+    pub(super) fn dismiss_result(&self, uuid: [u8; 6]) {
+        let updating = self.updating.lock();
+        if updating.contains(&uuid) {
+            return;
+        }
+        let mut states = self.states.lock();
+        if matches!(
+            states.get(&uuid),
+            Some(FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete)
+        ) {
+            states.remove(&uuid);
+            self.bump();
+        }
+    }
+
+    pub(super) fn retry_failed(&self, uuid: [u8; 6]) {
+        let updating = self.updating.lock();
+        if updating.contains(&uuid) {
+            return;
+        }
+        let mut states = self.states.lock();
+        if matches!(states.get(&uuid), Some(FirmwareUpdateState::Failed(_))) {
+            states.remove(&uuid);
+            self.bump();
+        }
+    }
+
+    fn release_claim(&self, uuid: &[u8; 6]) {
+        let mut updating = self.updating.lock();
+        let mut states = self.states.lock();
+        if !matches!(
+            states.get(uuid),
+            Some(FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete)
+        ) {
+            states.remove(uuid);
+        }
+        updating.remove(uuid);
         self.bump();
     }
 }
@@ -180,6 +221,35 @@ impl FirmwareUpdateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retry_preserves_active_transfer_and_resets_only_failure() {
+        let manager = FirmwareUpdateManager::new();
+        let uuid = [3; 6];
+        let claim = manager.try_claim(uuid).unwrap();
+        assert_eq!(manager.get_visible_updates(), vec![uuid]);
+        manager.set_state(uuid, FirmwareUpdateState::Failed("USB lost".into()));
+        manager.retry_failed(uuid);
+        assert!(matches!(
+            manager.get_state(&uuid),
+            FirmwareUpdateState::Failed(_)
+        ));
+        manager.dismiss_result(uuid);
+        assert!(matches!(
+            manager.get_state(&uuid),
+            FirmwareUpdateState::Failed(_)
+        ));
+        drop(claim);
+        assert_eq!(manager.get_visible_updates(), vec![uuid]);
+        manager.retry_failed(uuid);
+        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Idle);
+        assert!(manager.get_visible_updates().is_empty());
+        manager.set_state(uuid, FirmwareUpdateState::Complete);
+        manager.retry_failed(uuid);
+        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Complete);
+        assert_eq!(manager.get_visible_updates(), vec![uuid]);
+        manager.dismiss_result(uuid);
+        assert!(manager.get_visible_updates().is_empty());
+    }
 
     #[test]
     fn stale_availability_cannot_replace_update_progress_or_failure() {

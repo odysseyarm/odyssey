@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AppContext as _, Context, Task, Window};
+use gpui::{Context, Task, Window};
 use odyssey_autocalib::camera::CaptureSettings;
 use odyssey_autocalib::display::{self, DisplayLookup, LookupNote, LookupSource};
 use odyssey_autocalib::session::SessionOptions;
@@ -11,7 +11,6 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::{CameraList, Stage, Wizard};
 use crate::cli::CalibrateArgs;
-use crate::components::screen_picker::MonitorSelection;
 use crate::hub::HubHandle;
 use crate::runtime;
 use crate::ui_state::UiStateWriter;
@@ -22,6 +21,7 @@ use crate::views::calibrate::automatic::settings::SizeField;
 use crate::views::calibrate::automatic::worker::{
     Backend, DEMO_DIAGONAL_IN, Event, Worker, demo_scene,
 };
+use crate::workspace::WorkspaceHandle;
 
 impl Wizard {
     /// Creates the wizard's state, camera thread and event pumps. The
@@ -37,7 +37,7 @@ impl Wizard {
         let args = args.unwrap_or_default();
         let demo = args.demo;
 
-        let monitors = cx.new(MonitorSelection::new);
+        let monitors = cx.global::<WorkspaceHandle>().0.read(cx).monitors.clone();
         let (camera_events, camera_receiver) = unbounded_channel::<Event>();
         let (pattern_loss, pattern_receiver) = unbounded_channel::<PatternEvent>();
         let backend = if demo {

@@ -18,6 +18,7 @@ name = "cs_bindgen"
 path = "src/bin/cs_bindgen.rs"
 
 [dependencies]
+odyssey-common = { path = "../../crates/odyssey-common" }
 odyssey-hub-common = { path = "../../crates/odyssey-hub-common" }
 odyssey-hub-client = { path = "../../crates/odyssey-hub-client" }
 odyssey-hub-server-interface = { path = "../../crates/odyssey-hub-server-interface" }

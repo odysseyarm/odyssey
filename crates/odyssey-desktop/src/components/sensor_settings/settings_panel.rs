@@ -162,7 +162,6 @@ impl SensorSettings {
         &self,
         busy: bool,
         has_invalid: bool,
-        palette: Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let key = &self.key;
@@ -219,16 +218,6 @@ impl SensorSettings {
                     this.send(SettingsOperation::RestoreDefaults);
                 })),
             )
-            .child(status_line(
-                &self.form.status,
-                format!("sensor-details-{key}"),
-                self.details_open,
-                cx.listener(|this, _, _, cx| {
-                    this.details_open = !this.details_open;
-                    cx.notify();
-                }),
-                palette,
-            ))
     }
 
     fn render_general(
@@ -390,21 +379,34 @@ impl Render for SensorSettings {
                 cx.notify();
             }));
 
-        div().mt_2().child(summary).when(self.is_open, |this| {
-            this.child(
-                div()
-                    .mt_2()
-                    .p_3()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .bg(palette.surface_alt)
-                    .rounded(px(RADIUS_SM))
-                    .child(self.render_actions(busy, has_invalid, palette, cx))
-                    .child(self.render_general(&general_issues, show_issues, palette))
-                    .child(self.render_tuning(tunable_sensors, show_issues, palette)),
-            )
-        })
+        div()
+            .mt_2()
+            .child(summary)
+            .when(self.is_open, |this| {
+                this.child(
+                    div()
+                        .mt_2()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .bg(palette.surface_alt)
+                        .rounded(px(RADIUS_SM))
+                        .child(self.render_actions(busy, has_invalid, cx))
+                        .child(self.render_general(&general_issues, show_issues, palette))
+                        .child(self.render_tuning(tunable_sensors, show_issues, palette)),
+                )
+            })
+            .child(status_line(
+                &self.form.status,
+                format!("sensor-details-{}", self.key),
+                self.details_open,
+                cx.listener(|this, _, _, cx| {
+                    this.details_open = !this.details_open;
+                    cx.notify();
+                }),
+                palette,
+            ))
     }
 }
 

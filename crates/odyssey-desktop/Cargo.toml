@@ -28,8 +28,6 @@ tokio-util = { workspace = true }
 image = "0.25.6"
 hex = { workspace = true }
 nalgebra = "0.35"
-btleplug = { workspace = true }
-uuid = { workspace = true }
 dfu-nusb = { workspace = true }
 parking_lot = { workspace = true }
 # The native Save As dialog for the scale board PDFs.

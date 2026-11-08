@@ -23,8 +23,10 @@ mod stream_update;
 mod usb_release;
 mod version;
 
+pub mod accessory;
 pub mod control;
 pub mod image;
+pub mod marker_control;
 pub mod mux;
 pub mod wire;
 

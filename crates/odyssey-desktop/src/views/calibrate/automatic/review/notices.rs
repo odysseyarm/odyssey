@@ -33,12 +33,15 @@ pub(super) fn disagreement_notice(
             .child(
                 div()
                     .mt_0p5()
+                    .flex_shrink_0()
                     .child(icon(Icon::Warning, 24.0, p.warning_ink)),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
+                    .flex_1()
+                    .min_w_0()
                     .gap_1()
                     .child(
                         div()

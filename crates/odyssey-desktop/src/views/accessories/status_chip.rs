@@ -1,4 +1,4 @@
-//! The connected/disconnected pill beside an accessory.
+//! Accessory lifecycle status, including intentional idle marker links.
 
 use std::f32::consts::PI;
 use std::time::Duration;
@@ -7,19 +7,25 @@ use gpui::{
     Animation, AnimationExt as _, ElementId, FontWeight, IntoElement, ParentElement as _,
     Styled as _, div,
 };
+use odyssey_hub_common::accessory::AccessoryConnectionState;
 
 use crate::theme::Palette;
 
 /// A connected accessory pulses its dot, like the stylesheet's `animate-pulse`.
 pub(super) fn status_chip(
     id: impl Into<ElementId>,
-    connected: bool,
+    state: &AccessoryConnectionState,
     p: Palette,
 ) -> impl IntoElement {
-    let (label, bg, ink) = if connected {
-        ("Connected", p.success_soft, p.success_ink)
-    } else {
-        ("Disconnected", p.surface_alt, p.fg_muted)
+    let connected = *state == AccessoryConnectionState::Connected;
+    let (label, bg, ink) = match state {
+        AccessoryConnectionState::Idle => ("Idle", p.surface_alt, p.fg_muted),
+        AccessoryConnectionState::Connecting => ("Connecting", p.info_soft, p.info_ink),
+        AccessoryConnectionState::Connected => ("Connected", p.success_soft, p.success_ink),
+        AccessoryConnectionState::Failed => ("Connection failed", p.danger_soft, p.danger),
+        AccessoryConnectionState::RadioUnavailable => {
+            ("Radio unavailable", p.warning_soft, p.warning_ink)
+        }
     };
     let dot = div()
         .size_2()

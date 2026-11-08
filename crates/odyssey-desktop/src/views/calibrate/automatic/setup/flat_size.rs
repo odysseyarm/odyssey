@@ -78,7 +78,7 @@ pub(super) fn flat_size(
         p,
         div()
             .flex()
-            .flex_wrap()
+            .flex_col()
             .gap_1()
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Before you start:"))
             .child("set the TV to Game or PC mode, or turn on Just Scan, so it doesn't crop the picture."),
@@ -106,7 +106,7 @@ fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
     } else {
         finding.headline().to_string()
     };
-    let mut text = div().flex().flex_col().gap_1().child(
+    let mut text = div().flex_1().min_w_0().flex().flex_col().gap_1().child(
         div()
             .text_lg()
             .font_weight(FontWeight::MEDIUM)
@@ -133,7 +133,7 @@ fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
         .flex()
         .items_start()
         .gap_3()
-        .child(div().mt_0p5().child(icon(glyph, 24.0, ink)))
+        .child(div().flex_shrink_0().mt_0p5().child(icon(glyph, 24.0, ink)))
         .child(text)
 }
 
@@ -157,6 +157,8 @@ fn prefer_camera_toggle(p: Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
         )
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .text_base()

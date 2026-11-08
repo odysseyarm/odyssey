@@ -97,7 +97,7 @@ impl RenderOnce for Button {
             .bg(bg)
             .text_color(fg)
             .font_weight(FontWeight::SEMIBOLD)
-            .child(self.label);
+            .child(div().min_w_0().text_center().child(self.label));
         el = if self.small {
             el.px_3().py_1().text_xs()
         } else {

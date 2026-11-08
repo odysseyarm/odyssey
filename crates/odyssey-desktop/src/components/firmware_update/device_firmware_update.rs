@@ -20,6 +20,7 @@ pub(crate) fn device_firmware_update(
     manifest: Option<&FirmwareManifest>,
     manager: &FirmwareUpdateManager,
     p: Palette,
+    expanded: bool,
 ) -> AnyElement {
     let device_uuid = device.uuid;
     let current_state = manager.get_state(&device_uuid);
@@ -32,6 +33,18 @@ pub(crate) fn device_firmware_update(
     }
 
     let state = manager.get_state(&device_uuid);
+    if !expanded
+        && matches!(state, FirmwareUpdateState::Available { .. })
+        && device
+            .capabilities
+            .contains(odyssey_hub_common::device::DeviceCapabilities::CONTROL)
+    {
+        return div()
+            .text_xs()
+            .text_color(p.accent_ink)
+            .child("Firmware update available — open Advanced device details to manage.")
+            .into_any_element();
+    }
     match &state {
         FirmwareUpdateState::Idle => div().into_any_element(),
         FirmwareUpdateState::NeedsUsbConnection { current, available } => div()
@@ -92,24 +105,46 @@ pub(crate) fn device_firmware_update(
             .text_color(p.accent_ink)
             .child(state.status_text())
             .into_any_element(),
-        FirmwareUpdateState::Complete => div()
-            .text_xs()
-            .text_color(p.success_ink)
-            .child(state.status_text())
-            .into_any_element(),
-        FirmwareUpdateState::Failed(error) => div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .text_xs()
-            .text_color(p.danger_ink)
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(state.status_text()),
-            )
-            .child(error.clone())
-            .into_any_element(),
+        FirmwareUpdateState::Complete => {
+            let manager = manager.clone();
+            div()
+                .text_xs()
+                .text_color(p.success_ink)
+                .child(state.status_text())
+                .child(
+                    ui::button(
+                        gpui::SharedString::from(format!(
+                            "ack-firmware-{}",
+                            hex::encode(device_uuid)
+                        )),
+                        "Done",
+                        ui::ButtonKind::Secondary,
+                        p,
+                    )
+                    .small()
+                    .on_click(move |_, _, _| manager.dismiss_result(device_uuid)),
+                )
+                .into_any_element()
+        }
+        FirmwareUpdateState::Failed(error) => {
+            let manager = manager.clone();
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_xs()
+                .text_color(p.danger_ink)
+                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(state.status_text()))
+                .child(error.clone())
+                .child("Reconnect USB and check power. If the tracker remains in recovery mode, retry the firmware update.")
+                .child(ui::button(
+                    gpui::SharedString::from(format!("retry-firmware-{}", hex::encode(device_uuid))),
+                    "Check update again",
+                    ui::ButtonKind::Secondary,
+                    p,
+                ).small().on_click(move |_, _, _| manager.retry_failed(device_uuid)))
+                .into_any_element()
+        }
     }
 }
 

@@ -144,6 +144,8 @@ impl Render for CalibrateAutomaticView {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
             .size_full()
+            .flex()
+            .flex_col()
             .bg(p.canvas)
             .overflow_y_scroll()
             .child(
@@ -153,6 +155,7 @@ impl Render for CalibrateAutomaticView {
                     .max_w(px(768.0))
                     .flex()
                     .flex_col()
+                    .flex_shrink_0()
                     .gap_6()
                     .px_6()
                     .py_6()
@@ -238,7 +241,7 @@ fn header(p: Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
         .gap_4()
         .child(title)
         .child(
-            button("exit", "Exit", ButtonKind::Ghost, p)
+            button("exit", "Back to setup", ButtonKind::Ghost, p)
                 .small()
                 .on_click(super::ui::act(wizard, |w, cx| w.exit(cx))),
         )

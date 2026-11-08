@@ -6,6 +6,24 @@
 After connecting, your app subscribes to one stream of events from the hub.
 Each event says which device it is about and what happened.
 
+An active subscription also requests automatic marker illumination. The existing
+`subscribe_events()` API requests all six screens so clients can track across
+screens without changing their calls. Only registered marker boards assigned to
+those screens receive demand; unassigned boards stay off.
+
+Rust clients can use `subscribe_events_for_screen(screen_id)` for one screen
+(`0..=5`), or `subscribe_events_passive()` to observe events without illuminating
+markers. These methods change illumination demand, **not event filtering**:
+all event types and screen IDs still arrive, so filter payloads when needed.
+The desktop uses a passive background stream and a screen-scoped stream while
+zeroing.
+
+Demand lasts for the returned stream's lifetime, even before the first tracking
+event. Dropping the last active stream for a screen removes its demand; another
+client's stream can keep it on. The hub renews the firmware's six-second lease
+every two seconds. Disconnect or lease expiry switches Auto outputs off; the
+board's manual On mode overrides automatic demand.
+
 ## Tracking event
 
 Sent continuously, many times a second, for each device that can see a

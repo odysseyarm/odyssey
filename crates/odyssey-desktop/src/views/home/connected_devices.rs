@@ -6,14 +6,25 @@ use gpui::{
 };
 
 use super::{HomeEvent, HomeView};
-use crate::components::firmware_update::updating_device_row;
+use crate::components::firmware_update::{dongle_update_card, updating_device_row};
 use crate::components::ui;
 use crate::theme::Palette;
 
 impl HomeView {
+    /// One card per dongle running firmware older than the manifest's newest.
+    pub(super) fn dongle_updates(&self, p: Palette, cx: &Context<'_, Self>) -> Vec<AnyElement> {
+        let manifest = self.manifest.read(cx).manifest.clone();
+        self.hub
+            .read(cx)
+            .dongles
+            .iter()
+            .filter_map(|dongle| dongle_update_card(dongle, manifest.as_ref(), p))
+            .collect()
+    }
+
     pub(super) fn connected_devices(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let devices = self.hub.read(cx).devices.clone();
-        let updating = self.manager.get_all_updating();
+        let updating = self.manager.get_visible_updates();
         if devices.is_empty() && updating.is_empty() {
             return ui::card(p)
                 .gap_1()
@@ -59,7 +70,7 @@ impl HomeView {
             list = list.child(updating_device_row(*uuid, &self.manager, p));
         }
         ui::card(p)
-            .child(div().mb_3().child(ui::card_title(p, "Connected Devices")))
+            .child(div().mb_3().child(ui::card_title(p, "Device details")))
             .child(list)
             .into_any_element()
     }

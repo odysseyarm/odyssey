@@ -256,9 +256,16 @@ fn prompt(p: Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> 
                 .flex()
                 .items_start()
                 .gap_3()
-                .child(div().mt_0p5().child(icon(Icon::Bulb, 24.0, p.info_ink)))
                 .child(
                     div()
+                        .flex_shrink_0()
+                        .mt_0p5()
+                        .child(icon(Icon::Bulb, 24.0, p.info_ink)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .gap_1()

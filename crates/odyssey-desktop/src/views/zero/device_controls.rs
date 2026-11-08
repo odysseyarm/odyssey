@@ -1,84 +1,37 @@
-//! One device's row in the sidebar: what to zero on, and the zero and shot
-//! delay controls.
-
 use gpui::component::input::{InputEvent, InputState};
 use gpui::{
-    AppContext as _, Context, Div, ElementId, Entity, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Window, div,
 };
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;
+use odyssey_hub_common::events::TrackingEvent;
+use tokio_util::sync::CancellationToken;
 
-use super::device_state::DeviceState;
+use super::device_state::{DeviceState, Failure, Operation};
+use crate::components::ui::{AlertKind, ButtonKind, alert, button};
 use crate::hub::Hub;
 use crate::runtime;
-use crate::theme::{Palette, palette};
-
-/// How a [`pill`] button is tinted.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Tone {
-    Plain,
-    Success,
-    Danger,
-}
-
-/// The sidebar's small secondary button (`btn btn-secondary btn-sm`). The
-/// caller attaches the click handler and ignores clicks while `disabled`.
-pub(super) fn pill(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    tone: Tone,
-    disabled: bool,
-    p: Palette,
-) -> Stateful<Div> {
-    let (ink, border): (_, Hsla) = match tone {
-        Tone::Plain => (p.fg, p.line_strong.into()),
-        Tone::Success => (p.success_ink, Hsla::from(p.success).opacity(0.4)),
-        Tone::Danger => (p.danger_ink, p.line_strong.into()),
-    };
-    let hover_border: Hsla = if tone == Tone::Danger {
-        p.danger_ink.into()
-    } else {
-        border
-    };
-    let pill = div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
-        .flex_shrink_0()
-        .rounded_full()
-        .border_1()
-        .border_color(border)
-        .bg(p.surface)
-        .text_color(ink)
-        .px_3()
-        .py_1()
-        .text_xs()
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(label.into());
-    if disabled {
-        return pill.opacity(0.5);
-    }
-    pill.cursor_pointer()
-        .hover(move |style| style.bg(p.surface_hover).border_color(hover_border))
-}
+use crate::theme::palette;
+use crate::workspace::{Workspace, WorkspaceHandle};
 
 pub(super) struct DeviceControls {
     pub(super) device: Device,
     pub(super) hub: Entity<Hub>,
+    workspace: Entity<Workspace>,
     pub(super) state: DeviceState,
+    pub(super) ready: bool,
+    pub(super) connected: bool,
     pub(super) shot_delay_input: Entity<InputState>,
-    /// The `DeviceState` shot-delay revision the input text last showed.
     pub(super) shown_revision: u64,
-    /// A shot-delay command is in flight; the controls wait for it.
     pub(super) pending: bool,
-    pub(super) saving: bool,
-    /// Clears the save status after a pause. A new status replaces the task,
-    /// so an earlier timer can never clear a newer result too early.
-    pub(super) save_status_timer: Option<Task<()>>,
-    _input_events: Subscription,
+    pub(super) delay_loaded: bool,
+    pub(super) delay_error: Option<String>,
+    pub(super) delay_notice: Option<&'static str>,
+    advanced: bool,
+    confirmation: Option<Operation>,
+    pub(super) disconnected: CancellationToken,
+    input_events: Subscription,
 }
 
 impl DeviceControls {
@@ -88,74 +41,159 @@ impl DeviceControls {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let state = DeviceState::default();
-        let shot_delay_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(state.shot_delay_ms().to_string())
-                .validate(|typed, _| typed.chars().all(|c| c.is_ascii_digit()))
-        });
-        let input_events = cx.subscribe_in(
-            &shot_delay_input,
-            window,
-            |controls, _, event, window, cx| {
-                if matches!(event, InputEvent::Change) {
-                    controls.shot_delay_typed(window, cx);
-                }
-            },
-        );
-        Self {
+        let workspace = cx.global::<WorkspaceHandle>().0.clone();
+        let state = DeviceState::new(workspace.read(cx).alignment(&device.uuid));
+        let (shot_delay_input, input_events) = Self::bind_input(state.shot_delay_ms(), window, cx);
+        let mut controls = Self {
             device,
             hub,
+            workspace,
             shown_revision: state.shot_delay_revision(),
             state,
+            ready: false,
+            connected: true,
             shot_delay_input,
             pending: false,
-            saving: false,
-            save_status_timer: None,
-            _input_events: input_events,
+            delay_loaded: false,
+            delay_error: None,
+            delay_notice: None,
+            advanced: false,
+            confirmation: None,
+            disconnected: CancellationToken::new(),
+            input_events,
+        };
+        controls.load_shot_delay(cx);
+        controls
+    }
+
+    fn bind_input(
+        delay_ms: u16,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<InputState>, Subscription) {
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(delay_ms.to_string())
+                .validate(|typed, _| typed.chars().all(|c| c.is_ascii_digit()))
+        });
+        let events = cx.subscribe_in(&input, window, |controls, _, event, window, cx| {
+            if matches!(event, InputEvent::Change) {
+                controls.shot_delay_typed(window, cx);
+            }
+        });
+        (input, events)
+    }
+
+    pub(super) fn rebind_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (input, events) = Self::bind_input(self.state.shot_delay_ms(), window, cx);
+        self.shot_delay_input = input;
+        self.input_events = events;
+        self.shown_revision = self.state.shot_delay_revision();
+        self.ready = false;
+        self.state.cancel("Waiting for shot cancelled.");
+        self.confirmation = None;
+        if self.connected {
+            self.load_shot_delay(cx);
         }
     }
 
-    pub(super) fn set_device(&mut self, device: Device) {
-        self.device = device;
+    pub(super) fn sync_connection(&mut self, device: Option<Device>, cx: &mut Context<Self>) {
+        let connected = device.is_some();
+        if let Some(device) = device {
+            self.device = device;
+        }
+        if self.connected != connected {
+            self.connected = connected;
+            self.ready = false;
+            self.state
+                .cancel("Tracker disconnected. Waiting for shot cancelled.");
+            if !connected {
+                self.disconnected.cancel();
+                self.delay_loaded = false;
+                self.delay_error =
+                    Some("Tracker disconnected. Reload shot delay after reconnecting.".to_owned());
+            } else {
+                self.disconnected = CancellationToken::new();
+                self.load_shot_delay(cx);
+            }
+            cx.notify();
+        }
     }
 
-    /// The connected client, or a logged warning that the hub is unreachable.
-    pub(super) fn client(&self, action: &str, cx: &gpui::App) -> Option<Client> {
-        let client = self.hub.read(cx).client();
+    pub(super) fn client(&mut self, cx: &mut Context<Self>) -> Option<Client> {
+        let client = self.hub.read(cx).client().filter(|_| self.connected);
         if client.is_none() {
-            tracing::warn!(
-                "Failed to {action} {:x?}: not connected to the hub",
-                self.device.uuid
-            );
+            self.state.error = Some("Tracker or hub disconnected. Reconnect and retry.".to_owned());
+            cx.notify();
         }
         client
     }
 
-    fn reset_zero(&self, cx: &gpui::App) {
-        let Some(client) = self.client("reset zero", cx) else {
+    pub(super) fn start_operation(
+        &mut self,
+        operation: Operation,
+        sample: Option<TrackingEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending || self.state.pending.is_some() || !self.connected {
+            return;
+        }
+        if operation == Operation::Apply && !self.ready {
+            return;
+        }
+        let Some(client) = self.client(cx) else {
             return;
         };
-        let device = self.device.clone();
-        runtime::spawn(async move {
-            match client.device(device.clone()).reset_zero().await {
-                Ok(()) => tracing::info!("Cleared zero for {:x?}", device.uuid),
-                Err(e) => tracing::error!("Failed to reset zero {:x?}: {}", device.uuid, e),
-            }
-        });
+        if !self.state.begin(operation) {
+            return;
+        }
+        self.confirmation = None;
+        cx.notify();
+        let reply = runtime::spawn(super::zeroing::run_operation(
+            client,
+            self.device.clone(),
+            operation,
+            sample,
+            self.disconnected.clone(),
+        ));
+        // Keep acknowledgement handling alive even if the user explicitly leaves mid-operation.
+        let controls = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let result = reply.await.unwrap_or_else(|error| {
+                Err(Failure {
+                    message: format!("Operation stopped: {error}. Result unknown; retry."),
+                    unknown: true,
+                })
+            });
+            controls.update(cx, |controls, cx| {
+                let update_alignment =
+                    result.is_ok() || result.as_ref().is_err_and(|failure| failure.unknown);
+                controls.state.finish(operation, result);
+                if update_alignment {
+                    controls.workspace.update(cx, |workspace, cx| {
+                        workspace.set_alignment(controls.device.uuid, controls.state.alignment, cx);
+                    });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
-    fn clear_zero(&self, cx: &gpui::App) {
-        let Some(client) = self.client("clear zero", cx) else {
-            return;
-        };
-        let device = self.device.clone();
-        runtime::spawn(async move {
-            match client.device(device.clone()).clear_zero().await {
-                Ok(()) => tracing::info!("Cleared zero for {:x?}", device.uuid),
-                Err(e) => tracing::error!("Failed to clear zero {:x?}: {}", device.uuid, e),
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        match self.state.retry {
+            Some(Operation::Apply) => {
+                self.state.error = None;
+                self.state.retry = None;
+                self.state.notice = Some("Aim at the center, then press Z to capture again.");
             }
-        });
+            Some(operation @ (Operation::Reset | Operation::Clear)) => {
+                self.confirmation = Some(operation);
+            }
+            Some(Operation::Save) => self.start_operation(Operation::Save, None, cx),
+            None => {}
+        }
+        cx.notify();
     }
 }
 
@@ -163,71 +201,114 @@ impl Render for DeviceControls {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         self.show_shot_delay(window, cx);
-        let id = cx.entity_id();
-        let firing = self.state.shooting;
-        let zeroing_on_key = self.state.zeroing_on_key;
-
-        let shot_button = if firing {
-            pill(("zero-cancel-shot", id), "Cancel", Tone::Danger, false, p)
-        } else {
-            pill(("zero-on-shot", id), "Zero on shot", Tone::Plain, false, p)
+        let busy = self.pending || self.state.pending.is_some();
+        let mut body = div().flex().flex_col().gap_3();
+        if let Some(operation) = self.state.pending {
+            body = body.child(alert(AlertKind::Info, p, div().child(operation.label())));
         }
-        .on_click(cx.listener(move |controls, _, _, cx| {
-            controls.state.shooting = !firing;
-            cx.notify();
-        }));
-        let key_button = pill(
-            ("zero-on-key", id),
-            if zeroing_on_key {
-                "Cancel [Z]"
+        if self.state.unsaved {
+            body = body.child(alert(AlertKind::Warning, p, div().child(if self.state.unknown {
+                "Alignment result unknown. Do not trust the previous saved state. Capture again before saving."
             } else {
-                "Zero on [Z]"
-            },
-            if zeroing_on_key {
-                Tone::Danger
-            } else {
-                Tone::Plain
-            },
-            false,
-            p,
-        )
-        .on_click(cx.listener(|controls, _, _, cx| {
-            controls.state.zeroing_on_key = !controls.state.zeroing_on_key;
-            cx.notify();
-        }));
-        let reset_button = pill(("zero-reset", id), "Reset Zero", Tone::Plain, false, p)
-            .on_click(cx.listener(|controls, _, _, cx| controls.reset_zero(cx)));
-        let clear_button = pill(("zero-clear", id), "Clear Zero", Tone::Plain, false, p)
-            .on_click(cx.listener(|controls, _, _, cx| controls.clear_zero(cx)));
-
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_color(p.fg_strong)
-                    .child(crate::views::device_label(&self.device)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_3()
-                            .flex_wrap()
-                            .child(shot_button)
-                            .child(key_button)
-                            .child(reset_button)
-                            .child(clear_button)
-                            .child(self.save_zero_button(p, cx)),
+                "Active alignment changed, not saved. Leaving will not persist this change."
+            })));
+            body = body.child(
+                button("zero-save", "Save zero", ButtonKind::Primary, p)
+                    .disabled(busy || !self.connected || self.state.unknown || self.state.armed)
+                    .on_click(cx.listener(|controls, _, _, cx| {
+                        controls.start_operation(Operation::Save, None, cx);
+                    })),
+            );
+        }
+        if let Some(notice) = self.state.notice {
+            body = body.child(div().text_sm().text_color(p.fg_muted).child(notice));
+        }
+        if self.state.armed {
+            body = body.child(alert(AlertKind::Info, p, div().child("Waiting for this tracker's next shot. Z captures now; Escape cancels waiting.")))
+                .child(button("zero-cancel-shot", "Cancel waiting", ButtonKind::Secondary, p)
+                    .on_click(cx.listener(|controls, _, _, cx| {
+                        controls.state.cancel("Waiting for shot cancelled. No zero captured.");
+                        cx.notify();
+                    })));
+        }
+        if let Some(error) = &self.state.error {
+            let mut content = div().flex().flex_col().gap_2().child(error.clone());
+            if self.state.retry.is_some() {
+                content = content.child(
+                    button("zero-retry", "Retry", ButtonKind::Secondary, p)
+                        .small()
+                        .disabled(busy || !self.connected)
+                        .on_click(cx.listener(|controls, _, _, cx| controls.retry(cx))),
+                );
+            }
+            body = body.child(alert(AlertKind::Danger, p, content));
+        }
+        if let Some(error) = &self.delay_error {
+            body = body.child(alert(
+                AlertKind::Danger,
+                p,
+                div().flex().flex_col().gap_2().child(error.clone()).child(
+                    button(
+                        "zero-reload-delay",
+                        "Reload shot delay",
+                        ButtonKind::Secondary,
+                        p,
                     )
-                    .child(self.shot_delay_row(p, cx)),
+                    .small()
+                    .disabled(busy || !self.connected)
+                    .on_click(cx.listener(|controls, _, _, cx| controls.load_shot_delay(cx))),
+                ),
+            ));
+        }
+        body = body.child(
+            button(
+                "zero-advanced",
+                if self.advanced {
+                    "Hide Advanced"
+                } else {
+                    "Advanced"
+                },
+                ButtonKind::Ghost,
+                p,
             )
+            .small()
+            .on_click(cx.listener(|controls, _, _, cx| {
+                controls.advanced = !controls.advanced;
+                controls.confirmation = None;
+                cx.notify();
+            })),
+        );
+        if self.advanced {
+            body = body.child(div().text_sm().text_color(p.fg_muted).child("Optional shot capture: arm only this tracker, then aim and fire. Never captures automatically from a steady pose."))
+                .child(button("zero-arm-shot", "Zero on next shot", ButtonKind::Secondary, p)
+                    .disabled(busy || !self.ready || self.state.armed)
+                    .on_click(cx.listener(|controls, _, _, cx| {
+                        controls.state.arm(controls.ready);
+                        cx.notify();
+                    })))
+                .child(div().text_sm().text_color(p.fg_muted).child("Shot delay shifts capture backward from the shot timestamp (or newest sample for Z). Set changes active delay; Save sets then persists it; Reset restores the service default without saving."))
+                .child(self.shot_delay_row(p, cx))
+                .child(div().text_sm().text_color(p.fg_muted).child("Reset zero and Clear zero both remove this tracker's active offset in Odyssey. Neither persists removal until Save zero. Stored tracker firmware settings are unchanged."))
+                .child(div().flex().flex_wrap().gap_2()
+                    .child(button("zero-reset", "Reset zero…", ButtonKind::Secondary, p).small()
+                        .disabled(busy || !self.connected || self.state.armed)
+                        .on_click(cx.listener(|controls, _, _, cx| { controls.confirmation = Some(Operation::Reset); cx.notify(); })))
+                    .child(button("zero-clear", "Clear zero…", ButtonKind::Secondary, p).small()
+                        .disabled(busy || !self.connected || self.state.armed)
+                        .on_click(cx.listener(|controls, _, _, cx| { controls.confirmation = Some(Operation::Clear); cx.notify(); }))));
+            if let Some(notice) = self.delay_notice {
+                body = body.child(div().text_sm().text_color(p.fg_muted).child(notice));
+            }
+            if let Some(operation) = self.confirmation {
+                body = body.child(alert(AlertKind::Warning, p, div().flex().flex_col().gap_2()
+                    .child("Remove active zero for this tracker? Check alignment again after removal. Existing saved zero remains until you save removal.")
+                    .child(button("zero-confirm-remove", "Remove active zero", ButtonKind::Danger, p).small()
+                        .disabled(busy || !self.connected)
+                        .on_click(cx.listener(move |controls, _, _, cx| controls.start_operation(operation, None, cx))))
+                    .child(button("zero-cancel-remove", "Keep zero", ButtonKind::Secondary, p).small()
+                        .on_click(cx.listener(|controls, _, _, cx| { controls.confirmation = None; cx.notify(); })))));
+            }
+        }
+        body
     }
 }

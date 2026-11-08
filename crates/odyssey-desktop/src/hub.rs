@@ -9,6 +9,7 @@ use futures::{Stream, StreamExt as _, stream};
 use futures_concurrency::stream::Merge as _;
 use gpui::{Context, Entity, Global};
 use odyssey_hub_client::client::{Client, DongleInfo, RpcError};
+use odyssey_hub_common::accessory::AccessoryRadioInfo;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events as oe;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -19,7 +20,6 @@ use crate::runtime;
 /// or a connection attempt fails.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
-const TRACKING_CHANNEL_CAPACITY: usize = 128;
 const IMPACT_CHANNEL_CAPACITY: usize = 64;
 const PAIRING_CHANNEL_CAPACITY: usize = 16;
 
@@ -30,9 +30,10 @@ pub(crate) struct Hub {
     pub client: Option<Client>,
     pub devices: Vec<Device>,
     pub dongles: Vec<DongleInfo>,
+    pub accessory_radios: Vec<AccessoryRadioInfo>,
+    pub accessory_radio_error: Option<String>,
     /// Most recent battery state (percent, charging) per device UUID.
     pub battery_states: HashMap<[u8; 6], (u8, bool)>,
-    tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
     /// One-shot results a row has to observe exactly once.
     pairing_events: broadcast::Sender<oe::Event>,
@@ -44,11 +45,12 @@ pub(crate) struct HubHandle(pub Entity<Hub>);
 
 impl Global for HubHandle {}
 
-/// One of the three server-side streams the hub follows.
+/// Server-side streams the hub follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StreamKind {
     DeviceList,
     DongleList,
+    AccessoryRadios,
     Events,
 }
 
@@ -57,6 +59,7 @@ impl fmt::Display for StreamKind {
         formatter.write_str(match self {
             Self::DeviceList => "device list",
             Self::DongleList => "dongle list",
+            Self::AccessoryRadios => "accessory radios",
             Self::Events => "event",
         })
     }
@@ -73,6 +76,7 @@ impl fmt::Display for StreamKind {
 enum HubUpdate {
     Devices(Result<Vec<Device>, RpcError>),
     Dongles(Result<Vec<DongleInfo>, RpcError>),
+    AccessoryRadios(Result<Vec<AccessoryRadioInfo>, RpcError>),
     Event(Result<oe::Event, RpcError>),
     /// A stream ran dry. `Merge` keeps polling the others after one ends, so
     /// the end has to be an item of its own for the session to notice it.
@@ -100,8 +104,10 @@ struct Subscriptions<Updates> {
 /// What the tokio side tells the model.
 enum Change {
     Connected(Client),
+    Disconnected,
     Devices(Vec<Device>),
     Dongles(Vec<DongleInfo>),
+    AccessoryRadios(Vec<AccessoryRadioInfo>),
     /// The only device event that changes model state; the rest go over the
     /// broadcast channels so the UI is not woken at IMU rate.
     Battery {
@@ -122,16 +128,22 @@ fn tagged<Item>(
         .chain(stream::once(std::future::ready(HubUpdate::Closed(kind))))
 }
 
-/// Interleaves the three server streams into one. All items already share the
+/// Interleaves server streams into one. All items already share the
 /// [`HubUpdate`] type, so the differently-typed streams need no boxing.
 fn merged_updates(
     devices: impl Stream<Item = Result<Vec<Device>, RpcError>>,
     dongles: impl Stream<Item = Result<Vec<DongleInfo>, RpcError>>,
+    radios: impl Stream<Item = Result<Vec<AccessoryRadioInfo>, RpcError>>,
     events: impl Stream<Item = Result<oe::Event, RpcError>>,
 ) -> impl Stream<Item = HubUpdate> {
     (
         tagged(devices, StreamKind::DeviceList, HubUpdate::Devices),
         tagged(dongles, StreamKind::DongleList, HubUpdate::Dongles),
+        tagged(
+            radios,
+            StreamKind::AccessoryRadios,
+            HubUpdate::AccessoryRadios,
+        ),
         tagged(events, StreamKind::Events, HubUpdate::Event),
     )
         .merge()
@@ -154,8 +166,12 @@ async fn connect() -> eros::Result<(Client, Subscriptions<impl Stream<Item = Hub
         client.subscribe_dongle_list().await,
         "Failed to subscribe to dongle list",
     )?;
+    let radios = eros::Context::context(
+        client.subscribe_accessory_radios().await,
+        "Failed to subscribe to accessory radios",
+    )?;
     let events = eros::Context::context(
-        client.subscribe_events().await,
+        client.subscribe_events_passive().await,
         "Failed to subscribe to events",
     )?;
 
@@ -163,7 +179,7 @@ async fn connect() -> eros::Result<(Client, Subscriptions<impl Stream<Item = Hub
         client,
         Subscriptions {
             initial_devices,
-            updates: merged_updates(devices, dongles, events),
+            updates: merged_updates(devices, dongles, radios, events),
         },
     ))
 }
@@ -184,7 +200,6 @@ fn is_pairing_result(event: &oe::Event) -> bool {
 #[derive(Clone)]
 struct Follower {
     changes: mpsc::UnboundedSender<Change>,
-    tracking_events: broadcast::Sender<(Device, oe::TrackingEvent)>,
     impact_events: broadcast::Sender<(Device, oe::ImpactEvent)>,
     pairing_events: broadcast::Sender<oe::Event>,
 }
@@ -228,7 +243,9 @@ impl Follower {
         // Publish only once connected, so readers never see a half-dialled
         // client.
         let _ = self.changes.send(Change::Connected(client));
-        Err(LinkDown::Session(self.run_session(subscriptions).await))
+        let end = self.run_session(subscriptions).await;
+        let _ = self.changes.send(Change::Disconnected);
+        Err(LinkDown::Session(end))
     }
 
     /// Applies updates until any stream fails or ends; the stale half of a
@@ -252,12 +269,18 @@ impl Follower {
                     tracing::debug!("Dongle list update: {} dongles", list.len());
                     let _ = self.changes.send(Change::Dongles(list));
                 }
+                HubUpdate::AccessoryRadios(Ok(list)) => {
+                    let _ = self.changes.send(Change::AccessoryRadios(list));
+                }
                 HubUpdate::Event(Ok(event)) => self.handle_event(event),
                 HubUpdate::Devices(Err(error)) => {
                     return SessionEnd::StreamFailed(StreamKind::DeviceList, error);
                 }
                 HubUpdate::Dongles(Err(error)) => {
                     return SessionEnd::StreamFailed(StreamKind::DongleList, error);
+                }
+                HubUpdate::AccessoryRadios(Err(error)) => {
+                    return SessionEnd::StreamFailed(StreamKind::AccessoryRadios, error);
                 }
                 HubUpdate::Event(Err(error)) => {
                     return SessionEnd::StreamFailed(StreamKind::Events, error);
@@ -273,13 +296,7 @@ impl Follower {
         tracing::trace!("Hub event: {:?}", event);
         if let oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) = &event {
             match kind {
-                oe::DeviceEventKind::TrackingEvent(tracking) => {
-                    // No subscribers is the normal case outside the zero view.
-                    // Tracking never reaches the model: it would wake the UI at
-                    // the camera frame rate.
-                    let _ = self.tracking_events.send((device.clone(), *tracking));
-                    return;
-                }
+                oe::DeviceEventKind::TrackingEvent(_) => return,
                 oe::DeviceEventKind::ImpactEvent(impact) => {
                     let _ = self.impact_events.send((device.clone(), *impact));
                 }
@@ -307,14 +324,12 @@ impl Hub {
     /// Creates the model and starts following the server once `server_ready`
     /// turns true. The follower task ends when the model is dropped.
     pub(crate) fn new(server_ready: watch::Receiver<bool>, cx: &mut Context<Self>) -> Self {
-        let (tracking_events, _) = broadcast::channel(TRACKING_CHANNEL_CAPACITY);
         let (impact_events, _) = broadcast::channel(IMPACT_CHANNEL_CAPACITY);
         let (pairing_events, _) = broadcast::channel(PAIRING_CHANNEL_CAPACITY);
         let (changes, mut receiver) = mpsc::unbounded_channel();
 
         let follower = Follower {
             changes,
-            tracking_events: tracking_events.clone(),
             impact_events: impact_events.clone(),
             pairing_events: pairing_events.clone(),
         };
@@ -336,8 +351,9 @@ impl Hub {
             client: None,
             devices: Vec::new(),
             dongles: Vec::new(),
+            accessory_radios: Vec::new(),
+            accessory_radio_error: None,
             battery_states: HashMap::new(),
-            tracking_events,
             impact_events,
             pairing_events,
         }
@@ -346,8 +362,18 @@ impl Hub {
     fn apply(&mut self, change: Change, cx: &mut Context<Self>) {
         match change {
             Change::Connected(client) => self.client = Some(client),
+            Change::Disconnected => {
+                self.client = None;
+                self.accessory_radios.clear();
+                self.accessory_radio_error =
+                    Some("Hub disconnected; radio status is unavailable.".into());
+            }
             Change::Devices(list) => self.devices = list,
             Change::Dongles(list) => self.dongles = list,
+            Change::AccessoryRadios(list) => {
+                self.accessory_radios = list;
+                self.accessory_radio_error = None;
+            }
             Change::Battery {
                 uuid,
                 percent,
@@ -365,10 +391,6 @@ impl Hub {
     /// The connected client, or `None` before the hub server first answers.
     pub(crate) fn client(&self) -> Option<Client> {
         self.client.clone()
-    }
-
-    pub(crate) fn subscribe_tracking(&self) -> broadcast::Receiver<(Device, oe::TrackingEvent)> {
-        self.tracking_events.subscribe()
     }
 
     pub(crate) fn subscribe_impact(&self) -> broadcast::Receiver<(Device, oe::ImpactEvent)> {
@@ -400,9 +422,10 @@ mod tests {
     async fn ended_stream_is_reported_while_others_stay_open() {
         let devices = stream::iter([Ok::<Vec<Device>, RpcError>(Vec::new())]);
         let dongles = stream::pending::<Result<Vec<DongleInfo>, RpcError>>();
+        let radios = stream::pending::<Result<Vec<AccessoryRadioInfo>, RpcError>>();
         let events = stream::pending::<Result<oe::Event, RpcError>>();
 
-        let updates: Vec<HubUpdate> = merged_updates(devices, dongles, events)
+        let updates: Vec<HubUpdate> = merged_updates(devices, dongles, radios, events)
             .take(2)
             .collect()
             .await;

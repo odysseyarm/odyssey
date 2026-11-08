@@ -7,7 +7,7 @@ pub type Uuid = [u8; 6];
 /// [`MuxMsg::ReadVersionResponse`]. Bump it when the mux messages change
 /// shape; it moves independently of the crate version and of
 /// [`crate::DEVICE_PROTOCOL`].
-pub const MUX_PROTOCOL: [u16; 3] = [0, 2, 0];
+pub const MUX_PROTOCOL: [u16; 3] = [0, 4, 0];
 
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -23,6 +23,9 @@ pub enum MuxMsg {
     /// connects or disconnects.
     SubscribeDeviceList(),
     UnsubscribeDeviceList(),
+    AccessoryRequest(crate::accessory::Request),
+    AccessoryCompletion(crate::accessory::Completion),
+    AccessoryEvent(crate::accessory::Event),
 }
 
 #[repr(C)]

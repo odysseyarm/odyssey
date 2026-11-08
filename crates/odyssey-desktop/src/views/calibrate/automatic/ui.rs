@@ -59,6 +59,7 @@ pub(super) fn step_page(
     div()
         .flex()
         .flex_col()
+        .flex_shrink_0()
         .gap_5()
         .child(head)
         .children(content)
@@ -233,8 +234,13 @@ pub(super) fn info_note(p: Palette, body: Div) -> AnyElement {
             .items_start()
             .gap_3()
             .text_base()
-            .child(div().mt_0p5().child(icon(Icon::Bulb, 24.0, p.info_ink)))
-            .child(body),
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .mt_0p5()
+                    .child(icon(Icon::Bulb, 24.0, p.info_ink)),
+            )
+            .child(body.flex_1().min_w_0()),
     )
     .into_any_element()
 }

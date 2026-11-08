@@ -78,5 +78,20 @@ pub(crate) fn updating_device_row(
                 total / BYTES_PER_KB
             )));
     }
+    if is_error || is_complete {
+        let manager = manager.clone();
+        row = row
+            .child(div().text_xs().text_color(p.fg_muted).child(if is_error {
+                "Reconnect the tracker over USB to retry. Recovery remains available when it reappears."
+            } else {
+                "Update finished. Reconnect the tracker if it has not returned automatically."
+            }))
+            .child(ui::button(
+                gpui::SharedString::from(format!("dismiss-update-{}", hex::encode(uuid))),
+                "Dismiss result",
+                ui::ButtonKind::Secondary,
+                p,
+            ).small().on_click(move |_, _, _| manager.dismiss_result(uuid)));
+    }
     row.into_any_element()
 }

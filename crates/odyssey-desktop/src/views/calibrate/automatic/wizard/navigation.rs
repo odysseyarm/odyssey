@@ -58,20 +58,22 @@ impl Wizard {
         self.back_to_setup(cx);
     }
 
-    /// Leaves the wizard: the camera stops and the wizard's window closes.
+    /// Returns to the workspace after any unfinished measurement is confirmed.
     pub(crate) fn exit(&mut self, cx: &mut Context<Self>) {
-        self.release_hardware(cx);
-        let host = self.host;
-        // Deferred: this runs inside an update of the window being removed.
-        cx.defer(move |cx| {
-            host.update(cx, |_, window, _| window.remove_window()).ok();
-        });
+        cx.defer(crate::shell::finish_calibration);
     }
 
-    /// Zero lives on Home, in the main window: close the wizard and show it.
     pub(crate) fn go_home(&mut self, cx: &mut Context<Self>) {
-        self.exit(cx);
-        cx.defer(crate::shell::show_home);
+        if self.stage != Stage::Saved || self.saving {
+            return;
+        }
+        let monitor = self.monitors.read(cx).selected_key();
+        cx.defer(move |cx| {
+            crate::shell::show_home(cx);
+            if let Some(monitor) = monitor {
+                crate::views::zero::open(monitor, cx);
+            }
+        });
     }
 
     pub(super) fn problem(&mut self, failure: Failure, cx: &mut Context<Self>) {

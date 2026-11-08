@@ -195,9 +195,107 @@ impl Client {
         }))
     }
 
-    /// Streams hub events until the peer closes or the stream is dropped.
+    pub async fn get_accessory_radios(
+        &self,
+    ) -> Result<Vec<common::accessory::AccessoryRadioInfo>, ClientError> {
+        let reply = self
+            .rpc
+            .clone()
+            .get_accessory_radios(proto::EmptyRequest {})
+            .await?
+            .into_inner();
+        Ok(reply.try_into().map_err(invalid_reply)?)
+    }
+
+    pub async fn subscribe_accessory_radios(
+        &self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<Vec<common::accessory::AccessoryRadioInfo>, RpcError>>
+        + use<>,
+        ClientError,
+    > {
+        let stream = self
+            .rpc
+            .clone()
+            .subscribe_accessory_radios(proto::EmptyRequest {})
+            .await?
+            .into_inner();
+        Ok(stream.map(|item| {
+            item.map_err(RpcError::from)
+                .and_then(|reply| reply.try_into().map_err(invalid_reply))
+        }))
+    }
+
+    /// Securely enrolls on the selected radio, then saves this accessory without replacing others.
+    pub async fn enroll_accessory(
+        &self,
+        address: [u8; 6],
+        info: common::accessory::AccessoryInfo,
+    ) -> Result<(), ClientError> {
+        let mut bytes = [0; 8];
+        bytes[..6].copy_from_slice(&address);
+        self.rpc
+            .clone()
+            .enroll_accessory(proto::EnrollAccessoryRequest {
+                address: u64::from_le_bytes(bytes),
+                info: Some(info.into()),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Briefly connects to a configured marker board and sets its mode back to Auto.
+    pub async fn reset_marker_mode(&self, address: [u8; 6]) -> Result<(), ClientError> {
+        let mut bytes = [0; 8];
+        bytes[..6].copy_from_slice(&address);
+        self.rpc
+            .clone()
+            .reset_marker_mode(proto::ResetMarkerModeRequest {
+                address: u64::from_le_bytes(bytes),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Streams hub events and requests marker illumination until this stream is dropped.
     pub async fn subscribe_events(
         &self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
+        ClientError,
+    > {
+        self.subscribe_events_with_demand(false, None).await
+    }
+
+    /// Monitors hub events without requesting marker illumination.
+    pub async fn subscribe_events_passive(
+        &self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
+        ClientError,
+    > {
+        self.subscribe_events_with_demand(true, None).await
+    }
+
+    /// Requests marker illumination for one screen; event payloads remain unfiltered.
+    pub async fn subscribe_events_for_screen(
+        &self,
+        screen_id: u8,
+    ) -> Result<
+        impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
+        ClientError,
+    > {
+        if screen_id > odyssey_common::MAX_SCREEN_ID {
+            return Err(tonic::Status::invalid_argument("screen id out of range").into());
+        }
+        self.subscribe_events_with_demand(false, Some(screen_id))
+            .await
+    }
+
+    async fn subscribe_events_with_demand(
+        &self,
+        passive_tracking: bool,
+        screen_id: Option<u8>,
     ) -> Result<
         impl futures::Stream<Item = Result<common::events::Event, RpcError>> + Unpin + use<>,
         ClientError,
@@ -205,7 +303,10 @@ impl Client {
         let stream = self
             .rpc
             .clone()
-            .subscribe_events(proto::SubscribeEventsRequest {})
+            .subscribe_events(proto::SubscribeEventsRequest {
+                passive_tracking,
+                screen_id: screen_id.map(u32::from),
+            })
             .await?
             .into_inner();
 

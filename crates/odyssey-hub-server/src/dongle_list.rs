@@ -26,6 +26,56 @@ impl DongleList {
         Some(sender.clone())
     }
 
+    /// Routes only to the selected live actor; an unavailable radio never falls back.
+    pub(crate) async fn accessory_request(
+        &self,
+        id: &str,
+        command: odyssey_protocol::accessory::Command,
+    ) -> Result<odyssey_protocol::accessory::Reply, String> {
+        let sender = self
+            .task_sender(id)
+            .ok_or_else(|| format!("Dongle '{id}' unavailable"))?;
+        let (reply, response) = tokio::sync::oneshot::channel();
+        let operation = async {
+            sender
+                .send(DongleTaskMessage::Accessory { command, reply })
+                .await
+                .map_err(|_| format!("Dongle '{id}' disconnected"))?;
+            response
+                .await
+                .map_err(|_| format!("Dongle '{id}' disconnected"))?
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_millis(
+                odyssey_protocol::accessory::REQUEST_TIMEOUT_MILLIS + 5_000,
+            ),
+            operation,
+        )
+        .await
+        .map_err(|_| format!("Dongle '{id}' accessory request timed out"))?
+    }
+
+    pub(crate) async fn subscribe_accessory_events(
+        &self,
+        id: &str,
+    ) -> Result<tokio::sync::broadcast::Receiver<odyssey_protocol::accessory::Event>, String> {
+        let sender = self
+            .task_sender(id)
+            .ok_or_else(|| format!("Dongle '{id}' unavailable"))?;
+        let (reply, response) = tokio::sync::oneshot::channel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            sender
+                .send(DongleTaskMessage::SubscribeAccessoryEvents { reply })
+                .await
+                .map_err(|_| format!("Dongle '{id}' disconnected"))?;
+            response
+                .await
+                .map_err(|_| format!("Dongle '{id}' disconnected"))?
+        })
+        .await
+        .map_err(|_| format!("Dongle '{id}' event subscription timed out"))?
+    }
+
     /// Adds a dongle, or replaces the listed one with the same id.
     pub(crate) fn upsert(&self, info: DongleInfo, commands: mpsc::Sender<DongleTaskMessage>) {
         let mut entries = self.0.lock();
@@ -94,5 +144,49 @@ mod tests {
 
         let ids: Vec<_> = list.snapshot().into_iter().map(|info| info.id).collect();
         assert_eq!(ids, ["b"]);
+    }
+
+    #[tokio::test]
+    async fn unplugged_selection_never_uses_another_radio() {
+        let list = DongleList::default();
+        let (commands, mut received) = mpsc::channel(1);
+        list.upsert(dongle("other", 0), commands);
+        let error = list
+            .accessory_request(
+                "selected",
+                odyssey_protocol::accessory::Command::Capabilities(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("selected"));
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unplug_wakes_in_flight_accessory_wait() {
+        let list = DongleList::default();
+        let (commands, mut received) = mpsc::channel(1);
+        list.upsert(dongle("selected", 0), commands);
+        let request_list = list.clone();
+        let request = tokio::spawn(async move {
+            request_list
+                .accessory_request(
+                    "selected",
+                    odyssey_protocol::accessory::Command::Capabilities(),
+                )
+                .await
+        });
+        let in_flight = received.recv().await.unwrap();
+        list.remove("selected");
+        drop(in_flight);
+        drop(received);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.unwrap_err().contains("disconnected"));
     }
 }

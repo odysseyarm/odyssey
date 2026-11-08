@@ -17,8 +17,6 @@ use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
 use crate::runtime;
 
-/// How long the finished update stays visible before its state is cleared.
-const FINAL_STATE_LINGER: Duration = Duration::from_secs(5);
 const REBOOT_SETTLE_DELAY: Duration = Duration::from_millis(500);
 /// How long the device gets to reappear in application mode after flashing.
 const APP_MODE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -72,8 +70,6 @@ pub(super) fn start_firmware_update(
                 FirmwareUpdateState::Failed(crate::error_message(&e)),
             );
         }
-
-        tokio::time::sleep(FINAL_STATE_LINGER).await;
     });
 }
 

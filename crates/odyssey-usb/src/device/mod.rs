@@ -2,6 +2,7 @@ mod cobs;
 mod control_transfer;
 mod general_settings;
 mod hex_address;
+mod mux_accessory;
 mod mux_device;
 mod mux_transport;
 mod packet_stream;

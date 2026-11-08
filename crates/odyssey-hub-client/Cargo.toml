@@ -13,6 +13,7 @@ workspace = true
 eros = { workspace = true }
 odyssey-hub-server-interface = { workspace = true }
 odyssey-hub-common = { workspace = true }
+odyssey-common = { path = "../odyssey-common" }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "net", "signal", "rt-multi-thread", "time"] }
 tonic = { workspace = true }

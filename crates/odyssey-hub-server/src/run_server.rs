@@ -105,7 +105,7 @@ async fn run_server_inner(
     let shot_delay_watch = Arc::new(RwLock::new(HashMap::new()));
     let (accessory_info_sender, accessory_info_receiver) =
         watch::channel(config.accessory_info.clone());
-    let accessory_map = Arc::new(std::sync::Mutex::new(
+    let accessory_map = Arc::new(parking_lot::Mutex::new(
         config
             .accessory_info
             .into_iter()
@@ -113,15 +113,21 @@ async fn run_server_inner(
             .collect(),
     ));
 
+    let marker_demand = crate::accessories::MarkerDemand::default();
+    let marker_demand_watch = marker_demand.subscribe();
+    let (accessory_radios, accessory_commands) = crate::accessories::AccessoryRadios::new();
     let server = HubServer {
         device_list: Default::default(),
         event_sender: event_sender.clone(),
+        marker_demand,
         device_list_change_sender: device_list_change_sender.clone(),
         screen_calibrations: Arc::clone(&config.screen_calibrations),
         device_shot_delays: Arc::clone(&config.device_shot_delays),
         shot_delay_watch: Arc::clone(&shot_delay_watch),
         accessory_map: Arc::clone(&accessory_map),
         accessory_map_sender: accessory_map_sender.clone(),
+        accessory_radios: accessory_radios.clone(),
+        accessory_config_lock: Default::default(),
         dongle_list: Default::default(),
         dongle_list_change_sender: dongle_list_change_sender.clone(),
         app_message_sender: sender.clone(),
@@ -136,6 +142,7 @@ async fn run_server_inner(
         dongle_list_changed: dongle_list_change_sender,
     };
     let device_list = server.device_list.clone();
+    let accessory_dongles = server.dongle_list.clone();
 
     if let Err(e) = sender.send(Message::ServerInit(Ok(config.corruptions))) {
         tracing::warn!("Failed to send server init message: {}", e);
@@ -147,15 +154,20 @@ async fn run_server_inner(
     let accessory_cancel = background_cancel.clone();
     let accessory_task = tokio::spawn(async move {
         #[cfg(feature = "sim")]
-        if simulation_enabled {
-            return;
-        }
+        let native_enabled = !simulation_enabled;
+        #[cfg(not(feature = "sim"))]
+        let native_enabled = true;
         accessory_manager(
             event_sender,
             accessory_info_receiver,
             accessory_map_sender,
             device_list,
             accessory_map,
+            marker_demand_watch,
+            accessory_dongles,
+            accessory_radios,
+            accessory_commands,
+            native_enabled,
             accessory_cancel,
         )
         .await;

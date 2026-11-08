@@ -501,6 +501,17 @@ impl Model {
                     self.error(error);
                 }
             }
+            MuxMsg::AccessoryRequest(request) => {
+                let completion = odyssey_protocol::accessory::Completion {
+                    id: request.id,
+                    result: Err(odyssey_protocol::accessory::Error::Unsupported),
+                };
+                if let Err(error) =
+                    Self::send(self.mux.as_ref(), MuxMsg::AccessoryCompletion(completion))
+                {
+                    self.error(error);
+                }
+            }
             MuxMsg::SendTo(request) if request.dev == UNIT_UUID && self.state.ble_connected => {
                 self.packet(request.pkt, true);
             }
@@ -867,5 +878,50 @@ impl Model {
             percent: self.state.battery_percent,
             charging: self.state.charging,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use odyssey_protocol::accessory::{Command, Error, Profile, Request};
+
+    use super::*;
+
+    #[test]
+    fn tracker_only_dongle_rejects_accessory_commands_without_timeout() {
+        let (errors, _) = broadcast::channel(1);
+        let mut model = Model::new(errors, SensorModel::default());
+        let (sender, mut responses) = mpsc::channel(1);
+        model.state.dongle_usb = true;
+        model.mux = Some(sender);
+        let address = [2, 0, 0, 0, 0, 1];
+        let commands = [
+            Command::Capabilities(),
+            Command::Scan { enabled: true },
+            Command::Connect {
+                address,
+                profile: Profile::MarkerControlBoard,
+                enroll: true,
+            },
+            Command::Disconnect { address },
+            Command::MarkerDemand {
+                address,
+                active: true,
+            },
+            Command::MarkerMode {
+                address,
+                mode: odyssey_protocol::marker_control::Mode::Auto,
+            },
+        ];
+        for (id, command) in (0..).zip(commands) {
+            model.mux_packet(MuxMsg::AccessoryRequest(Request { id, command }));
+            let MuxMsg::AccessoryCompletion(completion) =
+                responses.try_recv().expect("immediate accessory response")
+            else {
+                panic!("accessory request must complete with typed rejection");
+            };
+            assert_eq!(completion.id, id, "{command:?}");
+            assert_eq!(completion.result, Err(Error::Unsupported), "{command:?}");
+        }
     }
 }

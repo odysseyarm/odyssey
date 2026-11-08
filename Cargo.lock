@@ -8720,7 +8720,6 @@ name = "odyssey-desktop"
 version = "0.7.3"
 dependencies = [
  "backon",
- "btleplug",
  "dfu-nusb",
  "embed-resource",
  "eros",
@@ -8750,7 +8749,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
- "uuid",
  "zip",
 ]
 
@@ -8778,6 +8776,7 @@ dependencies = [
  "eros",
  "futures",
  "interprocess",
+ "odyssey-common",
  "odyssey-hub-common",
  "odyssey-hub-server-interface",
  "odyssey-protocol",
@@ -8816,6 +8815,7 @@ dependencies = [
  "arc-swap",
  "arrayvec 0.7.8",
  "backon",
+ "bluez-async",
  "btleplug",
  "cam-geom",
  "dfu-core",
@@ -8854,6 +8854,7 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+ "windows 0.61.3",
  "winreg 0.52.0",
  "winres",
 ]
