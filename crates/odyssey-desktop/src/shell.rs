@@ -193,6 +193,8 @@ impl Shell {
 fn apply_appearance(window: &mut Window, cx: &mut App) {
     cx.set_global(ActivePalette(Palette::for_appearance(window.appearance())));
     gpui::component::Theme::sync_system_appearance(Some(window), cx);
+    let input_border = theme::palette(cx).fg_muted.into();
+    gpui::component::Theme::update(cx, |theme| theme.colors.input = input_border);
 }
 
 impl Render for Shell {
