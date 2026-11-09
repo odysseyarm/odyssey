@@ -28,8 +28,8 @@ let
       # zig's linker ignores NIX_LDFLAGS/LIBRARY_PATH, so name the native
       # library directories (xcb, xkbcommon, ...) to rustc directly.
       export RUSTFLAGS="$RUSTFLAGS ${lib.concatMapStringsSep " " (p: "-L native=${lib.getLib p}/lib") libs}"
-      # Customer binary: drop the symbol table naming the tracking internals
-      # (the zig prelude keeps it for UniFFI metadata, which this app lacks).
+      # Release binary: no symbol table (the zig prelude keeps one for UniFFI
+      # metadata, which this app does not use).
       export CARGO_PROFILE_RELEASE_STRIP=symbols
     '';
     cargoBuildCommand = backend.build;

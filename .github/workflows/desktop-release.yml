@@ -54,8 +54,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build both variants and packaging tools
         run: |
           out=$(nix build -L --no-link --print-out-paths .#desktop-windows)
@@ -113,8 +111,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build and verify AppImage
         run: |
           nix build -L .#desktop-appimage .#checks.x86_64-linux.desktop-appimage-contract
@@ -139,7 +135,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
         with:
-          public-cache: 'true'
+          host-deps: 'true'
       - name: Build and verify NixOS package
         id: build
         run: |

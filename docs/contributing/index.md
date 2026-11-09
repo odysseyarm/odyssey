@@ -31,41 +31,24 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
-Host, tracking and desktop jobs upload build results to the Actions cache
-(magic-nix-cache); SDK and firmware jobs do not, because GitHub's 10 GB per-repo
-budget only fits the large layers. Release tags cannot restore each other's
-caches, so `desktop-nixos` and tracking build on the host dependency layer that
-Host CI keeps warm on `master`. A public repository's caches are readable from
-fork pull requests. That is safe because `odyssey-cv` never reaches a cached
-path as source:
+CI caches the host dependency layer (`.#host.cargoArtifacts`, the third-party
+crates for host, tracking and `desktop-nixos`). Host CI saves it to the Actions
+cache under a key derived from its exact store path; Host, Tracking and the
+NixOS release job restore it. Pull request runs only restore. Releases reuse the
+layer Host CI last built on `master`.
 
-- Dependency layers (`buildDepsOnly`) vendor `odyssey-cv` and its `eskf` as
-  stubs: the real `Cargo.toml` files, so features and the dependency graph are
-  unchanged, with empty `.rs` files. Only third-party crates and those stubs are
-  compiled there, so those layers are public-cache safe.
-- Final builds go through `withPrivateSource` in `nix/common.nix`. Inside the
-  sandbox it overlays the flake input's real sources onto a copy of the stub
-  vendor directory, and Cargo rebuilds only `odyssey-cv`, `eskf` and the
-  workspace crates on top of the cached layer. The sources are never an output.
-- Root-workspace dependency layers do not install Cargo artifact archives, and
-  release binaries are built with `strip = "symbols"`.
-- `nix build .#checks.x86_64-linux.private-source-boundary` fails if any
-  vendored copy of the private crates carries real source.
-
-What does leave the private repository is compiled, symbol-stripped code in the
-released binaries, plus the dependency names already visible in `Cargo.lock`.
-A new build that needs private source must use `withPrivateSource`; one that
-vendors it directly would put the source in the cache.
+Dependency layers build `odyssey-cv` from its manifests only; builds that need
+its sources wrap their arguments in `withPrivateSource` (`nix/common.nix`).
+`nix build .#checks.x86_64-linux.private-source-boundary` checks the vendored
+copies.
 
 NixOS desktop releases publish the `desktop-nixos` store path to the signed
 `odysseyarm` Cachix cache and attach that path as
-`odyssey-desktop-nixos-store-path.txt`. The release job pushes only the package
-runtime closure, not Cargo dependency outputs or private source derivations.
-CI needs `CACHIX_AUTH_TOKEN` with write access to that cache.
+`odyssey-desktop-nixos-store-path.txt`. CI needs `CACHIX_AUTH_TOKEN` with write
+access to that cache.
 
-NixOS users can install the prebuilt output without evaluating this flake (which
-references private `odyssey-cv`). Add the cache and its signing key to the NixOS
-configuration:
+NixOS users can install the prebuilt output without evaluating this flake. Add
+the cache and its signing key to the NixOS configuration:
 
 ```nix
 nix.settings.substituters = [ "https://odysseyarm.cachix.org" ];

@@ -89,9 +89,8 @@ let
       # Cargo artifact archives of the root workspace hold compiled private
       # code; only dependency layers (which force this on) may install one.
       doInstallCargoArtifacts = false;
-      # Outputs of the root workspace land in public caches: no symbol table
-      # naming the tracking internals. Profiles are part of every fingerprint,
-      # so this applies to the dependency layer too.
+      # Release binaries carry no symbol table. Profiles are part of every
+      # fingerprint, so this applies to the dependency layer too.
       CARGO_PROFILE_RELEASE_STRIP = "symbols";
     };
   # Fails if any vendored copy of the private crates carries real source.
@@ -100,8 +99,8 @@ let
     for crate in ${vendor "." { }}/*/odyssey-cv-* ${vendor "." { }}/*/eskf-*; do
       [ -e "$crate" ] || continue
       found=1
-      leaked=$(find -L "$crate" -name '*.rs' -size +0)
-      if [ -n "$leaked" ]; then echo "private source in vendored stub: $leaked" >&2; exit 1; fi
+      real=$(find -L "$crate" -name '*.rs' -size +0)
+      if [ -n "$real" ]; then echo "vendored stub has sources: $real" >&2; exit 1; fi
     done
     [ "$found" = 1 ] || { echo "no vendored private crates found" >&2; exit 1; }
     touch $out

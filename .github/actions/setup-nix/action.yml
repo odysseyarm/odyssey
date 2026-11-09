@@ -1,10 +1,16 @@
 name: Set up Odyssey Nix
-description: Install pinned Nix action and cache store paths in the GitHub Actions cache
+description: Install pinned Nix and optionally restore the host dependency layer
+# One cache entry per exact store path: per-path caching (magic-nix-cache) made
+# ~1000 lookups per job and hit GitHub's cache API rate limit.
 inputs:
-  public-cache:
-    description: Upload store paths to the Actions cache. Safe for every job (outputs never carry private source; nix/common.nix, checks.private-source-boundary), but the 10 GB repo budget only fits the host and desktop jobs, which opt in
+  host-deps:
+    description: Restore the host dependency layer that Host CI saves on master
     required: false
     default: 'false'
+outputs:
+  host-deps-path:
+    description: Store path of the host dependency layer, when host-deps is true
+    value: ${{ steps.key.outputs.path }}
 runs:
   using: composite
   steps:
@@ -13,10 +19,19 @@ runs:
         extra_nix_config: |
           max-jobs = 2
           cores = 2
-    - uses: DeterminateSystems/magic-nix-cache-action@f69a2d3e148e90223fe63ab6e3f6331f2e7e33dc
-      if: inputs.public-cache == 'true'
+    - id: key
+      if: inputs.host-deps == 'true'
+      shell: bash
+      run: |
+        path=$(nix eval --raw .#host.cargoArtifacts.outPath)
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "key=host-deps-$(basename "$path")" >> "$GITHUB_OUTPUT"
+    - id: restore
+      if: inputs.host-deps == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        source-revision: cd88146e8de45fc50afaee98634fea04249c3c13
-        use-gha-cache: 'true'
-        use-flakehub: 'false'
-        diagnostic-endpoint: ''
+        path: ${{ runner.temp }}/host-deps-cache
+        key: ${{ steps.key.outputs.key }}
+    - if: inputs.host-deps == 'true' && steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      run: nix copy --no-check-sigs --from "file://$RUNNER_TEMP/host-deps-cache" "${{ steps.key.outputs.path }}"

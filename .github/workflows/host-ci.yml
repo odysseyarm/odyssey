@@ -18,11 +18,18 @@ jobs:
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-nix
+      - id: nix
+        uses: ./.github/actions/setup-nix
         with:
-          public-cache: 'true'
+          host-deps: 'true'
       - name: Build host applications and repository tools
         run: nix build -L --no-link .#host .#xtask
+      # Saved before tests and lint so a failing check still warms the next run.
+      - name: Save host dependency layer
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/save-host-deps
+        with:
+          path: ${{ steps.nix.outputs.host-deps-path }}
       - name: Test host applications and repository tools
         run: nix build -L --no-link .#checks.x86_64-linux.host-tests .#checks.x86_64-linux.xtask-tests
       - name: Lint host applications
