@@ -31,24 +31,28 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
-CI caches the host dependency layer (`.#host.cargoArtifacts`, the third-party
-crates for host, tracking and `desktop-nixos`). Host CI saves it to the Actions
-cache under a key derived from its exact store path; Host, Tracking and the
-NixOS release job restore it. Pull request runs only restore. Releases reuse the
-layer Host CI last built on `master`.
+### CI cache
 
-Dependency layers build `odyssey-cv` from its manifests only; builds that need
-its sources wrap their arguments in `withPrivateSource` (`nix/common.nix`).
-`nix build .#checks.x86_64-linux.private-source-boundary` checks the vendored
-copies.
+CI caches one artifact: the host dependency layer (`.#host.cargoArtifacts`),
+the compiled third-party crates shared by `host`, `tracking` and
+`desktop-nixos`. Host CI builds it, then saves its closure to the Actions cache
+as a single entry keyed by the layer's store path
+(`.github/actions/save-host-deps`). Host, Tracking and the NixOS release job
+restore that entry before building (`setup-nix` with `host-deps: 'true'`).
+Pull requests restore but never save. A new entry appears only when the key
+changes, which means the lockfile, toolchain or `odyssey-cv` manifests changed.
 
-NixOS desktop releases publish the `desktop-nixos` store path to the signed
-`odysseyarm` Cachix cache and attach that path as
-`odyssey-desktop-nixos-store-path.txt`. CI needs `CACHIX_AUTH_TOKEN` with write
-access to that cache.
+`odyssey-cv` is vendored with its manifests only. Builds that compile its
+sources wrap their arguments in `withPrivateSource` (`nix/common.nix`);
+`checks.private-source-boundary` verifies the vendored copies.
 
-NixOS users can install the prebuilt output without evaluating this flake. Add
-the cache and its signing key to the NixOS configuration:
+### NixOS package
+
+Desktop releases push `desktop-nixos` to the `odysseyarm` Cachix cache and
+attach its store path as `odyssey-desktop-nixos-store-path.txt`. CI needs
+`CACHIX_AUTH_TOKEN` with write access to that cache.
+
+To install it, add the cache to your NixOS configuration:
 
 ```nix
 nix.settings.substituters = [ "https://odysseyarm.cachix.org" ];
@@ -57,8 +61,7 @@ nix.settings.trusted-public-keys = [
 ];
 ```
 
-After applying that configuration, download the store path from the desired
-desktop release, copy its signed closure, then install it:
+then fetch the path named by the release and install it:
 
 ```sh
 release=odyssey-desktop-v0.7.5  # choose a release tag that includes this asset
@@ -67,8 +70,7 @@ nix copy --from https://odysseyarm.cachix.org "$store_path"
 nix profile install "$store_path"
 ```
 
-The cache publishes future desktop releases only. The existing `0.7.4` release
-does not gain this asset retroactively.
+Releases before this asset existed (0.7.4 and earlier) are not in the cache.
 
 Run the pinned Dioxus CLI with `cargo bin dx` inside the project's development
 shell; no global installation is needed. Its Subsecond tooling supports Rust
