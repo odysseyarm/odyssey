@@ -18,3 +18,7 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/ffi-build.yml
+    secrets:
+      NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

@@ -4,7 +4,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    StatefulInteractiveElement as _, Styled, Window, div, px,
 };
 
 use super::wizard::Wizard;
@@ -202,7 +202,7 @@ pub(super) fn link_button(
         .text_base()
         .font_weight(FontWeight::MEDIUM)
         .text_color(p.accent_ink)
-        .hover(|s| s.underline())
+        .hover(Styled::underline)
         .child(label.into())
         .on_click(on_click)
 }

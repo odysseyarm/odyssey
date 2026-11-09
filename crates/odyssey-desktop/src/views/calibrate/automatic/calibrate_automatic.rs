@@ -1,5 +1,7 @@
 //! The route: the wizard's frame, its header and the step that matches its stage.
 
+use std::sync::Arc;
+
 use gpui::component::tooltip::Tooltip;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _,
@@ -125,7 +127,11 @@ impl Render for CalibrateAutomaticView {
             return div().into_any_element();
         }
 
-        let review_image = wizard.read(cx).finished.as_ref().map(|f| f.image.clone());
+        let review_image = wizard
+            .read(cx)
+            .finished
+            .as_ref()
+            .map(|f| Arc::clone(&f.image));
         self.review_frame.show(review_image.as_ref(), window);
         if stage != self.shown_stage {
             self.shown_stage = stage;
@@ -243,6 +249,6 @@ fn header(p: Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
         .child(
             button("exit", "Back to setup", ButtonKind::Ghost, p)
                 .small()
-                .on_click(super::ui::act(wizard, |w, cx| w.exit(cx))),
+                .on_click(super::ui::act(wizard, Wizard::exit)),
         )
 }

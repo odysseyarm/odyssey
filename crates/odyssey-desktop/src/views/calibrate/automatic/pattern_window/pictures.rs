@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Bounds, Corners, Hsla, IntoElement, ParentElement as _, Pixels, Rgba, Styled as _,
-    canvas, div, fill, point, px, size, white,
+    AnyElement, Bounds, Corners, Hsla, IntoElement as _, ParentElement as _, Pixels, Rgba,
+    Styled as _, canvas, div, fill, point, px, size, white,
 };
 use odyssey_autocalib::pattern::Pattern;
 

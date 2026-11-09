@@ -109,8 +109,8 @@ struct GeneralFields {
 
 enum SensorFields {
     Paj {
-        near_field: PajState,
-        wide_field: PajState,
+        near_field: Box<PajState>,
+        wide_field: Box<PajState>,
     },
     Pag(PagState),
 }
@@ -217,8 +217,8 @@ impl SettingsForm {
                 near_field,
                 wide_field,
             })) => {
-                self.paj_near_field = near_field;
-                self.paj_wide_field = wide_field;
+                self.paj_near_field = *near_field;
+                self.paj_wide_field = *wide_field;
             }
             Some(Ok(SensorFields::Pag(state))) => self.pag = state,
             // A failed reload must not leave an apparently valid stale sensor
@@ -379,8 +379,8 @@ async fn read_sensors(
             let wide_field = paj_load_from_device(client, WIDE_FIELD_PORT).await;
             match (near_field, wide_field) {
                 (Ok(near_field), Ok(wide_field)) => Ok(SensorFields::Paj {
-                    near_field,
-                    wide_field,
+                    near_field: Box::new(near_field),
+                    wide_field: Box::new(wide_field),
                 }),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }

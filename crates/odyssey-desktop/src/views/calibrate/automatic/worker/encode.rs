@@ -41,7 +41,7 @@ pub(super) fn encode_gray(image: &GrayImage) -> (Arc<RenderImage>, u32, u32) {
 fn render_image(image: &RgbImage) -> Arc<RenderImage> {
     let (w, h) = image.dimensions();
     let mut bgra = Vec::with_capacity(image.as_raw().len() / 3 * 4);
-    for pixel in image.as_raw().chunks_exact(3) {
+    for pixel in image.as_raw().as_chunks::<3>().0 {
         bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
     }
     bgra_image(w, h, bgra)

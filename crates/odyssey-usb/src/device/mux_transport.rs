@@ -100,7 +100,7 @@ impl MuxTransport {
 
         let cancel = CancellationToken::new();
         let accessories = AccessoryDispatcher::new(cancel.clone());
-        let reader_accessories = accessories.clone();
+        let reader_accessories = Arc::clone(&accessories);
         let (versions_tx, versions) = watch::channel(None);
         spawn_writer(out_ep, writer_rx, "mux usb", cancel.clone());
         let lifetime = Arc::new(cancel.clone().drop_guard());
@@ -228,7 +228,7 @@ async fn route_message(
         MuxMsg::AccessoryCompletion(completion) => accessories.complete(completion),
         MuxMsg::AccessoryEvent(event) => accessories.event(event),
         MuxMsg::AccessoryRequest(_) => {
-            trace!("mux reader: ignoring host-directed accessory request")
+            trace!("mux reader: ignoring host-directed accessory request");
         }
         MuxMsg::ReadVersionResponse(version) => {
             versions.send_replace(Some(version));

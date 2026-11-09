@@ -99,7 +99,7 @@ pub(super) fn disagreement_notice(
                     p,
                 )
                 .disabled(saving)
-                .on_click(act(wizard, |w, cx| w.check_by_hand(cx))),
+                .on_click(act(wizard, Wizard::check_by_hand)),
             )
             .child(div().text_sm().child(
                 "Goes back to Setup with a tape measure line on the screen. About a minute, then measure again.",

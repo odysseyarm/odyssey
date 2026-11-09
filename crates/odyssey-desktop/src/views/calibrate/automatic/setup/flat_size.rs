@@ -104,7 +104,7 @@ fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
     } else if prefer_camera && found {
         "The camera will measure the screen's size.".to_string()
     } else {
-        finding.headline().to_string()
+        finding.headline()
     };
     let mut text = div().flex_1().min_w_0().flex().flex_col().gap_1().child(
         div()

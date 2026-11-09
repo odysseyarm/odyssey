@@ -39,10 +39,10 @@ pub(super) fn problem_step(
         ],
         vec![
             button("back-to-setup", "Back to setup", ButtonKind::Secondary, p)
-                .on_click(act(wizard, |w, cx| w.back_to_setup(cx)))
+                .on_click(act(wizard, Wizard::back_to_setup))
                 .into_any_element(),
             button("retry", retry_label(failure.kind), ButtonKind::Primary, p)
-                .on_click(act(wizard, |w, cx| w.retry(cx)))
+                .on_click(act(wizard, Wizard::retry))
                 .into_any_element(),
         ],
     )

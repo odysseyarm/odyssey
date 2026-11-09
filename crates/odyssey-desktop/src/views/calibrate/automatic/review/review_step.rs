@@ -1,5 +1,6 @@
 //! Step 5: the result. The camera picture with the fitted screen outline and
 //! marker positions, the measured size, a green/amber/red verdict, and Save.
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Div, Entity, FontWeight, IntoElement as _, ParentElement as _, Styled as _,
@@ -65,7 +66,7 @@ fn review_footer(
         .into_any_element();
     let redo_button = button("redo", "Redo", redo_kind, p)
         .disabled(saving)
-        .on_click(act(wizard, |w, cx| w.begin_position(cx)))
+        .on_click(act(wizard, Wizard::begin_position))
         .into_any_element();
     if poor {
         vec![save_button, redo_button]
@@ -140,7 +141,7 @@ pub(in crate::views::calibrate::automatic) fn review_step(
     content.push(
         result_overlay(
             p,
-            finished.image.clone(),
+            Arc::clone(&finished.image),
             finished.width,
             finished.height,
             outcome.screen_quad,

@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::theme::palette;
-use crate::views::calibrate::automatic::kind::DisplayKind;
+use crate::views::calibrate::automatic::kind::{DisplayKind, Finding};
 use crate::views::calibrate::automatic::settings::{
     DIAGONAL_RANGE_IN, SizeError, SizeField, WIDTH_RANGE_CM,
 };
@@ -58,7 +58,7 @@ impl Render for SizeBox {
         let wizard = self.wizard.read(cx);
         let field = wizard.field();
         let label = match (wizard.kind(), field) {
-            (DisplayKind::Flat, _) if wizard.finding.as_ref().is_some_and(|f| f.is_found()) => {
+            (DisplayKind::Flat, _) if wizard.finding.as_ref().is_some_and(Finding::is_found) => {
                 "Screen size (diagonal)"
             }
             (DisplayKind::Flat, _) => "Size printed on the box (optional)",

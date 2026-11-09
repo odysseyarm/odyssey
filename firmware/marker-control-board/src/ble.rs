@@ -207,7 +207,6 @@ pub async fn run<C: Controller, F: NorFlash>(controller: C, flash: F, seed: [u8;
                     Err(_) => reset_safe(),
                 };
                 if conn.raw().set_bondable(enrollment_active()).is_ok() {
-                    let _ = conn.raw().request_security();
                     let _ = session(&server, &conn, &mut bonds, || {
                         stack
                             .get_bond_information()

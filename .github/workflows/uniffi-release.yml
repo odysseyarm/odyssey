@@ -41,6 +41,10 @@ jobs:
     uses: ./.github/workflows/uniffi-build.yml
     with:
       version: ${{ needs.check-version.outputs.version }}
+    secrets:
+      NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
   publish-python:
     name: Publish Python to PyPI

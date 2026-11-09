@@ -104,7 +104,7 @@ impl Render for ScreenPicker {
                                 selected == Some(i),
                                 p,
                                 move |cx| {
-                                    selection.update(cx, |selection, cx| selection.select(i, cx))
+                                    selection.update(cx, |selection, cx| selection.select(i, cx));
                                 },
                             )
                         },

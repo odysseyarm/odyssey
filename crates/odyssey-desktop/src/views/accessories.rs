@@ -566,7 +566,7 @@ impl AccessoriesView {
             )
             .child(badges)
             .when_some(connection.and_then(|connection| connection.error.as_ref()), |row, error| {
-                row.child(div().text_sm().text_color(p.danger).child(error.clone()))
+                row.child(div().text_sm().text_color(p.danger).child(radios::radio_error_summary(error).into_owned()))
             })
             .child(controls)
             .child(self.radio_controls(id, info, radios, p, cx))
@@ -603,7 +603,7 @@ impl AccessoriesView {
             .and_then(|seen| seen.pairing_window_expires_at_ms);
         let can_enroll = ty != AccessoryType::MarkerControlBoard
             || pairing_window(expires, unix_time_ms()) == PairingWindow::Open;
-        let mut controls = div().w_full().flex().flex_wrap().items_center().gap_2();
+        let mut controls = div().w_full().flex().flex_col().gap_2();
         if let Some(select) = self.radio_selects.get(&id) {
             controls = controls.child(
                 Select::new(&select.state)
@@ -615,22 +615,24 @@ impl AccessoriesView {
             );
         }
         controls = controls.child(
-            button(
-                (ElementId::from(mac.clone()), "add"),
-                if self.enrolling == Some(id) {
-                    "Enrolling…"
-                } else {
-                    "Pair & add"
-                },
-                ButtonKind::Secondary,
-                p,
-            )
-            .small()
-            .disabled(self.edit_pending || !available || !can_enroll)
-            .on_click(cx.listener({
-                let name = name.clone();
-                move |this, _, _, cx| this.add(id, name.clone(), ty, route.clone(), cx)
-            })),
+            div().flex().child(
+                button(
+                    (ElementId::from(mac.clone()), "add"),
+                    if self.enrolling == Some(id) {
+                        "Enrolling…"
+                    } else {
+                        "Pair & add"
+                    },
+                    ButtonKind::Secondary,
+                    p,
+                )
+                .small()
+                .disabled(self.edit_pending || !available || !can_enroll)
+                .on_click(cx.listener({
+                    let name = name.clone();
+                    move |this, _, _, cx| this.add(id, name.clone(), ty, route.clone(), cx)
+                })),
+            ),
         );
         div()
             .flex()

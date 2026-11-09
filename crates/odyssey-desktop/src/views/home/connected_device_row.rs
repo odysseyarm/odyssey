@@ -9,7 +9,7 @@ use gpui::component::input::{Input, InputEvent, InputState};
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AppContext as _, Context, Entity,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, pulsating_between, px,
+    StatefulInteractiveElement as _, Styled, Subscription, Window, div, pulsating_between, px,
 };
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 
@@ -206,7 +206,7 @@ impl ConnectedDeviceRow {
                 Animation::new(Duration::from_secs(2))
                     .repeat()
                     .with_easing(pulsating_between(0.4, 1.0)),
-                |el, delta| el.opacity(delta),
+                Styled::opacity,
             )
         };
         if self.is_updating {

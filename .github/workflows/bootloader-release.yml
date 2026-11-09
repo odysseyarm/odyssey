@@ -90,6 +90,13 @@ jobs:
             echo "board_dir=firmware/$board"
             echo "crate_dir=$crate_dir"
           } >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request' && steps.exists.outputs.skip != 'true'
+        with:
+          public-builds: '.#xtask'
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
   build:
     name: Build bootloader
@@ -110,6 +117,13 @@ jobs:
           mkdir dist-bootloader
           cp -rL "$out"/. dist-bootloader/
           ls -l dist-bootloader
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: '.#bootloader-dist-${{ needs.resolve.outputs.board }}'
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: bootloader

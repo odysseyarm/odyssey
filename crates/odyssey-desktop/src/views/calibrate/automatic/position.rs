@@ -1,6 +1,7 @@
 //! Step 2: aim the camera. Live picture with detection overlays, one plain
 //! sentence about what to change, and a brightness slider.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
@@ -64,8 +65,7 @@ impl PositionStep {
                     this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
-                            this.wizard
-                                .update(cx, |wizard, cx| wizard.restart_camera(cx));
+                            this.wizard.update(cx, Wizard::restart_camera);
                         }
                     })
                     .ok();
@@ -112,15 +112,15 @@ impl Render for PositionStep {
         let primary = if same_monitor {
             button("start", "Start", ButtonKind::Primary, p)
                 .disabled(!has_frame)
-                .on_click(act(&wizard, |w, cx| w.start_countdown(cx)))
+                .on_click(act(&wizard, Wizard::start_countdown))
         } else {
             button("next", "Next", ButtonKind::Primary, p)
                 .disabled(!ready)
-                .on_click(act(&wizard, |w, cx| w.measure_screen(cx)))
+                .on_click(act(&wizard, Wizard::measure_screen))
         };
         let footer = vec![
             button("back", "Back", ButtonKind::Secondary, p)
-                .on_click(act(&wizard, |w, cx| w.back_to_setup(cx)))
+                .on_click(act(&wizard, Wizard::back_to_setup))
                 .into_any_element(),
             primary.into_any_element(),
         ];
@@ -230,7 +230,7 @@ fn live_preview(p: Palette, wizard: &Wizard) -> AnyElement {
     let dots = frame.dots.clone();
     let danger = p.danger;
     overlay_image(
-        Some(frame.image.clone()),
+        Some(Arc::clone(&frame.image)),
         frame.width,
         frame.height,
         move |canvas, window| {

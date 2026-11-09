@@ -1,9 +1,14 @@
 name: Push to the Odyssey binary cache
-description: Sign store paths and upload their closures to cache.odysseyarm.com; fails if a closure references odyssey-cv sources
+description: Sign and upload approved output closures or public build closures to cache.odysseyarm.com
 inputs:
   paths:
-    description: Whitespace-separated store paths to push
-    required: true
+    description: Whitespace-separated approved output paths; runtime closures only
+    required: false
+    default: ''
+  public-builds:
+    description: Whitespace-separated firmware, SDK or xtask installables; includes build-time layers and public sources
+    required: false
+    default: ''
   signing-key:
     description: Nix secret signing key (NIX_SIGNING_KEY)
     required: true
@@ -18,16 +23,16 @@ runs:
       env:
         PATHS: ${{ inputs.paths }}
         NIX_SIGNING_KEY: ${{ inputs.signing-key }}
+        PUBLIC_BUILDS: ${{ inputs.public-builds }}
+        CACHE_ACTION_PATH: ${{ github.action_path }}
         AWS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
         AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
       run: |
-        set -eu
-        private=$(nix flake archive --json --dry-run | jq -r '.inputs["odyssey-cv"].path')
-        if nix path-info -r $PATHS | grep -qxF "$private"; then
-          echo "closure references the odyssey-cv source; refusing to push" >&2
-          exit 1
-        fi
-        key=$(mktemp); printf '%s' "$NIX_SIGNING_KEY" > "$key"
-        nix store sign -r -k "$key" $PATHS
-        nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' $PATHS
-        rm -f "$key"
+        set -euo pipefail
+        set -f
+        paths=$(bash "$CACHE_ACTION_PATH/paths.sh")
+        key=$(mktemp)
+        trap 'rm -f "$key"' EXIT
+        printf '%s' "$NIX_SIGNING_KEY" > "$key"
+        nix store sign -r -k "$key" $paths
+        nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' $paths

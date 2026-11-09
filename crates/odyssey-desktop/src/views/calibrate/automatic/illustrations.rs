@@ -4,6 +4,7 @@
 //! SVGs laid over it so they can twinkle. Only the overlays animate.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -96,9 +97,10 @@ fn projector_svg(p: Palette) -> String {
     let mut dots = String::new();
     for y in [38, 52, 66] {
         for x in [110, 124, 138] {
-            dots.push_str(&format!(
+            let _ = write!(
+                dots,
                 r#"<circle cx="{x}" cy="{y}" r="3.2" fill="{strong}"/>"#
-            ));
+            );
         }
     }
     format!(
@@ -140,14 +142,15 @@ fn picture(tv: bool, p: Palette) -> Arc<Image> {
         .map(pack),
     );
     let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
-    cache
-        .get_or_insert_with(HashMap::new)
-        .entry(key)
-        .or_insert_with(|| {
-            let svg = if tv { tv_svg(p) } else { projector_svg(p) };
-            Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes()))
-        })
-        .clone()
+    Arc::clone(
+        cache
+            .get_or_insert_with(HashMap::new)
+            .entry(key)
+            .or_insert_with(|| {
+                let svg = if tv { tv_svg(p) } else { projector_svg(p) };
+                Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes()))
+            }),
+    )
 }
 
 /// A mono SVG over the whole picture that fades between `low` and 1 and back.

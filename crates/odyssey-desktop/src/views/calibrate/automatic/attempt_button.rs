@@ -42,7 +42,7 @@ pub(super) fn save_attempt(p: Palette, wizard: &Entity<Wizard>, state: &Wizard) 
             div().flex().flex_wrap().items_center().gap_3().child(
                 button("save-attempt", label, ButtonKind::Secondary, p)
                     .disabled(saving)
-                    .on_click(act(wizard, |wizard, cx| wizard.save_attempt(cx))),
+                    .on_click(act(wizard, Wizard::save_attempt)),
             ),
         )
         .child(

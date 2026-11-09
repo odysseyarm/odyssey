@@ -24,7 +24,13 @@ on:
         description: Package version override (e.g. from the release tag); empty = project defaults
         required: false
         type: string
-        default: ''
+    secrets:
+      NIX_SIGNING_KEY:
+        required: false
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -97,6 +103,20 @@ jobs:
       - name: Test wheel
         if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
         run: nix build -L --no-link .#checks.x86_64-linux.sdk-python-wheel-import
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      - uses: ./.github/actions/push-cache
+        if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto' && github.event_name != 'pull_request'
+        with:
+          public-builds: .#checks.x86_64-linux.sdk-python-wheel-import
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -121,6 +141,13 @@ jobs:
         run: |
           mkdir -p dist
           cp -L "${{ steps.build.outputs.out }}"/dist/*.whl dist/
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-python-windows-${{ matrix.target }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -143,9 +170,23 @@ jobs:
         run: |
           mkdir -p dist
           cp -L "${{ steps.build.outputs.out }}"/dist/*.whl dist/
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-python-macos-${{ matrix.target }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Test wheel
         if: matrix.target == 'aarch64'
         run: nix build -L --no-link .#checks.aarch64-darwin.sdk-python-wheel-import
+      - uses: ./.github/actions/push-cache
+        if: matrix.target == 'aarch64' && github.event_name != 'pull_request'
+        with:
+          public-builds: .#checks.aarch64-darwin.sdk-python-wheel-import
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -169,6 +210,13 @@ jobs:
             mkdir -p "natives/$triple"
             cp -L "$out"/* "natives/$triple/"
           done
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-dotnet-native-x86_64-unknown-linux-gnu .#sdk-dotnet-native-aarch64-unknown-linux-gnu .#sdk-dotnet-native-x86_64-pc-windows-msvc
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-x86_64-unknown-linux-gnu
@@ -196,6 +244,13 @@ jobs:
             mkdir -p "natives/$triple"
             cp -L "$out"/* "natives/$triple/"
           done
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-dotnet-native-aarch64-apple-darwin .#sdk-dotnet-native-x86_64-apple-darwin
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-native-aarch64-apple-darwin
@@ -237,6 +292,13 @@ jobs:
       # package it restores are pinned by Nix (sdk-dotnet-sdk, sdk-dotnet-nuget-deps).
       - name: Pack
         run: nix run .#sdk-dotnet-pack -- "${{ inputs.version }}"
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-dotnet-csharp-bindings .#sdk-dotnet-pack
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: dotnet-nuget

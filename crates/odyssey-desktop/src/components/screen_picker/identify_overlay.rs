@@ -68,7 +68,7 @@ impl Render for IdentifyOverlay {
             .text_color(p.on_accent)
             .cursor_pointer()
             .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
-                window.remove_window()
+                window.remove_window();
             })
             .child(
                 div()

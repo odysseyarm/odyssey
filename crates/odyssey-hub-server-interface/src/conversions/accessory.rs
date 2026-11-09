@@ -165,8 +165,8 @@ impl TryFrom<crate::AccessoryRadio> for common::accessory::AccessoryRadio {
 
     fn try_from(value: crate::AccessoryRadio) -> Result<Self, Self::Error> {
         use crate::AccessoryRadioKind;
-        let kind =
-            AccessoryRadioKind::try_from(value.kind).map_err(|_| "unknown accessory radio kind")?;
+        let kind = AccessoryRadioKind::try_from(value.kind)
+            .map_err(|_conversion_error| "unknown accessory radio kind")?;
         match kind {
             AccessoryRadioKind::System if value.id.is_empty() => Ok(Self::System),
             AccessoryRadioKind::Native if valid_radio_id(&value.id) => {
@@ -284,7 +284,7 @@ impl TryFrom<crate::AccessoryRadioInfo> for common::accessory::AccessoryRadioInf
                     Ok(common::accessory::AccessoryConnectionInfo {
                         address: address_from_key(connection.address)?,
                         state: crate::AccessoryConnectionState::try_from(connection.state)
-                            .map_err(|_| "unknown accessory connection state")?
+                            .map_err(|_conversion_error| "unknown accessory connection state")?
                             .into(),
                         error: connection.error,
                     })
@@ -298,7 +298,7 @@ impl TryFrom<crate::AccessoryRadioInfo> for common::accessory::AccessoryRadioInf
                         address: address_from_key(nearby.address)?,
                         name: nearby.name,
                         ty: AccessoryType::try_from(nearby.ty)
-                            .map_err(|_| "unknown accessory type")?
+                            .map_err(|_conversion_error| "unknown accessory type")?
                             .into(),
                         pairing_window_expires_at_ms: nearby.pairing_window_expires_at_ms,
                     })

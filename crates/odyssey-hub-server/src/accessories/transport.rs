@@ -78,7 +78,7 @@ impl RadioBackend {
                 };
                 tokio::time::timeout(Duration::from_secs(10), find)
                     .await
-                    .map_err(|_| "Accessory not discovered on selected radio".to_string())?
+                    .map_err(|_elapsed| "Accessory not discovered on selected radio".to_string())?
             }
             Self::Dongle(list, id) => Ok(Link::Dongle {
                 list: list.clone(),
@@ -107,7 +107,7 @@ impl Link {
                 if enroll && info.ty == AccessoryType::MarkerControlBoard {
                     tokio::time::timeout(Duration::from_secs(28), native::pair(peripheral))
                         .await
-                        .map_err(|_| "Bluetooth pairing timed out".to_string())??;
+                        .map_err(|_elapsed| "Bluetooth pairing timed out".to_string())??;
                 }
                 io(peripheral.discover_services()).await?;
                 let uuid = Uuid::from_bytes(profile(info.ty).characteristic_uuid());
@@ -117,8 +117,7 @@ impl Link {
                     .find(|c| c.uuid == uuid)
                     .ok_or_else(|| format!("Accessory characteristic {uuid} unavailable"))?;
                 if info.ty == AccessoryType::MarkerControlBoard {
-                    if found.service_uuid
-                        != Uuid::from_bytes(odyssey_protocol::marker_control::SERVICE_UUID)
+                    if found.service_uuid != Uuid::from_bytes(marker_control::SERVICE_UUID)
                         || !found
                             .properties
                             .contains(btleplug::api::CharPropFlags::WRITE)
@@ -134,7 +133,7 @@ impl Link {
                         peripheral.write(&found, &[0], WriteType::WithResponse),
                     )
                     .await
-                    .map_err(|_| "Marker secure access timed out".to_string())?
+                    .map_err(|_elapsed| "Marker secure access timed out".to_string())?
                     .map_err(|e| e.to_string());
                     *characteristic = Some(found);
                     accepted?;
@@ -190,7 +189,7 @@ impl Link {
                     peripheral.write(characteristic, &[u8::from(active)], WriteType::WithResponse),
                 )
                 .await
-                .map_err(|_| "Marker demand write timed out".to_string())?
+                .map_err(|_elapsed| "Marker demand write timed out".to_string())?
                 .map_err(|e| e.to_string())
             }
             Self::Dongle {
@@ -348,7 +347,10 @@ pub(super) async fn discover_dongle(
                 }
             }
         }
-        #[allow(unreachable_code)]
+        #[expect(
+            unreachable_code,
+            reason = "the loop never breaks; the Ok fixes the block's error type"
+        )]
         Ok::<(), String>(())
     };
     tokio::select! {
@@ -388,7 +390,7 @@ pub(super) struct PairingWindows(HashMap<[u8; 6], (u8, u64)>);
 
 impl PairingWindows {
     pub(super) fn update(&mut self, address: [u8; 6], seconds: u8, now_ms: u64) -> Option<u64> {
-        if seconds > odyssey_protocol::marker_control::ENROLLMENT_SECONDS {
+        if seconds > marker_control::ENROLLMENT_SECONDS {
             return None;
         }
         let state = self.0.entry(address).or_insert((u8::MAX, 0));

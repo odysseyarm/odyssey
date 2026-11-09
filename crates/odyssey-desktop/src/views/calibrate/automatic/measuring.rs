@@ -57,7 +57,7 @@ pub(super) fn measuring_step(
         ],
         vec![
             button("cancel", "Cancel", ButtonKind::Secondary, p)
-                .on_click(act(wizard, |w, cx| w.back_to_setup(cx)))
+                .on_click(act(wizard, Wizard::back_to_setup))
                 .into_any_element(),
             div().into_any_element(),
         ],

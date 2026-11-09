@@ -2,6 +2,7 @@
 //! infrared view shows what the camera sees. Measuring starts when the tech presses
 //! Measure, never by itself.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::component::slider::{SliderEvent, SliderState, SliderValue};
@@ -56,8 +57,7 @@ impl MarkersStep {
                     this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
-                            this.wizard
-                                .update(cx, |wizard, cx| wizard.apply_ir_exposure(cx));
+                            this.wizard.update(cx, Wizard::apply_ir_exposure);
                         }
                     })
                     .ok();
@@ -106,12 +106,12 @@ impl Render for MarkersStep {
                         .gap_3()
                         .child(
                             button("cancel", "Cancel", ButtonKind::Secondary, p)
-                                .on_click(act(&wizard, |w, cx| w.back_to_setup(cx))),
+                                .on_click(act(&wizard, Wizard::back_to_setup)),
                         )
                         .child(
                             button("measure", "Measure", ButtonKind::Primary, p)
                                 .disabled(!all_found)
-                                .on_click(act(&wizard, |w, cx| w.measure_markers(cx))),
+                                .on_click(act(&wizard, Wizard::measure_markers)),
                         ),
                 )
                 .child(marker_banner(p, state))
@@ -222,7 +222,7 @@ fn marker_preview(p: Palette, wizard: &Wizard) -> AnyElement {
         })
         .collect();
     overlay_image(
-        Some(frame.image.clone()),
+        Some(Arc::clone(&frame.image)),
         frame.width,
         frame.height,
         move |canvas, window| {

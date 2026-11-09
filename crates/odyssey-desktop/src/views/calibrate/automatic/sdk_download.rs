@@ -98,8 +98,7 @@ mod online {
                 let _ = this.update(cx, |this, cx| {
                     this.state = match result {
                         Ok(Installed::Ready) => {
-                            this.wizard
-                                .update(cx, |wizard, cx| wizard.request_camera_list(cx));
+                            this.wizard.update(cx, Wizard::request_camera_list);
                             State::Ready
                         }
                         Ok(Installed::AfterRestart) => State::Waiting,
@@ -309,8 +308,7 @@ impl DownloadedSdkRow {
             Ok(Removal::Removed | Removal::AfterRestart) => None,
             Err(e) => Some(format!("Couldn't remove it: {e}")),
         };
-        self.wizard
-            .update(cx, |wizard, cx| wizard.request_camera_list(cx));
+        self.wizard.update(cx, Wizard::request_camera_list);
         cx.notify();
     }
 }

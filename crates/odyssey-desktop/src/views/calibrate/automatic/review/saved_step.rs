@@ -65,7 +65,7 @@ pub(in crate::views::calibrate::automatic) fn saved_step(
                 )
                 .child(
                     button("go-to-zero", "Zero tracker", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, |w, cx| w.go_home(cx))),
+                        .on_click(act(wizard, Wizard::go_home)),
                 )
                 .into_any_element(),
             details(
@@ -80,10 +80,10 @@ pub(in crate::views::calibrate::automatic) fn saved_step(
         ],
         vec![
             button("another", "Calibrate another screen", ButtonKind::Secondary, p)
-                .on_click(act(wizard, |w, cx| w.calibrate_another(cx)))
+                .on_click(act(wizard, Wizard::calibrate_another))
                 .into_any_element(),
             button("done", "Done", ButtonKind::Primary, p)
-                .on_click(act(wizard, |w, cx| w.exit(cx)))
+                .on_click(act(wizard, Wizard::exit))
                 .into_any_element(),
         ],
     )

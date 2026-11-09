@@ -36,15 +36,19 @@ still need their respective operating systems.
 `https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary
 cache, signed with `odysseyarm-1`. Every CI job reads from it
 (`.github/actions/setup-nix`). Host CI pushes the host dependency layer
-(`.#host.cargoArtifacts`, the third-party crates shared by `host`, `tracking`
-and `desktop-nixos`) on every `master` run, and desktop releases push
-`desktop-nixos` (`.github/actions/push-cache`). Pushing needs the
-`NIX_SIGNING_KEY`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets.
+(`.#host.cargoArtifacts`, built with the private-source stubs) and xtask on
+trusted master runs. Firmware release workflows push firmware derivations,
+checks and packaging closures; FFI and UniFFI workflows push SDK derivations
+and checks on trusted runs. Desktop releases push `desktop-nixos`.
 
-`odyssey-cv` is vendored with its manifests only. Builds that compile its
-sources wrap their arguments in `withPrivateSource` (`nix/common.nix`);
-`checks.private-source-boundary` verifies the vendored copies, and the push
-action refuses any closure that references the sources.
+Public builds upload full Nix build closures, including build-time dependency
+outputs. The upload action rejects any closure containing the locked
+`odyssey-cv` source. Host application and tracking derivations that compile its
+real sources are never uploaded. Pull requests never push. Uploads need
+`NIX_SIGNING_KEY`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
+
+Run `.github/actions/push-cache/test.sh` to check build-only closure coverage
+and private-source rejection locally.
 
 ### NixOS package
 

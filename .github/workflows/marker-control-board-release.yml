@@ -46,6 +46,13 @@ jobs:
           out=$(nix build -L --no-link --print-out-paths .#firmware-marker-control-board-images)
           mkdir build
           cp -rL "$out"/. build/
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: '.#firmware-marker-control-board-images .#checks.x86_64-linux.marker-control-board-tests .#checks.x86_64-linux.better-dfu-tests'
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: marker-control-board

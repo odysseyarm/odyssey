@@ -200,7 +200,7 @@ fn camera_support_notice(
     }
     actions = actions.child(
         button("check-again", "Check again", ButtonKind::Secondary, p)
-            .on_click(act(wizard, |w, cx| w.request_camera_list(cx))),
+            .on_click(act(wizard, Wizard::request_camera_list)),
     );
     no_camera(
         p,

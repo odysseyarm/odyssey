@@ -85,7 +85,7 @@ pub(super) fn frame_view(
         // Native-resolution pixels, scaled only for display.
         .child(
             div().w_full().bg(gpui::black()).child(
-                img(frame.image.clone())
+                img(Arc::clone(&frame.image))
                     .w_full()
                     .aspect_ratio(f32::from(frame.width) / f32::from(frame.height)),
             ),

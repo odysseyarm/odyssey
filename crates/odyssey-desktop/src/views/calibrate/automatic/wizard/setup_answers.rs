@@ -155,10 +155,7 @@ impl Wizard {
     pub(super) fn poll_cameras(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
-                if this
-                    .update(cx, |this, cx| this.request_camera_list(cx))
-                    .is_err()
-                {
+                if this.update(cx, Self::request_camera_list).is_err() {
                     break;
                 }
                 cx.background_executor().timer(CAMERA_POLL_INTERVAL).await;

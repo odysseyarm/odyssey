@@ -151,7 +151,7 @@ impl Render for SetupStep {
                 div().into_any_element(),
                 button("continue", "Continue", ButtonKind::Primary, p)
                     .disabled(!can_continue)
-                    .on_click(act(&wizard, |w, cx| w.begin_position(cx)))
+                    .on_click(act(&wizard, Wizard::begin_position))
                     .into_any_element(),
             ],
         )

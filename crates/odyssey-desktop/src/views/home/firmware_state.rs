@@ -30,7 +30,7 @@ pub(super) struct FirmwareManifestModel {
     pub(super) error: Option<String>,
     channel: Option<FirmwareChannel>,
     fetcher: Option<tokio::task::JoinHandle<()>>,
-    _receiver: Option<Task<()>>,
+    receiver_task: Option<Task<()>>,
     _channel_subscription: gpui::Subscription,
 }
 
@@ -48,7 +48,7 @@ impl FirmwareManifestModel {
             error: None,
             channel: None,
             fetcher: None,
-            _receiver: None,
+            receiver_task: None,
             _channel_subscription: subscription,
         };
         this.restart(channel_model.read(cx).channel(), cx);
@@ -88,7 +88,7 @@ impl FirmwareManifestModel {
                 let _ = sender.send(Fetch::Done(fetched));
             }
         }));
-        self._receiver = Some(cx.spawn(async move |this, cx| {
+        self.receiver_task = Some(cx.spawn(async move |this, cx| {
             while let Some(fetch) = receiver.recv().await {
                 let applied = this.update(cx, |this, cx| {
                     match fetch {
@@ -108,6 +108,7 @@ impl FirmwareManifestModel {
     }
 
     fn stop(&mut self) {
+        drop(self.receiver_task.take());
         if let Some(fetcher) = self.fetcher.take() {
             fetcher.abort();
         }

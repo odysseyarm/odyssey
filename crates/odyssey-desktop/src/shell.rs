@@ -4,7 +4,7 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled, Subscription, Window,
     WindowOptions, div, px, size,
 };
 use odyssey_hub_common::config::ConfigCorruptionEvent;
@@ -71,8 +71,7 @@ impl Shell {
             calibration: None,
             pending_page: None,
             _context: context,
-            _appearance: window
-                .observe_window_appearance(|window, cx| apply_appearance(window, cx)),
+            _appearance: window.observe_window_appearance(apply_appearance),
         }
     }
 
@@ -329,7 +328,7 @@ impl Render for Shell {
                             .min_h_0()
                             .h_0()
                             .overflow_y_scroll()
-                            .when(self.calibration.is_some(), |page| page.overflow_hidden())
+                            .when(self.calibration.is_some(), Styled::overflow_hidden)
                             .child(content),
                     ),
             )

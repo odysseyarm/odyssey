@@ -124,7 +124,10 @@ pub(super) async fn discover(
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        #[allow(unreachable_code)]
+        #[expect(
+            unreachable_code,
+            reason = "the loop never breaks; the Ok fixes the block's error type"
+        )]
         Ok::<(), String>(())
     };
     tokio::select! {

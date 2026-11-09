@@ -77,7 +77,7 @@ pub(super) fn push_text(
 ) {
     if input.read(cx).value() != value {
         input.update(cx, |state, cx| {
-            state.set_value(value.to_owned(), window, cx)
+            state.set_value(value.to_owned(), window, cx);
         });
     }
 }

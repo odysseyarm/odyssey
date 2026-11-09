@@ -70,7 +70,7 @@ impl Drop for MarkerDemandGuard {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum OneShotAction {
     Enroll,
     ResetMarkerMode,
@@ -237,6 +237,10 @@ struct AccessoryManager {
     native_error: Option<String>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one handle per channel/list the manager owns; grouping would only rename them"
+)]
 pub(crate) async fn accessory_manager(
     event_tx: broadcast::Sender<Event>,
     info: watch::Receiver<AccessoryInfoMap>,
@@ -421,10 +425,11 @@ impl AccessoryManager {
                     let task = tokio::spawn(async move {
                         match backend {
                             RadioBackend::Native(adapter) => {
-                                native::discover(adapter, radio, nearby, updates, worker_stop).await
+                                native::discover(adapter, radio, nearby, updates, worker_stop)
+                                    .await;
                             }
                             RadioBackend::Dongle(list, id) => {
-                                transport::discover_dongle(list, id, updates, worker_stop).await
+                                transport::discover_dongle(list, id, updates, worker_stop).await;
                             }
                         }
                     });
@@ -616,6 +621,7 @@ impl AccessoryManager {
                     OneShotAction::Enroll => context.enroll().await,
                     OneShotAction::ResetMarkerMode => context.reset_marker_mode().await,
                 };
+                tracing::info!(?address, ?action, ?result, "Accessory one-shot finished");
                 let _ = reply.send(result.map(|()| enrolled_radio));
             } else {
                 context.run().await;
@@ -664,7 +670,7 @@ impl AccessoryManager {
             }
         }
         let mut map = AccessoryMap::new();
-        for (&address, info) in configured.iter() {
+        for (&address, info) in &configured {
             let route = self
                 .route(&info.radio)
                 .unwrap_or_else(|| info.radio.clone());
@@ -887,6 +893,7 @@ impl SessionContext {
                 Err(error) => Err(error),
             };
             if let Err(error) = result {
+                tracing::warn!(?self.address, %error, "Accessory session failed");
                 self.state(AccessoryConnectionState::Failed, Some(error), false)
                     .await;
             } else {
@@ -941,7 +948,7 @@ impl SessionContext {
 async fn io<T>(future: impl Future<Output = Result<T, impl Display>>) -> Result<T, String> {
     time::timeout(Duration::from_secs(8), future)
         .await
-        .map_err(|_| "Bluetooth operation timed out".to_string())?
+        .map_err(|_elapsed| "Bluetooth operation timed out".to_string())?
         .map_err(|error| error.to_string())
 }
 
@@ -1533,10 +1540,7 @@ mod tests {
         let device_list = DeviceList::default();
         device_list.upsert(device, None);
 
-        let mut info = odyssey_hub_common::accessory::AccessoryInfo::with_defaults(
-            "mag",
-            AccessoryType::DryFireMag,
-        );
+        let mut info = AccessoryInfo::with_defaults("mag", AccessoryType::DryFireMag);
         info.assignment = std::num::NonZeroU64::new(u64::from_le_bytes([1, 2, 3, 4, 5, 6, 0, 0]));
         let (_info_sender, info_watch) = watch::channel(HashMap::from([([0; 6], info)]));
         let (event_tx, mut events) = broadcast::channel(4);

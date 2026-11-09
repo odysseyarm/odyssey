@@ -75,6 +75,13 @@ jobs:
             test -s "dist/dongle-fw-$VERSION$ext"
           done
           ls -l dist
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: '.#dongle-dist .#xtask'
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: dongle-fw

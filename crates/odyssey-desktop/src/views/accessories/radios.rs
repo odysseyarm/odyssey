@@ -51,6 +51,30 @@ fn radio_label(radios: &[AccessoryRadioInfo], selected: &AccessoryRadio) -> Stri
     }
 }
 
+const BLUETOOTH_OFF_SUMMARY: &str =
+    "Bluetooth is off or unavailable. Turn it on in system settings.";
+
+/// Platform Bluetooth errors name the OS API, not what the user should do.
+pub(super) fn radio_error_summary(error: &str) -> std::borrow::Cow<'_, str> {
+    const OFF_SIGNATURES: [&str; 6] = [
+        "device not ready",
+        "winrt",
+        "radio is off",
+        "0x800710df",
+        "no adapter",
+        "no bluetooth adapter",
+    ];
+    let lower = error.to_lowercase();
+    if OFF_SIGNATURES.iter().any(|sig| lower.contains(sig)) {
+        return BLUETOOTH_OFF_SUMMARY.into();
+    }
+    let first = error.lines().next().unwrap_or_default();
+    match first.char_indices().nth(120) {
+        Some((end, _)) => format!("{}…", &first[..end]).into(),
+        None => first.into(),
+    }
+}
+
 impl AccessoriesView {
     pub(super) fn sync_radio_selects(
         &mut self,
@@ -299,7 +323,7 @@ impl AccessoriesView {
                         .mt_1()
                         .text_sm()
                         .text_color(p.warning_ink)
-                        .child(error.clone()),
+                        .child(radio_error_summary(error).into_owned()),
                 );
             }
             row = row.child(
@@ -341,6 +365,9 @@ impl AccessoriesView {
                             radio.connected_accessories,
                             radio.connecting_accessories,
                         )))
+                        .children(radio.error.as_ref().map(|error| {
+                            div().mt_2().text_xs().text_color(p.fg_muted).child(error.clone())
+                        }))
                         .child(div().mt_2().text_sm().text_color(p.fg_muted).child(
                             if is_dongle {
                                 format!(
@@ -390,6 +417,19 @@ mod tests {
         for invalid in ["", "native:", "dongle:", "system:other", "other:id"] {
             assert_eq!(parse_radio(invalid), None);
         }
+    }
+
+    #[test]
+    fn radio_error_summary_hides_winrt_text_and_truncates_the_rest() {
+        assert_eq!(
+            radio_error_summary("WinRT error: 0x800710DF (The device is not ready)"),
+            BLUETOOTH_OFF_SUMMARY,
+        );
+        let long = format!("{}\nsecond line", "x".repeat(200));
+        let summary = radio_error_summary(&long);
+        assert_eq!(summary.chars().count(), 121);
+        assert!(summary.ends_with('…') && !summary.contains("second"));
+        assert_eq!(radio_error_summary("scan timed out"), "scan timed out");
     }
 
     #[test]

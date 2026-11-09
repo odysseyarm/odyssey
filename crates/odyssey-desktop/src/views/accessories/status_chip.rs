@@ -4,8 +4,8 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, ElementId, FontWeight, IntoElement, ParentElement as _,
-    Styled as _, div,
+    Animation, AnimationExt as _, ElementId, FontWeight, IntoElement, ParentElement as _, Styled,
+    div,
 };
 use odyssey_hub_common::accessory::AccessoryConnectionState;
 
@@ -37,7 +37,7 @@ pub(super) fn status_chip(
             Animation::new(Duration::from_secs(2))
                 .repeat()
                 .with_easing(|t| 1.0 - 0.5 * (t * PI).sin()),
-            |dot, opacity| dot.opacity(opacity),
+            Styled::opacity,
         )
         .into_any_element()
     } else {

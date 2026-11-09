@@ -30,7 +30,13 @@ on:
         description: SDK version to stamp into the bundled zip's VERSION file; empty = the crate's own VERSION file
         required: false
         type: string
-        default: ''
+    secrets:
+      NIX_SIGNING_KEY:
+        required: false
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -55,6 +61,13 @@ jobs:
       - name: Build (nix, cargo-zigbuild)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-ffi-${{ matrix.triplet }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Collect libs
         run: |
           set -eu
@@ -88,6 +101,13 @@ jobs:
       - name: Build (nix, cargo-xwin)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-win_x64)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-ffi-win_x64
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Collect libs
         run: |
           set -eu
@@ -115,6 +135,13 @@ jobs:
       - name: Build (nix)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/push-cache
+        if: github.event_name != 'pull_request'
+        with:
+          public-builds: .#sdk-ffi-${{ matrix.triplet }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Collect libs
         run: |
           set -eu

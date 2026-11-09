@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
+      - name: Check public cache boundaries
+        run: bash .github/actions/push-cache/test.sh
       - name: Build host applications and repository tools
         id: deps
         run: |
@@ -30,6 +32,7 @@ jobs:
         uses: ./.github/actions/push-cache
         with:
           paths: ${{ steps.deps.outputs.path }}
+          public-builds: .#host.cargoArtifacts .#xtask
           signing-key: ${{ secrets.NIX_SIGNING_KEY }}
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}

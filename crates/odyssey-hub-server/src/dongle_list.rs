@@ -40,10 +40,10 @@ impl DongleList {
             sender
                 .send(DongleTaskMessage::Accessory { command, reply })
                 .await
-                .map_err(|_| format!("Dongle '{id}' disconnected"))?;
+                .map_err(|_closed| format!("Dongle '{id}' disconnected"))?;
             response
                 .await
-                .map_err(|_| format!("Dongle '{id}' disconnected"))?
+                .map_err(|_closed| format!("Dongle '{id}' disconnected"))?
         };
         tokio::time::timeout(
             std::time::Duration::from_millis(
@@ -52,7 +52,7 @@ impl DongleList {
             operation,
         )
         .await
-        .map_err(|_| format!("Dongle '{id}' accessory request timed out"))?
+        .map_err(|_elapsed| format!("Dongle '{id}' accessory request timed out"))?
     }
 
     pub(crate) async fn subscribe_accessory_events(
@@ -67,13 +67,13 @@ impl DongleList {
             sender
                 .send(DongleTaskMessage::SubscribeAccessoryEvents { reply })
                 .await
-                .map_err(|_| format!("Dongle '{id}' disconnected"))?;
+                .map_err(|_closed| format!("Dongle '{id}' disconnected"))?;
             response
                 .await
-                .map_err(|_| format!("Dongle '{id}' disconnected"))?
+                .map_err(|_closed| format!("Dongle '{id}' disconnected"))?
         })
         .await
-        .map_err(|_| format!("Dongle '{id}' event subscription timed out"))?
+        .map_err(|_elapsed| format!("Dongle '{id}' event subscription timed out"))?
     }
 
     /// Adds a dongle, or replaces the listed one with the same id.

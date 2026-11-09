@@ -5,6 +5,8 @@ use odyssey_hub_common::device::{Device, DeviceCapabilities};
 const PRODUCT_ID_ATS_VM: u16 = 0x520F;
 const PRODUCT_ID_ATS_LITE: u16 = 0x5210;
 const PRODUCT_ID_ATS_LITE1: u16 = 0x5211;
+const PRODUCT_ID_DONGLE: u16 = 0x5212;
+const PRODUCT_ID_MARKER_CONTROL_BOARD: u16 = 0x5213;
 
 /// The product's name for its USB product id.
 pub(crate) fn device_type(device: &Device) -> &'static str {
@@ -12,6 +14,8 @@ pub(crate) fn device_type(device: &Device) -> &'static str {
         PRODUCT_ID_ATS_VM => "ATS VM",
         PRODUCT_ID_ATS_LITE => "ATS Lite",
         PRODUCT_ID_ATS_LITE1 => "ATS Lite1",
+        PRODUCT_ID_DONGLE => "Odyssey Dongle",
+        PRODUCT_ID_MARKER_CONTROL_BOARD => "Marker Control Board",
         _ => "Unknown",
     }
 }

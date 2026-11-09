@@ -82,7 +82,7 @@ impl ReferenceHelper {
                 "121.0"
             };
             self.tape.update(cx, |state, cx| {
-                state.set_placeholder(placeholder, window, cx)
+                state.set_placeholder(placeholder, window, cx);
             });
         }
 
@@ -292,7 +292,7 @@ fn prompt(p: Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> 
                         p,
                     )
                     .on_click(act(wizard, |wizard, cx| {
-                        wizard.open_helper(Method::Tape, cx)
+                        wizard.open_helper(Method::Tape, cx);
                     })),
                 )
                 .child(
@@ -371,7 +371,7 @@ fn measured(
                     "helper-drop",
                     p,
                     "Don't use it",
-                    act(wizard, |wizard, cx| wizard.clear_reference(cx)),
+                    act(wizard, Wizard::clear_reference),
                 )),
         )
         .into_any_element()
@@ -415,7 +415,7 @@ impl ReferenceHelper {
                     SharedString::from(label),
                     option == method,
                     act_boxed(wizard, move |wizard, cx| {
-                        wizard.set_helper_method(option, cx)
+                        wizard.set_helper_method(option, cx);
                     }),
                 )
             })
@@ -478,11 +478,11 @@ impl ReferenceHelper {
                     .child(
                         button("helper-use", "Use this size", ButtonKind::Primary, p)
                             .disabled(!usable)
-                            .on_click(act(wizard, |wizard, cx| wizard.apply_helper(cx))),
+                            .on_click(act(wizard, Wizard::apply_helper)),
                     )
                     .child(
                         button("helper-cancel", "Cancel", ButtonKind::Secondary, p)
-                            .on_click(act(wizard, |wizard, cx| wizard.cancel_helper(cx))),
+                            .on_click(act(wizard, Wizard::cancel_helper)),
                     ),
             )
             .into_any_element()
@@ -539,7 +539,7 @@ impl ReferenceHelper {
                         ButtonKind::Secondary,
                         p,
                     )
-                    .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
+                    .on_click(act(wizard, Wizard::show_helper_picture)),
                 )
             }))
             .child(
@@ -586,7 +586,7 @@ impl ReferenceHelper {
                         ButtonKind::Secondary,
                         p,
                     )
-                    .on_click(act(wizard, |wizard, cx| wizard.show_helper_picture(cx))),
+                    .on_click(act(wizard, Wizard::show_helper_picture)),
                 )
                 .child(width)
         } else {
@@ -596,10 +596,12 @@ impl ReferenceHelper {
                 .items_center()
                 .gap_3()
                 .child(
-                    button("helper-smaller", "\u{2212}", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, move |wizard, cx| {
-                            wizard.set_card_px(card_px - CARD_STEP_PX, cx)
-                        })),
+                    button("helper-smaller", "\u{2212}", ButtonKind::Secondary, p).on_click(act(
+                        wizard,
+                        move |wizard, cx| {
+                            wizard.set_card_px(card_px - CARD_STEP_PX, cx);
+                        },
+                    )),
                 )
                 .child(
                     div()
@@ -608,10 +610,12 @@ impl ReferenceHelper {
                         .child(Slider::new(&self.card)),
                 )
                 .child(
-                    button("helper-larger", "+", ButtonKind::Secondary, p)
-                        .on_click(act(wizard, move |wizard, cx| {
-                            wizard.set_card_px(card_px + CARD_STEP_PX, cx)
-                        })),
+                    button("helper-larger", "+", ButtonKind::Secondary, p).on_click(act(
+                        wizard,
+                        move |wizard, cx| {
+                            wizard.set_card_px(card_px + CARD_STEP_PX, cx);
+                        },
+                    )),
                 )
                 .child(width)
         };

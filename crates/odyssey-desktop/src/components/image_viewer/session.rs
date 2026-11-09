@@ -53,7 +53,7 @@ impl LiveSession {
         let pump = cx.spawn_in(window, async move |this, cx| {
             while let Some(event) = received.next().await {
                 let delivered = this.update_in(cx, |dialog, window, cx| {
-                    dialog.on_session_event(event, window, cx)
+                    dialog.on_session_event(event, window, cx);
                 });
                 if delivered.is_err() {
                     break;

@@ -99,7 +99,7 @@ impl AccessoryDispatcher {
         state.pending[index] = Some(Pending { id, reply });
         Ok((
             Reservation {
-                dispatcher: self.clone(),
+                dispatcher: Arc::clone(self),
                 id,
             },
             receiver,

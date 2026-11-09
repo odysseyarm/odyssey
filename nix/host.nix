@@ -71,11 +71,11 @@ in {
     host-tests = craneLib.cargoTest (common.withPrivateSource hostArgs // { cargoArtifacts = hostArtifacts; });
     host-lint = craneLib.cargoClippy (common.withPrivateSource hostArgs // {
       cargoArtifacts = hostArtifacts;
-      cargoClippyExtraArgs = "--all-targets -- -A dead_code_pub_in_binary";
+      cargoClippyExtraArgs = "--all-targets -- -D warnings -A dead_code_pub_in_binary";
     });
     host-lint-bins = craneLib.cargoClippy (common.withPrivateSource hostArgs // {
       cargoArtifacts = hostArtifacts;
-      cargoClippyExtraArgs = "--bins";
+      cargoClippyExtraArgs = "--bins -- -D warnings";
     });
     xtask-tests = craneLib.cargoTest (xtaskArgs // { cargoArtifacts = xtaskArtifacts; });
     format = pkgs.runCommand "odyssey-format" {
