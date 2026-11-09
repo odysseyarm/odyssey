@@ -60,8 +60,6 @@ jobs:
           fi
       - uses: ./.github/actions/setup-nix
         if: steps.exists.outputs.skip != 'true'
-        with:
-          public-cache: 'true'
       - name: Check the tag against the net-core source
         id: parse
         if: steps.exists.outputs.skip != 'true'
@@ -100,8 +98,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build the release artifacts
         env:
           BOARD: ${{ needs.resolve.outputs.board }}

@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
+        with:
+          public-cache: 'true'
       - name: Build host applications and repository tools
         run: nix build -L --no-link .#host .#xtask
       - name: Test host applications and repository tools

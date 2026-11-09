@@ -31,9 +31,13 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
-Every CI job uploads build results to the Actions cache (magic-nix-cache), and a
-public repository's caches are readable from fork pull requests. That is safe
-because `odyssey-cv` never reaches a cached path as source:
+Host, tracking and desktop jobs upload build results to the Actions cache
+(magic-nix-cache); SDK and firmware jobs do not, because GitHub's 10 GB per-repo
+budget only fits the large layers. Release tags cannot restore each other's
+caches, so `desktop-nixos` and tracking build on the host dependency layer that
+Host CI keeps warm on `master`. A public repository's caches are readable from
+fork pull requests. That is safe because `odyssey-cv` never reaches a cached
+path as source:
 
 - Dependency layers (`buildDepsOnly`) vendor `odyssey-cv` and its `eskf` as
   stubs: the real `Cargo.toml` files, so features and the dependency graph are

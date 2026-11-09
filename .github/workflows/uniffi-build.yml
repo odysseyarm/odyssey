@@ -84,8 +84,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       # maturin (in the sandbox) builds the wheel with zig as the linker and
       # audits it against the manylinux2014 / musllinux_1_2 policy.
       - name: Build wheels
@@ -114,8 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       # maturin cross-compiles this target through its cargo-xwin backend; the
       # sysroot is the hash-pinned one from nix/xwin.nix.
       - name: Build wheels
@@ -140,8 +136,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build wheels
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-macos-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
@@ -167,8 +161,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build natives (nix)
         run: |
           set -eu
@@ -196,8 +188,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build macos natives (nix)
         run: |
           set -eu
@@ -222,8 +212,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Download natives
         uses: actions/download-artifact@v6
         with:

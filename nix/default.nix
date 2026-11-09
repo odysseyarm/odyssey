@@ -59,6 +59,7 @@ let
   } else { packages = {}; checks = {}; };
   desktopNixos = if system == "x86_64-linux" then import ./desktop-nixos.nix {
     inherit pkgs craneLib common nativeInputs nativeLibraries nativeEnvironment;
+    hostArtifacts = host.artifacts;
   } else { packages = {}; checks = {}; };
   windows = if system == "x86_64-linux" then import ./desktop-windows.nix {
     inherit pkgs craneLib common;

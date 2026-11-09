@@ -1,4 +1,4 @@
-{ pkgs, craneLib, common, nativeInputs, nativeLibraries, nativeEnvironment }:
+{ pkgs, craneLib, common, nativeInputs, nativeLibraries, nativeEnvironment, hostArtifacts }:
 let
   inherit (pkgs) lib;
 
@@ -24,9 +24,9 @@ let
     buildInputs = (lib.filter (p: lib.getName p != "opencv") nativeLibraries) ++ [ pkgs.freetype ];
     doCheck = false;
   };
-  cargoArtifacts = craneLib.buildDepsOnly args;
   desktop = craneLib.buildPackage (common.withPrivateSource args // {
-    inherit cargoArtifacts;
+    # Host CI keeps this layer warm on master, so release runs reuse it.
+    cargoArtifacts = hostArtifacts;
     meta.mainProgram = mainBinary;
     postInstall = ''
       wrapProgram "$out/bin/${mainBinary}" \

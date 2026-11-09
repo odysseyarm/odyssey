@@ -23,7 +23,8 @@ let
     pname = "odyssey-tracking-regression";
     cargoExtraArgs = "--locked --offline -p odyssey-hub-server --features tracking-regression --bin tracking-regression";
   };
-  trackingArtifacts = craneLib.buildDepsOnly (trackingArgs // { doCheck = false; });
+  # The host layer already compiles every dependency of this selection.
+  trackingArtifacts = hostArtifacts;
   tracking = craneLib.buildPackage (common.withPrivateSource trackingArgs // {
     cargoArtifacts = trackingArtifacts;
     doCheck = false;
@@ -56,6 +57,8 @@ let
     '';
   };
 in {
+  # Host dependency layer, shared with other native-glibc builds of this workspace.
+  artifacts = hostArtifacts;
   packages = {
     default = host;
     inherit host tracking xtask;

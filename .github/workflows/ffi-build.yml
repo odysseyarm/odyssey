@@ -52,8 +52,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build (nix, cargo-zigbuild)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
@@ -85,8 +83,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       # The MSVC CRT and Windows SDK are a hash-pinned fixed-output derivation
       # (nix/xwin.nix); nothing is downloaded by the build itself.
       - name: Build (nix, cargo-xwin)
@@ -116,8 +112,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Build (nix)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"

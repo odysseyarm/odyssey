@@ -21,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
+        with:
+          public-cache: 'true'
       - name: Test regression contracts
         run: nix build -L --no-link .#checks.x86_64-linux.tracking-tests
       - name: Build tracking runner

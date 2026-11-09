@@ -2,9 +2,9 @@ name: Set up Odyssey Nix
 description: Install pinned Nix action and cache store paths in the GitHub Actions cache
 inputs:
   public-cache:
-    description: Upload store paths to the Actions cache. On by default; outputs here never carry private source (nix/common.nix, checks.private-source-boundary)
+    description: Upload store paths to the Actions cache. Safe for every job (outputs never carry private source; nix/common.nix, checks.private-source-boundary), but the 10 GB repo budget only fits the host and desktop jobs, which opt in
     required: false
-    default: 'true'
+    default: 'false'
 runs:
   using: composite
   steps:

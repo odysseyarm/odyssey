@@ -35,8 +35,6 @@ jobs:
               out.write(f'version={version}\n')
           PY
       - uses: ./.github/actions/setup-nix
-        with:
-          public-cache: 'true'
       - name: Check startup and DFU boundaries
         run: |
           nix build -L --no-link \
