@@ -1,6 +1,6 @@
 [package]
 name = "odyssey-desktop"
-version = "0.7.4"
+version = "0.7.5"
 edition.workspace = true
 default-run = "odyssey-desktop"
 
@@ -29,6 +29,7 @@ image = "0.25.6"
 hex = { workspace = true }
 nalgebra = "0.35"
 dfu-nusb = { workspace = true }
+nusb = { workspace = true }
 parking_lot = { workspace = true }
 # The native Save As dialog for the scale board PDFs.
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }

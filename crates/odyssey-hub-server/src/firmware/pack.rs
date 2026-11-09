@@ -47,7 +47,7 @@ pub fn manifest_path(dir: &Path, channel: FirmwareChannel) -> PathBuf {
 
 /// Where a file of a release is, relative to the pack.
 fn relative_path(device: &str, source: ReleaseSource<'_>, filename: &str) -> PathBuf {
-    PathBuf::from(source.tag(device)).join(format!("{filename}.bin"))
+    PathBuf::from(source.tag(device)).join(super::asset_filename(device, source, filename))
 }
 
 /// Which GitHub release holds a manifest file, which is also its folder here.
@@ -76,7 +76,14 @@ fn source_of<'a>(
 /// Everything wrong with one release in this folder.
 fn problems(dir: &Path, device: &str, entry: &FirmwareEntry) -> Vec<String> {
     let mut found = Vec::new();
-    if entry.application_files().is_none() {
+    if device == "dongle" {
+        if !["dfu-fanstel", "dfu-laird"]
+            .iter()
+            .all(|key| entry.files.contains_key(*key))
+        {
+            found.push("the manifest must list both signed dongle packages".into());
+        }
+    } else if entry.application_files().is_none() {
         found.push("the manifest must list app or both app-a and app-b, not mixed images".into());
     }
     let mut keys: Vec<_> = entry.files.keys().collect();
@@ -307,6 +314,49 @@ mod tests {
             .unwrap(),
             image
         );
+    }
+
+    #[test]
+    fn dongle_pack_reads_signed_zips_and_refuses_a_missing_vendor() {
+        let dir = scratch("dongle");
+        let bytes = b"signed package";
+        let file = serde_json::json!({"size": bytes.len(), "sha256": sha(bytes)});
+        let manifest = serde_json::json!({
+            "version": 1, "devices": {"dongle": {"firmwares": [{
+                "version": "0.1.13", "requires_bootloader": 0, "requires_netcore": 0,
+                "min_desktop": "0.7.4", "files": {"dfu-fanstel": file, "dfu-laird": file}
+            }]}}
+        });
+        put(&dir, "releases.alpha.json", manifest.to_string().as_bytes());
+        for vendor in ["fanstel", "laird"] {
+            put(
+                &dir,
+                &format!("dongle-v0.1.13/dongle-fw-0.1.13-dfu-{vendor}.zip"),
+                bytes,
+            );
+        }
+        let loaded = load_manifest(&dir, FirmwareChannel::Alpha).unwrap();
+        let entry = &loaded.manifest.devices["dongle"].firmwares[0];
+        let file = &entry.files["dfu-fanstel"];
+        assert_eq!(
+            read_file(
+                &dir,
+                "dongle",
+                ReleaseSource::Application {
+                    version: &entry.version
+                },
+                "dfu-fanstel",
+                &file.sha256,
+                file.size
+            )
+            .unwrap(),
+            bytes
+        );
+        std::fs::remove_file(dir.join("dongle-v0.1.13/dongle-fw-0.1.13-dfu-laird.zip")).unwrap();
+        assert!(matches!(
+            load_manifest(&dir, FirmwareChannel::Alpha),
+            Err(super::super::FirmwareSourceError::IncompletePack { .. })
+        ));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Firmware manifest fetching and DFU update support.
 
 mod dfu_download;
+pub mod dongle;
 pub mod pack;
 
 use std::collections::HashMap;
@@ -436,11 +437,20 @@ impl ReleaseSource<'_> {
 /// The download URL of `filename` in the release `source` names.
 pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename: &str) -> String {
     format!(
-        "{}/{}/{}.bin",
+        "{}/{}/{}",
         RELEASES_BASE_URL,
         source.tag(device_type),
-        filename
+        asset_filename(device_type, source, filename)
     )
+}
+
+pub(crate) fn asset_filename(device: &str, source: ReleaseSource<'_>, key: &str) -> String {
+    match (device, source, key) {
+        ("dongle", ReleaseSource::Application { version }, "dfu-fanstel" | "dfu-laird") => {
+            format!("dongle-fw-{version}-{key}.zip")
+        }
+        _ => format!("{key}.bin"),
+    }
 }
 
 /// Fails unless `data` hashes to `expected_sha256`.

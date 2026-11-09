@@ -21,6 +21,7 @@ pub(crate) struct FirmwareUpdateManager {
     /// read from the GPUI-side hub entity.
     devices: Arc<Mutex<Vec<Device>>>,
     generation: Arc<AtomicU64>,
+    pub(super) dongles: Arc<Mutex<super::dongle_update::DongleUpdates>>,
 }
 
 /// Notifies observers whenever the manager's state changed. Views observe it
@@ -64,6 +65,7 @@ impl FirmwareUpdateManager {
             updating: Arc::new(Mutex::new(HashSet::new())),
             devices: Arc::new(Mutex::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
+            dongles: Arc::new(Mutex::new(super::dongle_update::DongleUpdates::default())),
         }
     }
 
@@ -79,9 +81,12 @@ impl FirmwareUpdateManager {
 
         let hub = cx.global::<HubHandle>().0.clone();
         manager.set_devices(hub.read(cx).devices.clone());
+        manager.set_dongle_versions(hub.read(cx).dongles.clone());
+        super::dongle_update::watch_dongles(manager.clone());
         let mirror = manager.clone();
         cx.observe(&hub, move |hub, cx| {
             mirror.set_devices(hub.read(cx).devices.clone());
+            mirror.set_dongle_versions(hub.read(cx).dongles.clone());
         })
         .detach();
 
@@ -116,7 +121,7 @@ impl FirmwareUpdateManager {
         self.devices.lock().clone()
     }
 
-    fn bump(&self) {
+    pub(super) fn bump(&self) {
         self.generation.fetch_add(1, Ordering::Release);
     }
 

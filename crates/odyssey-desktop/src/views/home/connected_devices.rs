@@ -6,20 +6,14 @@ use gpui::{
 };
 
 use super::{HomeEvent, HomeView};
-use crate::components::firmware_update::{dongle_update_card, updating_device_row};
+use crate::components::firmware_update::{dongle_update_cards, updating_device_row};
 use crate::components::ui;
 use crate::theme::Palette;
 
 impl HomeView {
-    /// One card per dongle running firmware older than the manifest's newest.
     pub(super) fn dongle_updates(&self, p: Palette, cx: &Context<'_, Self>) -> Vec<AnyElement> {
         let manifest = self.manifest.read(cx).manifest.clone();
-        self.hub
-            .read(cx)
-            .dongles
-            .iter()
-            .filter_map(|dongle| dongle_update_card(dongle, manifest.as_ref(), p))
-            .collect()
+        dongle_update_cards(&self.manager, manifest.as_ref(), p)
     }
 
     pub(super) fn connected_devices(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {

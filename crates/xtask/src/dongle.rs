@@ -246,6 +246,28 @@ fn dfu_pkg(vendors: &[Vendor]) -> eros::Result<()> {
     println!("==> Creating DFU packages (nrfutil)");
     let version = cmd::package_version(DIR)?;
     let application_version = application_version(&version)?.to_string();
+    let memory = fs::read_to_string(cmd::root().join(DIR).join("memory-dongle.kdl"))?;
+    let memory = match memory.parse::<memory_spec::MemorySpec>() {
+        Ok(memory) => memory,
+        Err(error) => eros::bail!("invalid dongle memory layout: {error}"),
+    };
+    let regions = memory.regions();
+    let application = &regions["flash"]["app_flash"];
+    let maximum = usize::try_from(application.length())?;
+    let binary = format!("./{BUILT}/{BIN}.dfu.bin");
+    cmd::run(
+        cmd::at(DIR, cmd::llvm_objcopy()?)
+            .args(["-O", "binary"])
+            .arg(elf())
+            .arg(&binary),
+    )?;
+    let path = cmd::root().join(DIR).join(&binary);
+    let mut image = fs::read(&path)?;
+    if image.is_empty() || image.len() > maximum {
+        eros::bail!("dongle application exceeds memory-map bounds");
+    }
+    image.resize(maximum, 0xff);
+    fs::write(path, image)?;
     for &vendor in vendors {
         let pkg = dfu_zip(vendor);
         cmd::run(
@@ -259,7 +281,7 @@ fn dfu_pkg(vendors: &[Vendor]) -> eros::Result<()> {
                 ])
                 .args(["--application-version", &application_version])
                 .args(["--sd-req", SD_REQ, "--application"])
-                .arg(hex_file())
+                .arg(&binary)
                 .args(["--key-file", vendor.key_file(), &pkg]),
         )?;
         println!("PKG ({}): {pkg}", vendor.name());

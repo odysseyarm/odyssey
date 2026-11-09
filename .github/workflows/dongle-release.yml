@@ -104,7 +104,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Dongle firmware v$VERSION" \
-              --notes "Dongle firmware $VERSION. The app updates over serial DFU: use the -dfu-fanstel.zip or -dfu-laird.zip that matches the dongle's bootloader (a mismatched package is rejected). The hex and uf2 are for flashing by hand."
+              --notes "Dongle firmware $VERSION. Update from Devices in Odyssey Desktop 0.7.5 or newer; press the reset/DFU button when prompted. Desktop selects the signed vendor package automatically and checks flash placement before erase. The hex and uf2 are for manual flashing."
           fi
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" --clobber \

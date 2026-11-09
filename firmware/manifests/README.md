@@ -35,13 +35,16 @@ Manifest `files` contains only `app`; `requires_bootloader` is `1` and
 `requires_netcore` is `0`. Never add `app-a`, `app-b`, `net-core`, or
 `stage2-bootloader` to this device. Bootloader cannot self-update through DFU.
 
-`dongle` entries announce a release; Odyssey Desktop does not install it. The
-dongle keeps its maker's bootloader (Fanstel's or Laird's, both Nordic serial
-DFU), so `files` holds one signed package per maker, `dfu-fanstel` and
-`dfu-laird`, and `requires_bootloader` and `requires_netcore` are `0`. The
-desktop compares the version the dongle reports with the newest entry its
-`min_desktop` allows and links to the `dongle-v<semver>` release. After the
-release workflow has published, run `cargo xtask dongle gen-release <min_desktop>`.
+`dongle` entries are installed by Odyssey Desktop 0.7.5 and newer. The dongle
+keeps its maker's bootloader (Fanstel or Laird, Nordic serial DFU), so `files`
+contains both `dfu-fanstel` and `dfu-laird`; `requires_bootloader` and
+`requires_netcore` are `0`. Assets are named
+`dongle-fw-<semver>-dfu-<maker>.zip`. Desktop checks size/hash, tries the signed
+init packets before writing an application, and selects the accepted package.
+It targets the same physical USB port through bootloader/reconnect and confirms
+the full dongle identity and reported firmware version before showing success.
+Offline packs must carry both ZIPs. After publication, run
+`cargo xtask dongle gen-release <min_desktop>`.
 
 The bootloader counter is the `release!` literal in its `main.rs`. It is
 published as `bcdDevice = 0xF000 | N` and as the DFU label `BOOTLOADER N`, and

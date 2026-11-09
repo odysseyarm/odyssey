@@ -218,7 +218,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
             let Some(tag) = tag_for(device, entry, key, file) else {
                 continue;
             };
-            let relative = format!("{tag}/{key}.bin");
+            let relative = format!("{tag}/{}", asset_filename(device, entry, key));
             if have.contains_key(&relative) {
                 continue;
             }
@@ -255,7 +255,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
             let Some(tag) = tag_for(device, entry, key, file) else {
                 continue;
             };
-            let path = out.join(&tag).join(format!("{key}.bin"));
+            let path = out.join(&tag).join(asset_filename(device, entry, key));
             let size = fs::metadata(&path)
                 .ok()
                 .filter(|meta| meta.is_file())
@@ -309,9 +309,21 @@ fn select(
         };
         firmwares.truncate(latest);
         for entry in firmwares.iter() {
-            validate_layout(entry).with_context(|| {
-                format!("{device} {}", entry["version"].as_str().unwrap_or_default())
-            })?;
+            if device == "dongle" {
+                if !["dfu-fanstel", "dfu-laird"]
+                    .iter()
+                    .all(|key| entry["files"].get(*key).is_some())
+                {
+                    eros::bail!(
+                        "dongle {} is missing a signed vendor package",
+                        entry["version"]
+                    );
+                }
+            } else {
+                validate_layout(entry).with_context(|| {
+                    format!("{device} {}", entry["version"].as_str().unwrap_or_default())
+                })?;
+            }
         }
     }
     Ok(())
@@ -337,6 +349,17 @@ fn validate_layout(entry: &Value) -> eros::Result<()> {
         eros::bail!("lists no {missing}");
     }
     Ok(())
+}
+
+fn asset_filename(device: &str, entry: &Value, key: &str) -> String {
+    if device == "dongle" && matches!(key, "dfu-fanstel" | "dfu-laird") {
+        format!(
+            "dongle-fw-{}-{key}.zip",
+            entry["version"].as_str().unwrap_or_default()
+        )
+    } else {
+        format!("{key}.bin")
+    }
 }
 
 /// Every (device, entry, file key, file) in the manifest, files in key order.
@@ -581,6 +604,19 @@ mod tests {
         ] {
             assert!(validate_layout(&entry).is_err(), "{entry}");
         }
+    }
+
+    #[test]
+    fn dongle_pack_requires_both_signed_packages() {
+        let mut source = json!({"version": 1, "devices": {"dongle": {"firmwares": [{
+            "version": "0.1.13", "files": {"dfu-fanstel": {}, "dfu-laird": {}}
+        }]}}});
+        select(&mut source, "alpha", &[], 1).unwrap();
+        source["devices"]["dongle"]["firmwares"][0]["files"]
+            .as_object_mut()
+            .unwrap()
+            .remove("dfu-laird");
+        assert!(select(&mut source, "alpha", &[], 1).is_err());
     }
 
     #[test]

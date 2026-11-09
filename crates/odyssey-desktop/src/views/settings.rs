@@ -70,6 +70,7 @@ impl Render for SettingsView {
             updates = updates.child(
                 Radio::new(label)
                     .checked(current == channel)
+                    .accessibility_label(label)
                     .on_click(cx.listener(move |this, _: &bool, _, cx| this.choose(channel, cx)))
                     .child(
                         div()

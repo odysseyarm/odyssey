@@ -25,6 +25,25 @@ nRF52840 USB dongle firmware acting as BLE-to-USB mux for three trackers plus th
                                 └────────────┘             └──────────┘
 ```
 
+## Updating in Odyssey Desktop
+
+In Desktop 0.7.5 or newer, open **Devices → Update dongle**. Desktop downloads
+and verifies both signed packages and selects the one the bootloader accepts;
+customers do not need `nrfutil`, a vendor choice, or a manually downloaded ZIP.
+When prompted, press the dongle's reset/DFU button. Keep it in the same USB port
+until Desktop confirms the installed version. Trackers and accessories
+disconnect during the update.
+
+A dongle already in Nordic bootloader mode appears as **Recover dongle**, including
+after restarting Desktop. If an update fails, leave it in that USB port and retry;
+press reset/DFU again if needed.
+
+Signed packages from 0.1.14 pad the application to the region in
+`memory-dongle.kdl`. Desktop queries the bootloader's existing image layout
+before erase and refuses a package whose staging could overwrite saved bonds.
+Unsupported layouts stop before flashing. An interrupted single-bank update
+requires bootloader recovery, not a chip erase.
+
 ## Building
 
 ### Prerequisites

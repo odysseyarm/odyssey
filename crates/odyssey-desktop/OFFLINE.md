@@ -56,6 +56,8 @@ atslite1-v0.1.22/app-a.bin                    an application release carries bot
 atslite1-v0.1.22/app-b.bin
 atslite1-netcore-v1/net-core.bin              net core and bootloader releases a manifest
 atslite1-bootloader-v4/stage2-bootloader.bin  entry refers to
+dongle-v0.1.14/dongle-fw-0.1.14-dfu-fanstel.zip
+dongle-v0.1.14/dongle-fw-0.1.14-dfu-laird.zip  dongle updates require both signed packages
 ```
 
 Odyssey offers a firmware release only when **every file it lists is in the folder at its listed
@@ -63,6 +65,9 @@ size, both application slots included** (an update writes whichever slot the dev
 running). A missing or half-copied file means that release is left out, and the log says which
 file; it never starts an update that cannot finish. Each file is also checked against its
 hash when it is used.
+
+Dongle updates use the same in-app flow offline. Desktop selects the accepted
+vendor package automatically; customers need no command-line DFU tool.
 
 Where the folder is, in order: `ODYSSEY_FIRMWARE_PACK_DIR`, the registry value `FirmwarePackDir`,
 `firmware_pack_dir` in the policy file, then the default:

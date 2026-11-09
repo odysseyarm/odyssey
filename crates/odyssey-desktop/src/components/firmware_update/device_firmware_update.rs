@@ -149,7 +149,7 @@ pub(crate) fn device_firmware_update(
 }
 
 /// A label, a progress bar and the byte counts of an image being written.
-fn flash_progress(label: &str, progress: usize, total: usize, p: Palette) -> AnyElement {
+pub(super) fn flash_progress(label: &str, progress: usize, total: usize, p: Palette) -> AnyElement {
     let percent = percent_complete(progress, total);
     div()
         .flex()
