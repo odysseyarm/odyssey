@@ -995,6 +995,27 @@
           "released": "2026-11-08"
         }
       ]
+    },
+    "dongle": {
+      "firmwares": [
+        {
+          "version": "0.1.13",
+          "requires_bootloader": 0,
+          "requires_netcore": 0,
+          "min_desktop": "0.7.4",
+          "files": {
+            "dfu-fanstel": {
+              "sha256": "ff46ba378114d492f4f5bb3dd0db5090a3f1231f171e4f6b4dc2e05b6f8edb45",
+              "size": 418203
+            },
+            "dfu-laird": {
+              "sha256": "9a454c033cf70fd556c0843e530d64b90c607a65c4bb7fa6f60869bd0f2f11a4",
+              "size": 418203
+            }
+          },
+          "released": "2026-11-08"
+        }
+      ]
     }
   }
 }
