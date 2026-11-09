@@ -1,10 +1,10 @@
 name: Set up Odyssey Nix
-description: Install pinned Nix action and optionally cache public store paths
+description: Install pinned Nix action and cache store paths in the GitHub Actions cache
 inputs:
   public-cache:
-    description: Enable store uploads only for builds without private source inputs
+    description: Upload store paths to the Actions cache. On by default; outputs here never carry private source (nix/common.nix, checks.private-source-boundary)
     required: false
-    default: 'false'
+    default: 'true'
 runs:
   using: composite
   steps:

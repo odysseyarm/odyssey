@@ -136,7 +136,7 @@ let
     doInstallCargoArtifacts = true;
     buildPhaseCargoCommand = "${cargoXwin} -p odyssey-desktop";
   });
-  app = { variant, flags }: crane.mkCargoDerivation (appBase // {
+  app = { variant, flags }: crane.mkCargoDerivation (common.withPrivateSource appBase // {
     pnameSuffix = "-${variant}";
     cargoArtifacts = appDeps;
     nativeBuildInputs = appBase.nativeBuildInputs ++ scrub;

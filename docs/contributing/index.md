@@ -31,10 +31,27 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
-Public SDK and firmware CI jobs can upload build results to the shared cache.
-Host and desktop jobs disable automatic store uploads because their closures can
-contain private source. Local builds stay local unless explicitly uploaded to a
-trusted cache; a warm local store does not automatically warm hosted CI runners.
+Every CI job uploads build results to the Actions cache (magic-nix-cache), and a
+public repository's caches are readable from fork pull requests. That is safe
+because `odyssey-cv` never reaches a cached path as source:
+
+- Dependency layers (`buildDepsOnly`) vendor `odyssey-cv` and its `eskf` as
+  stubs: the real `Cargo.toml` files, so features and the dependency graph are
+  unchanged, with empty `.rs` files. Only third-party crates and those stubs are
+  compiled there, so those layers are public-cache safe.
+- Final builds go through `withPrivateSource` in `nix/common.nix`. Inside the
+  sandbox it overlays the flake input's real sources onto a copy of the stub
+  vendor directory, and Cargo rebuilds only `odyssey-cv`, `eskf` and the
+  workspace crates on top of the cached layer. The sources are never an output.
+- Root-workspace dependency layers do not install Cargo artifact archives, and
+  release binaries are built with `strip = "symbols"`.
+- `nix build .#checks.x86_64-linux.private-source-boundary` fails if any
+  vendored copy of the private crates carries real source.
+
+What does leave the private repository is compiled, symbol-stripped code in the
+released binaries, plus the dependency names already visible in `Cargo.lock`.
+A new build that needs private source must use `withPrivateSource`; one that
+vendors it directly would put the source in the cache.
 
 NixOS desktop releases publish the `desktop-nixos` store path to the signed
 `odysseyarm` Cachix cache and attach that path as

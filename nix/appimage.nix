@@ -28,6 +28,9 @@ let
       # zig's linker ignores NIX_LDFLAGS/LIBRARY_PATH, so name the native
       # library directories (xcb, xkbcommon, ...) to rustc directly.
       export RUSTFLAGS="$RUSTFLAGS ${lib.concatMapStringsSep " " (p: "-L native=${lib.getLib p}/lib") libs}"
+      # Customer binary: drop the symbol table naming the tracking internals
+      # (the zig prelude keeps it for UniFFI metadata, which this app lacks).
+      export CARGO_PROFILE_RELEASE_STRIP=symbols
     '';
     cargoBuildCommand = backend.build;
     doCheck = false;
@@ -35,7 +38,7 @@ let
   cargoArtifacts = craneLib.buildDepsOnly (args // {
     buildPhaseCargoCommand = "${backend.build} ${args.cargoExtraArgs}";
   });
-  desktop = craneLib.buildPackage (args // { inherit cargoArtifacts; });
+  desktop = craneLib.buildPackage (common.withPrivateSource args // { inherit cargoArtifacts; });
 
   # Portability contract, shared by the bundler and the verifier.
   #  * The loader, glibc and libgcc_s come from the host (PT_INTERP is the

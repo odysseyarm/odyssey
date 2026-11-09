@@ -8,7 +8,7 @@ let
     buildInputs = nativeLibraries;
   };
   hostArtifacts = craneLib.buildDepsOnly (hostArgs // { doCheck = false; });
-  host = craneLib.buildPackage (hostArgs // {
+  host = craneLib.buildPackage (common.withPrivateSource hostArgs // {
     cargoArtifacts = hostArtifacts;
     doCheck = false;
     meta.mainProgram = "odyssey-desktop";
@@ -24,7 +24,7 @@ let
     cargoExtraArgs = "--locked --offline -p odyssey-hub-server --features tracking-regression --bin tracking-regression";
   };
   trackingArtifacts = craneLib.buildDepsOnly (trackingArgs // { doCheck = false; });
-  tracking = craneLib.buildPackage (trackingArgs // {
+  tracking = craneLib.buildPackage (common.withPrivateSource trackingArgs // {
     cargoArtifacts = trackingArtifacts;
     doCheck = false;
   });
@@ -61,16 +61,16 @@ in {
     inherit host tracking xtask;
   };
   checks = {
-    tracking-tests = craneLib.cargoTest (trackingArgs // {
+    tracking-tests = craneLib.cargoTest (common.withPrivateSource trackingArgs // {
       cargoArtifacts = trackingArtifacts;
       cargoExtraArgs = "--locked --offline -p odyssey-sim -p odyssey-hub-server --features odyssey-hub-server/tracking-regression";
     });
-    host-tests = craneLib.cargoTest (hostArgs // { cargoArtifacts = hostArtifacts; });
-    host-lint = craneLib.cargoClippy (hostArgs // {
+    host-tests = craneLib.cargoTest (common.withPrivateSource hostArgs // { cargoArtifacts = hostArtifacts; });
+    host-lint = craneLib.cargoClippy (common.withPrivateSource hostArgs // {
       cargoArtifacts = hostArtifacts;
       cargoClippyExtraArgs = "--all-targets -- -A dead_code_pub_in_binary";
     });
-    host-lint-bins = craneLib.cargoClippy (hostArgs // {
+    host-lint-bins = craneLib.cargoClippy (common.withPrivateSource hostArgs // {
       cargoArtifacts = hostArtifacts;
       cargoClippyExtraArgs = "--bins";
     });

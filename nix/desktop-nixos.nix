@@ -25,7 +25,7 @@ let
     doCheck = false;
   };
   cargoArtifacts = craneLib.buildDepsOnly args;
-  desktop = craneLib.buildPackage (args // {
+  desktop = craneLib.buildPackage (common.withPrivateSource args // {
     inherit cargoArtifacts;
     meta.mainProgram = mainBinary;
     postInstall = ''

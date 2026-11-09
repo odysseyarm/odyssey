@@ -77,7 +77,8 @@ in {
   inherit pkgs;
   packages = host.packages // sdk.packages // firmware.packages // appimage.packages // desktopNixos.packages // windows.packages
     // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; };
-  checks = host.checks // sdk.checks // firmware.checks // appimage.checks // desktopNixos.checks // windows.checks;
+  checks = host.checks // sdk.checks // firmware.checks // appimage.checks // desktopNixos.checks // windows.checks
+    // { private-source-boundary = common.privateBoundaryCheck; };
   devShells = {
     default = shell;
     sdk = sdk.devShell;
