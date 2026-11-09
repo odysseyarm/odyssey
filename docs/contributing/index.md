@@ -31,33 +31,32 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
-### CI cache
+### Binary cache
 
-CI caches one artifact: the host dependency layer (`.#host.cargoArtifacts`),
-the compiled third-party crates shared by `host`, `tracking` and
-`desktop-nixos`. Host CI builds it, then saves its closure to the Actions cache
-as a single entry keyed by the layer's store path
-(`.github/actions/save-host-deps`). Host, Tracking and the NixOS release job
-restore that entry before building (`setup-nix` with `host-deps: 'true'`).
-Pull requests restore but never save. A new entry appears only when the key
-changes, which means the lockfile, toolchain or `odyssey-cv` manifests changed.
+`https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary
+cache, signed with `odysseyarm-1`. Every CI job reads from it
+(`.github/actions/setup-nix`). Host CI pushes the host dependency layer
+(`.#host.cargoArtifacts`, the third-party crates shared by `host`, `tracking`
+and `desktop-nixos`) on every `master` run, and desktop releases push
+`desktop-nixos` (`.github/actions/push-cache`). Pushing needs the
+`NIX_SIGNING_KEY`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` secrets.
 
 `odyssey-cv` is vendored with its manifests only. Builds that compile its
 sources wrap their arguments in `withPrivateSource` (`nix/common.nix`);
-`checks.private-source-boundary` verifies the vendored copies.
+`checks.private-source-boundary` verifies the vendored copies, and the push
+action refuses any closure that references the sources.
 
 ### NixOS package
 
-Desktop releases push `desktop-nixos` to the `odysseyarm` Cachix cache and
-attach its store path as `odyssey-desktop-nixos-store-path.txt`. CI needs
-`CACHIX_AUTH_TOKEN` with write access to that cache.
+Desktop releases attach the pushed store path as
+`odyssey-desktop-nixos-store-path.txt`.
 
 To install it, add the cache to your NixOS configuration:
 
 ```nix
-nix.settings.substituters = [ "https://odysseyarm.cachix.org" ];
+nix.settings.substituters = [ "https://cache.odysseyarm.com" ];
 nix.settings.trusted-public-keys = [
-  "odysseyarm.cachix.org-1:T5qjafUaELSGbQgRNZu5nMdk55uyRIEv4IQn92RMsR8="
+  "odysseyarm-1:pQObqsDwZYUoo1CsL/NGvRPF+aAfKtDyZALe7CVyuI0="
 ];
 ```
 
@@ -66,7 +65,7 @@ then fetch the path named by the release and install it:
 ```sh
 release=odyssey-desktop-v0.7.5  # choose a release tag that includes this asset
 store_path=$(curl -fsSL "https://github.com/odysseyarm/odyssey/releases/download/$release/odyssey-desktop-nixos-store-path.txt")
-nix copy --from https://odysseyarm.cachix.org "$store_path"
+nix copy --from https://cache.odysseyarm.com "$store_path"
 nix profile install "$store_path"
 ```
 

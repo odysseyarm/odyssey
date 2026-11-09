@@ -130,26 +130,25 @@ jobs:
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-        with:
-          host-deps: 'true'
       - name: Build and verify NixOS package
         id: build
         run: |
           set -eu
-          test -n "$CACHIX_AUTH_TOKEN" || { echo "CACHIX_AUTH_TOKEN secret is required to publish the trusted NixOS output" >&2; exit 1; }
+          test -n "$NIX_SIGNING_KEY" || { echo "NIX_SIGNING_KEY secret is required to publish the NixOS output" >&2; exit 1; }
           out=$(nix build -L --no-link --print-out-paths .#desktop-nixos)
           nix build -L --no-link .#checks.x86_64-linux.desktop-nixos-glibc
           printf '%s\n' "$out" > odyssey-desktop-nixos-store-path.txt
           echo "out=$out" >> "$GITHUB_OUTPUT"
-      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
+      - uses: ./.github/actions/push-cache
         with:
-          name: odysseyarm
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          pathsToPush: ${{ steps.build.outputs.out }}
+          paths: ${{ steps.build.outputs.out }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-nixos-store-path

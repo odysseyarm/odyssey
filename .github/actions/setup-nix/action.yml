@@ -1,16 +1,5 @@
 name: Set up Odyssey Nix
-description: Install pinned Nix and optionally restore the host dependency layer
-# One cache entry per exact store path: per-path caching (magic-nix-cache) made
-# ~1000 lookups per job and hit GitHub's cache API rate limit.
-inputs:
-  host-deps:
-    description: Restore the host dependency layer that Host CI saves on master
-    required: false
-    default: 'false'
-outputs:
-  host-deps-path:
-    description: Store path of the host dependency layer, when host-deps is true
-    value: ${{ steps.key.outputs.path }}
+description: Install pinned Nix with the Odyssey binary cache as a substituter
 runs:
   using: composite
   steps:
@@ -19,19 +8,5 @@ runs:
         extra_nix_config: |
           max-jobs = 2
           cores = 2
-    - id: key
-      if: inputs.host-deps == 'true'
-      shell: bash
-      run: |
-        path=$(nix eval --raw .#host.cargoArtifacts.outPath)
-        echo "path=$path" >> "$GITHUB_OUTPUT"
-        echo "key=host-deps-$(basename "$path")" >> "$GITHUB_OUTPUT"
-    - id: restore
-      if: inputs.host-deps == 'true'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ${{ runner.temp }}/host-deps-cache
-        key: ${{ steps.key.outputs.key }}
-    - if: inputs.host-deps == 'true' && steps.restore.outputs.cache-hit == 'true'
-      shell: bash
-      run: nix copy --no-check-sigs --from "file://$RUNNER_TEMP/host-deps-cache" "${{ steps.key.outputs.path }}"
+          extra-substituters = https://cache.odysseyarm.com
+          extra-trusted-public-keys = odysseyarm-1:pQObqsDwZYUoo1CsL/NGvRPF+aAfKtDyZALe7CVyuI0=

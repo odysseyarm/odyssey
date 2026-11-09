@@ -18,18 +18,21 @@ jobs:
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
-      - id: nix
-        uses: ./.github/actions/setup-nix
-        with:
-          host-deps: 'true'
+      - uses: ./.github/actions/setup-nix
       - name: Build host applications and repository tools
-        run: nix build -L --no-link .#host .#xtask
-      # Saved before tests and lint so a failing check still warms the next run.
-      - name: Save host dependency layer
+        id: deps
+        run: |
+          nix build -L --no-link .#host .#xtask
+          echo "path=$(nix eval --raw .#host.cargoArtifacts.outPath)" >> "$GITHUB_OUTPUT"
+      # Pushed before tests and lint so a failing check still warms the next run.
+      - name: Push host dependency layer
         if: github.event_name != 'pull_request'
-        uses: ./.github/actions/save-host-deps
+        uses: ./.github/actions/push-cache
         with:
-          path: ${{ steps.nix.outputs.host-deps-path }}
+          paths: ${{ steps.deps.outputs.path }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       - name: Test host applications and repository tools
         run: nix build -L --no-link .#checks.x86_64-linux.host-tests .#checks.x86_64-linux.xtask-tests
       - name: Lint host applications

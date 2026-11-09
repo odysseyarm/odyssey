@@ -1,0 +1,33 @@
+name: Push to the Odyssey binary cache
+description: Sign store paths and upload their closures to cache.odysseyarm.com; fails if a closure references odyssey-cv sources
+inputs:
+  paths:
+    description: Whitespace-separated store paths to push
+    required: true
+  signing-key:
+    description: Nix secret signing key (NIX_SIGNING_KEY)
+    required: true
+  access-key-id:
+    required: true
+  secret-access-key:
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        NIX_SIGNING_KEY: ${{ inputs.signing-key }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
+      run: |
+        set -eu
+        private=$(nix flake archive --json --dry-run | jq -r '.inputs["odyssey-cv"].path')
+        if nix path-info -r $PATHS | grep -qxF "$private"; then
+          echo "closure references the odyssey-cv source; refusing to push" >&2
+          exit 1
+        fi
+        key=$(mktemp); printf '%s' "$NIX_SIGNING_KEY" > "$key"
+        nix store sign -r -k "$key" $PATHS
+        nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' $PATHS
+        rm -f "$key"
