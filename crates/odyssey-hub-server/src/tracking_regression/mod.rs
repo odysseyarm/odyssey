@@ -24,6 +24,7 @@ use super::tracking::DeviceTracker;
 pub mod marker_noise;
 pub mod recording;
 pub mod scenarios;
+pub mod staged;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;

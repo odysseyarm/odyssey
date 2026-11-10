@@ -1,0 +1,15 @@
+[package]
+name = "odyssey-stage"
+version = "0.0.0"
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+odyssey-sim = { path = "../odyssey-sim" }
+odyssey-common = { path = "../odyssey-common" }
+nalgebra = "0.35"
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

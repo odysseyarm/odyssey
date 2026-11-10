@@ -22,7 +22,7 @@ pub const MARKER_PATTERN_LEN: usize = 6;
 /// homography for aim mapping wherever the aim ray hits it.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(not(feature = "std"), derive(Copy))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {
     #[cfg_attr(feature = "serde", serde(default))]
     pub rotation: nalgebra::UnitQuaternion<F>,

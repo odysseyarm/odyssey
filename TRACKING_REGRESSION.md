@@ -185,7 +185,9 @@ Output files and render directories must be new. Edit calibrated screen vertices
 positions in Blender; preserve their IDs, UVs and grid topology. General static
 environment meshes travel through native GLB rather than custom primitive types.
 Author camera trajectories and intrinsics in scene JSON; unsupported camera edits
-are rejected rather than silently discarded.
+are rejected rather than silently discarded. `odyssey-stage` (see its README) authors
+such scenes from displays, trackers and aim patterns without writing the trajectory by
+hand, replays them through the production tracker, and takes a Blender-edited display back.
 
 Cameras follow OpenCV intrinsics, including skew and Brown-Conrady distortion
 (k1, k2, p1, p2, k3). Blender renders an ideal pinhole view with overscan, then

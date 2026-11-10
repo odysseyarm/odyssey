@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odyssey Stage</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="bar">
+  <h1>Odyssey Stage</h1>
+  <input id="name" type="text" aria-label="Stage name" title="Name of this stage. It is saved inside the stage file." maxlength="80">
+  <button id="play" class="primary" type="button" title="Start or pause the simulation (Space)">▶ Play</button>
+  <label title="How fast the simulation runs">Speed
+    <select id="speed">
+      <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option>
+      <option value="2">2×</option><option value="4">4×</option>
+    </select>
+  </label>
+  <label title="Start over when the run reaches its end"><input id="loop" type="checkbox"> Loop</label>
+  <div class="scrub" title="Drag to jump to a moment in the run. Ticks mark scheduled button presses.">
+    <input id="scrub" type="range" min="0" max="20" step="0.01" value="0" aria-label="Time in the run">
+    <div id="ticks" aria-hidden="true"></div>
+  </div>
+  <span id="time" class="mono" aria-live="off">0.0 / 20 s</span>
+  <label class="detailed-only" title="How long one run lasts, in seconds">Length <input id="duration" type="number" min="1" max="600" step="1"> s</label>
+  <button id="open" type="button" title="Load a stage file (.json) saved earlier">Open…</button>
+  <input id="openfile" type="file" accept=".json,application/json" hidden>
+  <button id="save" type="button" title="Download this stage as a .json file">Save</button>
+  <span id="hubpill" class="pill off">No hub — simulated devices only</span>
+  <span id="conn" class="pill bad" hidden title="No data from the stage server for 2 seconds. Reconnecting automatically.">Disconnected</span>
+  <div class="seg" role="group" aria-label="Interface mode">
+    <button id="mode-simple" type="button" title="Only the essentials">Simple</button>
+    <button id="mode-detailed" type="button" title="All controls: shape, hands, walls, lights, evaluation, export">Detailed</button>
+  </div>
+</header>
+<div class="banner err" data-sec="top" role="alert" hidden></div>
+<main>
+  <aside id="left">
+    <details open id="sec-display">
+      <summary>Display</summary>
+      <div class="banner err" data-sec="display" role="alert" hidden></div>
+      <div id="z-display" class="body"></div>
+    </details>
+    <details open id="sec-devices">
+      <summary>Devices</summary>
+      <div class="banner err" data-sec="devices" role="alert" hidden></div>
+      <div id="z-devices" class="body"></div>
+      <div id="z-inspector" class="body"></div>
+    </details>
+    <details open id="sec-light" class="detailed-only">
+      <summary>Light</summary>
+      <div class="banner err" data-sec="light" role="alert" hidden></div>
+      <div id="z-light" class="body"></div>
+    </details>
+  </aside>
+  <section id="center">
+    <div class="card">
+      <div class="cardhead">
+        <h2>Room, seen from above</h2>
+        <span class="muted">Drag trackers and dongles to move them. The display is the thick line at the top.</span>
+        <button id="addwall" class="detailed-only" type="button" aria-pressed="false" title="Then press and drag in the room view to draw a wall that weakens the radio signal">Add wall</button>
+      </div>
+      <div class="view"><svg id="top" role="img" aria-label="Top-down room view"></svg><div id="empty-top" class="empty" hidden>Add a tracker to see something move</div></div>
+      <div id="topcap" class="cap"></div>
+    </div>
+    <div class="card">
+      <div class="cardhead">
+        <h2>Display, front view</h2>
+        <label title="Colour each part of the display by how far it bulges toward you (blue) or away (red)"><input id="shade" type="checkbox" checked> Show depth shading</label>
+        <span id="legend" class="legend" hidden><b id="lg-lo"></b><i></i><b id="lg-hi"></b></span>
+      </div>
+      <div class="view"><svg id="disp" role="img" aria-label="Display front view"></svg><div id="empty-disp" class="empty" hidden>Add a tracker to see something move</div></div>
+    </div>
+  </section>
+  <aside id="right">
+    <details open id="sec-radio">
+      <summary>Radio</summary>
+      <div class="banner err" data-sec="radio" role="alert" hidden></div>
+      <div id="z-radio" class="body"></div>
+    </details>
+    <details open id="sec-hub" class="detailed-only">
+      <summary>Hub</summary>
+      <div class="banner err" data-sec="hub" role="alert" hidden></div>
+      <div id="z-hub" class="body"></div>
+    </details>
+    <details open id="sec-eval" class="detailed-only">
+      <summary>Evaluate</summary>
+      <div class="banner err" data-sec="evaluate" role="alert" hidden></div>
+      <div id="z-eval" class="body"></div>
+    </details>
+    <details open id="sec-export" class="detailed-only">
+      <summary>Export</summary>
+      <div class="banner err" data-sec="export" role="alert" hidden></div>
+      <div id="z-export" class="body"></div>
+    </details>
+  </aside>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

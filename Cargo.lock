@@ -1000,7 +1000,11 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper 0.1.2",
+ "tokio",
  "tower 0.4.13",
  "tower-layer",
  "tower-service",
@@ -8966,6 +8970,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "odyssey-stage"
+version = "0.0.0"
+dependencies = [
+ "nalgebra 0.35.0",
+ "odyssey-common",
+ "odyssey-sim",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "odyssey-stage-app"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "clap",
+ "eros",
+ "futures",
+ "hex",
+ "odyssey-hub-client",
+ "odyssey-hub-common",
+ "odyssey-hub-server",
+ "odyssey-sim",
+ "odyssey-stage",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower 0.4.13",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "odyssey-usb"
 version = "0.0.0"
 dependencies = [
@@ -11196,6 +11235,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
