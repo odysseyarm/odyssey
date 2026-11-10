@@ -21,8 +21,8 @@ use gpui::{
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, WindowOptions, div,
     px, rgb, size,
 };
-use odyssey_hub_server::sim;
-use odyssey_sim::{Command, ScenarioStep, Snapshot};
+use odyssey_hub_server::sim::Control;
+use odyssey_sim::{Command, ScenarioStep, Snapshot, Target, Uuid, uuid_text};
 
 const USAGE: &str = r#"Odyssey simulator controls (requires a running simulator-enabled hub)
 
@@ -38,6 +38,7 @@ have explicitly enabled simulation; this program never starts a separate model.
 A scenario is a JSON array. Each after_ms delay precedes its command, relative
 to the preceding step, in simulator time. Steps run in file order and stop on
 failure. The final authoritative snapshot is printed as JSON; errors exit 1.
+A step acts on the first unit and dongle unless it names others by address.
 Example:
 [
   {"after_ms":0,"command":{"type":"unit_usb","plugged":true}},
@@ -45,12 +46,17 @@ Example:
   {"after_ms":0,"command":{"type":"pair","timeout_ms":30000}},
   {"after_ms":100,"command":{"type":"unit_usb","plugged":false}},
   {"after_ms":50,"command":{"type":"aim","x":0.5,"y":0.5}},
-  {"after_ms":10,"command":{"type":"shot"}}
+  {"after_ms":10,"command":{"type":"shot"}},
+  {"after_ms":0,"command":{"type":"add_unit","uuid":"53494d000101"}},
+  {"after_ms":0,"unit":"53494d000101","command":{"type":"unit_usb","plugged":true}}
 ]
 
-Commands: unit_usb {plugged}, dongle_usb {plugged}, ble_range {in_range},
-pair {timeout_ms}, cancel_pairing, clear_bonds, aim {x,y} (normalized 0..1),
-motion {accel:[x,y,z],gyro:[x,y,z]}, shot, battery {percent,charging},
+Commands: add_unit {uuid}, remove_unit {uuid}, add_dongle {uuid},
+remove_dongle {uuid} (addresses are twelve hex digits starting 53494d),
+unit_usb {plugged}, dongle_usb {plugged}, ble_range {in_range},
+pair {timeout_ms}, cancel_pairing, clear_bonds, screens {screens},
+pose {position_m:[x,y,z],orientation_xyzw:[x,y,z,w]}, aim {x,y} (normalized
+0..1), motion {accel:[x,y,z],gyro:[x,y,z]}, shot, battery {percent,charging},
 advance {millis}. All command objects include their snake_case "type".
 "#;
 
@@ -131,10 +137,11 @@ fn run() -> eros::Result<()> {
     )?;
     let snapshot = eros::Context::context(
         runtime.block_on(async {
+            let mut control = Control::connect().await?;
             if let Some(steps) = steps {
-                sim::run_scenario(&steps).await
+                control.run_scenario(steps).await
             } else {
-                sim::snapshot().await
+                control.snapshot().await
             }
         }),
         "simulator IPC failed",
@@ -225,29 +232,67 @@ enum Update {
 
 /// One worker serializes every command and polls the authoritative state.
 async fn worker(
-    mut commands: futures::channel::mpsc::UnboundedReceiver<Command>,
+    mut commands: futures::channel::mpsc::UnboundedReceiver<(Target, Command)>,
     updates: UnboundedSender<Update>,
 ) {
     let mut poll = tokio::time::interval(Duration::from_millis(250));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut hub: Option<Control> = None;
     loop {
-        let update = tokio::select! {
+        let command = tokio::select! {
             command = commands.next() => {
                 let Some(command) = command else { break };
-                match sim::request(command).await {
-                    Ok(state) => Update::State(state, Some("Command accepted by the hub".to_owned())),
-                    Err(error) => Update::Result(format!("Command failed: {error}")),
-                }
+                Some(command)
             }
-            _ = poll.tick() => match sim::snapshot().await {
-                Ok(state) => Update::State(state, None),
-                Err(error) => Update::Unavailable(format!("Hub unavailable: {error}. Start the hub with simulation enabled. Displayed state, if any, is the last received snapshot.")),
-            },
+            _ = poll.tick() => None,
+        };
+        let accepted = command.is_some();
+        let state = async {
+            let control = match hub.take() {
+                Some(control) => control,
+                None => Control::connect().await?,
+            };
+            let control = hub.insert(control);
+            if let Some((target, command)) = command {
+                control.execute(target, command).await?;
+            }
+            control.snapshot().await
+        }
+        .await;
+        let update = match state {
+            Ok(state) => Update::State(
+                state,
+                accepted.then(|| "Command accepted by the hub".to_owned()),
+            ),
+            Err(odyssey_hub_server::sim::ControlError::Model(error)) => {
+                Update::Result(format!("Command failed: {error}"))
+            }
+            Err(error) => {
+                hub = None;
+                Update::Unavailable(format!(
+                    "Hub unavailable: {error}. Start the hub with simulation enabled. Displayed state, if any, is the last received snapshot."
+                ))
+            }
         };
         if updates.unbounded_send(update).is_err() {
             break;
         }
     }
+}
+
+/// A blank address field means the first unit or dongle.
+fn address(text: &str, name: &str) -> eros::Result<Option<Uuid>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    uuid_text::parse(&text.to_ascii_lowercase())
+        .map(Some)
+        .ok_or_else(|| eros::error!("{name} address must be twelve hex digits"))
+}
+
+fn named(text: &str, name: &str) -> eros::Result<Uuid> {
+    address(text, name)?.ok_or_else(|| eros::error!("Enter the {name} address first"))
 }
 
 const CANVAS: u32 = 0xfaf8f7;
@@ -263,7 +308,11 @@ struct Controls {
     snapshot: Option<Snapshot>,
     connection_error: String,
     result: String,
-    queue: UnboundedSender<Command>,
+    queue: UnboundedSender<(Target, Command)>,
+    /// The unit and dongle the controls below act on.
+    target: Target,
+    unit: Entity<InputState>,
+    dongle: Entity<InputState>,
     timeout: Entity<InputState>,
     aim_x: Entity<InputState>,
     aim_y: Entity<InputState>,
@@ -276,7 +325,7 @@ struct Controls {
 fn field(initial: &str, window: &mut Window, cx: &mut Context<'_, Controls>) -> Entity<InputState> {
     let input = cx.new(|cx| InputState::new(window, cx));
     input.update(cx, |state, cx| {
-        state.set_value(initial.to_owned(), window, cx)
+        state.set_value(initial.to_owned(), window, cx);
     });
     input
 }
@@ -338,6 +387,9 @@ impl Controls {
             connection_error: String::new(),
             result: "Commands below are sent to the running simulator hub.".to_owned(),
             queue,
+            target: Target::default(),
+            unit: field("", window, cx),
+            dongle: field("", window, cx),
             timeout: field("30000", window, cx),
             aim_x: field("0.5", window, cx),
             aim_y: field("0.5", window, cx),
@@ -357,7 +409,7 @@ impl Controls {
 
     fn send(&mut self, command: Command) {
         // The worker only stops with the window.
-        let _ = self.queue.unbounded_send(command);
+        let _ = self.queue.unbounded_send((self.target, command));
     }
 
     fn submit(&mut self, command: eros::Result<Command>, cx: &mut Context<'_, Self>) {
@@ -408,13 +460,22 @@ fn group(title: &'static str, children: impl IntoElement) -> gpui::Div {
 
 impl Render for Controls {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let known = self.snapshot.is_some() && self.connection_error.is_empty();
-        let unit_usb = self.snapshot.as_ref().is_some_and(|state| state.unit_usb);
-        let dongle_usb = self.snapshot.as_ref().is_some_and(|state| state.dongle_usb);
-        let in_range = self
+        let known = self
             .snapshot
             .as_ref()
-            .is_some_and(|state| state.ble_in_range);
+            .filter(|_| self.connection_error.is_empty());
+        let unit = known.and_then(|state| match self.target.unit {
+            Some(uuid) => state.unit(uuid),
+            None => state.units.first(),
+        });
+        let dongle = known.and_then(|state| match self.target.dongle {
+            Some(uuid) => state.dongle(uuid),
+            None => state.dongles.first(),
+        });
+        let unit_usb = unit.is_some_and(|unit| unit.usb);
+        let dongle_usb = dongle.is_some_and(|dongle| dongle.usb);
+        let in_range = unit.is_some_and(|unit| unit.ble_in_range);
+        let known = known.is_some();
         let state_text = match self.snapshot.as_ref() {
             Some(state) => serde_json::to_string_pretty(state)
                 .unwrap_or_else(|error| format!("Cannot display state: {error}")),
@@ -465,6 +526,72 @@ impl Render for Controls {
                             .child(SharedString::from(self.connection_error.clone()))
                     }))
                     .child(div().my_2().child(SharedString::from(self.result.clone())))
+                    .child(group(
+                        "Devices",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child("Addresses are twelve hex digits starting 53494d. Blank means the first unit or dongle.")
+                            .child(
+                                row()
+                                    .child(number_field("Unit address", &self.unit))
+                                    .child(number_field("Dongle address", &self.dongle)),
+                            )
+                            .child(
+                                row()
+                                    .child(button("select", "Control these").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            let target = address(&text(&this.unit, cx), "Unit")
+                                                .and_then(|unit| {
+                                                    Ok(Target {
+                                                        unit,
+                                                        dongle: address(
+                                                            &text(&this.dongle, cx),
+                                                            "Dongle",
+                                                        )?,
+                                                    })
+                                                });
+                                            match target {
+                                                Ok(target) => {
+                                                    this.target = target;
+                                                    this.result = "The controls below act on these devices.".to_owned();
+                                                }
+                                                Err(error) => this.result = error.to_string(),
+                                            }
+                                            cx.notify();
+                                        }),
+                                    ))
+                                    .child(button("add-unit", "Add unit").on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            let command = named(&text(&this.unit, cx), "unit")
+                                                .map(|uuid| Command::AddUnit { uuid });
+                                            this.submit(command, cx);
+                                        },
+                                    )))
+                                    .child(button("remove-unit", "Remove unit").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            let command = named(&text(&this.unit, cx), "unit")
+                                                .map(|uuid| Command::RemoveUnit { uuid });
+                                            this.submit(command, cx);
+                                        }),
+                                    ))
+                                    .child(button("add-dongle", "Add dongle").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            let command = named(&text(&this.dongle, cx), "dongle")
+                                                .map(|uuid| Command::AddDongle { uuid });
+                                            this.submit(command, cx);
+                                        }),
+                                    ))
+                                    .child(button("remove-dongle", "Remove dongle").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            let command = named(&text(&this.dongle, cx), "dongle")
+                                                .map(|uuid| Command::RemoveDongle { uuid });
+                                            this.submit(command, cx);
+                                        }),
+                                    )),
+                            ),
+                    ))
                     .child(group(
                         "Connections",
                         div()
@@ -656,5 +783,12 @@ mod tests {
         assert!(pair_command("-1").is_err());
         assert!(advance_command("1000").is_ok());
         assert!(motion_command(["0", "0", "9.81", "0", "0", "x"]).is_err());
+        assert_eq!(address("  ", "Unit").unwrap(), None);
+        assert_eq!(
+            address("53494D000101", "Unit").unwrap(),
+            Some(odyssey_sim::unit_uuid(1))
+        );
+        assert!(address("53494d0001", "Unit").is_err());
+        assert!(named("", "unit").is_err());
     }
 }

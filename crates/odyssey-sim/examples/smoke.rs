@@ -9,7 +9,10 @@ use eros::Context as _;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_protocol::image::{IMAGE_LEASE_TIMEOUT_MS, ImageStatusCode, ImageStreamConfig};
 use odyssey_protocol::{ConfigKind, GeneralConfig, PacketData, Port, PropKind, Props};
-use odyssey_sim::{Command, SensorModel, Simulator, Transport, UNIT_UUID};
+use odyssey_sim::{
+    Command, DONGLE_UUID, ScenarioStep, SensorModel, Simulator, Target, Transport, UNIT_UUID,
+    unit_uuid,
+};
 use odyssey_usb::device::{PairingEvent, VmDevice};
 use tokio_stream::StreamExt as _;
 
@@ -19,8 +22,8 @@ async fn main() -> eros::Result<()> {
     let handle = sim.handle();
     handle.execute(Command::UnitUsb { plugged: true }).await?;
     handle.execute(Command::DongleUsb { plugged: true }).await?;
-    let usb = sim.connect_unit_usb();
-    let dongle = sim.connect_dongle();
+    let usb = sim.connect_unit_usb(UNIT_UUID);
+    let dongle = sim.connect_dongle(DONGLE_UUID);
     assert_eq!(usb.read_uuid().await?, UNIT_UUID);
     assert_eq!(usb.get_transport_mode().await?, TransportMode::Usb);
     assert_eq!(
@@ -52,10 +55,7 @@ async fn main() -> eros::Result<()> {
     ));
     dongle.start_pairing(5000).await?;
     usb.start_pairing(5000).await?;
-    assert_eq!(
-        usb.wait_pairing_event().await?.uuid,
-        odyssey_sim::DONGLE_UUID
-    );
+    assert_eq!(usb.wait_pairing_event().await?.uuid, DONGLE_UUID);
     assert!(
         matches!(dongle.wait_pairing_event().await?, PairingEvent::Result(device) if device.uuid == UNIT_UUID)
     );
@@ -231,9 +231,10 @@ async fn main() -> eros::Result<()> {
     drop(impact);
     usb.clear_all_streams().await?;
 
-    let snapshot = handle.execute(Command::UnitUsb { plugged: false }).await?;
-    assert_eq!(snapshot.transport, Transport::Ble);
-    assert!(snapshot.ble_connected);
+    handle.execute(Command::UnitUsb { plugged: false }).await?;
+    let snapshot = handle.snapshot();
+    assert_eq!(snapshot.units[0].transport, Transport::Ble);
+    assert_eq!(snapshot.units[0].dongle, Some(DONGLE_UUID));
     assert!(usb.read_uuid().await.is_err());
     let ble = VmDevice::open_via_mux(dongle.clone(), UNIT_UUID);
     assert!(matches!(
@@ -270,65 +271,80 @@ async fn main() -> eros::Result<()> {
     handle.execute(Command::BleRange { in_range: true }).await?;
     assert_eq!(dongle.request_devices().await?.as_slice(), &[UNIT_UUID]);
     handle.execute(Command::UnitUsb { plugged: true }).await?;
-    let reconnected = sim.connect_unit_usb();
+    let reconnected = sim.connect_unit_usb(UNIT_UUID);
     assert_eq!(reconnected.read_uuid().await?, UNIT_UUID);
     dongle.clear_bonds().await?;
-    assert!(!handle.snapshot().bonded);
+    assert!(!handle.snapshot().units[0].bonded);
     assert!(dongle.list_bonds().await?.is_empty());
     assert!(dongle.request_devices().await?.is_empty());
     handle
         .execute(Command::DongleUsb { plugged: false })
         .await?;
     handle.execute(Command::DongleUsb { plugged: true }).await?;
-    let new_dongle = sim.connect_dongle();
+    let new_dongle = sim.connect_dongle(DONGLE_UUID);
     assert!(new_dongle.request_devices().await?.is_empty());
+
+    let second = unit_uuid(1);
+    handle.execute(Command::AddUnit { uuid: second }).await?;
+    handle
+        .execute_on(Target::unit(second), Command::UnitUsb { plugged: true })
+        .await?;
+    let second_usb = sim.connect_unit_usb(second);
+    assert_eq!(second_usb.read_uuid().await?, second);
+    assert_eq!(reconnected.read_uuid().await?, UNIT_UUID);
+    handle
+        .execute_on(Target::unit(second), Command::Pair { timeout_ms: 1000 })
+        .await?;
+    assert_eq!(new_dongle.request_devices().await?.as_slice(), &[second]);
+    let second_ble = VmDevice::open_via_mux(new_dongle.clone(), second);
+    assert!(matches!(
+        second_ble.read_prop(PropKind::Uuid).await?,
+        Props::Uuid(uuid) if uuid == second
+    ));
+    handle.execute(Command::RemoveUnit { uuid: second }).await?;
+    assert!(new_dongle.request_devices().await?.is_empty());
+    assert!(second_usb.read_uuid().await.is_err());
     sim.shutdown().await?;
     assert!(!handle.snapshot().running);
     assert!(handle.execute(Command::Shot).await.is_err());
     let manual = Simulator::with_clock(odyssey_sim::ClockMode::Manual);
     let control = manual.handle();
     control.execute(Command::Pair { timeout_ms: 25 }).await?;
-    let expired = control.execute(Command::Advance { millis: 25 }).await?;
-    assert!(!expired.unit_pairing && !expired.dongle_pairing && !expired.bonded);
+    control.execute(Command::Advance { millis: 25 }).await?;
+    let expired = control.snapshot();
+    assert!(!expired.units[0].pairing && !expired.dongles[0].pairing && !expired.units[0].bonded);
+    let step = |after_ms, command| ScenarioStep {
+        after_ms,
+        target: Target::default(),
+        command,
+    };
     let scripted = manual
         .run_scenario(&[
-            odyssey_sim::ScenarioStep {
-                after_ms: 5,
-                command: Command::Pair { timeout_ms: 100 },
-            },
-            odyssey_sim::ScenarioStep {
-                after_ms: 5,
-                command: Command::CancelPairing,
-            },
-            odyssey_sim::ScenarioStep {
-                after_ms: 5,
-                command: Command::Aim { x: 0.25, y: 0.75 },
-            },
+            step(5, Command::Pair { timeout_ms: 100 }),
+            step(5, Command::CancelPairing),
+            step(5, Command::Aim { x: 0.25, y: 0.75 }),
         ])
         .await?;
     assert_eq!(scripted.time_ms, 40);
-    assert_eq!(scripted.aim, [0.25, 0.75]);
-    assert!(!scripted.unit_pairing && !scripted.dongle_pairing);
+    assert_eq!(scripted.units[0].aim, Some([0.25, 0.75]));
+    assert!(!scripted.units[0].pairing && !scripted.dongles[0].pairing);
     let failed = manual
         .run_scenario(&[
-            odyssey_sim::ScenarioStep {
-                after_ms: 0,
-                command: Command::Battery {
+            step(
+                0,
+                Command::Battery {
                     percent: 101,
                     charging: false,
                 },
-            },
-            odyssey_sim::ScenarioStep {
-                after_ms: 0,
-                command: Command::Aim { x: 0.5, y: 0.5 },
-            },
+            ),
+            step(0, Command::Aim { x: 0.5, y: 0.5 }),
         ])
         .await;
     assert!(matches!(
         failed,
         Err(odyssey_sim::SimError::Scenario { index: 0, .. })
     ));
-    assert_eq!(control.snapshot().aim, [0.25, 0.75]);
+    assert_eq!(control.snapshot().units[0].aim, Some([0.25, 0.75]));
     manual.shutdown().await?;
     legacy_images().await?;
     println!(
@@ -342,7 +358,7 @@ async fn legacy_images() -> eros::Result<()> {
     let handle = sim.handle();
     handle.execute(Command::UnitUsb { plugged: true }).await?;
     for camera in [Port::Nf, Port::Wf] {
-        let usb = sim.connect_unit_usb();
+        let usb = sim.connect_unit_usb(UNIT_UUID);
         let mut images = usb
             .stream_images(ImageStreamConfig { camera, fps: 5 })
             .await?;
@@ -368,16 +384,16 @@ async fn legacy_images() -> eros::Result<()> {
                 ImageStatusCode::RebootRequired
             ))
         ));
-        let generation = handle.snapshot().unit_usb_generation;
+        let generation = handle.snapshot().units[0].usb_generation;
         let mut snapshots = handle.subscribe();
         usb.reboot().await?;
         tokio::time::timeout(
             Duration::from_secs(2),
-            snapshots.wait_for(|state| state.unit_usb_generation != generation),
+            snapshots.wait_for(|state| state.units[0].usb_generation != generation),
         )
         .await??;
     }
-    let usb = sim.connect_unit_usb();
+    let usb = sim.connect_unit_usb(UNIT_UUID);
     let mut markers = usb.stream_poc_markers().await?;
     let before = tokio::time::timeout(Duration::from_secs(2), markers.next())
         .await?

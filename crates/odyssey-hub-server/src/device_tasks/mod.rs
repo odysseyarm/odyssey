@@ -14,6 +14,8 @@ pub mod tracking_regression;
 mod transport_selection;
 mod usb_probe;
 
+#[cfg(feature = "sim")]
+pub(crate) use manager::Simulation;
 pub(crate) use manager::device_tasks;
 pub(crate) use messages::{
     DeviceTaskMessage, DongleInfo, DongleTaskMessage, ImageRenewals, Message,

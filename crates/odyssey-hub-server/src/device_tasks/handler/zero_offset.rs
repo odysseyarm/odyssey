@@ -31,6 +31,8 @@ impl DeviceHandler {
         // Keep the guard through the write: concurrent saves must not persist an
         // older snapshot after a newer one.
         let offsets = self.context.device_offsets.lock().await;
+        #[cfg(feature = "sim")]
+        let offsets = persisted(&offsets);
         let result = odyssey_hub_common::config::device_offsets_save_async(&offsets).await;
         if let Err(error) = &result {
             warn!("Failed to save zero offsets: {error}");
@@ -103,5 +105,37 @@ impl DeviceHandler {
             .lock()
             .await
             .remove(&self.device.uuid);
+    }
+}
+
+/// The offsets that belong in the configuration file.
+#[cfg(feature = "sim")]
+fn persisted(
+    offsets: &std::collections::HashMap<[u8; 6], Isometry3<f32>>,
+) -> std::borrow::Cow<'_, std::collections::HashMap<[u8; 6], Isometry3<f32>>> {
+    if offsets.keys().all(crate::sim::persists) {
+        return std::borrow::Cow::Borrowed(offsets);
+    }
+    std::borrow::Cow::Owned(
+        offsets
+            .iter()
+            .filter(|(uuid, _)| crate::sim::persists(uuid))
+            .map(|(uuid, offset)| (*uuid, *offset))
+            .collect(),
+    )
+}
+
+#[cfg(all(test, feature = "sim"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simulated_offsets_are_not_written_to_the_users_configuration() {
+        let real = [0xd2, 0xa6, 0x07, 0xd5, 0xdc, 0xea];
+        let offsets = std::collections::HashMap::from([
+            (real, Isometry3::identity()),
+            (odyssey_sim::UNIT_UUID, Isometry3::identity()),
+        ]);
+        assert_eq!(persisted(&offsets).keys().collect::<Vec<_>>(), [&real]);
     }
 }

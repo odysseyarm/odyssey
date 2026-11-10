@@ -367,6 +367,10 @@ impl Service for HubServer {
         req: tonic::Request<Device>,
     ) -> Result<Response<EmptyReply>, Status> {
         let uuid = uuid_from_bytes(&req.into_inner().uuid)?;
+        #[cfg(feature = "sim")]
+        if !crate::sim::persists(&uuid) {
+            return ok_empty();
+        }
         let current = self.shot_delay_or_default(uuid).await;
         common::config::device_shot_delay_save_async(uuid, current)
             .await

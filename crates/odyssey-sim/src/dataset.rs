@@ -36,6 +36,17 @@ pub struct SceneScreen {
     pub marker_ids: [String; 6],
 }
 
+impl SceneScreen {
+    /// A calibrated screen with marker identities derived from its ID.
+    pub fn from_calibration(id: u8, calibration: ScreenCalibration<f32>) -> Self {
+        Self {
+            id,
+            calibration,
+            marker_ids: std::array::from_fn(|index| format!("screen-{id}-marker-{index}")),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneCamera {
@@ -310,25 +321,42 @@ fn pose_rotation(pose: &ScenePose) -> UnitQuaternion<f64> {
 impl SceneCamera {
     /// OpenCV projection including k1,k2,p1,p2,k3 distortion; None means behind/outside.
     pub fn project_world(&self, pose: &ScenePose, point_world_m: [f64; 3]) -> Option<[f64; 2]> {
-        let local = pose_rotation(pose).inverse_transform_vector(
-            &(Vector3::from(point_world_m) - Vector3::from(pose.position_m)),
-        );
-        if local.z <= 0.0 {
-            return None;
-        }
-        let x = local.x / local.z;
-        let y = local.y / local.z;
-        let r2 = x * x + y * y;
-        let [k1, k2, p1, p2, k3] = self.distortion;
-        let radial = 1.0 + r2 * (k1 + r2 * (k2 + r2 * k3));
-        let dx = x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
-        let dy = y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
-        let u = self.intrinsics[0][0] * dx + self.intrinsics[0][1] * dy + self.intrinsics[0][2];
-        let v = self.intrinsics[1][1] * dy + self.intrinsics[1][2];
-        (u.is_finite()
-            && v.is_finite()
-            && (0.0..f64::from(self.image_size_px[0])).contains(&u)
-            && (0.0..f64::from(self.image_size_px[1])).contains(&v))
-        .then_some([u, v])
+        project_world(
+            self.image_size_px,
+            &self.intrinsics,
+            &self.distortion,
+            pose,
+            point_world_m,
+        )
     }
+}
+
+/// [`SceneCamera::project_world`] for optics that are not part of a scene, such
+/// as a simulated unit's own camera configuration.
+pub fn project_world(
+    image_size_px: [u32; 2],
+    intrinsics: &[[f64; 3]; 3],
+    distortion: &[f64; 5],
+    pose: &ScenePose,
+    point_world_m: [f64; 3],
+) -> Option<[f64; 2]> {
+    let local = pose_rotation(pose)
+        .inverse_transform_vector(&(Vector3::from(point_world_m) - Vector3::from(pose.position_m)));
+    if local.z <= 0.0 {
+        return None;
+    }
+    let x = local.x / local.z;
+    let y = local.y / local.z;
+    let r2 = x * x + y * y;
+    let [k1, k2, p1, p2, k3] = *distortion;
+    let radial = 1.0 + r2 * (k1 + r2 * (k2 + r2 * k3));
+    let dx = x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
+    let dy = y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
+    let u = intrinsics[0][0] * dx + intrinsics[0][1] * dy + intrinsics[0][2];
+    let v = intrinsics[1][1] * dy + intrinsics[1][2];
+    (u.is_finite()
+        && v.is_finite()
+        && (0.0..f64::from(image_size_px[0])).contains(&u)
+        && (0.0..f64::from(image_size_px[1])).contains(&v))
+    .then_some([u, v])
 }

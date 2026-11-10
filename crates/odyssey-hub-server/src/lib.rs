@@ -21,7 +21,5 @@ mod startup_config;
 pub use device_tasks::tracking_regression;
 pub use local_socket_stream::LocalSocketStream;
 pub use message::Message;
-pub use run_server::run_server;
-#[cfg(feature = "sim")]
-pub use run_server::run_server_with_sim;
+pub use run_server::{ServerOptions, run_server};
 pub use server_error::ServerError;

@@ -14,29 +14,45 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let mut simulation_requested = false;
-    for argument in std::env::args().skip(1) {
-        match argument.as_str() {
-            "--sim" => simulation_requested = true,
+    #[cfg_attr(
+        not(feature = "sim"),
+        expect(unused_mut, reason = "only simulator builds take flags out")
+    )]
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(feature = "sim")]
+    let flags = odyssey_hub_server::sim::Flags::take(
+        &mut arguments,
+        std::env::var("ODYSSEY_SIM").ok().as_deref(),
+    );
+    if let Some(argument) = arguments.first() {
+        return match argument.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "Usage: odyssey-hub [--sim]\n\n--sim  Enable the simulator (requires the sim compile feature).\n       ODYSSEY_SIM=1 also enables it in sim builds."
+                    "Usage: odyssey-hub [--sim] [--sim-legacy] [--no-discovery] [--temp-config]\n\nThese need the sim compile feature:\n--sim           Add simulated units and dongles next to the physical ones.\n                ODYSSEY_SIM=1 does the same.\n--sim-legacy    The same, with units that have the earlier sensor.\n--no-discovery  Leave USB devices and the system Bluetooth radio alone.\n--temp-config   Keep all settings in a temporary directory instead of yours."
                 );
-                return ExitCode::SUCCESS;
+                ExitCode::SUCCESS
+            }
+            "--sim" | "--sim-legacy" | "--no-discovery" | "--temp-config" => {
+                eprintln!("{argument} requires a build with the sim feature");
+                ExitCode::FAILURE
             }
             _ => {
                 eprintln!("Unknown argument: {argument}");
-                return ExitCode::FAILURE;
+                ExitCode::FAILURE
             }
-        }
+        };
     }
-    #[cfg(not(feature = "sim"))]
-    if simulation_requested {
-        eprintln!("--sim requires a build with the sim feature");
+    #[cfg(feature = "sim")]
+    if flags.temp_config
+        && let Err(error) = odyssey_hub_server::sim::use_temp_config()
+    {
+        eprintln!("Could not set up temporary settings: {error}");
         return ExitCode::FAILURE;
     }
     #[cfg(feature = "sim")]
-    let simulation_enabled = simulation_requested || odyssey_hub_server::sim::enabled();
+    let options = flags.server_options();
+    #[cfg(not(feature = "sim"))]
+    let options = odyssey_hub_server::ServerOptions::default();
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
@@ -49,13 +65,11 @@ async fn main() -> ExitCode {
     let cancel_token = CancellationToken::new();
 
     let server_cancel = cancel_token.clone();
-    let server_handle = tokio::spawn(async move {
-        #[cfg(feature = "sim")]
-        if simulation_enabled {
-            return odyssey_hub_server::run_server_with_sim(sender, server_cancel).await;
-        }
-        odyssey_hub_server::run_server(sender, server_cancel).await
-    });
+    let server_handle = tokio::spawn(odyssey_hub_server::run_server(
+        sender,
+        server_cancel,
+        options,
+    ));
 
     let status = tokio::select! {
         status = handle_server_status(receiver) => status,

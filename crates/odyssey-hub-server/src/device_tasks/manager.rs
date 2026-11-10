@@ -31,6 +31,14 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(2);
 /// Pause before retrying when the USB bus cannot be enumerated at all.
 const SCAN_FAILURE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
+/// What a simulator build adds to device discovery.
+#[cfg(feature = "sim")]
+pub(crate) struct Simulation {
+    pub(crate) simulator: Option<odyssey_sim::Simulator>,
+    /// False leaves the physical USB bus alone.
+    pub(crate) discovery: bool,
+}
+
 /// Runs the USB device manager: discovers USB devices, starts a handler task per unit and
 /// a hub manager per dongle. Never returns.
 pub(crate) async fn device_tasks(
@@ -40,7 +48,7 @@ pub(crate) async fn device_tasks(
     device_shot_delays: ShotDelays,
     shot_delay_watch: ShotDelayWatchers,
     event_sender: broadcast::Sender<Event>,
-    #[cfg(feature = "sim")] simulator: Option<odyssey_sim::Simulator>,
+    #[cfg(feature = "sim")] simulation: Simulation,
 ) -> Result<(), std::convert::Infallible> {
     tracing::info!("device_tasks starting");
     let context = DeviceTaskContext {
@@ -55,7 +63,7 @@ pub(crate) async fn device_tasks(
     };
     let manager = UsbDeviceManager::new(context);
     #[cfg(feature = "sim")]
-    let manager = manager.with_simulator(simulator);
+    let manager = manager.with_simulator(simulation);
     manager.run().await
 }
 
@@ -99,15 +107,41 @@ struct UsbDeviceManager {
     logged_device_ids: Vec<nusb::DeviceId>,
     #[cfg(feature = "sim")]
     simulated: Option<SimulatedDevices>,
+    /// False leaves the physical USB bus alone.
+    #[cfg(feature = "sim")]
+    discovery: bool,
 }
 
 #[cfg(feature = "sim")]
 struct SimulatedDevices {
     simulator: odyssey_sim::Simulator,
     changes: tokio::sync::watch::Receiver<odyssey_sim::Snapshot>,
-    hub: Option<(tokio::task::JoinHandle<()>, oneshot::Sender<()>)>,
-    unit_generation: u64,
-    dongle_generation: u64,
+    /// The manager of each plugged dongle, with the plug generation it serves.
+    dongles: HashMap<DeviceAddress, (u64, tokio::task::JoinHandle<()>, oneshot::Sender<()>)>,
+    /// The plug generation last seen for each plugged unit.
+    units: HashMap<DeviceAddress, u64>,
+}
+
+/// Whether a simulated device was plugged, unplugged or reset since the scan
+/// that recorded `units` and `dongles`.
+#[cfg(feature = "sim")]
+fn simulated_changed<T>(
+    units: &HashMap<DeviceAddress, u64>,
+    dongles: &HashMap<DeviceAddress, (u64, T, oneshot::Sender<()>)>,
+    snapshot: &odyssey_sim::Snapshot,
+) -> bool {
+    let plugged_units = snapshot.units.iter().filter(|unit| unit.usb);
+    let plugged_dongles = snapshot.dongles.iter().filter(|dongle| dongle.usb);
+    plugged_units.clone().count() != units.len()
+        || plugged_dongles.clone().count() != dongles.len()
+        || plugged_units
+            .into_iter()
+            .any(|unit| units.get(&unit.uuid) != Some(&unit.usb_generation))
+        || plugged_dongles.into_iter().any(|dongle| {
+            dongles
+                .get(&dongle.uuid)
+                .is_none_or(|(generation, ..)| *generation != dongle.usb_generation)
+        })
 }
 
 impl UsbDeviceManager {
@@ -122,67 +156,79 @@ impl UsbDeviceManager {
             logged_device_ids: Vec::new(),
             #[cfg(feature = "sim")]
             simulated: None,
+            #[cfg(feature = "sim")]
+            discovery: true,
         }
     }
 
     #[cfg(feature = "sim")]
-    fn with_simulator(mut self, simulator: Option<odyssey_sim::Simulator>) -> Self {
-        self.simulated = simulator.map(|simulator| SimulatedDevices {
+    fn with_simulator(mut self, simulation: Simulation) -> Self {
+        self.simulated = simulation.simulator.map(|simulator| SimulatedDevices {
             changes: simulator.handle().subscribe(),
             simulator,
-            hub: None,
-            unit_generation: 0,
-            dongle_generation: 0,
+            dongles: HashMap::new(),
+            units: HashMap::new(),
         });
+        self.discovery = simulation.discovery;
         self
     }
 
     async fn run(mut self) -> ! {
         #[cfg(feature = "sim")]
-        if self.simulated.is_some() {
-            loop {
-                self.scan(&[]).await;
-                let simulated = self
-                    .simulated
-                    .as_mut()
-                    .expect("simulator remains installed");
-                // Report ticks do not warrant another USB discovery pass.
-                let unit_generation = simulated.unit_generation;
-                let dongle_generation = simulated.dongle_generation;
-                let closed = tokio::select! {
-                    change = simulated.changes.wait_for(|snapshot| {
-                        snapshot.unit_usb_generation != unit_generation
-                            || snapshot.dongle_usb_generation != dongle_generation
-                    }) => change.is_err(),
-                    () = sleep(SCAN_INTERVAL) => false,
-                };
-                if closed {
-                    std::future::pending::<()>().await;
-                }
-            }
-        }
+        let discovery = self.discovery;
+        #[cfg(not(feature = "sim"))]
+        let discovery = true;
         // A unit that picks its own transport switches its reports to USB the moment a
         // host configures it and back to BLE when the cable goes, so the hub has to
         // follow within milliseconds rather than at the next periodic scan.
-        let mut hotplug = match nusb::watch_devices() {
-            Ok(watch) => Some(Box::pin(watch)),
-            Err(e) => {
+        let mut hotplug = match discovery.then(nusb::watch_devices) {
+            Some(Ok(watch)) => Some(Box::pin(watch)),
+            Some(Err(e)) => {
                 warn!("USB hotplug events unavailable, scanning every {SCAN_INTERVAL:?} only: {e}");
                 None
             }
+            None => None,
         };
         loop {
-            let devices = match nusb::list_devices().await {
-                Ok(devices) => devices.collect::<Vec<_>>(),
-                Err(error) => {
-                    warn!("Failed to list USB devices: {error}");
-                    sleep(SCAN_FAILURE_RETRY_DELAY).await;
-                    continue;
+            let devices = if discovery {
+                match nusb::list_devices().await {
+                    Ok(devices) => devices.collect::<Vec<_>>(),
+                    Err(error) => {
+                        warn!("Failed to list USB devices: {error}");
+                        sleep(SCAN_FAILURE_RETRY_DELAY).await;
+                        continue;
+                    }
                 }
+            } else {
+                Vec::new()
             };
             self.scan(&devices).await;
-            wait_for_next_scan(hotplug.as_mut()).await;
+            tokio::select! {
+                () = wait_for_next_scan(hotplug.as_mut()) => {}
+                () = self.simulated_change() => {}
+            }
         }
+    }
+
+    /// Resolves when a simulated device is plugged, unplugged or reset.
+    async fn simulated_change(&mut self) {
+        #[cfg(feature = "sim")]
+        if let Some(simulated) = &mut self.simulated {
+            let SimulatedDevices {
+                changes,
+                dongles,
+                units,
+                ..
+            } = simulated;
+            let changed = changes
+                .wait_for(|snapshot| simulated_changed(units, dongles, snapshot))
+                .await;
+            // A stopped simulator has nothing more to report.
+            if changed.is_ok() {
+                return;
+            }
+        }
+        std::future::pending::<()>().await;
     }
 
     async fn scan(&mut self, devices: &[nusb::DeviceInfo]) {
@@ -338,46 +384,58 @@ impl UsbDeviceManager {
             return;
         };
         let snapshot = simulated.changes.borrow_and_update().clone();
-        if (!snapshot.dongle_usb
-            || snapshot.dongle_usb_generation != simulated.dongle_generation
-            || simulated
-                .hub
-                .as_ref()
-                .is_some_and(|(task, _)| task.is_finished()))
-            && let Some((task, shutdown)) = simulated.hub.take()
-        {
-            let _ = shutdown.send(());
-            if let Err(error) = task.await {
-                warn!("Simulated hub task failed during shutdown: {error}");
+        let stale: Vec<DeviceAddress> = simulated
+            .dongles
+            .iter()
+            .filter(|(uuid, (generation, task, _))| {
+                task.is_finished()
+                    || snapshot
+                        .dongle(**uuid)
+                        .is_none_or(|dongle| !dongle.usb || dongle.usb_generation != *generation)
+            })
+            .map(|(uuid, _)| *uuid)
+            .collect();
+        for uuid in stale {
+            if let Some((_, task, shutdown)) = simulated.dongles.remove(&uuid) {
+                let _ = shutdown.send(());
+                if let Err(error) = task.await {
+                    warn!("Simulated hub task failed during shutdown: {error}");
+                }
             }
         }
-        if snapshot.dongle_usb && simulated.hub.is_none() {
-            let hub = simulated.simulator.connect_dongle();
+        for dongle in snapshot.dongles.iter().filter(|dongle| dongle.usb) {
+            if simulated.dongles.contains_key(&dongle.uuid) {
+                continue;
+            }
+            let hub = simulated.simulator.connect_dongle(dongle.uuid);
             match hub.subscribe_device_list().await {
                 Ok(()) => {
                     let (shutdown, shutdown_rx) = oneshot::channel();
                     let task = HubManager::spawn(HubManagerInit {
                         hub,
-                        serial: "SIM-ODYSSEY-DONGLE".to_owned(),
+                        serial: format!("SIM-{}", odyssey_sim::uuid_text::format(&dongle.uuid)),
                         context: self.context.clone(),
                         device_handles: Arc::clone(&self.device_handles),
                         shutdown: shutdown_rx,
                     });
-                    simulated.hub = Some((task, shutdown));
+                    simulated
+                        .dongles
+                        .insert(dongle.uuid, (dongle.usb_generation, task, shutdown));
                 }
                 Err(error) => warn!("Failed to subscribe to simulated dongle: {error}"),
             }
         }
-        if snapshot.unit_usb && snapshot.unit_usb_generation != simulated.unit_generation {
-            // A watch receiver may coalesce an unplug/replug into one snapshot.
-            // Force replacement of the old control channel without replacing its
-            // handler, which may still be receiving BLE events for this UUID.
-            self.direct_usb_id_to_uuid.remove("sim:unit-usb");
-        }
-        if snapshot.unit_usb {
-            let id = "sim:unit-usb";
-            present.direct_usb_ids.insert(id.to_owned());
-            let connected = match self.direct_usb_id_to_uuid.get(id) {
+        let plugged = snapshot.units.iter().filter(|unit| unit.usb);
+        for unit in plugged.clone() {
+            let id = format!("sim:{}", odyssey_sim::uuid_text::format(&unit.uuid));
+            if simulated.units.get(&unit.uuid) != Some(&unit.usb_generation) {
+                // A watch receiver may coalesce an unplug/replug into one snapshot.
+                // Force replacement of the old control channel without replacing its
+                // handler, which may still be receiving BLE events for this UUID.
+                self.direct_usb_id_to_uuid.remove(&id);
+            }
+            present.direct_usb_ids.insert(id.clone());
+            let connected = match self.direct_usb_id_to_uuid.get(&id) {
                 Some(uuid) => self
                     .device_handles
                     .lock()
@@ -387,12 +445,13 @@ impl UsbDeviceManager {
                 None => false,
             };
             if !connected {
-                self.on_simulated_unit(simulated.simulator.connect_unit_usb(), present)
+                self.on_simulated_unit(simulated.simulator.connect_unit_usb(unit.uuid), id)
                     .await;
             }
         }
-        simulated.unit_generation = snapshot.unit_usb_generation;
-        simulated.dongle_generation = snapshot.dongle_usb_generation;
+        simulated.units = plugged
+            .map(|unit| (unit.uuid, unit.usb_generation))
+            .collect();
         self.simulated = Some(simulated);
     }
 }
@@ -429,5 +488,94 @@ impl UsbDeviceManager {
             );
             tracing::debug!("USB scan entry full: {:?}", dev);
         }
+    }
+}
+
+#[cfg(all(test, feature = "sim"))]
+mod tests {
+    use arc_swap::ArcSwap;
+    use odyssey_sim::{Command, DONGLE_UUID, Simulator, Target, UNIT_UUID, dongle_uuid, unit_uuid};
+    use tokio::sync::RwLock;
+
+    use super::*;
+
+    async fn next(messages: &mut mpsc::Receiver<Message>) -> Message {
+        tokio::time::timeout(Duration::from_secs(5), messages.recv())
+            .await
+            .expect("the manager reports within the scan interval")
+            .expect("the manager keeps running")
+    }
+
+    #[tokio::test]
+    async fn every_simulated_unit_and_dongle_is_managed_without_usb_discovery() {
+        let simulator = Simulator::new();
+        let control = simulator.handle();
+        let (second_unit, second_dongle) = (unit_uuid(1), dongle_uuid(1));
+        control
+            .execute(Command::AddUnit { uuid: second_unit })
+            .await
+            .unwrap();
+        control
+            .execute(Command::AddDongle {
+                uuid: second_dongle,
+            })
+            .await
+            .unwrap();
+        let (message_channel, mut messages) = mpsc::channel(64);
+        let manager = tokio::spawn(device_tasks(
+            message_channel,
+            Arc::new(ArcSwap::from_pointee(Default::default())),
+            Arc::new(Mutex::new(Default::default())),
+            Arc::new(RwLock::new(Default::default())),
+            Arc::new(RwLock::new(Default::default())),
+            broadcast::channel(16).0,
+            Simulation {
+                simulator: Some(simulator),
+                discovery: false,
+            },
+        ));
+
+        for unit in [UNIT_UUID, second_unit] {
+            control
+                .execute_on(Target::unit(unit), Command::UnitUsb { plugged: true })
+                .await
+                .unwrap();
+        }
+        let mut units = HashSet::new();
+        while units.len() < 2 {
+            if let Message::Connect(device, _) = next(&mut messages).await {
+                units.insert(device.uuid);
+            }
+        }
+        assert_eq!(units, HashSet::from([UNIT_UUID, second_unit]));
+
+        for dongle in [DONGLE_UUID, second_dongle] {
+            control
+                .execute_on(Target::dongle(dongle), Command::DongleUsb { plugged: true })
+                .await
+                .unwrap();
+        }
+        let mut dongles = HashSet::new();
+        while dongles.len() < 2 {
+            if let Message::DongleConnect(dongle, _) = next(&mut messages).await {
+                dongles.insert(dongle.id);
+            }
+        }
+        assert_eq!(
+            dongles,
+            HashSet::from(["SIM-53494d000002".to_owned(), "SIM-53494d000102".to_owned()])
+        );
+
+        control
+            .execute(Command::RemoveUnit { uuid: second_unit })
+            .await
+            .unwrap();
+        loop {
+            if let Message::Disconnect(device) = next(&mut messages).await {
+                assert_eq!(device.uuid, second_unit);
+                break;
+            }
+        }
+        manager.abort();
     }
 }

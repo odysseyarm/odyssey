@@ -37,17 +37,25 @@ fn error_message(error: &eros::ErrorUnion) -> String {
 
 fn main() {
     logging::init();
+    #[cfg_attr(
+        not(feature = "sim"),
+        expect(unused_mut, reason = "only simulator builds take flags out")
+    )]
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(feature = "sim")]
-    if odyssey_hub_server::sim::enabled()
-        && let Err(error) = odyssey_hub_server::sim::initialize_config()
     {
-        tracing::error!("Could not initialize isolated simulator settings: {error}");
-        std::process::exit(1);
+        let flags = odyssey_hub_server::sim::Flags::take(
+            &mut args,
+            std::env::var("ODYSSEY_SIM").ok().as_deref(),
+        );
+        if flags.temp_config
+            && let Err(error) = odyssey_hub_server::sim::use_temp_config()
+        {
+            tracing::error!("Could not set up temporary settings: {error}");
+            std::process::exit(1);
+        }
+        cli::set_server_options(flags.server_options());
     }
-
-    let args = std::env::args().skip(1);
-    #[cfg(feature = "sim")]
-    let args = args.filter(|argument| !matches!(argument.as_str(), "--sim" | "--sim-legacy"));
     match cli::parse(args) {
         Ok(cli::Command::Run) => {}
         Ok(cli::Command::Calibrate(args)) => cli::set_pending_calibrate(args),

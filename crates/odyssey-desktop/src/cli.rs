@@ -224,6 +224,20 @@ pub(crate) fn take_pending_calibrate() -> Option<CalibrateArgs> {
     PENDING_CALIBRATE.lock().take()
 }
 
+/// How the hub inside this app finds its devices; the default unless the
+/// command line said otherwise.
+static SERVER_OPTIONS: std::sync::OnceLock<odyssey_hub_server::ServerOptions> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "sim")]
+pub(crate) fn set_server_options(options: odyssey_hub_server::ServerOptions) {
+    let _ = SERVER_OPTIONS.set(options);
+}
+
+pub(crate) fn server_options() -> odyssey_hub_server::ServerOptions {
+    SERVER_OPTIONS.get().copied().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

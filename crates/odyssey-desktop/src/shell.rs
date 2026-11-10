@@ -463,7 +463,11 @@ fn start_server(
     let server_cancel = cancel.child_token();
     runtime::spawn(async move {
         let _stop_server = server_cancel.clone().drop_guard();
-        let server = tokio::spawn(odyssey_hub_server::run_server(status_tx, server_cancel));
+        let server = tokio::spawn(odyssey_hub_server::run_server(
+            status_tx,
+            server_cancel,
+            cli::server_options(),
+        ));
         let exit = handle_server_status(status_rx, shell_tx.clone(), server_ready).await;
         match server.await {
             Ok(Ok(())) => tracing::info!("Server task ended"),

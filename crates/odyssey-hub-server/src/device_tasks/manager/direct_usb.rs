@@ -124,13 +124,7 @@ impl UsbDeviceManager {
     }
 
     #[cfg(feature = "sim")]
-    pub(super) async fn on_simulated_unit(
-        &mut self,
-        connection: VmDevice,
-        present: &mut PresentUsbDevices,
-    ) {
-        let id = "sim:unit-usb".to_owned();
-        present.direct_usb_ids.insert(id.clone());
+    pub(super) async fn on_simulated_unit(&mut self, connection: VmDevice, id: String) {
         let Ok(odyssey_protocol::Props::ProductId(product_id)) = connection
             .read_prop(odyssey_protocol::PropKind::ProductId)
             .await
@@ -541,8 +535,8 @@ mod tests {
             tokio::time::timeout(
                 Duration::from_secs(5),
                 manager.on_simulated_unit(
-                    simulator.connect_unit_usb(),
-                    &mut PresentUsbDevices::default(),
+                    simulator.connect_unit_usb(odyssey_sim::UNIT_UUID),
+                    "sim:test".to_owned(),
                 ),
             )
             .await

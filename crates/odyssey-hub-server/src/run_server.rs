@@ -34,6 +34,17 @@ enum ServerEvent {
     TonicServer(Result<(), tonic::transport::Error>),
 }
 
+/// How the hub finds its devices. The default is what a user's hub does.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ServerOptions {
+    /// Run simulated units and dongles next to the physical ones.
+    #[cfg(feature = "sim")]
+    pub simulator: Option<odyssey_sim::SensorModel>,
+    /// Leave USB devices and the system Bluetooth radio alone.
+    #[cfg(feature = "sim")]
+    pub no_discovery: bool,
+}
+
 /// Runs the hub: the gRPC server on the local socket, the device tasks, the accessory
 /// manager and the forwarding of device task messages into the shared lists.
 ///
@@ -41,32 +52,17 @@ enum ServerEvent {
 /// Critical task failures are returned rather than reported as a clean shutdown.
 /// Cancellation does not wait for clients to close their streaming RPCs; Bluetooth
 /// readers are stopped and the manager disconnects its accessories before returning.
+#[cfg_attr(
+    not(feature = "sim"),
+    expect(
+        unused_variables,
+        reason = "the options only have fields in simulator builds"
+    )
+)]
 pub async fn run_server(
     sender: mpsc::UnboundedSender<Message>,
     cancel_token: CancellationToken,
-) -> Result<(), ServerError> {
-    run_server_inner(
-        sender,
-        cancel_token,
-        #[cfg(feature = "sim")]
-        crate::sim::enabled(),
-    )
-    .await
-}
-
-/// Run the hub with its opt-in simulator, regardless of `ODYSSEY_SIM`.
-#[cfg(feature = "sim")]
-pub async fn run_server_with_sim(
-    sender: mpsc::UnboundedSender<Message>,
-    cancel_token: CancellationToken,
-) -> Result<(), ServerError> {
-    run_server_inner(sender, cancel_token, true).await
-}
-
-async fn run_server_inner(
-    sender: mpsc::UnboundedSender<Message>,
-    cancel_token: CancellationToken,
-    #[cfg(feature = "sim")] simulation_enabled: bool,
+    options: ServerOptions,
 ) -> Result<(), ServerError> {
     let (name, connections) = bind_local_socket(&sender).await?;
 
@@ -79,26 +75,21 @@ async fn run_server_inner(
     // Both background tasks also stop if the run_server future itself is dropped.
     let background_cancel = cancel_token.child_token();
     let _background_stop = background_cancel.clone().drop_guard();
-    #[cfg(feature = "sim")]
-    if simulation_enabled {
-        crate::sim::initialize_config()?;
-    }
     let config = StartupConfig::load(background_cancel.clone()).await;
     #[cfg(feature = "sim")]
-    let simulator = simulation_enabled.then(|| {
-        odyssey_sim::Simulator::with_sensor_model(
-            if std::env::args().any(|argument| argument == "--sim-legacy") {
-                odyssey_sim::SensorModel::Paj7025
-            } else {
-                odyssey_sim::SensorModel::Pag7665qn
-            },
-        )
-    });
+    let simulator = options
+        .simulator
+        .map(odyssey_sim::Simulator::with_sensor_model);
     #[cfg(feature = "sim")]
     let simulator_control = match simulator.as_ref() {
-        Some(simulator) => {
-            Some(crate::sim::start(simulator.handle(), background_cancel.clone()).await?)
-        }
+        Some(simulator) => Some(
+            crate::sim::start(
+                simulator.handle(),
+                Arc::clone(&config.screen_calibrations),
+                background_cancel.clone(),
+            )
+            .await?,
+        ),
         None => None,
     };
 
@@ -154,7 +145,7 @@ async fn run_server_inner(
     let accessory_cancel = background_cancel.clone();
     let accessory_task = tokio::spawn(async move {
         #[cfg(feature = "sim")]
-        let native_enabled = !simulation_enabled;
+        let native_enabled = !options.no_discovery;
         #[cfg(not(feature = "sim"))]
         let native_enabled = true;
         accessory_manager(
@@ -183,7 +174,10 @@ async fn run_server_inner(
             shot_delay_watch,
             device_task_events,
             #[cfg(feature = "sim")]
-            simulator,
+            device_tasks::Simulation {
+                simulator,
+                discovery: !options.no_discovery,
+            },
         )
         .await;
         ServerEvent::DeviceTasks(result)
@@ -260,6 +254,10 @@ mod tests {
     fn run_server_future_is_send() {
         fn assert_send<T: Send>(_: T) {}
         let (sender, _receiver) = mpsc::unbounded_channel();
-        assert_send(run_server(sender, CancellationToken::new()));
+        assert_send(run_server(
+            sender,
+            CancellationToken::new(),
+            ServerOptions::default(),
+        ));
     }
 }

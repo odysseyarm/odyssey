@@ -1,49 +1,71 @@
-use std::future::pending;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use odyssey_protocol::Packet;
 use odyssey_protocol::control::device::DeviceMsg;
 use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use odyssey_protocol::mux::MuxMsg;
-use tokio::sync::{Notify, broadcast, mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 
 use super::model::Model;
-use super::{ClockMode, Pending, Request, SensorModel, SimError, Snapshot};
+use super::{ClockMode, Pending, Request, Snapshot, Uuid, mark_stopped};
 
 struct Publication(watch::Sender<Snapshot>);
 
 impl Drop for Publication {
     fn drop(&mut self) {
-        self.0.send_modify(|snapshot| {
-            snapshot.running = false;
-            snapshot.ble_connected = false;
-        });
+        self.0.send_modify(mark_stopped);
     }
 }
 
-async fn receive<T>(receiver: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
-    match receiver {
-        Some(receiver) => receiver.recv().await,
-        None => pending().await,
-    }
+/// The host's side of one endpoint. `controls` may close before `packets`.
+struct Endpoint<P, C> {
+    packets: mpsc::Receiver<P>,
+    controls: Option<mpsc::Receiver<C>>,
+}
+
+enum Received<P, C> {
+    Packet(P),
+    Control(C),
+    /// The host dropped the endpoint.
+    Closed,
+}
+
+/// The next message from any endpoint, with the address it arrived at.
+async fn receive<P, C>(endpoints: &mut BTreeMap<Uuid, Endpoint<P, C>>) -> (Uuid, Received<P, C>) {
+    std::future::poll_fn(|context| {
+        for (uuid, endpoint) in endpoints.iter_mut() {
+            if let Poll::Ready(packet) = endpoint.packets.poll_recv(context) {
+                return Poll::Ready((*uuid, packet.map_or(Received::Closed, Received::Packet)));
+            }
+            if let Some(controls) = &mut endpoint.controls {
+                match controls.poll_recv(context) {
+                    Poll::Ready(Some(message)) => {
+                        return Poll::Ready((*uuid, Received::Control(message)));
+                    }
+                    Poll::Ready(None) => endpoint.controls = None,
+                    Poll::Pending => {}
+                }
+            }
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 pub(crate) async fn run(
     clock: ClockMode,
-    sensor_model: SensorModel,
+    mut model: Model,
     mut commands: mpsc::Receiver<Request>,
     snapshots: watch::Sender<Snapshot>,
-    errors: broadcast::Sender<SimError>,
-    pending_connections: Arc<Mutex<Pending>>,
+    pending_connections: Arc<Mutex<Vec<Pending>>>,
     notify: Arc<Notify>,
 ) {
     let publication = Publication(snapshots);
-    let mut model = Model::new(errors, sensor_model);
-    let mut usb_packets: Option<mpsc::Receiver<Packet>> = None;
-    let mut usb_controls: Option<mpsc::Receiver<DeviceMsg>> = None;
-    let mut mux_packets: Option<mpsc::Receiver<MuxMsg>> = None;
-    let mut mux_controls: Option<mpsc::Receiver<UsbMuxCtrlMsg>> = None;
+    let mut units: BTreeMap<Uuid, Endpoint<Packet, DeviceMsg>> = BTreeMap::new();
+    let mut dongles: BTreeMap<Uuid, Endpoint<MuxMsg, UsbMuxCtrlMsg>> = BTreeMap::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(10));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ticker.tick().await;
@@ -52,64 +74,66 @@ pub(crate) async fn run(
             // A newly opened endpoint is installed before requests queued on it.
             biased;
             () = notify.notified() => {
-                let Pending { usb, mux } = std::mem::take(&mut *pending_connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-                if let Some(connection) = usb && model.state.unit_usb {
-                    model.disconnect_usb();
-                    usb_packets = Some(connection.packets);
-                    usb_controls = Some(connection.controls);
-                    model.usb = Some(connection.replies);
-                    model.unit_control = Some(connection.events);
-                }
-                if let Some(connection) = mux && model.state.dongle_usb {
-                    mux_packets = Some(connection.packets);
-                    mux_controls = Some(connection.controls);
-                    model.mux = Some(connection.replies);
-                    model.mux_control = Some(connection.events);
+                let opened = std::mem::take(&mut *pending_connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+                for connection in opened {
+                    match connection {
+                        Pending::Unit(uuid, connection) => {
+                            if let Some(unit) = model.units.get_mut(&uuid) && unit.plugged {
+                                unit.disconnect_usb();
+                                unit.usb = Some(connection.replies);
+                                unit.control = Some(connection.events);
+                                units.insert(uuid, Endpoint { packets: connection.packets, controls: Some(connection.controls) });
+                            }
+                        }
+                        Pending::Dongle(uuid, connection) => {
+                            if let Some(dongle) = model.dongles.get_mut(&uuid) && dongle.plugged {
+                                dongle.disconnect_mux();
+                                dongle.mux = Some(connection.replies);
+                                dongle.control = Some(connection.events);
+                                dongles.insert(uuid, Endpoint { packets: connection.packets, controls: Some(connection.controls) });
+                            }
+                        }
+                    }
                 }
             },
             request = commands.recv() => {
                 let Some(request) = request else { break; };
-                let result = model.command(request.command);
-                if let Err(error) = &result { model.error(error.clone()); }
-                publication.0.send_replace(model.state.clone());
-                let _ = request.response.send(result.map(|()| model.state.clone()));
+                let result = model.command(request.target, request.command);
+                if let Err(error) = &result { model.errors.report(error.clone()); }
+                publication.0.send_modify(|snapshot| model.publish(snapshot));
+                let _ = request.response.send(result);
             },
-            packet = receive(&mut usb_packets) => {
-                match packet {
-                    Some(packet) => model.packet(packet, false),
-                    None => { usb_packets = None; model.disconnect_usb(); },
+            (uuid, received) = receive(&mut units) => {
+                match received {
+                    Received::Packet(packet) => model.unit_packet(uuid, packet),
+                    Received::Control(message) => model.unit_control(uuid, message),
+                    Received::Closed => {
+                        if let Some(unit) = model.units.get_mut(&uuid) { unit.disconnect_usb(); }
+                    }
                 }
             },
-            control = receive(&mut usb_controls) => {
-                match control {
-                    Some(message) => model.unit_control(message),
-                    None => usb_controls = None,
-                }
-            },
-            packet = receive(&mut mux_packets) => {
-                match packet {
-                    Some(packet) => model.mux_packet(packet),
-                    None => { mux_packets = None; model.disconnect_mux(); },
-                }
-            },
-            control = receive(&mut mux_controls) => {
-                match control {
-                    Some(message) => model.dongle_control(message),
-                    None => mux_controls = None,
+            (uuid, received) = receive(&mut dongles) => {
+                match received {
+                    Received::Packet(message) => model.mux_message(uuid, message),
+                    Received::Control(message) => model.dongle_control(uuid, message),
+                    Received::Closed => {
+                        if let Some(dongle) = model.dongles.get_mut(&uuid) { dongle.disconnect_mux(); }
+                    }
                 }
             },
             _ = ticker.tick(), if clock == ClockMode::Realtime => {
-                model.tick(model.state.time_ms.saturating_add(10));
+                model.tick(model.time_ms.saturating_add(10));
             },
         }
-        if model.usb.is_none() {
-            usb_packets = None;
-            usb_controls = None;
-        }
-        if model.mux.is_none() {
-            mux_packets = None;
-            mux_controls = None;
-        }
-        publication.0.send_replace(model.state.clone());
+        units.retain(|uuid, _| model.units.get(uuid).is_some_and(|unit| unit.usb.is_some()));
+        dongles.retain(|uuid, _| {
+            model
+                .dongles
+                .get(uuid)
+                .is_some_and(|dongle| dongle.mux.is_some())
+        });
+        publication
+            .0
+            .send_modify(|snapshot| model.publish(snapshot));
     }
 }
