@@ -14,6 +14,8 @@ path = "src/main.rs"
 argmin = { workspace = true }
 argmin-math = { workspace = true, features = ["vec"] }
 odyssey-usb = { workspace = true }
+odyssey-hub-client = { workspace = true }
+odyssey-hub-common = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol" }
 clap = { workspace = true, features = ["derive"] }
 futures = "0.3.30"

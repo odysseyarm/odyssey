@@ -8706,6 +8706,8 @@ dependencies = [
  "futures",
  "nalgebra 0.35.0",
  "nusb",
+ "odyssey-hub-client",
+ "odyssey-hub-common",
  "odyssey-protocol",
  "odyssey-usb",
  "rand 0.8.8",

@@ -10,6 +10,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+mod accessory;
 mod bond;
 mod calibration;
 mod device;
@@ -46,6 +47,11 @@ enum Commands {
     },
     /// Create a manual bond between a dongle and a device
     Bond(bond::BondArgs),
+    /// Accessory commands through the running hub
+    Accessory {
+        #[command(subcommand)]
+        command: accessory::AccessoryCommands,
+    },
 }
 
 #[tokio::main]
@@ -56,6 +62,7 @@ async fn main() -> ExitCode {
         Commands::Mux { device, command } => mux::handle_command(device, command).await,
         Commands::Device { device, command } => device::handle_command(device, command).await,
         Commands::Bond(args) => bond::handle_bond(args).await,
+        Commands::Accessory { command } => accessory::handle_command(command).await,
     };
 
     match result {
