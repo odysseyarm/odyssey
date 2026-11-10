@@ -319,6 +319,12 @@ impl MuxDevice {
         }
     }
 
+    /// Resets the dongle into its vendor bootloader; it leaves the bus without replying.
+    /// Firmware without the command rejects it, which fails the control transfer.
+    pub async fn enter_bootloader(&self) -> Result<()> {
+        self.ctrl_send(UsbMuxCtrlMsg::EnterBootloader()).await
+    }
+
     pub async fn cancel_pairing(&self) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::CancelPairing()).await
     }

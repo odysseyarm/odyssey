@@ -963,6 +963,17 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 settings.set_device_name(uuid, &name.0).await;
                 ble::central::update_device_name(uuid, name.0);
             }
+            C::EnterBootloader() => {
+                info!("CTL EnterBootloader received");
+                // Let the control transfer's status stage finish before the dongle leaves the bus.
+                embassy_time::Timer::after_millis(50).await;
+                // nRF5 SDK bootloaders (Fanstel's, Laird's) stay in DFU mode after a
+                // reset with GPREGRET set to BOOTLOADER_DFU_START.
+                embassy_nrf::pac::POWER
+                    .gpregret()
+                    .write(|w| w.set_gpregret(0xB1));
+                cortex_m::peripheral::SCB::sys_reset();
+            }
             _ => {}
         }
     }

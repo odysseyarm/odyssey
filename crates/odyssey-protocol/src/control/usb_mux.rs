@@ -56,6 +56,10 @@ pub enum UsbMuxCtrlMsg {
         uuid: crate::mux::Uuid,
         name: crate::DeviceName,
     },
+
+    /// Resets the dongle into its vendor's Nordic DFU bootloader. No reply:
+    /// the dongle leaves the bus and returns as the bootloader (PID 0x521F).
+    EnterBootloader(),
 }
 
 /// The result of a clear-bonds request. Serializes as the equivalent `Result`.

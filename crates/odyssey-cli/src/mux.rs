@@ -1,10 +1,19 @@
 //! Commands for the mux dongle.
 
+use std::time::Duration;
+
 use clap::Subcommand;
 use eros::Context as _;
+use nusb::DeviceInfo;
 use odyssey_usb::device::MuxDevice;
 
-use crate::usb_discovery::{format_bd_addr, list_muxes, product_name};
+use crate::usb_discovery::{
+    NORDIC_VENDOR_ID, format_bd_addr, list_muxes, list_nordic_devices, product_name,
+};
+
+/// USB product id of the vendors' Nordic DFU bootloaders.
+const BOOTLOADER_PRODUCT_ID: u16 = 0x521F;
+const BOOTLOADER_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Subcommand)]
 pub(crate) enum MuxCommands {
@@ -25,37 +34,66 @@ pub(crate) enum MuxCommands {
     PairCancel,
     /// Clear all bonds
     ClearBonds,
+    /// Reset into the vendor bootloader for a serial DFU update
+    EnterBootloader,
 }
 
-async fn connect_to_mux(device_index: Option<usize>) -> eros::Result<MuxDevice> {
+fn select_mux(device_index: Option<usize>) -> eros::Result<DeviceInfo> {
     let devices = list_muxes()?;
 
     if devices.is_empty() {
         eros::bail!("No mux found (VID:0x1915 PID:0x5212). Please connect a mux.");
     }
 
-    let device_info = if let Some(idx) = device_index {
-        devices
+    if let Some(idx) = device_index {
+        return Ok(devices
             .get(idx)
             .ok_or_else(|| {
                 eros::error!(
                     "Device index {idx} not found. Use 'mux list-devices' to see available devices."
                 )
             })?
-            .clone()
-    } else {
-        if devices.len() > 1 {
-            eros::bail!(
-                "Multiple muxes found ({}). Please specify which one to use with --device <index>. Use 'mux list-devices' to list them.",
-                devices.len()
-            );
-        }
-        devices[0].clone()
-    };
+            .clone());
+    }
+    if devices.len() > 1 {
+        eros::bail!(
+            "Multiple muxes found ({}). Please specify which one to use with --device <index>. Use 'mux list-devices' to list them.",
+            devices.len()
+        );
+    }
+    Ok(devices[0].clone())
+}
 
-    Ok(MuxDevice::connect_usb(device_info)
+async fn connect_to_mux(device_index: Option<usize>) -> eros::Result<MuxDevice> {
+    Ok(MuxDevice::connect_usb(select_mux(device_index)?)
         .await
         .context("Failed to connect to mux")?)
+}
+
+async fn cmd_enter_bootloader(info: DeviceInfo) -> eros::Result<()> {
+    let device = MuxDevice::connect_usb(info.clone())
+        .await
+        .context("Failed to connect to mux")?;
+    device.enter_bootloader().await.context(
+        "The dongle refused the command; firmware before 0.1.15 needs its reset/DFU button",
+    )?;
+    drop(device);
+    let start = std::time::Instant::now();
+    while start.elapsed() < BOOTLOADER_TIMEOUT {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if list_nordic_devices()?.iter().any(|found| {
+            found.vendor_id() == NORDIC_VENDOR_ID
+                && found.product_id() == BOOTLOADER_PRODUCT_ID
+                && found.bus_id() == info.bus_id()
+                && found.port_chain() == info.port_chain()
+        }) {
+            println!("Dongle is in its bootloader");
+            return Ok(());
+        }
+    }
+    eros::bail!(
+        "The dongle did not come back as its bootloader within {BOOTLOADER_TIMEOUT:?}; its bootloader may ignore the request, so press its reset/DFU button"
+    )
 }
 
 fn cmd_list_devices() -> eros::Result<()> {
@@ -163,23 +201,7 @@ async fn cmd_clear_bonds(device: &MuxDevice) -> eros::Result<()> {
 
 async fn cmd_usb_info(device_index: Option<usize>) -> eros::Result<()> {
     use nusb::transfer::{Bulk, In, Interrupt, Out};
-    let devices = list_muxes()?;
-    if devices.is_empty() {
-        eros::bail!("No mux found (VID:0x1915 PID:0x5212)");
-    }
-    let device_info = if let Some(idx) = device_index {
-        devices.get(idx).cloned().ok_or_else(|| {
-            eros::error!("Device index {idx} not found. Use 'mux list-devices' to list.")
-        })?
-    } else {
-        if devices.len() > 1 {
-            eros::bail!(
-                "Multiple muxes found ({}). Please specify with --device <index>.",
-                devices.len()
-            );
-        }
-        devices[0].clone()
-    };
+    let device_info = select_mux(device_index)?;
     let dev = device_info.open().await.context("Failed to open device")?;
     println!(
         "Probing interfaces for VID:0x{:04X} PID:0x{:04X}",
@@ -226,5 +248,6 @@ pub(crate) async fn handle_command(
             let device = connect_to_mux(device_index).await?;
             cmd_clear_bonds(&device).await
         }
+        MuxCommands::EnterBootloader => cmd_enter_bootloader(select_mux(device_index)?).await,
     }
 }
