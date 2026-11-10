@@ -215,6 +215,12 @@ fn hex() -> eros::Result<()> {
             let parent = to.parent().expect("the ELF path has a parent");
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
             copy(&tree.join(DIR).join(BUILT).join(BIN), &to)?;
+            // llvm-objcopy gives its outputs the input's mode, and the DFU binary is
+            // padded in place, so the read-only store mode cannot carry over.
+            let mut permissions = fs::metadata(&to)?.permissions();
+            permissions.set_readonly(false);
+            fs::set_permissions(&to, permissions)
+                .with_context(|| format!("making {} writable", to.display()))?;
         }
         None => cmd::run(cmd::at(DIR, "cargo").args([
             "build",

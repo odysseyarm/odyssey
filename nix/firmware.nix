@@ -103,6 +103,16 @@ let
             --replace-fail 'readme = "../README.md"' 'readme = "README.md"'
         '';
       })
+      else if lib.any (package: lib.hasInfix "github.com/alexmoon/nrf-sdc" package.source) packages
+      then drv.overrideAttrs (old: {
+        postPatch = (old.postPatch or "") + ''
+          # Both sys crates omit headers that their bindgen scripts include.
+          substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
+            --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
+          substituteInPlace nrf-sdc-sys/Cargo.toml \
+            --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+        '';
+      })
       else drv;
   };
   vendorOf = dir: craneLib.vendorCargoDeps (vendorArgs // { cargoLock = lockOf dir; });
@@ -313,11 +323,13 @@ let
     # What the release workflow checks before it uploads.
     expect = map (suffix: "dongle-fw-${dongleVersion}${suffix}")
       [ ".hex" ".uf2" "-dfu-fanstel.zip" "-dfu-laird.zip" ];
-    # Only what the packaging reads: the version and the two vendor signing keys,
-    # which are already tracked in the public repository.
+    # Only what the packaging reads: the version, the flash layout that bounds the
+    # padded DFU image, and the two vendor signing keys, which are already tracked
+    # in the public repository.
     source = mkSource {
       dirs = [ ];
-      files = map (file: "firmware/dongle-fw/${file}") [ "Cargo.toml" "fanstel-debug.pem" "laird-dongle.pem" ];
+      files = map (file: "firmware/dongle-fw/${file}")
+        [ "Cargo.toml" "memory-dongle.kdl" "fanstel-debug.pem" "laird-dongle.pem" ];
     };
     tools = [ nrfutil ];
     # nrfutil keeps state under its home, which the sandbox has to provide.
