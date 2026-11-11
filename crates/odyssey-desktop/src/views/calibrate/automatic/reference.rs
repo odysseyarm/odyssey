@@ -194,9 +194,6 @@ pub(crate) fn agreement(gap: f64) -> Agreement {
 /// Reads a length typed from a tape: "47.5", "47,5", "47 5/8", "47-5/8",
 /// "121 cm", `47.5"`, "1210mm". A bare number is in `default`.
 pub(crate) fn parse_length_mm(text: &str, default: Unit) -> Result<f64, ReferenceError> {
-    let lower = text.trim().to_lowercase();
-    // Longer spellings first, so "inches" is not read as "in" and a bare "m"
-    // (meters, which no tape on a screen reads in) is left to fail as a number.
     const UNITS: [(&str, Unit); 8] = [
         ("inches", Unit::Inches),
         ("inch", Unit::Inches),
@@ -207,6 +204,9 @@ pub(crate) fn parse_length_mm(text: &str, default: Unit) -> Result<f64, Referenc
         ("mm", Unit::Millimeters),
         ("cm", Unit::Centimeters),
     ];
+    let lower = text.trim().to_lowercase();
+    // Longer spellings first, so "inches" is not read as "in" and a bare "m"
+    // (meters, which no tape on a screen reads in) is left to fail as a number.
     let (number, unit) = UNITS
         .iter()
         .find_map(|(suffix, unit)| lower.strip_suffix(suffix).map(|rest| (rest, *unit)))
@@ -283,7 +283,7 @@ mod tests {
     fn a_reading_that_cannot_be_this_line_is_refused() {
         let line = f64::from(tape_line_px(2560));
         // 470 mm across 1792 px is 0.26 mm per pixel: an ordinary monitor.
-        assert!(Reference::from_tape(line, 470.0).is_ok());
+        Reference::from_tape(line, 470.0).unwrap();
         // A centimeter reading typed as millimeters, or a length meant for another line.
         assert_eq!(
             Reference::from_tape(line, 10.0),

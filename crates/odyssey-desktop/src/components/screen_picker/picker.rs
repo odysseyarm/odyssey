@@ -51,11 +51,10 @@ impl ScreenPicker {
             .timer(IDENTIFY_DURATION + IDENTIFY_COOLDOWN);
         self.identify_reset = Some(cx.spawn(async move |this, cx| {
             timer.await;
-            this.update(cx, |picker, cx| {
+            let _ = this.update(cx, |picker, cx| {
                 picker.identifying = false;
                 cx.notify();
-            })
-            .ok();
+            });
         }));
         cx.notify();
     }
@@ -63,7 +62,7 @@ impl ScreenPicker {
 
 impl Render for ScreenPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let (monitors, selected) = {
             let selection = self.selection.read(cx);
             (selection.monitors().to_vec(), selection.selected())
@@ -191,7 +190,7 @@ fn monitor_tile(
     diagram_width: f64,
     diagram_height: f64,
     selected: bool,
-    p: Palette,
+    p: &Palette,
     select: impl Fn(&mut gpui::App) + 'static,
 ) -> impl IntoElement {
     let detail = detail_for(tile);

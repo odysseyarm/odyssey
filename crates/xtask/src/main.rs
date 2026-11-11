@@ -1,7 +1,13 @@
 //! Repository automation: `cargo xtask <command>`, run from the repository root.
 //!
 //! External tools (probe-rs, nrfutil, gh, git, cargo-packager, dotnet)
-//! are still invoked as programs; this crate replaces the shell glue around them.
+//! are still invoked as programs. This crate replaces the shell glue around them.
+
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "xtask stdout and stderr are its user-facing command output"
+)]
 
 mod autocalib;
 mod cmd;
@@ -41,7 +47,7 @@ enum Command {
     #[command(subcommand)]
     Release(release::Cmd),
     /// Flash a device over SWD with sector erase only: bootloader and app, or
-    /// the app alone. Select a probe with PROBE_RS_PROBE=VID:PID:SERIAL.
+    /// the app alone. Select a probe with `PROBE_RS_PROBE=VID:PID:SERIAL`.
     Flash {
         device: Device,
         /// Program the app image only, not the bootloader. Boards that keep swap state clear it.

@@ -1,22 +1,22 @@
 //! Measures the printed scale board's distance from its apparent size and
 //! compares it with the distance the depth sensor reports for the same board.
-//! A prototype probe for validation on real hardware: it tests whether the
-//! board's apparent size can expose a depth scale error, and claims nothing
+//! A prototype probe for validation on real hardware. It tests whether the
+//! board's apparent size can expose a depth scale error and says nothing
 //! about accuracy by itself.
 //!
 //! Usage: `board_probe [--pitch-mm <millimeters>]`. The pitch defaults to the
-//! nominal value in `board.json`. If the print was scaled by the printer,
-//! measure the printed scale bar with a ruler and pass the corrected pitch:
-//! the board distance is proportional to it.
+//! nominal value in `board.json`. If the printer scaled the print, measure the
+//! printed scale bar with a ruler and pass the corrected pitch. The board
+//! distance is proportional to it.
 //!
 //! Hold the board still in the camera's view, flat and facing the camera more
 //! or less, with the whole dot grid visible. The program opens the first
-//! Orbbec camera (the SDK is found as described in
-//! `odyssey_autocalib::orbbec::runtime`; `ODYSSEY_ORBBEC_SDK_DIR` points it at
-//! a particular install), grabs about 30 frames over a couple of seconds and
-//! prints what it measured. The exit code is 0 whenever the program runs to
-//! the end, including when the SDK, the camera or the board is missing; the
-//! printed text says what happened. A bad command line exits with 2.
+//! Orbbec camera, grabs about 30 frames over a couple of seconds and prints
+//! what it measured. The SDK is found as described in
+//! `odyssey_autocalib::orbbec::runtime`, and `ODYSSEY_ORBBEC_SDK_DIR` points
+//! it at a particular install. The exit code is 0 whenever the program runs
+//! to the end, including when the SDK, the camera or the board is missing, and
+//! the printed text says what happened. A bad command line exits with 2.
 
 #![expect(
     clippy::print_stdout,
@@ -53,6 +53,10 @@ fn main() {
     };
     let status = runtime_status(None);
     println!("runtime: {status}");
+    #[expect(
+        clippy::float_cmp,
+        reason = "exact equality identifies use of the board's nominal pitch"
+    )]
     if pitch_mm == BoardSpec::nominal_pitch_mm() {
         println!("pitch: {pitch_mm} mm (nominal, from board.json; not measured)");
     } else {

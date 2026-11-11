@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      # OIDC token for PyPI trusted publishing; the pypi.org publisher for
+      # OIDC token for PyPI trusted publishing. The pypi.org publisher for
       # odysseyhubclient is bound to this repo and this workflow filename.
       id-token: write
     steps:
@@ -71,7 +71,7 @@ jobs:
     permissions:
       # OIDC token for nuget.org trusted publishing. The nuget.org policy
       # "odysseyhubclient-publish" is bound to this repo and this exact
-      # workflow filename; renaming this file means updating the policy.
+      # workflow filename. Renaming this file means updating the policy.
       id-token: write
     steps:
       - uses: actions/download-artifact@v6

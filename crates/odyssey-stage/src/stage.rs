@@ -6,32 +6,50 @@ use crate::light::Lighting;
 use crate::pattern::{Handling, Movement, Pattern, Press};
 use crate::radio::Radio;
 
+/// Since: Odyssey Desktop 0.7.5.
 pub const SCHEMA: u32 = 1;
 const MAX_DEVICES: usize = 32;
 const MAX_HUB_DONGLES: usize = 8;
 const MAX_DURATION_S: f64 = 600.0;
 
 /// Which software owns a device's behavior.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
-    /// Exists only in the stage; drives the previews and exports.
+    /// Exists only in the stage. Drives the previews and exports.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     #[default]
     Stage,
     /// One of the simulated devices of a running hub started with `--sim`:
     /// trackers become its units and dongles its dongles, in stage order.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     HubSim,
-    /// A physical device the hub reports; the stage shows it, never drives it.
-    Real { uuid: String },
+    /// A physical device the hub reports. The stage shows it, never drives it.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    Real {
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        uuid: String,
+    },
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Tracker {
+    /// Since: Odyssey Desktop 0.7.5.
     pub pattern: Pattern,
+    /// Since: Odyssey Desktop 0.7.5.
     pub handling: Handling,
+    /// Since: Odyssey Desktop 0.7.5.
     pub movement: Movement,
+    /// Since: Odyssey Desktop 0.7.5.
     pub presses: Vec<Press>,
+    /// Since: Odyssey Desktop 0.7.5.
     pub roll_deg: f64,
 }
 
@@ -47,27 +65,38 @@ impl Default for Tracker {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DeviceKind {
+    /// Since: Odyssey Desktop 0.7.5.
     Tracker(Tracker),
+    /// Since: Odyssey Desktop 0.7.5.
     Dongle,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Device {
+    /// Since: Odyssey Desktop 0.7.5.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.5.
     pub name: String,
     /// Meters from the display's top-left corner: +X right, +Y down, +Z away
     /// from the viewer, so a viewer standing in front has negative Z.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub position_m: [f64; 3],
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(default)]
     pub binding: Binding,
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(flatten)]
     pub kind: DeviceKind,
 }
 
 impl Device {
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn tracker(&self) -> Option<&Tracker> {
         match &self.kind {
             DeviceKind::Tracker(tracker) => Some(tracker),
@@ -78,18 +107,29 @@ impl Device {
 
 /// An authored scene: the display, the devices around it, the light and radio
 /// environment, and how long a run lasts.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Stage {
+    /// Since: Odyssey Desktop 0.7.5.
     pub schema: u32,
+    /// Since: Odyssey Desktop 0.7.5.
     pub name: String,
+    /// Since: Odyssey Desktop 0.7.5.
     pub display: Display,
+    /// Since: Odyssey Desktop 0.7.5.
     pub devices: Vec<Device>,
+    /// Since: Odyssey Desktop 0.7.5.
     pub lighting: Lighting,
+    /// Since: Odyssey Desktop 0.7.5.
     pub radio: Radio,
+    /// Since: Odyssey Desktop 0.7.5.
     pub duration_s: f64,
     /// Whether a hub this stage calibrates is told the display's measured
     /// surface, or only the flat fit an uncalibrated tracker would assume.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub tracker_knows_surface: bool,
 }
 
@@ -128,6 +168,11 @@ impl Default for Stage {
 }
 
 impl Stage {
+    /// # Errors
+    ///
+    /// Returns an error if no device has the requested identifier.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn device(&self, id: &str) -> Result<&Device, StageError> {
         self.devices
             .iter()
@@ -137,6 +182,8 @@ impl Stage {
 
     /// The devices bound to a hub's simulator with the address each has there:
     /// trackers are its units and dongles its dongles, numbered in stage order.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn hub_devices(&self) -> impl Iterator<Item = (odyssey_sim::Uuid, &Device)> {
         let (mut units, mut dongles) = (0_u8, 0_u8);
         self.devices
@@ -153,6 +200,11 @@ impl Stage {
             })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if any stage setting or device is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         if self.schema != SCHEMA {
             return Err(StageError::invalid(format!(
@@ -220,6 +272,7 @@ impl Stage {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 pub const DISPLAY_PRESET_NAMES: [&str; 5] = [
     "monitor",
     "tv-55",
@@ -229,6 +282,8 @@ pub const DISPLAY_PRESET_NAMES: [&str; 5] = [
 ];
 
 /// Starting points for the display, named for what people actually have.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub fn display_preset(name: &str) -> Option<Display> {
     use crate::display::{Keystone, Waviness};
     Some(match name {
@@ -328,7 +383,7 @@ mod tests {
         let mut second = stage.devices[0].clone();
         second.id = "tracker-2".to_owned();
         stage.devices.push(second);
-        for device in &mut stage.devices[..] {
+        for device in &mut stage.devices {
             device.binding = Binding::HubSim;
         }
         stage.validate().unwrap();

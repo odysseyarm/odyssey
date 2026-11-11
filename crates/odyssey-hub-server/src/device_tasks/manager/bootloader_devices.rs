@@ -1,7 +1,7 @@
 //! USB DFU-only peripherals and bootloader recovery entries without hub protocol handlers.
 
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
-use odyssey_version::{UsbDeviceRelease, UsbVersionReport};
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use tracing::{info, warn};
 
 use super::{PresentUsbDevices, UsbDeviceManager};
@@ -32,7 +32,7 @@ impl UsbDeviceManager {
         if !is_in_bootloader(dev_info) {
             return;
         }
-        self.track_dfu_device(dev_info, direct_usb_id, present, None)
+        self.track_dfu_device(dev_info, direct_usb_id, present, None, None)
             .await;
     }
 
@@ -41,8 +41,8 @@ impl UsbDeviceManager {
         dev_info: &nusb::DeviceInfo,
         present: &mut PresentUsbDevices,
     ) {
-        let application_version = if is_in_bootloader(dev_info) {
-            None
+        let (application_version, firmware_identity) = if is_in_bootloader(dev_info) {
+            (None, super::read_firmware_identity(dev_info))
         } else {
             if !dev_info.interfaces().any(|interface| {
                 interface.class() == DFU_CLASS
@@ -51,25 +51,31 @@ impl UsbDeviceManager {
             }) {
                 return;
             }
-            Some(
-                match UsbDeviceRelease::new_with_raw_value(dev_info.device_version()).report() {
-                    UsbVersionReport::Known(version) => version,
-                    UsbVersionReport::Unset | UsbVersionReport::Unreadable => [0, 0, 0],
-                },
-            )
+            let firmware_identity = super::read_firmware_identity(dev_info);
+            let application_version = firmware_identity
+                .and_then(|version| version.known().map(|version| version.core))
+                .unwrap_or([0; 3]);
+            (Some(application_version), firmware_identity)
         };
         let direct_usb_id = format!("{:?}", dev_info.id());
-        self.track_dfu_device(dev_info, &direct_usb_id, present, application_version)
-            .await;
+        self.track_dfu_device(
+            dev_info,
+            &direct_usb_id,
+            present,
+            application_version,
+            firmware_identity,
+        )
+        .await;
     }
 
-    /// `None` means bootloader; runtime-only peripherals report their application version.
+    /// `None` means bootloader. Runtime-only peripherals report their application version.
     async fn track_dfu_device(
         &mut self,
         dev_info: &nusb::DeviceInfo,
         direct_usb_id: &str,
         present: &mut PresentUsbDevices,
-        application_version: Option<[u16; 3]>,
+        application_version: Option<[u32; 3]>,
+        firmware_identity: Option<FirmwareVersion>,
     ) {
         let pid = dev_info.product_id();
         let Some(uuid) = self.bootloader_uuid(dev_info) else {
@@ -96,6 +102,7 @@ impl UsbDeviceManager {
             uuid,
             transport: Transport::Usb,
             capabilities,
+            firmware_identity: firmware_identity.unwrap_or_default(),
             firmware_version: application_version.unwrap_or([0, 0, 0]),
             events_transport: EventsTransport::Wired,
             events_connected: false,
@@ -122,9 +129,9 @@ impl UsbDeviceManager {
             return Some(uuid);
         }
         // Bootloaders that predate per-device serials cannot identify themselves. Prefer the
-        // device last seen under this product id; a device that has been in the bootloader
-        // since before the app started has never been seen, so it gets a stand-in instead,
-        // which is the only way it reaches the device list and therefore the only way it can
+        // device last seen under this product id. A device that has been in the bootloader
+        // since before the app started has never been seen, so it gets a stand-in instead.
+        // That is the only way it reaches the device list and therefore the only way it can
         // be recovered.
         if !crate::migration::is_placeholder_serial(dev_info.serial_number()) {
             return None;

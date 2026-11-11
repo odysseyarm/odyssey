@@ -9,8 +9,10 @@ use embassy_nrf::timer::{self, Instance, Timer};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub static FOD_TICK_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct FodTrigger<'d, T: Instance> {
     timer: Timer<'d>,
     ppi_set: Ppi<'d, ppi::AnyConfigurableChannel, 1, 2>,
@@ -22,7 +24,11 @@ pub struct FodTrigger<'d, T: Instance> {
 }
 
 impl<'d, T: Instance> FodTrigger<'d, T> {
-    #[allow(clippy::too_many_arguments)]
+    /// Since: Odyssey Desktop 0.7.0.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Constructor takes each pin and timer resource needed by hardware"
+    )]
     pub fn new<C1: gpiote::Channel, C2: gpiote::Channel>(
         nf: Peri<'d, AnyPin>,
         wf: Peri<'d, AnyPin>,
@@ -91,10 +97,12 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn wait_tick(&self) {
         FOD_TICK_SIG.wait().await;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn start(&mut self) {
         if self.running {
             return;
@@ -105,6 +113,7 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         self.ppi_set.enable();
         self.ppi_clr.enable();
 
+        // SAFETY: constructor binds T's interrupt handler before start enables its interrupt.
         unsafe {
             T::Interrupt::enable();
         }
@@ -114,6 +123,7 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         self.running = true;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn stop(&mut self) {
         if !self.running {
             return;

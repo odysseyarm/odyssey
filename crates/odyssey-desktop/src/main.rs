@@ -35,6 +35,19 @@ fn error_message(error: &eros::ErrorUnion) -> String {
     message
 }
 
+#[cfg(feature = "sim")]
+fn take_sim_flags(args: &mut Vec<String>) {
+    let flags =
+        odyssey_hub_server::sim::Flags::take(args, std::env::var("ODYSSEY_SIM").ok().as_deref());
+    if flags.temp_config
+        && let Err(error) = odyssey_hub_server::sim::use_temp_config()
+    {
+        tracing::error!("Could not set up temporary settings: {error}");
+        std::process::exit(1);
+    }
+    cli::set_server_options(flags.server_options());
+}
+
 fn main() {
     logging::init();
     #[cfg_attr(
@@ -43,19 +56,7 @@ fn main() {
     )]
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(feature = "sim")]
-    {
-        let flags = odyssey_hub_server::sim::Flags::take(
-            &mut args,
-            std::env::var("ODYSSEY_SIM").ok().as_deref(),
-        );
-        if flags.temp_config
-            && let Err(error) = odyssey_hub_server::sim::use_temp_config()
-        {
-            tracing::error!("Could not set up temporary settings: {error}");
-            std::process::exit(1);
-        }
-        cli::set_server_options(flags.server_options());
-    }
+    take_sim_flags(&mut args);
     match cli::parse(args) {
         Ok(cli::Command::Run) => {}
         Ok(cli::Command::Calibrate(args)) => cli::set_pending_calibrate(args),

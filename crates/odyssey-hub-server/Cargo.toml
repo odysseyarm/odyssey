@@ -17,7 +17,7 @@ required-features = ["tracking-regression"]
 
 [dependencies]
 ahrs = { workspace = true, features = ["field_access"] }
-semver = "1"
+semver = { version = "1", features = ["serde"] }
 backon = { workspace = true }
 futures = { version = "0.3.30", default-features = false, features = ["alloc", "async-await", "std"] }
 futures-concurrency = { workspace = true }
@@ -38,6 +38,7 @@ minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", features = ["
 nusb = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 odyssey-version = { path = "../odyssey-version" }
+odyssey-firmware-manifest = { workspace = true }
 nalgebra = "0.35"
 cam-geom = { workspace = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
@@ -78,3 +79,4 @@ winres = "0.1.12"
 [dev-dependencies]
 odyssey-autocalib = { workspace = true }
 postcard = { workspace = true, features = ["use-std"] }
+better-ota = { path = "../../firmware/better-ota" }

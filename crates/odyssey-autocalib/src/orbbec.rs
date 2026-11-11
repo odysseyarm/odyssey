@@ -15,6 +15,7 @@
 //! IMU callback.
 
 mod ffi;
+/// Since: Odyssey Desktop 0.6.5.
 pub mod runtime;
 
 use std::collections::VecDeque;
@@ -31,6 +32,7 @@ use nalgebra::{Matrix3, Vector3};
 use parking_lot::Mutex;
 
 use self::runtime::Sdk;
+/// Since: Odyssey Desktop 0.6.5.
 pub use self::runtime::{
     LIBRARY_NAME, RuntimeStatus, SDK_DIR_ENV, SUPPORTED_VERSIONS, SdkVersion, runtime_status,
 };
@@ -42,11 +44,11 @@ use crate::camera::{
 /// Frame rate every video stream is requested at. Calibration measures a still
 /// board, so a higher rate buys no accuracy, and 15 fps carries half the USB
 /// traffic of 30. (An xHCI controller failed while this camera streamed at 30 fps
-/// over USB 3; the cause was not established.)
+/// over USB 3, and the cause was not established.)
 const STREAM_FPS: u32 = 15;
 /// The IMU rate closest to this one is used; gravity estimation needs no more.
 const IMU_TARGET_HZ: f64 = 100.0;
-/// Upper bound on buffered IMU samples; the oldest drop first when nobody drains.
+/// Upper bound on buffered IMU samples. The oldest drop first when nobody drains.
 const IMU_BUFFER_LIMIT: usize = 8192;
 const COLOR_SHARPNESS: i32 = 100;
 /// `OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT` value for 60 Hz mains.
@@ -77,7 +79,7 @@ impl SdkError<'_> {
         // SAFETY: `ptr` is a live error object (field invariant).
         let text = unsafe { self.sdk.ob_error_get_message(self.ptr.as_ptr()) };
         // SAFETY: the SDK returns null or a NUL-terminated string that belongs
-        // to the error object; `self` keeps that alive and `c_str` copies it.
+        // to the error object. `self` keeps that alive and `c_str` copies it.
         unsafe { c_str(text) }
     }
 
@@ -103,7 +105,7 @@ fn check(sdk: &Sdk, err: *mut ffi::ob_error) -> Result<(), CameraError> {
         return Ok(());
     };
     // The SDK's C API gives the caller any non-null error to delete with
-    // `ob_delete_error`; `ob` hands each one here exactly once.
+    // `ob_delete_error`. `ob` hands each one here exactly once.
     let error = SdkError { sdk, ptr };
     let (message, function) = (error.message(), error.function());
     Err(CameraError::Sdk(if function.is_empty() {
@@ -163,17 +165,16 @@ fn initialize(sdk: &Sdk, extensions: Option<&Path>) {
         ),
     );
     let Some(dir) = extensions else { return };
-    match dir.to_str().map(CString::new) {
-        Some(Ok(dir_c)) => {
-            best_effort(
-                "ob_set_extensions_directory",
-                ob!(sdk, ob_set_extensions_directory(dir_c.as_ptr())),
-            );
-        }
-        _ => tracing::warn!(
+    if let Some(Ok(dir_c)) = dir.to_str().map(CString::new) {
+        best_effort(
+            "ob_set_extensions_directory",
+            ob!(sdk, ob_set_extensions_directory(dir_c.as_ptr())),
+        );
+    } else {
+        tracing::warn!(
             "extensions directory {} cannot be passed to the SDK; it keeps its own lookup",
             dir.display()
-        ),
+        );
     }
 }
 
@@ -184,7 +185,7 @@ macro_rules! handle {
         struct $name {
             sdk: Sdk,
             /// Invariant: a live SDK object this wrapper owns and nothing else
-            /// frees; `Drop` deletes it exactly once.
+            /// frees. `Drop` deletes it exactly once.
             ptr: NonNull<$raw>,
         }
 
@@ -785,7 +786,7 @@ struct ImuCallbackCtx {
     /// Rotates this sensor's vectors into the color camera's frame.
     to_color: Matrix3<f64>,
     shared: Arc<Mutex<ImuState>>,
-    /// The callback calls the SDK; this keeps the library loaded until the
+    /// The callback calls the SDK, so this keeps the library loaded until the
     /// context is freed.
     sdk: Sdk,
 }
@@ -846,7 +847,7 @@ unsafe extern "C" fn imu_callback(frame: *mut ffi::ob_frame, user_data: *mut c_v
         let mut state = ctx.shared.lock();
         match ctx.kind {
             ImuKind::Accel => state.accel = Some(v),
-            // Gyro drives sample timing; it holds the latest accelerometer reading.
+            // Gyro drives sample timing, and each sample carries the latest accelerometer reading.
             ImuKind::Gyro => {
                 if let Some(accel) = state.accel {
                     if state.samples.len() >= IMU_BUFFER_LIMIT {
@@ -930,7 +931,7 @@ impl ImuSensor {
             sdk: Arc::clone(sdk),
         }));
         // `ctx` stays allocated until `ImuSensor::drop`, which stops the sensor
-        // first; the callback is the only other user of it.
+        // first. The callback is the only other user of it.
         let started = ob!(
             sdk,
             ob_sensor_start(
@@ -962,8 +963,8 @@ impl Drop for ImuSensor {
         }
         // SAFETY: `ctx` came from `Box::into_raw` in `start` and is freed only
         // here. The sensor is stopped, and `ob_sensor_stop` is relied on to
-        // return only once its callbacks have finished (the SDK's guarantee;
-        // nothing in this crate can check it).
+        // return only once its callbacks have finished (the SDK's guarantee,
+        // which nothing in this crate can check).
         drop(unsafe { Box::from_raw(self.ctx) });
     }
 }
@@ -971,20 +972,25 @@ impl Drop for ImuSensor {
 /// Lists and opens Orbbec depth cameras.
 ///
 /// Every call first makes sure the SDK library is loaded, and fails with
-/// [`CameraError::RuntimeUnavailable`] when it cannot be; check
+/// [`CameraError::RuntimeUnavailable`] when it cannot be. Check
 /// [`runtime_status`] to tell the reasons apart.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Default, Clone)]
 pub struct OrbbecBackend {
     extra_dir: Option<PathBuf>,
 }
 
 impl OrbbecBackend {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// A backend that also looks for the SDK library in `extra_dir`, after the
     /// environment variable and the system loader path (see [`runtime`]).
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn with_extra_dir(extra_dir: Option<PathBuf>) -> Self {
         Self { extra_dir }
     }
@@ -1020,7 +1026,8 @@ impl CameraBackend for OrbbecBackend {
         camera: &CameraInfo,
         settings: &CaptureSettings,
     ) -> Result<Box<dyn CameraStream>, CameraError> {
-        Ok(Box::new(OrbbecStream::open(self.sdk()?, camera, settings)?))
+        let sdk = self.sdk()?;
+        Ok(Box::new(OrbbecStream::open(&sdk, camera, settings)?))
     }
 }
 
@@ -1028,6 +1035,12 @@ impl OrbbecBackend {
     /// Every video profile the camera's pipeline offers right now, which depends on
     /// the link it is plugged into, with the ones [`CameraBackend::open`] would
     /// pick marked. Infrared is listed for the first imager that has a Y8 profile.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
+    ///
+    /// # Errors
+    ///
+    /// Returns SDK, device, or profile errors while querying available streams.
     pub fn offered_profiles(
         &self,
         camera: &CameraInfo,
@@ -1076,14 +1089,23 @@ impl OrbbecBackend {
 }
 
 /// One video profile a camera offers.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfferedProfile {
+    /// Since: Odyssey Desktop 0.6.7.
     pub stream: &'static str,
+    /// Since: Odyssey Desktop 0.6.7.
     pub width: u32,
+    /// Since: Odyssey Desktop 0.6.7.
     pub height: u32,
+    /// Since: Odyssey Desktop 0.6.7.
     pub fps: u32,
+    /// Since: Odyssey Desktop 0.6.7.
     pub format: String,
     /// The one streaming would use for this stream.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub chosen: bool,
 }
 
@@ -1144,6 +1166,8 @@ impl Opened {
 /// Fields drop in declaration order after [`Drop::drop`]: sensors stop before
 /// the pipeline, the pipeline before its device, and the context goes last.
 /// Each field holds the loaded library, so it outlives every one of them.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub struct OrbbecStream {
     imu: Vec<ImuSensor>,
     imu_state: Arc<Mutex<ImuState>>,
@@ -1160,7 +1184,7 @@ pub struct OrbbecStream {
 
 impl fmt::Debug for OrbbecStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The SDK handles are opaque pointers; the geometry is what identifies a stream.
+        // The SDK handles are opaque pointers, so the geometry is what identifies a stream.
         f.debug_struct("OrbbecStream")
             .field("geometry", &self.geometry)
             .finish_non_exhaustive()
@@ -1173,7 +1197,7 @@ impl fmt::Debug for OrbbecStream {
 // mapped) may move to another thread. `OrbbecStream` is not `Sync` (its
 // handles are `NonNull`) and its API takes `&mut self`, so one thread at a
 // time uses the handles. The IMU callback context is the only thing the SDK's
-// own threads touch; it is `Send + Sync` (asserted below) and holds shared
+// own threads touch. It is `Send + Sync` (asserted below) and holds shared
 // state behind a mutex.
 unsafe impl Send for OrbbecStream {}
 
@@ -1184,7 +1208,7 @@ const _: () = {
 
 impl OrbbecStream {
     fn open(
-        sdk: Sdk,
+        sdk: &Sdk,
         camera: &CameraInfo,
         settings: &CaptureSettings,
     ) -> Result<Self, CameraError> {
@@ -1193,7 +1217,7 @@ impl OrbbecStream {
             devices,
             device,
             pipeline,
-        } = Opened::open(&sdk, camera)?;
+        } = Opened::open(sdk, camera)?;
 
         device.apply_capture_settings(settings)?;
 
@@ -1269,7 +1293,7 @@ impl OrbbecStream {
             Some(kind) => {
                 let name = CString::new("FormatConverter").expect("literal has no NUL");
                 let filter = Filter::new(
-                    &sdk,
+                    sdk,
                     ob!(sdk, ob_create_filter(name.as_ptr()))?,
                     "format converter",
                 )?;
@@ -1282,7 +1306,7 @@ impl OrbbecStream {
             }
         };
 
-        let config = Config::new(&sdk, ob!(sdk, ob_create_config())?, "ob_create_config")?;
+        let config = Config::new(sdk, ob!(sdk, ob_create_config())?, "ob_create_config")?;
         for profile in [&color.profile, &ir.profile, &depth.profile] {
             ob!(
                 sdk,
@@ -1481,11 +1505,11 @@ mod tests {
     fn video_pixels_strip_padding_without_including_it_in_rows() {
         let (_, _, pixels) = unpack_pixels(2, 2, &[1, 2, 99, 3, 4, 88], 1).unwrap();
         assert_eq!(pixels, [1, 2, 3, 4]);
-        assert!(unpack_pixels(2, 2, &[1, 2, 3], 1).is_err());
-        assert!(unpack_pixels(2, 2, &[1, 2, 3, 4, 5], 1).is_err());
-        assert!(unpack_pixels(0, 2, &[], 1).is_err());
-        assert!(unpack_pixels(2, 0, &[], 1).is_err());
-        assert!(unpack_pixels(u32::MAX, u32::MAX, &[], 3).is_err());
-        assert!(unpack_pixels(2, 2, &[], usize::MAX).is_err());
+        unpack_pixels(2, 2, &[1, 2, 3], 1).unwrap_err();
+        unpack_pixels(2, 2, &[1, 2, 3, 4, 5], 1).unwrap_err();
+        unpack_pixels(0, 2, &[], 1).unwrap_err();
+        unpack_pixels(2, 0, &[], 1).unwrap_err();
+        unpack_pixels(u32::MAX, u32::MAX, &[], 3).unwrap_err();
+        unpack_pixels(2, 2, &[], usize::MAX).unwrap_err();
     }
 }

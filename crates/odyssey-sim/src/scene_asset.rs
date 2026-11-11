@@ -1,5 +1,5 @@
-//! Static self-contained glTF2 assets. Calibration JSON remains authoritative;
-//! tagged display/marker/camera meshes never replace calibrated geometry.
+//! Static self-contained glTF2 assets. Calibration JSON remains authoritative.
+//! Tagged display/marker/camera meshes never replace calibrated geometry.
 
 use std::fs::File;
 use std::io::Read as _;
@@ -11,27 +11,37 @@ use serde_json::Value;
 
 use crate::dataset::SceneDescription;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const MAX_ASSET_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NODES: usize = 4096;
 const MAX_TRIANGLES: usize = 1_000_000;
 const MAX_ACCESSOR_ITEMS: usize = 3_000_000;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, thiserror::Error)]
 pub enum AssetError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("cannot read scene asset: {0}")]
     Io(#[from] std::io::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("cannot parse glTF2 asset: {0}")]
     Gltf(#[from] gltf::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("cannot parse calibration metadata: {0}")]
     Json(#[from] serde_json::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid embedded calibration scene: {0}")]
     Scene(#[from] crate::dataset::DatasetError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid glTF2 binary asset: {0}")]
     Invalid(String),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("scene asset exceeds bounded byte/node/triangle/accessor limits or buffer bounds")]
     Bounds,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("unsupported scene asset: {0}")]
     Unsupported(&'static str),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("asset calibration/identity mismatch: {0}")]
     Identity(&'static str),
 }
@@ -46,6 +56,8 @@ struct TaggedNode {
 
 /// Validated world-space environment triangles. glTF Y-up coordinates map to
 /// Odyssey as [x,-z,y], matching Blender's default Y-up glTF export.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct SceneAsset {
     triangles: Vec<[Vector3<f64>; 3]>,
@@ -54,6 +66,13 @@ pub struct SceneAsset {
 }
 
 impl SceneAsset {
+    /// Load and parse a GLB scene asset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or its GLB data is unsupported or invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, AssetError> {
         let file = File::open(path)?;
         let mut bytes = Vec::new();
@@ -62,8 +81,14 @@ impl SceneAsset {
         Self::from_glb(&bytes)
     }
 
-    /// Parse embedded GLB only; URLs, dynamics, sparse accessors, non-triangle
+    /// Parse embedded GLB only. URLs, dynamics, sparse accessors, non-triangle
     /// primitives and nonopaque environment materials fail instead of approximating.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when GLB data is malformed, unsupported, or exceeds size bounds.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn from_glb(bytes: &[u8]) -> Result<Self, AssetError> {
         if bytes.len() > MAX_ASSET_BYTES {
             return Err(AssetError::Bounds);
@@ -352,6 +377,12 @@ impl SceneAsset {
     }
 
     /// Validate metadata available in asset against authoritative calibration labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when embedded calibration or tagged geometry differs from scene.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn validate_scene(&self, scene: &SceneDescription) -> Result<(), AssetError> {
         if let Some(embedded) = &self.embedded_scene
             && (embedded.cameras != scene.cameras
@@ -469,6 +500,8 @@ impl SceneAsset {
     }
 
     /// True when an opaque environment triangle lies strictly before endpoint.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn occludes_segment(&self, origin_world_m: [f64; 3], endpoint_world_m: [f64; 3]) -> bool {
         let origin = Vector3::from(origin_world_m);
         let delta = Vector3::from(endpoint_world_m) - origin;
@@ -677,14 +710,14 @@ mod tests {
             Err(AssetError::Invalid(_))
         ));
         let bytes = fixture(|json, _| json["accessors"][0]["count"] = json!(u64::MAX));
-        assert!(SceneAsset::from_glb(&bytes).is_err());
+        SceneAsset::from_glb(&bytes).unwrap_err();
         let bytes = fixture(|_, bin| bin[40..42].copy_from_slice(&99_u16.to_le_bytes()));
         assert!(matches!(
             SceneAsset::from_glb(&bytes),
             Err(AssetError::Bounds)
         ));
         let bytes = fixture(|json, _| json["bufferViews"][0]["byteLength"] = json!(usize::MAX));
-        assert!(SceneAsset::from_glb(&bytes).is_err());
+        SceneAsset::from_glb(&bytes).unwrap_err();
     }
 
     #[test]

@@ -6,14 +6,23 @@ use std::path::{Path, PathBuf};
 use odyssey_common::{MAX_SCREEN_ID, ScreenCalibration};
 
 /// File name the hub reads for screen `id`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn screen_file_name(id: u8) -> String {
     format!("screen_{id}.json")
 }
 
-/// Serializes a calibration the way the hub's loader expects: compact JSON
-/// with `rotation` as `[i, j, k, w]`, `homography` as nine column-major
-/// values and `object_points` as six `[x, y, z]` triples.
-/// Rejects non-finite or otherwise invalid numeric calibration data.
+/// Serializes calibration as compact JSON in the hub's expected schema.
+///
+/// `rotation` uses `[i, j, k, w]`, `homography` uses nine column-major values,
+/// and `object_points` uses six `[x, y, z]` triples. Invalid numeric data is
+/// rejected.
+///
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns a serialization error when calibration validation or JSON
+/// serialization fails.
 pub fn calibration_to_json(
     calibration: &ScreenCalibration<f32>,
 ) -> Result<String, serde_json::Error> {
@@ -24,6 +33,12 @@ pub fn calibration_to_json(
 }
 
 /// Deserializes and validates bounds, coordinates and the rotation quaternion.
+///
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns a deserialization error for malformed JSON or calibration data
+/// that fails validation.
 pub fn calibration_from_json(json: &str) -> Result<ScreenCalibration<f32>, serde_json::Error> {
     let calibration: ScreenCalibration<f32> = serde_json::from_str(json)?;
     calibration
@@ -45,6 +60,12 @@ fn check_id(id: u8) -> io::Result<()> {
 /// Writes `screen_<id>.json` into `screens_dir`, creating the directory. The
 /// write goes through a temporary file so the hub never reads a partial
 /// calibration. Returns the file's path.
+///
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns an I/O error when `id` exceeds [`MAX_SCREEN_ID`], directory or file
+/// operations fail, or calibration serialization fails.
 pub fn save_calibration(
     screens_dir: &Path,
     id: u8,
@@ -66,6 +87,11 @@ pub fn save_calibration(
     Ok(path)
 }
 
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns an I/O error when `id` exceeds [`MAX_SCREEN_ID`], reading fails, or
+/// the file contains invalid calibration JSON.
 pub fn load_calibration(screens_dir: &Path, id: u8) -> io::Result<ScreenCalibration<f32>> {
     check_id(id)?;
     let json = std::fs::read_to_string(screens_dir.join(screen_file_name(id)))?;
@@ -140,18 +166,18 @@ mod tests {
         save_calibration(&screens, 3, &replacement).unwrap();
         let back = load_calibration(&screens, 3).unwrap();
         assert_eq!(back.object_points, replacement.object_points);
-        assert!(save_calibration(dir.path(), MAX_SCREEN_ID + 1, &sample()).is_err());
+        save_calibration(dir.path(), MAX_SCREEN_ID + 1, &sample()).unwrap_err();
     }
 
     #[test]
     fn invalid_calibrations_are_not_written_or_loaded() {
         let mut calibration = sample();
         calibration.object_points[0].x = f32::NAN;
-        assert!(calibration_to_json(&calibration).is_err());
+        calibration_to_json(&calibration).unwrap_err();
         calibration = sample();
         calibration.homography = Matrix3::zeros();
-        assert!(calibration_to_json(&calibration).is_err());
+        calibration_to_json(&calibration).unwrap_err();
         let invalid_json = serde_json::to_string(&calibration).unwrap();
-        assert!(calibration_from_json(&invalid_json).is_err());
+        calibration_from_json(&invalid_json).unwrap_err();
     }
 }

@@ -1,9 +1,14 @@
 //! Boot state shared between the lite1 application and its bootloader.
 
 #![no_std]
+#![expect(
+    unsafe_code,
+    reason = "Boot-state linker symbol exposes fixed flash address"
+)]
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
+/// Since: Odyssey Desktop 0.7.0.
 pub use better_boot::{BootState, BootStateManager};
 use embassy_nrf::nvmc::Nvmc;
 
@@ -18,15 +23,19 @@ fn bootloader_state_addr() -> u32 {
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: Linker script defines this symbol at the boot-state flash partition.
     unsafe { &__bootloader_state_start as *const u32 as u32 }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct BootConfirmation;
 
 impl BootConfirmation {
     /// Marks the current boot as successful in flash and caches the resulting
     /// slots for [`Self::request_dfu_with`]. The application calls this once it
     /// has booted.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn mark_booted(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
@@ -61,6 +70,8 @@ impl BootConfirmation {
     /// Confirms the current boot: sets `boot_counter` to 0, makes
     /// `pending_slot` the active slot, and caches the slots for
     /// [`Self::request_dfu_with`].
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn confirm_boot_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
         let mut state = manager.read();
@@ -111,6 +122,8 @@ impl BootConfirmation {
 
     /// Requests DFU by writing SWAP_MAGIC to the flash state page, keeping the
     /// active and pending slots cached at the last confirm.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn request_dfu_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 

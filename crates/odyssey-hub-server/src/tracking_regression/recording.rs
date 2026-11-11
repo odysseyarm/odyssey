@@ -8,27 +8,39 @@ use super::{
     Trace,
 };
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordingTemplate {
+    /// Since: Odyssey Desktop 0.7.0.
     pub name: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub source: RecordingSource,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screens: Vec<Screen>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub thresholds: Thresholds,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordingSource {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub device_uuid: [u8; 6],
 }
 
 /// Imports one device's legacy recording using template identity, screens and limits.
 ///
-/// Arrival stamps are Unix milliseconds; sensor timestamps stay unchanged.
+/// Arrival stamps are Unix milliseconds. Sensor timestamps stay unchanged.
+///
 /// # Errors
-/// Rejects oversized, malformed, empty or backward-clock recordings.
+/// Returns an error for I/O or playback decoding failures, oversized or empty
+/// recordings, backward or overflowing arrival timestamps, or an invalid trace.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn import_recording(path: &Path, template: RecordingTemplate) -> Result<Trace, Error> {
     if std::fs::metadata(path)?.len() > MAX_INPUT_BYTES {
         return Err(Error::Invalid("recording exceeds 64 MiB".into()));
@@ -175,19 +187,19 @@ mod tests {
     fn template_rejects_settings_and_trace_fields() {
         let mut json = serde_json::to_value(template()).unwrap();
         json["source"]["settings"] = serde_json::json!({});
-        assert!(
+        assert!(matches!(
             super::super::read_json::<RecordingTemplate>(
                 serde_json::to_vec(&json).unwrap().as_slice(),
-            )
-            .is_err()
-        );
+            ),
+            Err(Error::Json(_))
+        ));
         let trace = super::super::scenarios::builtin_scenarios().remove(0);
-        assert!(
+        assert!(matches!(
             super::super::read_json::<RecordingTemplate>(
                 serde_json::to_vec(&trace).unwrap().as_slice(),
-            )
-            .is_err()
-        );
+            ),
+            Err(Error::Json(_))
+        ));
     }
 
     #[test]

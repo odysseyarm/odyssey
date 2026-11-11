@@ -55,8 +55,8 @@ enum StreamKind {
 }
 
 impl fmt::Display for StreamKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::DeviceList => "device list",
             Self::DongleList => "dongle list",
             Self::AccessoryRadios => "accessory radios",
@@ -108,7 +108,7 @@ enum Change {
     Devices(Vec<Device>),
     Dongles(Vec<DongleInfo>),
     AccessoryRadios(Vec<AccessoryRadioInfo>),
-    /// The only device event that changes model state; the rest go over the
+    /// The only device event that changes model state. The rest go over the
     /// broadcast channels so the UI is not woken at IMU rate.
     Battery {
         uuid: [u8; 6],
@@ -248,7 +248,7 @@ impl Follower {
         Err(LinkDown::Session(end))
     }
 
-    /// Applies updates until any stream fails or ends; the stale half of a
+    /// Applies updates until any stream fails or ends. The stale half of a
     /// broken subscription must not keep serving the UI.
     async fn run_session(
         &self,
@@ -272,7 +272,7 @@ impl Follower {
                 HubUpdate::AccessoryRadios(Ok(list)) => {
                     let _ = self.changes.send(Change::AccessoryRadios(list));
                 }
-                HubUpdate::Event(Ok(event)) => self.handle_event(event),
+                HubUpdate::Event(Ok(event)) => self.handle_event(&event),
                 HubUpdate::Devices(Err(error)) => {
                     return SessionEnd::StreamFailed(StreamKind::DeviceList, error);
                 }
@@ -292,9 +292,9 @@ impl Follower {
         unreachable!("merged stream ended without a Closed marker")
     }
 
-    fn handle_event(&self, event: oe::Event) {
+    fn handle_event(&self, event: &oe::Event) {
         tracing::trace!("Hub event: {:?}", event);
-        if let oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) = &event {
+        if let oe::Event::DeviceEvent(oe::DeviceEvent(device, kind)) = event {
             match kind {
                 oe::DeviceEventKind::TrackingEvent(_) => return,
                 oe::DeviceEventKind::ImpactEvent(impact) => {
@@ -303,7 +303,7 @@ impl Follower {
                 _ => {}
             }
         }
-        if is_pairing_result(&event) {
+        if is_pairing_result(event) {
             let _ = self.pairing_events.send(event.clone());
         }
         if let oe::Event::DeviceEvent(oe::DeviceEvent(
@@ -416,7 +416,7 @@ mod tests {
     use super::*;
 
     /// A list stream that ends must surface as a `Closed` item even while the
-    /// other streams stay open; this is what turns a silent stale list into a
+    /// other streams stay open. That is what turns a silent stale list into a
     /// reconnect.
     #[tokio::test]
     async fn ended_stream_is_reported_while_others_stay_open() {

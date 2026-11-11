@@ -100,7 +100,7 @@ impl ZeroView {
         }
         let sample = closest_sample(
             &self.history,
-            &uuid,
+            uuid,
             controls.read(cx).state.shot_delay_ms(),
             impact_timestamp,
         );
@@ -109,7 +109,7 @@ impl ZeroView {
         });
     }
 
-    fn zero_if_armed(&mut self, device: Device, impact_timestamp: u32, cx: &mut Context<Self>) {
+    fn zero_if_armed(&mut self, device: &Device, impact_timestamp: u32, cx: &mut Context<Self>) {
         if self.selected_device == Some(device.uuid) {
             self.capture_selected(Some(impact_timestamp), cx);
         }
@@ -124,7 +124,7 @@ pub(super) fn zero_on_impact(hub: &Entity<Hub>, cx: &mut Context<ZeroView>) -> T
                 Ok((device, impact)) => {
                     if this
                         .update(cx, |zero, cx| {
-                            zero.zero_if_armed(device, impact.timestamp, cx);
+                            zero.zero_if_armed(&device, impact.timestamp, cx);
                         })
                         .is_err()
                     {

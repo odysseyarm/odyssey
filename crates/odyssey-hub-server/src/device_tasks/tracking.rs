@@ -211,16 +211,16 @@ impl DeviceTracker {
             near_points.len(),
             wide_points.len()
         );
-        let near_markers = build_markers_from_points(near_points, &self.cameras.near_field, None);
+        let near_markers = build_markers_from_points(&near_points, &self.cameras.near_field, None);
         let wide_markers = build_markers_from_points(
-            wide_points,
+            &wide_points,
             &self.cameras.wide_field,
             Some(&self.cameras.stereo_iso),
         );
 
         self.observe_markers(&near_markers, &wide_markers, context);
         let solution = self.raycast(device, context).await;
-        self.publish_marker_solution(device, solution, context);
+        Self::publish_marker_solution(device, solution, context);
     }
 
     async fn on_markers(
@@ -230,14 +230,14 @@ impl DeviceTracker {
         context: &DeviceTaskContext,
     ) {
         let near_markers = build_markers_from_points(
-            detected_points(&report.points),
+            &detected_points(&report.points),
             &self.cameras.near_field,
             None,
         );
 
         self.observe_markers(&near_markers, &[], context);
         let solution = self.raycast(device, context).await;
-        self.publish_marker_solution(device, solution, context);
+        Self::publish_marker_solution(device, solution, context);
     }
 
     fn observe_markers(
@@ -289,7 +289,6 @@ impl DeviceTracker {
 
     /// A marker report has no timestamp of its own, and without a pose there is nothing to track.
     fn publish_marker_solution(
-        &self,
         device: &Device,
         solution: RaycastSolution,
         context: &DeviceTaskContext,
@@ -330,7 +329,7 @@ fn gravity_in_sensor_frame(orientation: &Rotation3<f32>) -> UnitVector3<f32> {
     UnitVector3::new_normalize(Vector3::new(local.x, local.z, local.y))
 }
 
-/// Pixel coordinates of the markers the sensor actually saw; an all-zero point is an empty slot.
+/// Pixel coordinates of the markers the sensor actually saw. An all-zero point is an empty slot.
 fn detected_points(points: &[Point2<u16>]) -> Vec<Point2<f32>> {
     points
         .iter()
@@ -355,7 +354,7 @@ fn transform_pose_for_client(rotmat: Matrix3<f32>, transvec: Vector3<f32>) -> Po
     }
 }
 
-/// Zero offset quaternion from a client-side TrackingEvent. Its pose has been through
+/// Zero offset quaternion from a client-side `TrackingEvent`. Its pose has been through
 /// `transform_pose_for_client`, so the flip is undone to recover the raw orientation and
 /// position before the offset is computed.
 pub(super) fn calculate_zero_offset_from_tracking_event(
@@ -397,14 +396,14 @@ pub(super) fn calculate_zero_offset_from_tracking_event(
 }
 
 fn build_markers_from_points(
-    raw_points: Vec<Point2<f32>>,
+    raw_points: &[Point2<f32>],
     camera_model: &RosOpenCvIntrinsics<f32>,
     stereo_iso: Option<&Isometry3<f32>>,
 ) -> Vec<Marker> {
     if raw_points.is_empty() {
         return Vec::new();
     }
-    let undistorted = undistort_points(camera_model, &raw_points);
+    let undistorted = undistort_points(camera_model, raw_points);
     let intrinsics = ros_opencv_intrinsics_type_convert(camera_model);
     undistorted
         .into_iter()

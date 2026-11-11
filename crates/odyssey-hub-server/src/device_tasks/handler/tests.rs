@@ -10,6 +10,7 @@ use arc_swap::ArcSwap;
 use nalgebra::{Isometry3, Point2, Translation3};
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event};
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_usb::device::{PacketTransport, VmDevice};
 use odyssey_usb::packets::vm::{ImpactReport, Packet, PacketData, StreamUpdateAction};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
@@ -42,6 +43,7 @@ fn device(capabilities: u8) -> Device {
         uuid: UUID,
         transport: Transport::UsbMux,
         capabilities: DeviceCapabilities::new(capabilities),
+        firmware_identity: FirmwareVersion::default(),
         firmware_version: [0, 0, 0],
         events_transport: EventsTransport::Bluetooth,
         events_connected: false,
@@ -173,7 +175,7 @@ fn start_handler_with_links(
     let (event_sender, events) = broadcast::channel(64);
     let context = DeviceTaskContext {
         message_channel,
-        screen_calibrations: Arc::new(ArcSwap::from_pointee(Default::default())),
+        screen_calibrations: Arc::new(ArcSwap::from_pointee(arrayvec::ArrayVec::default())),
         device_offsets: Arc::new(Mutex::new(HashMap::new())),
         device_shot_delays: Arc::new(RwLock::new(HashMap::new())),
         shot_delay_watch: Arc::new(RwLock::new(HashMap::new())),
@@ -228,7 +230,7 @@ impl Harness {
             .await
             .expect("handler answers")
             .expect("handler replies");
-        assert!(result.is_err());
+        result.expect_err("the handler refuses the request");
     }
 
     async fn send(&self, message: DeviceTaskMessage) {
@@ -341,7 +343,10 @@ async fn unknown_config_kind_is_refused() {
         .send(DeviceTaskMessage::ReadConfig { kind: 9, reply })
         .await
         .unwrap();
-    assert!(answer.await.unwrap().is_err());
+    answer
+        .await
+        .unwrap()
+        .expect_err("the handler refuses the request");
 }
 
 #[tokio::test]
@@ -486,7 +491,7 @@ async fn resetting_zero_forgets_the_stored_offset() {
     assert!(harness.context.device_offsets.lock().await.is_empty());
 }
 
-fn stops_a_stream(action: &StreamUpdateAction) -> bool {
+fn stops_a_stream(action: StreamUpdateAction) -> bool {
     matches!(
         action,
         StreamUpdateAction::Disable | StreamUpdateAction::DisableAll
@@ -540,7 +545,7 @@ async fn reports_from_both_links_are_forwarded_while_usb_carries_the_events() {
     harness.expect_impact(2).await;
 
     assert!(
-        !ble.stream_actions().iter().any(stops_a_stream),
+        !ble.stream_actions().into_iter().any(stops_a_stream),
         "the standby link's subscriptions are the unit's, and must stay"
     );
 }
@@ -563,9 +568,9 @@ async fn pulling_usb_keeps_the_device_listed_with_events_over_ble() {
     assert!(unplugged.capabilities.contains(DeviceCapabilities::EVENTS));
     ble.report_impact(3).await;
     harness.expect_impact(3).await;
-    assert!(!ble.stream_actions().iter().any(stops_a_stream));
+    assert!(!ble.stream_actions().into_iter().any(stops_a_stream));
     assert!(
-        !usb.stream_actions().iter().any(stops_a_stream),
+        !usb.stream_actions().into_iter().any(stops_a_stream),
         "a stop sent down the dropped link would reach the shared subscriptions"
     );
     harness.barrier().await;

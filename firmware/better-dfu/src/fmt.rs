@@ -1,5 +1,8 @@
 #![macro_use]
-#![allow(unused)]
+#![expect(
+    unused,
+    reason = "Formatting and logging macros vary with enabled crate features."
+)]
 
 use core::fmt::{Debug, Display, LowerHex};
 
@@ -213,12 +216,17 @@ macro_rules! unwrap {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct NoneError;
 
+/// Since: Odyssey Desktop 0.6.0.
 pub trait Try {
+    /// Since: Odyssey Desktop 0.6.0.
     type Ok;
+    /// Since: Odyssey Desktop 0.6.0.
     type Error;
+    /// Since: Odyssey Desktop 0.6.0.
     fn into_result(self) -> Result<Self::Ok, Self::Error>;
 }
 

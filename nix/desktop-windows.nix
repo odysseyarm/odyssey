@@ -53,7 +53,7 @@ let
 
   # ---- Microsoft fxc.exe -------------------------------------------------------
   # `Windows SDK for Windows Store Apps Tools` of Windows SDK 10.0.26100 (the SDK
-  # in ./xwin.nix's manifest). The cab is what that MSI's File table points at; the
+  # in ./xwin.nix's manifest). The cab is what that MSI's File table points at, and the
   # two members are the x64 fxc.exe and the x64 d3dcompiler_47.dll it loads.
   fxcCab = pkgs.fetchurl {
     url = "https://download.visualstudio.microsoft.com/download/pr/6452c1f1-dc1e-413c-8b19-991b61870a8b/944d105a33e16da614cbf2a17da22954/69661e20556b3ca9456b946c2c881ddd.cab";
@@ -83,7 +83,7 @@ let
     unset DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR
   '';
   # gpui's build script runs this as `fxc /T … /E … /Fh <out> /Vn … /O3 <hlsl>`.
-  # Absolute Unix paths become Z: paths; switches (/T, /Fh, /O3, …) have no second slash.
+  # Absolute Unix paths become Z: paths. Switches (/T, /Fh, /O3, …) have no second slash.
   fxcUnderWine = pkgs.writeShellScript "fxc-under-wine" ''
     : "''${WINEPREFIX:?fxcPrefix has not run}"
     ${wineEnv}
@@ -107,7 +107,7 @@ let
 
   # gpui-pre-windows 0.3.11 only compiles its shaders when the *host* is
   # Windows. The patch moves that decision to the target and keeps the rest of
-  # upstream's build.rs; it is tied to this version and refuses any other.
+  # upstream's build.rs. It is tied to this version and refuses any other.
   gpuiCrossBuild = { name, version, ... }: drv:
     if name != "gpui-pre-windows" then drv
     else
@@ -130,7 +130,7 @@ let
     doInstallCargoArtifacts = false;
     dontFixup = true;
   };
-  # Both variants share one dependency build; cargo recompiles only what the
+  # Both variants share one dependency build, and cargo recompiles only what the
   # SDK-downloader feature (reqwest, sha2) changes.
   appDeps = crane.buildDepsOnly (appBase // {
     doCheck = false;
@@ -176,7 +176,7 @@ let
 
   # ---- cargo-packager ------------------------------------------------------------------
   # The version Cargo.toml pins for `cargo bin` (workspace.metadata.bin) is the
-  # only version here; its source hash is pinned next to it below and a new
+  # only version here. Its source hash is pinned next to it below, and a new
   # version has no hash until someone adds one. The crate's own Cargo.lock
   # (`locked = true`) fixes every dependency.
   root = builtins.fromTOML (builtins.readFile (common.source + "/Cargo.toml"));
@@ -250,7 +250,7 @@ let
     cp ${cargoPackager}/bin/cargo-packager.exe ${xtask}/bin/xtask.exe $out/tools/
     cp ${packagerConfig} $out/packager.json
 
-    # Each is a 64-bit Windows binary; the apps carry their icon and manifest.
+    # Each is a 64-bit Windows binary, and the apps carry their icon and manifest.
     for exe in $out/online/odyssey-desktop.exe $out/full/odyssey-desktop.exe \
                $out/tools/cargo-packager.exe $out/tools/xtask.exe; do
       llvm-readobj --file-headers "$exe" | grep -q IMAGE_FILE_MACHINE_AMD64 \

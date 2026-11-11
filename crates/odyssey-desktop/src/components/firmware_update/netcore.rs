@@ -39,10 +39,10 @@ fn netcore_not_reported(published: u16) -> eros::ErrorUnion {
 
 /// The net core release the hub last read from a device that is in application
 /// mode, `None` while the device is absent or has no control connection.
-fn reported_netcore_release(devices: &[Device], uuid: &[u8; 6]) -> Option<u16> {
+fn reported_netcore_release(devices: &[Device], uuid: [u8; 6]) -> Option<u16> {
     devices
         .iter()
-        .find(|d| &d.uuid == uuid && d.capabilities.contains(DeviceCapabilities::CONTROL))
+        .find(|d| d.uuid == uuid && d.capabilities.contains(DeviceCapabilities::CONTROL))
         .map(|d| d.netcore_release)
 }
 
@@ -53,7 +53,7 @@ fn reported_netcore_release(devices: &[Device], uuid: &[u8; 6]) -> Option<u16> {
 /// release differs from the one just written, and a device with no answer reads 0.
 pub(super) async fn wait_for_netcore_release(
     manager: &FirmwareUpdateManager,
-    uuid: &[u8; 6],
+    uuid: [u8; 6],
     published: u16,
 ) -> eros::Result<()> {
     let mut last = None;
@@ -88,10 +88,10 @@ impl DfuSession<'_> {
     ///
     /// Completing the download only means the bootloader has the image staged. The
     /// device resets, and the stage2 bootloader starts the net core bootloader,
-    /// which copies the image into net flash; stage2 treats every outcome of that
+    /// which copies the image into net flash. Stage2 treats every outcome of that
     /// copy alike. The application's DFU request is still pending afterwards, so the
-    /// device returns to DFU mode and stays there until an application is written:
-    /// the caller continues in that same DFU session without detaching again. Nothing
+    /// device returns to DFU mode and stays there until an application is written.
+    /// The caller continues in that same DFU session without detaching again. Nothing
     /// reports the net core while the device is in the bootloader, so whether the
     /// copy took is only readable once the new application runs.
     pub(super) async fn flash_netcore(&self, image: &[u8], release: u16) -> eros::Result<()> {

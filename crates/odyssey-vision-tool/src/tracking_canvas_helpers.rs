@@ -12,7 +12,7 @@ use crate::custom_shapes::{
 };
 use crate::mot_runner::MotRunner;
 
-/// Canvas background; dark so it blends with the egui dark theme.
+/// Canvas background, dark so it blends with the egui dark theme.
 const BACKGROUND: Color32 = Color32::from_gray(20);
 /// Neutral line colour for outlines, light enough to read on [`BACKGROUND`].
 const OUTLINE: Color32 = Color32::from_gray(200);
@@ -132,14 +132,12 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
     }
 
     // Green line representing the up direction relative to the vision module.
-    {
-        let angle = -gravity_angle - PI / 2.;
-        let tip = to_pos(Point2::new(
-            f64::from(center.x) + 50.0 * angle.cos(),
-            f64::from(center.y) + 50.0 * angle.sin(),
-        ));
-        painter.line_segment([center, tip], Stroke::new(2., Color32::from_rgb(0, 255, 0)));
-    }
+    let angle = -gravity_angle - PI / 2.;
+    let tip = to_pos(Point2::new(
+        f64::from(center.x) + 50.0 * angle.cos(),
+        f64::from(center.y) + 50.0 * angle.sin(),
+    ));
+    painter.line_segment([center, tip], Stroke::new(2., Color32::from_rgb(0, 255, 0)));
 
     let draw_tf = Transform2::from_matrix_unchecked(
         center_tf * Scale2::new(draw_size, draw_size).to_homogeneous(),
@@ -245,7 +243,8 @@ fn boundary_bounds(mot_data: &odyssey_usb::packets::vm::legacy::MotData) -> [f64
     ]
 }
 
-/// Colour for a marker by its pattern id; ids below `known` cycle red/green/blue, others are magenta.
+/// Colour for a marker by its pattern id. Ids below `known` cycle red/green/blue,
+/// others are magenta.
 fn pattern_color(pattern_id: Option<u8>, known: u8, unmatched: Color32) -> Color32 {
     match pattern_id {
         Some(id) if id < known => match id % 3 {

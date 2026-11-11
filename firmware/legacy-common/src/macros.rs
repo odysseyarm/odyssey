@@ -1,5 +1,4 @@
-#![allow(clippy::needless_borrows_for_move)]
-
+/// Since: Odyssey Desktop 0.7.0.
 #[macro_export]
 macro_rules! battery_model_inc {
     (
@@ -18,9 +17,13 @@ macro_rules! battery_model_inc {
         .param_10 = { $($p10:expr),* $(,)? },
         .param_11 = { $($p11:expr),* $(,)? },
         .param_12 = { $($p12:expr),* $(,)? }
-        $(, .name = $($_ignore_name_tokens:tt)* )?   // ignored; `name:` is used instead
+        $(, .name = $($_ignore_name_tokens:tt)* )?   // ignored, `name:` is used instead
         $(,)?
     ) => {
+        #[allow(
+            clippy::needless_borrows_for_move,
+            reason = "Generated C ABI tables preserve pointers and lengths expected by nrfxlib"
+        )]
         mod __battery_model_generated {
             use core::ffi::c_char;
             use nrfxlib_sys as sys;
@@ -45,7 +48,7 @@ macro_rules! battery_model_inc {
             const _: () = {
                 // A few temperatures (typically 3), never none.
                 assert!(TEMPS.len() > 0);
-                // param_1 holds the SoC points in [0, 1]; at least two of them.
+                // param_1 holds the SoC points in [0, 1]. At least two of them.
                 assert!(PARAM_1.len() > 1);
             };
 

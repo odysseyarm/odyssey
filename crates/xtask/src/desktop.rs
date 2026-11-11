@@ -17,10 +17,10 @@ const TAG_PREFIX: &str = "odyssey-desktop-v";
 /// run on the Windows box.
 #[derive(clap::Subcommand)]
 pub(crate) enum Cmd {
-    /// Stage what the MSI needs for one variant: writes the WiX fragment
-    /// the `wix` section of crates/odyssey-desktop/Cargo.toml points at and, for full, the SDK files and EULA it
-    /// installs. The version, URLs, hashes and file list come only from
-    /// crates/odyssey-desktop/orbbec-sdk.json, which the app reads too.
+    /// Stage what the MSI needs for one variant: writes the `WiX` fragment the
+    /// `wix` section of crates/odyssey-desktop/Cargo.toml points at and, for full,
+    /// the SDK files and EULA it installs. The version, URLs, hashes and file list
+    /// come only from crates/odyssey-desktop/orbbec-sdk.json, which the app reads too.
     PrepareOrbbec {
         variant: Variant,
         /// Stage directory [default: crates/odyssey-desktop/target/orbbec-stage].
@@ -49,7 +49,7 @@ pub(crate) enum Cmd {
         /// Defaults to the one in crates/odyssey-desktop/Cargo.toml.
         #[arg(long)]
         version: Option<String>,
-        /// Falls back to $GITHUB_TOKEN.
+        /// Falls back to `$GITHUB_TOKEN`.
         #[arg(long)]
         token: Option<String>,
     },
@@ -60,16 +60,16 @@ pub(crate) enum Variant {
     /// The app downloads the Orbbec SDK.
     Online,
     /// Carries the SDK, so neither installing nor calibrating needs the
-    /// internet; the app is built without the downloader. Whether offline
-    /// mode is on is separate: OFFLINE_MODE=1 at install time, or policy.
+    /// internet. The app is built without the downloader. Whether offline
+    /// mode is on is separate: `OFFLINE_MODE=1` at install time, or policy.
     Full,
 }
 
 impl Variant {
     fn name(self) -> &'static str {
         match self {
-            Variant::Online => "online",
-            Variant::Full => "full",
+            Self::Online => "online",
+            Self::Full => "full",
         }
     }
 }
@@ -99,26 +99,25 @@ fn bundle(variant: Variant, prebuilt: Option<PathBuf>) -> eros::Result<()> {
         .transpose()?;
     let stage = orbbec::prepare(variant, &orbbec::default_stage(), None, None)?;
 
-    let mut packager = match prebuilt {
-        Some(packager) => packager,
-        None => {
-            // cargo-packager packages a finished binary, it does not build one.
-            let mut build = cmd::at(DIR, "cargo");
-            build.args(["build", "--release", "--package", "odyssey-desktop"]);
-            // The full app is the same code without the SDK downloader.
-            if let Variant::Full = variant {
-                build.arg("--no-default-features");
-            }
-            cmd::run(&mut build)?;
-
-            let mut packager = cmd::at(DIR, "cargo");
-            packager
-                .args(["bin", "cargo-packager", "--release", "--formats", "wix"])
-                .args(["--packages", "odyssey-desktop", "--out-dir", &out_dir]);
-            packager
+    let mut packager = if let Some(packager) = prebuilt {
+        packager
+    } else {
+        // cargo-packager packages a finished binary, it does not build one.
+        let mut build = cmd::at(DIR, "cargo");
+        build.args(["build", "--release", "--package", "odyssey-desktop"]);
+        // The full app is the same code without the SDK downloader.
+        if let Variant::Full = variant {
+            build.arg("--no-default-features");
         }
+        cmd::run(&mut build)?;
+
+        let mut packager = cmd::at(DIR, "cargo");
+        packager
+            .args(["bin", "cargo-packager", "--release", "--formats", "wix"])
+            .args(["--packages", "odyssey-desktop", "--out-dir", &out_dir]);
+        packager
     };
-    // The installer template reads these (see wix/main.wxs); cargo-packager
+    // The installer template reads these (see wix/main.wxs). cargo-packager
     // only forwards variables with this prefix to WiX.
     packager
         .env("CARGO_PACKAGER_ODYSSEY_MSI_VARIANT", variant.name())
@@ -192,21 +191,21 @@ fn release(version: Option<String>, token: Option<String>) -> eros::Result<()> {
     let api = format!("https://api.github.com/repos/{REPO}");
 
     // Reuse the release if the tag was already pushed, so a re-run only replaces the asset.
-    let release: Release =
-        match github(ureq::get(format!("{api}/releases/tags/{tag}")), &token).call() {
-            Ok(mut response) => json(response.body_mut())?,
-            Err(_) => {
-                let body = serde_json::json!({
-                    "tag_name": tag,
-                    "name": format!("Odyssey Desktop v{version}"),
-                });
-                let mut response = github(ureq::post(format!("{api}/releases")), &token)
-                    .content_type("application/json")
-                    .send(body.to_string())
-                    .with_context(|| format!("creating the release {tag}"))?;
-                json(response.body_mut())?
-            }
-        };
+    let release: Release = if let Ok(mut response) =
+        github(ureq::get(format!("{api}/releases/tags/{tag}")), &token).call()
+    {
+        json(response.body_mut())?
+    } else {
+        let body = serde_json::json!({
+            "tag_name": tag,
+            "name": format!("Odyssey Desktop v{version}"),
+        });
+        let mut response = github(ureq::post(format!("{api}/releases")), &token)
+            .content_type("application/json")
+            .send(body.to_string())
+            .with_context(|| format!("creating the release {tag}"))?;
+        json(response.body_mut())?
+    };
 
     for (variant, msi) in built {
         let name = asset_name(variant, &version);

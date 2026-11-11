@@ -15,7 +15,7 @@ use crate::views::calibrate::automatic::ui::{act, amber_alert, plain_details, wo
 use crate::views::calibrate::automatic::wizard::{CameraList, Wizard};
 
 pub(super) fn camera_picker(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     download: &Entity<DownloadSdk>,
     details_open: &Entity<bool>,
@@ -52,6 +52,7 @@ pub(super) fn camera_picker(
         CameraList::Found(list) => {
             let mut col = div().flex().flex_col().gap_2();
             for (index, camera) in list.iter().enumerate() {
+                let accent_ink = p.accent_ink;
                 let selected = chosen.as_ref().is_some_and(|c| c.id == camera.id);
                 let (border, bg) = if selected {
                     (p.accent_ink, p.accent_soft)
@@ -97,7 +98,7 @@ pub(super) fn camera_picker(
                         });
                     });
                 if !selected {
-                    row = row.hover(move |s| s.border_color(p.accent_ink));
+                    row = row.hover(move |s| s.border_color(accent_ink));
                 }
                 if selected {
                     row = row.child(div().ml_auto().child(icon(Icon::Check, 24.0, p.accent_ink)));
@@ -113,7 +114,7 @@ pub(super) fn camera_picker(
 }
 
 fn no_camera(
-    p: Palette,
+    p: &Palette,
     title: String,
     detail: String,
     technical: Vec<String>,
@@ -163,9 +164,9 @@ fn no_camera(
 }
 
 /// The camera library is missing, broken or the wrong version. The page keeps
-/// checking by itself; the button only saves the wait.
+/// checking by itself. The button only saves the wait.
 fn camera_support_notice(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     notice: Notice,
     download: &Entity<DownloadSdk>,

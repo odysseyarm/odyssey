@@ -89,7 +89,7 @@ async fn connect_to_device(
     require_usb_mode: bool,
 ) -> eros::Result<VmDevice> {
     // Explicit indices refer to the unfiltered enumeration printed by
-    // `list-devices`; probing or filtering first would renumber devices.
+    // `list-devices`. Probing or filtering first would renumber devices.
     let device_info = if let Some(idx) = device_index {
         list_vm_usb_devices()?
             .get(idx)
@@ -213,7 +213,7 @@ async fn cmd_pair(device: &VmDevice, timeout: u32) -> eros::Result<()> {
         .context("Pairing failed")?;
     println!(
         "Successfully paired with device: {}",
-        format_bd_addr(&bond.uuid)
+        format_bd_addr(bond.uuid)
     );
     Ok(())
 }

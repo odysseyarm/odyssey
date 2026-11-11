@@ -2,14 +2,14 @@
 resolver = "2"
 
 # Flat layout: every host crate lives directly under crates/, in a folder named
-# exactly like the crate. Internal crates are version 0.0.0 (never published);
+# exactly like the crate. Internal crates are version 0.0.0 (never published).
 # odyssey-desktop keeps its real version because releases and the update check
 # read it.
 members = ["crates/*"]
 
-# sdk/* are excluded (not just left out of members) so they get their own
-# Cargo.lock: odyssey-hub-server depends on odyssey-cv over an SSH git URL that
-# CI can't authenticate to, and a shared workspace lock forces cargo to resolve
+# sdk/* are excluded explicitly. Leaving them out of members is not enough, they
+# need their own Cargo.lock. odyssey-hub-server depends on odyssey-cv over an SSH
+# git URL that CI can't authenticate to, and a shared workspace lock forces cargo to resolve
 # every member's dependencies even when building with -p for a single package.
 # Neither FFI nor uniffi depend on odyssey-hub-server, so their own lockfiles
 # never touch odyssey-cv.
@@ -27,7 +27,7 @@ exclude = [
 ]
 
 # One source for metadata every member shares. `license` names the repository's
-# LICENSE file (MIT); a crate that is licensed differently says so itself.
+# LICENSE file (MIT). A crate licensed differently says so itself.
 [workspace.package]
 edition = "2024"
 license = "MIT"
@@ -41,12 +41,10 @@ repository = "https://github.com/odysseyarm/odyssey"
 # true. sdk/* and firmware/ are separate workspace roots with their own
 # lockfiles and do not inherit these.
 #
-# No clippy group is switched on: pedantic, restriction and nursery are
-# cherry-picked below, the way jj and bevy do it, because every project that
-# enables `pedantic` wholesale then has to switch off 15-20 of its lints again.
-# Nothing here needs a `priority`, since nothing is a group.
+# Pedantic follows Microsoft's static-verification baseline. Restriction and
+# nursery lints stay explicit because those groups contain conflicting rules.
 [workspace.lints.rust]
-# Denied, not forbidden: `forbid` cannot be overridden even by `#[expect]`, and
+# Set to deny. `forbid` cannot be overridden even by `#[expect]`, and
 # the FFI crates have to opt in with `#![expect(unsafe_code, reason = "...")]`.
 # That attribute is also a greppable inventory of every crate that has unsafe.
 unsafe_code = "deny"
@@ -67,49 +65,51 @@ dead_code_pub_in_binary = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.lints.clippy]
-# Readability and modernisation (pedantic, low noise).
-manual_let_else = "warn"
-semicolon_if_nothing_returned = "warn"
-redundant_closure_for_method_calls = "warn"
-redundant_else = "warn"
-unnested_or_patterns = "warn"
-uninlined_format_args = "warn"
-explicit_iter_loop = "warn"
-explicit_into_iter_loop = "warn"
-needless_for_each = "warn"
-implicit_clone = "warn"
-cloned_instead_of_copied = "warn"
-flat_map_option = "warn"
-format_collect = "warn"
-format_push_string = "warn"
-single_char_pattern = "warn"
-stable_sort_primitive = "warn"
-unnecessary_semicolon = "warn"
-ref_option = "warn"
-ignored_unit_patterns = "warn"
-inconsistent_struct_constructor = "warn"
-match_wildcard_for_single_variants = "warn"
-wildcard_imports = "warn"
-enum_glob_use = "warn"
-used_underscore_binding = "warn"
-cast_lossless = "warn"
-fn_params_excessive_bools = "warn"
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# These crates ship as applications or bundled SDKs, not crates.io packages.
+cargo_common_metadata = "allow"
+# Independent platform stacks resolve different transitive dependency versions.
+multiple_crate_versions = "allow"
+# Wire representations and tracking math use deliberate numeric conversions.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+# Coordinate algebra needs related names and short mathematical identifiers.
+similar_names = "allow"
+many_single_char_names = "allow"
+# Function boundaries follow responsibilities, not a line-count threshold.
+too_many_lines = "allow"
+# Protocol flag fields describe independent bits, not interchangeable modes.
+struct_excessive_bools = "allow"
+# Internal maps need no configurable hasher in their signatures.
+implicit_hasher = "allow"
+# Add must_use only where discarding a result is a caller error.
+must_use_candidate = "allow"
+
 use_self = "warn"
 unused_trait_names = "warn"
-
-# Async.
-unused_async = "warn"
-large_futures = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_enum_variants_with_brackets = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+too_long_first_doc_paragraph = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
 
 # Unsafe and FFI hygiene.
 undocumented_unsafe_blocks = "warn"
 multiple_unsafe_ops_per_block = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
-ptr_as_ptr = "warn"
-ref_as_ptr = "warn"
-borrow_as_ptr = "warn"
-ptr_cast_constness = "warn"
+# Structured logging strings are templates, not missing format! calls.
+literal_string_with_formatting_args = "allow"
 fn_to_numeric_cast_any = "warn"
 
 # Leftovers and panics in production code. Tests are exempt via clippy.toml.
@@ -134,9 +134,8 @@ empty_structs_with_brackets = "warn"
 rest_pat_in_fully_bound_structs = "warn"
 
 [workspace.lints.cargo]
-# Everything else (unused_dependencies, unused_workspace_dependencies,
-# missing_lints_inheritance, ...) is already warn by default and stays there;
-# the one addition is a guardrail that nothing in the workspace violates.
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
 non_kebab_case_packages = "warn"
 
 [workspace.dependencies]
@@ -147,7 +146,7 @@ argmin-math = "0.5"
 arrayvec = "0.7.4"
 backon = { version = "1.6", default-features = false, features = ["tokio-sleep"] }
 # Error type for the applications (libraries keep typed `thiserror` errors).
-# `anyhow` bridges third-party optimizer errors; first-party libraries stay typed.
+# `anyhow` bridges third-party optimizer errors. First-party libraries stay typed.
 eros = { version = "0.8", features = ["anyhow"] }
 btleplug = "0.11.8"
 cam-geom = "0.17"
@@ -168,6 +167,7 @@ odyssey-hub-common = { path = "crates/odyssey-hub-common" }
 odyssey-hub-server = { path = "crates/odyssey-hub-server" }
 odyssey-hub-server-interface = { path = "crates/odyssey-hub-server-interface" }
 odyssey-protocol = { path = "crates/odyssey-protocol" }
+odyssey-firmware-manifest = { path = "crates/odyssey-firmware-manifest" }
 odyssey-usb = { path = "crates/odyssey-usb" }
 parking_lot = "0.12.1"
 pin-project = "1.1.5"

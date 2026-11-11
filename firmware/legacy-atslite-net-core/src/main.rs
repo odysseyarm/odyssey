@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "network-core firmware initializes shared-memory IPC over linker SRAM"
+)]
 #![no_std]
 #![no_main]
 #![recursion_limit = "256"]
@@ -47,7 +51,7 @@ const RELEASE: u16 = release!();
 const _: () = assert!(RELEASE != 0);
 
 /// Vendor-specific HCI command (OGF 0x3F, OCF 0x3F0) that returns [`RELEASE`]. The net core answers
-/// it itself; the SoftDevice Controller never sees it.
+/// it itself. The SoftDevice Controller never sees it.
 const OPCODE_READ_RELEASE: u16 = 0xFFF0;
 
 /// H4 Command Complete event for [`OPCODE_READ_RELEASE`]: indicator 0x04, event 0x0E, plen 6,
@@ -176,6 +180,7 @@ async fn main(spawner: Spawner) {
 
     let icmsg_config = icmsg_config::get_icmsg_config();
     defmt::info!("{:?}", Debug2Format(&icmsg_config));
+    // SAFETY: linker regions supply aligned shared SRAM and IPC endpoints are uniquely owned by these cores.
     let icmsg = unsafe {
         IcMsg::<_, _, { icmsg_config::ALIGN }>::init(
             icmsg_config::get_icmsg_config(),
@@ -203,7 +208,7 @@ async fn main(spawner: Spawner) {
         p.RTC0, p.TIMER0, p.TIMER1, p.TEMP, p.PPI_CH0, p.PPI_CH1, p.PPI_CH2,
     );
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        // The BC40P module's 20 ppm crystal, started by the app core; 50 ppm leaves temperature and ageing margin.
+        // The BC40P module's 20 ppm crystal, started by the app core. 50 ppm leaves temperature and ageing margin.
         source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
         rc_ctiv: 0,
         rc_temp_ctiv: 0,
@@ -398,6 +403,7 @@ fn clear_boot_state(nvmc: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>) 
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: linker symbol marks reserved boot-state flash page.
     let state_base = unsafe { &__bootloader_state_start as *const u32 as u32 };
     let state_end = state_base + PAGE_SIZE as u32;
     nvmc.lock(|cell| {

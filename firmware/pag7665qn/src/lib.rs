@@ -1,5 +1,4 @@
 #![no_std]
-#![allow(dead_code)]
 
 use core::convert::Infallible;
 use core::future::Future;
@@ -9,8 +8,11 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital;
 use embedded_hal_async::spi::SpiDevice;
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod mode;
+/// Since: Odyssey Desktop 0.6.0.
 pub mod spi;
+/// Since: Odyssey Desktop 0.6.0.
 pub mod types;
 
 use mode::{Mode, ModeT};
@@ -23,66 +25,105 @@ const HANDSHAKE_POLLS: usize = 100;
 // PAG7665QN register addresses, bank 0x00 unless noted.
 mod regs {
     // Identification
+    /// Since: Odyssey Desktop 0.6.0.
     pub const PART_ID_LO: u8 = 0x00;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const PART_ID_HI: u8 = 0x01;
 
     // Status and control
+    /// Since: Odyssey Desktop 0.6.0.
     pub const INTO_STATUS: u8 = 0x04;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const CPU_RESET_ENL: u8 = 0x0A;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const REPORT_BUF_SEL: u8 = 0x0E;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const RPT_SRAM_DATA: u8 = 0x0F;
 
     // Mode control
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OP_MODE_HOST: u8 = 0x10;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const SENSOR_SIZE_SEL: u8 = 0x12;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const SENSOR_FRAME_RATE: u8 = 0x13;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OP_MODE_ACTIVE: u8 = 0x14;
 
     // Firmware version
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_MAJOR_VERSION: u8 = 0x15;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_MINOR_VERSION: u8 = 0x7C;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_CUSTOMER_NUM: u8 = 0x7D;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_REVISION_NUM: u8 = 0x7E;
 
     // Circle detection parameters
+    /// Since: Odyssey Desktop 0.6.0.
     pub const CIRCLE_R_LB: u8 = 0x23;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const CIRCLE_R_UB: u8 = 0x24;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const CIRCLE_K_LB: u8 = 0x77;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const CIRCLE_K_UB: u8 = 0x78;
 
     // Object output
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_COUNT: u8 = 0x25;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_DATA_START: u8 = 0x26; // 8 bytes per object, 8 objects max per read
 
     // Manual power control
+    /// Since: Odyssey Desktop 0.6.0.
     pub const MANUAL_POWER_CTRL: u8 = 0x2F;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const MANUAL_POWER_TRIG: u8 = 0x30;
 
     // Sensor settings. These addresses differ from the PAG7661QN.
+    /// Since: Odyssey Desktop 0.6.0.
     pub const SENSOR_EXPO: u8 = 0x67; // bit[7]=LED_Always_ON, bits[6:0]=time in 100 µs steps
+    /// Since: Odyssey Desktop 0.6.0.
     pub const SENSOR_GAIN: u8 = 0x68; // Analog gain
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_LIGHT_THRD: u8 = 0x6D;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_AREA_LB_LO: u8 = 0x6E; // Area lower bound [7:0]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_AREA_LB_HI: u8 = 0x6F; // Area lower bound [15:8]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_AREA_UB_LO: u8 = 0x70; // Area upper bound [7:0]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const OBJ_AREA_UB_HI: u8 = 0x71; // Area upper bound [15:8]
 
     // ROI (Region of Interest)
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ROI_CTRL: u8 = 0x72; // bit[5]=X1[8], bit[4]=X0[8], bit[0]=ROI_EN
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ROI_X0_LO: u8 = 0x73; // X0[7:0]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ROI_Y0: u8 = 0x74; // Y0[7:0]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ROI_X1_LO: u8 = 0x75; // X1[7:0]
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ROI_Y1: u8 = 0x76; // Y1[7:0]
 
     // Error registers
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_ERROR_TYPE: u8 = 0x7A;
+    /// Since: Odyssey Desktop 0.6.0.
     pub const FW_ERROR_CODE: u8 = 0x7B;
 
     // Bank select, reachable from every bank.
+    /// Since: Odyssey Desktop 0.6.0.
     pub const BANK_NO: u8 = 0x7F;
 
     // Bank 0x06 registers
+    /// Since: Odyssey Desktop 0.6.0.
     pub mod bank6 {
+        /// Since: Odyssey Desktop 0.6.0.
         pub const SW_RESET: u8 = 0x1F;
     }
 }
@@ -90,6 +131,8 @@ mod regs {
 /// PAG7665QN driver. `M` tracks the sensor mode, either at the type level ([`mode::Idle`],
 /// [`mode::Image`], [`mode::Object`]) or at runtime ([`Mode`]). The selected register bank is
 /// cached so repeated accesses to the same bank skip the bank-select write.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665Qn<I, D, M> {
     bus: I,
     timer: D,
@@ -98,7 +141,10 @@ pub struct Pag7665Qn<I, D, M> {
 }
 
 /// The PAG7665QN INT_O pin, returned next to the driver by [`Pag7665Qn::init_spi`].
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665QnInterrupt<O> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub int_o: O,
 }
 
@@ -113,6 +159,10 @@ impl<S: SpiDevice, D: DelayNs, M: ModeT> Pag7665Qn<Pag7665QnSpi<S>, D, M> {
     /// [`InitError::FailedPartIdCheck`] if the part ID is not 0x7660 after one retry,
     /// [`InitError::FailedBootLoader`] if power-on ready is not set 250 ms after the CPU is
     /// enabled.
+    ///
+    /// Initialization also returns an interface error if an SPI operation fails.
+    /// # Since
+    /// Odyssey Desktop 0.6.0.
     pub async fn init_spi<O: digital::Wait>(
         spi: S,
         mut timer: D,
@@ -168,7 +218,7 @@ async fn initialize<I: Interface, D: DelayNs>(
     bus.write(regs::OP_MODE_HOST, &[initial_mode as u8]).await?;
     bus.write(regs::CPU_RESET_ENL, &[1]).await?;
 
-    // The datasheet allows up to 300 ms for power-on ready; this waits 250 ms.
+    // The datasheet allows up to 300 ms for power-on ready. This waits 250 ms.
     timer.delay_ms(250).await;
     let mut int_o_status = [0];
     bus.read(regs::INTO_STATUS, &mut int_o_status).await?;
@@ -197,16 +247,22 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     ///
     /// Writes through it bypass the cached mode and bank, so the driver's state can disagree with
     /// the device afterwards.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn bus_unchecked(&mut self) -> &mut I {
         &mut self.bus
     }
 
     /// Overwrites the cached bank without writing BANK_NO (0x7F).
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn set_bank_unchecked(&mut self, bank: u8) {
         self.bank = bank
     }
 
     /// Changes the mode type without writing OP_MODE_HOST (0x10).
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn set_mode_unchecked<N: ModeT>(self, mode: N) -> Pag7665Qn<I, D, N> {
         Pag7665Qn {
             bus: self.bus,
@@ -255,7 +311,11 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Selects the register bank (BANK_NO, 0x7F); a no-op when the cached bank already matches.
+    /// Selects the register bank (BANK_NO, 0x7F). A no-op when the cached bank already matches.
+    ///
+    /// # Errors
+    /// Returns an interface error if writing the selected bank fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn set_bank(
         &mut self,
         bank: u8,
@@ -264,6 +324,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         self._set_bank(bank)
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn mode(&self) -> mode::Mode {
         self.mode.mode()
     }
@@ -285,6 +346,9 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         Err(Error::Timeout)
     }
 
+    /// # Errors
+    /// Returns an interface error on SPI failure or [`Error::Timeout`] if sensor does not acknowledge the mode.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn switch_mode<N: ModeT>(
         mut self,
         new_mode: N,
@@ -305,6 +369,7 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
         })
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn as_dynamic_mode(self) -> Pag7665Qn<I, D, Mode> {
         Pag7665Qn {
             mode: self.mode.mode(),
@@ -331,6 +396,10 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Reads SENSOR_FRAME_RATE (0x13).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn sensor_fps(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         let mut value = [0];
@@ -340,6 +409,10 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
 
     /// Returns `(led_always_on, exposure_us)` from SENSOR_EXPO (0x67): bit 7 is the
     /// LED-always-on flag, bits 6:0 the exposure time in 100 µs steps.
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn sensor_exposure_us(
         &mut self,
     ) -> Result<(bool, u16), Error<I::Error, Infallible, Infallible>> {
@@ -351,12 +424,20 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Reads the analog gain (SENSOR_GAIN, 0x68).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn sensor_gain(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(regs::SENSOR_GAIN).await
     }
 
     /// Reads the object area lower bound (0x6E-0x6F, little-endian).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn area_lower_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -368,6 +449,10 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Reads the object area upper bound (0x70-0x71, little-endian).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn area_upper_bound(
         &mut self,
     ) -> Result<u16, Error<I::Error, Infallible, Infallible>> {
@@ -379,12 +464,20 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Reads OBJ_LIGHT_THRD (0x6D).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn light_threshold(&mut self) -> Result<u8, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         self.read_byte(regs::OBJ_LIGHT_THRD).await
     }
 
     /// Reads the circle detection ratio bounds (0x23, 0x24, 0x77, 0x78).
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn circle_params(
         &mut self,
     ) -> Result<CircleParams, Error<I::Error, Infallible, Infallible>> {
@@ -402,6 +495,10 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Reads the ROI registers (0x72-0x76) and reassembles the 9-bit X coordinates.
+    ///
+    /// # Errors
+    /// Returns an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn roi(&mut self) -> Result<Roi, Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x00).await?;
         let ctrl = self.read_byte(regs::ROI_CTRL).await?;
@@ -424,6 +521,10 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
     }
 
     /// Writes 0xFF to SW_RESET in bank 0x06 and waits 1 ms. All registers are cleared.
+    ///
+    /// # Errors
+    /// Returns an interface error if the reset write fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn software_reset(&mut self) -> Result<(), Error<I::Error, Infallible, Infallible>> {
         self._set_bank(0x06).await?;
         self.write(regs::bank6::SW_RESET, &[0xFF]).await?;
@@ -435,6 +536,11 @@ impl<I: Interface, D: DelayNs, M: ModeT> Pag7665Qn<I, D, M> {
 
 impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     /// Writes SENSOR_FRAME_RATE (0x13). The sensor must be idle.
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_sensor_fps(
         &mut self,
         value: u8,
@@ -449,7 +555,15 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     ///
     /// # Panics
     ///
-    /// If `exposure_us` is not a multiple of 100 or exceeds 12700 µs.
+    /// Panics if `exposure_us` is not a multiple of 100 or exceeds 12,700 µs.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.6.0.
+    ///
     pub async fn set_sensor_exposure_us(
         &mut self,
         led_always_on: bool,
@@ -465,6 +579,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     }
 
     /// Writes the analog gain (SENSOR_GAIN, 0x68). The sensor must be idle.
+    ///
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_sensor_gain(
         &mut self,
         x: u8,
@@ -476,6 +595,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     }
 
     /// Writes the object area lower bound (0x6E-0x6F, little-endian). The sensor must be idle.
+    ///
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_area_lower_bound(
         &mut self,
         x: u16,
@@ -487,6 +611,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     }
 
     /// Writes the object area upper bound (0x70-0x71, little-endian). The sensor must be idle.
+    ///
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_area_upper_bound(
         &mut self,
         x: u16,
@@ -498,6 +627,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     }
 
     /// Writes OBJ_LIGHT_THRD (0x6D). The sensor must be idle.
+    ///
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_light_threshold(
         &mut self,
         x: u8,
@@ -509,6 +643,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
     }
 
     /// Writes the circle detection ratio bounds. The sensor must be idle.
+    ///
+    ///
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_circle_params(
         &mut self,
         params: CircleParams,
@@ -526,8 +665,12 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
         Ok(())
     }
 
-    /// Writes the ROI registers (0x72-0x76); bit 8 of each X coordinate goes into ROI_CTRL. The
+    /// Writes the ROI registers (0x72-0x76). Bit 8 of each X coordinate goes into ROI_CTRL. The
     /// sensor must be idle.
+    /// # Errors
+    /// Returns a mode error if runtime mode is not idle, or an interface error if register access fails.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_roi(&mut self, roi: Roi) -> Result<(), Error<I::Error, Infallible, M::Error>> {
         self.mode.is_idle().map_err(Error::ModeError)?;
         self._set_bank(0x00).await?;
@@ -549,6 +692,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsIdle> Pag7665Qn<I, D, M> {
 
 impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
     /// Waits on INT_O until a frame is ready, then reads the 320×240 image into `image`.
+    /// # Errors
+    /// Returns an interface, INT_O wait, or mode error.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn wait_for_image<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7665QnInterrupt<O>,
@@ -569,11 +716,15 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
     /// even if locking or the image read fails. Callers can poll this with their own deadline
     /// without cancelling an in-progress SPI transaction.
     ///
-    /// This retains the existing 320×240 image-report contract. The encoding of
-    /// SENSOR_SIZE_SEL is not documented here, so alternative selector values have no
-    /// verified physical-size mapping. SPI reads transfer exactly the requested byte count
-    /// or return an interface error; the current interface exposes no actual frame length to
-    /// validate a different image size. Do not reinterpret a shorter image as 320×240.
+    /// This keeps the existing 320×240 image-report contract. The encoding of SENSOR_SIZE_SEL
+    /// is undocumented here, so other selector values have no verified physical-size mapping.
+    /// SPI reads transfer exactly the requested byte count or return an interface error, and
+    /// the current interface exposes no actual frame length to validate a different image
+    /// size. Do not reinterpret a shorter image as 320×240.
+    ///
+    /// # Errors
+    /// Returns an interface error, mode error, or [`Error::Timeout`] if report-buffer locking times out.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn try_get_image<EO>(
         &mut self,
         image: &mut [u8; 320 * 240],
@@ -609,6 +760,11 @@ impl<I: Interface, D: DelayNs, M: mode::IsImage> Pag7665Qn<I, D, M> {
 impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
     /// Waits on INT_O until a frame of object data is ready, fills `obj` and returns the number
     /// of objects detected.
+    ///
+    /// # Errors
+    /// Returns an interface error, INT_O wait error, or mode error.
+    /// Also returns [`Error::Timeout`] if object report handshake times out.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn wait_for_objects<O: digital::Wait>(
         &mut self,
         interrupt: &mut Pag7665QnInterrupt<O>,
@@ -627,7 +783,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
     /// `Ok(None)` if no object data was ready. Use [`Pag7665QnInterrupt::wait`] to wait until a
     /// frame is ready.
     ///
-    /// Returns [`Error::InvalidObjectCount`] if the sensor reports more than 16 objects.
+    /// # Errors
+    /// Returns an interface error, mode error, [`Error::InvalidObjectCount`] for counts above 16, or [`Error::Timeout`] if report handshake times out.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn try_get_objects<EO>(
         &mut self,
         obj: &mut [types::Object; 16],
@@ -694,6 +853,12 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
 }
 
 impl<I: Interface, D: DelayNs> Pag7665Qn<I, D, Mode> {
+    /// Switches the sensor mode and updates this driver's mode.
+    ///
+    /// # Errors
+    /// Returns an interface error or [`Error::Timeout`] if the sensor does not acknowledge the mode.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn switch_mode_mut(
         &mut self,
         new_mode: Mode,
@@ -715,9 +880,12 @@ impl<I: Interface, D: DelayNs> Pag7665Qn<I, D, Mode> {
 
     /// Releases a possibly locked image report and returns to object mode.
     ///
-    /// Cleanup is deliberately independent of the cached mode so a cancelled/failed image
-    /// transition cannot make restoration a no-op. Mode restoration is attempted even when
+    /// Cleanup ignores the cached mode on purpose, so a cancelled or failed image transition
+    /// cannot turn restoration into a no-op. Mode restoration is attempted even when
     /// releasing the report buffer fails.
+    ///
+    /// Returns an interface error or [`Error::Timeout`] if the sensor does not acknowledge object mode.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn restore_object_mode(
         &mut self,
     ) -> Result<(), Error<I::Error, Infallible, Infallible>> {
@@ -733,17 +901,43 @@ impl<I: Interface, D: DelayNs> Pag7665Qn<I, D, Mode> {
 }
 
 impl<O: digital::Wait> Pag7665QnInterrupt<O> {
+    /// Waits for INT_O to go high.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pin wait error.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn wait(&mut self) -> Result<(), O::Error> {
         self.int_o.wait_for_high().await
     }
 }
 
-#[allow(async_fn_in_trait)]
+/// Since: Odyssey Desktop 0.6.0.
+#[expect(
+    async_fn_in_trait,
+    reason = "the driver interface is asynchronous and has one concrete hardware implementation"
+)]
 pub trait Interface {
+    /// Since: Odyssey Desktop 0.6.0.
     type Error;
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Writes `data` to the register.
+    ///
+    /// # Errors
+    /// Returns the interface error if the register write fails.
     async fn write(&mut self, address: u8, data: &[u8]) -> Result<(), Self::Error>;
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Reads register bytes into `data`.
+    ///
+    /// # Errors
+    /// Returns the interface error if the register read fails.
     async fn read(&mut self, address: u8, data: &mut [u8]) -> Result<(), Self::Error>;
 
+    /// Reads one byte from a register.
+    ///
+    /// # Errors
+    /// Returns the interface error if the register read fails.
+    /// Since: Odyssey Desktop 0.6.0.
     async fn read_byte(&mut self, address: u8) -> Result<u8, Self::Error> {
         let mut value = [0];
         self.read(address, &mut value).await?;
@@ -751,6 +945,10 @@ pub trait Interface {
     }
 
     /// Reads INTO_Status (0x04) and logs its error bit. The caller must have selected bank 0x00.
+    /// # Errors
+    /// Returns the interface error if the status read fails.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     async fn int_o_status(&mut self) -> Result<IntOStatus, Self::Error> {
         let value = self.read_byte(regs::INTO_STATUS).await?;
         let status = IntOStatus::new_with_raw_value(value);
@@ -761,16 +959,24 @@ pub trait Interface {
     }
 
     /// Writes INTO_Status (0x04). The caller must have selected bank 0x00.
+    ///
+    /// # Errors
+    /// Returns the interface error if the status write fails.
+    /// Since: Odyssey Desktop 0.6.0.
     async fn set_int_o_status(&mut self, value: IntOStatus) -> Result<(), Self::Error> {
         self.write(regs::INTO_STATUS, &[value.raw_value()]).await?;
         Ok(())
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
 pub enum InitError<E> {
+    /// Since: Odyssey Desktop 0.6.0.
     FailedPartIdCheck,
+    /// Since: Odyssey Desktop 0.6.0.
     FailedBootLoader,
+    /// Since: Odyssey Desktop 0.6.0.
     InterfaceError(E),
 }
 
@@ -780,14 +986,22 @@ impl<E> From<E> for InitError<E> {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
 pub enum Error<I, O, M> {
+    /// Since: Odyssey Desktop 0.6.0.
     InterfaceError(I),
+    /// Since: Odyssey Desktop 0.6.0.
     IntOError(O),
+    /// Since: Odyssey Desktop 0.6.0.
     ModeError(M),
     /// The sensor reported more objects than its 16-object output buffer can hold.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     InvalidObjectCount(u8),
     /// The sensor did not acknowledge a mode/report handshake within 100 ms.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Timeout,
 }
 

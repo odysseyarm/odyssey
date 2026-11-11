@@ -1,5 +1,5 @@
 //! `cargo xtask desktop bundle <variant> --prebuilt <dir>`: wrap binaries that were already
-//! built, instead of compiling the app and cargo-packager on the machine that runs WiX.
+//! built, instead of compiling the app and cargo-packager on the machine that runs `WiX`.
 //!
 //! `<dir>` is the `desktop-windows` output of the Nix flake (cross-built from Linux):
 //!
@@ -132,6 +132,7 @@ fn pinned_packager(manifest: &str) -> eros::Result<String> {
 
 #[cfg(test)]
 mod tests {
+
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -207,21 +208,23 @@ mod tests {
             format!("{error:?}").contains("full/odyssey-desktop.exe"),
             "{error:?}"
         );
-        assert!(check(Variant::Online, &dir, &manifest).is_ok());
+        check(Variant::Online, &dir, &manifest).expect("online variant matches its fixture");
     }
 
     #[test]
     fn a_directory_from_another_release_or_packager_pin_is_refused() {
         let (dir, manifest) = fixture("release");
-        assert!(verify(Variant::Online, &dir, &manifest, "1.2.4", "0.11.8").is_err());
-        assert!(verify(Variant::Online, &dir, &manifest, "1.2.3", "0.12.0").is_err());
+        verify(Variant::Online, &dir, &manifest, "1.2.4", "0.11.8")
+            .expect_err("app version mismatch is rejected");
+        verify(Variant::Online, &dir, &manifest, "1.2.3", "0.12.0")
+            .expect_err("packager version mismatch is rejected");
     }
 
     #[test]
     fn a_file_the_manifest_does_not_list_is_refused() {
         let (dir, mut manifest) = fixture("unlisted");
         manifest.sha256.remove("full/odyssey-desktop.exe");
-        assert!(check(Variant::Full, &dir, &manifest).is_err());
+        check(Variant::Full, &dir, &manifest).expect_err("unlisted binary is rejected");
     }
 
     #[test]

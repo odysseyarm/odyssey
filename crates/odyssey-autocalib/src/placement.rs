@@ -7,13 +7,13 @@
 //!
 //! - `[1]` and `[2]` are the ends of a nearly straight row with exactly one other marker
 //!   between them (the tracker counts the points whose angle at the middle is wider than about
-//!   143 degrees);
+//!   143 degrees).
 //! - `[0]` lies below `[1]` along gravity, and on the side that makes the turn from `[1]`'s
 //!   row to `[0]` counter-clockwise as the camera sees it (the cross product of `[0] - [1]`
 //!   and `[2] - [1]` is not positive in the image, y down).
 //!
-//! `[3]`, `[4]` and `[5]` take no part in the seed; the tracker matches them by reprojection.
-//! These are the tests in `foveated.rs` of `odyssey-cv`; `crates/odyssey-hub-server/tests/
+//! `[3]`, `[4]` and `[5]` take no part in the seed. The tracker matches them by reprojection.
+//! These are the tests in `foveated.rs` of `odyssey-cv`. `crates/odyssey-hub-server/tests/
 //! marker_order.rs` runs the tracker on the orders this module produces.
 //!
 //! Everything here is in the screen's frame, in meters, x to the right and y down as a viewer
@@ -29,10 +29,10 @@ const MIDDLE_MIN_STRAIGHTNESS: f64 = 0.9;
 /// a second point between the ends and drops the seed.
 const OTHERS_MAX_STRAIGHTNESS: f64 = 0.6;
 /// How far below the row's left end `[0]` must lie, as a fraction of the markers' extent,
-/// so that a slightly tilted camera still sees it below.
+/// so a slightly tilted camera still sees it below.
 const MIN_DROP: f64 = 0.05;
 /// The sine of the angle between `[0] - [1]` and the row at which `[0]` counts as off the
-/// row. The seed's three points must not be collinear; this also keeps the solve well
+/// row. The seed's three points must not be collinear, and this also keeps the solve well
 /// conditioned.
 const MIN_OFF_ROW: f64 = 0.25;
 /// A candidate for `[0]` needs at least this share of the largest triangle area on offer.
@@ -41,30 +41,43 @@ const MIN_AREA_SHARE: f64 = 0.5;
 /// practical purposes: the points are collinear and have no circumcircle.
 const MIN_CIRCUMCIRCLE_DETERMINANT: f64 = 1e-12;
 
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PlacementError {
+    /// Since: Odyssey Desktop 0.6.7.
     #[error(
         "no three markers form a straight row with exactly one between the ends, with a marker below its left end"
     )]
     NoSeed,
+    /// Since: Odyssey Desktop 0.6.7.
     #[error("a marker position is not a finite number")]
     NotFinite,
 }
 
 /// The markers in tracker order, and the seed they were ordered by.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackerOrder {
     /// `order[n]` is the index into the input of `object_points[n]`.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub order: [usize; 6],
     /// The circle through `object_points[0..3]`: the seed solve is ill-conditioned for a
     /// camera whose position, projected onto the screen's plane, is on it.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub seed_circle: Option<Circle>,
 }
 
 /// A circle in the screen's plane.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Circle {
+    /// Since: Odyssey Desktop 0.6.7.
     pub center: Point2<f64>,
+    /// Since: Odyssey Desktop 0.6.7.
     pub radius: f64,
 }
 
@@ -168,8 +181,8 @@ fn candidate_seeds(points: &[Point2<f64>; 6]) -> Vec<Seed> {
     seeds
 }
 
-/// The most spread-out triangle solves best; among those nearly as good, the one nearest
-/// the row's left end, which is what the layout the tracker was built on does.
+/// The most spread-out triangle solves best. Among those nearly as good, the pick is the
+/// one nearest the row's left end, as in the layout the tracker was built on.
 fn best_seed(seeds: &[Seed]) -> Option<&Seed> {
     let largest = seeds.iter().map(|s| s.area).fold(0.0, f64::max);
     seeds
@@ -186,9 +199,12 @@ fn best_seed(seeds: &[Seed]) -> Option<&Seed> {
 ///
 /// # Errors
 ///
-/// [`PlacementError::NotFinite`] if a coordinate is NaN or infinite;
+/// [`PlacementError::NotFinite`] if a coordinate is NaN or infinite.
 /// [`PlacementError::NoSeed`] if no choice of markers meets the seed conditions in the
 /// module documentation.
+///
+/// # Since
+/// Odyssey Desktop 0.6.7.
 pub fn tracker_order(points: &[Point2<f64>; 6]) -> Result<TrackerOrder, PlacementError> {
     if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
         return Err(PlacementError::NotFinite);
@@ -197,7 +213,7 @@ pub fn tracker_order(points: &[Point2<f64>; 6]) -> Result<TrackerOrder, Placemen
     let seed = best_seed(&seeds).ok_or(PlacementError::NoSeed)?;
 
     // The tracker matches the markers outside the seed by reprojection, so any fixed order
-    // will do; left to right keeps it reproducible.
+    // will do. Left to right keeps it reproducible.
     let mut rest: Vec<usize> = (0..points.len())
         .filter(|&n| ![seed.off_row, seed.row_start, seed.row_end, seed.middle].contains(&n))
         .collect();
@@ -326,6 +342,6 @@ mod tests {
             [0.7, 0.5],
             [0.9, 0.5],
         ]);
-        assert!(tracker_order(&p).is_err());
+        tracker_order(&p).unwrap_err();
     }
 }

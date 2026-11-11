@@ -40,7 +40,7 @@ jobs:
   # workspace bin and runs `cargo run --bin uniffi-bindgen`, so bindings match
   # the uniffi version in Cargo.lock. The pip pin in pyproject.toml only covers
   # builds where that bin is unavailable, so this job fails if it drifts from
-  # the lockfile. (Pure text check; needs no Nix.)
+  # the lockfile. (Pure text check, needs no Nix.)
   check-pyproject-pin:
     name: Check pyproject uniffi-bindgen pin
     runs-on: ubuntu-latest
@@ -90,6 +90,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
+      - name: Lint SDK workspace
+        if: matrix.platform.target == 'x86_64' && matrix.platform.manylinux == 'auto'
+        run: nix build -L --no-link .#checks.x86_64-linux.sdk-uniffi-lint
       # maturin (in the sandbox) builds the wheel with zig as the linker and
       # audits it against the manylinux2014 / musllinux_1_2 policy.
       - name: Build wheels
@@ -132,8 +135,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-      # maturin cross-compiles this target through its cargo-xwin backend; the
-      # sysroot is the hash-pinned one from nix/xwin.nix.
+      # maturin cross-compiles this target through its cargo-xwin backend, with the
+      # hash-pinned sysroot from nix/xwin.nix.
       - name: Build wheels
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-windows-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
@@ -278,8 +281,8 @@ jobs:
             mv dotnet-native-"$triple"/* "sdk/odyssey-hub-client-uniffi/target/$triple/release/"
           done
       # uniffi-bindgen-cs is built from the pinned NordSecurity tag in nix/sdk.nix
-      # (keep it in sync with UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs);
-      # the derivation reads the metadata of the Nix-built x86_64 linux native.
+      # (keep it in sync with UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs).
+      # The derivation reads the metadata of the Nix-built x86_64 linux native.
       - name: Generate C# bindings
         run: |
           set -eu

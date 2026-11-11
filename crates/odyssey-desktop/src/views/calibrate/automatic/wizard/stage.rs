@@ -16,17 +16,16 @@ impl Stage {
     pub(crate) const STEPS: [&'static str; 5] =
         ["Setup", "Position", "Measure", "Markers", "Review"];
 
-    /// Index into [`Self::STEPS`]; `Saved` is one past the end so every step
+    /// Index into [`Self::STEPS`]. `Saved` is one past the end, so every step
     /// shows as done.
     pub(crate) fn step(self) -> usize {
         match self {
-            Self::Setup => 0,
+            Self::Setup | Self::Problem => 0,
             Self::Position => 1,
             Self::Measuring => 2,
             Self::Markers | Self::MeasuringMarkers => 3,
             Self::Review => 4,
             Self::Saved => 5,
-            Self::Problem => 0,
         }
     }
 }

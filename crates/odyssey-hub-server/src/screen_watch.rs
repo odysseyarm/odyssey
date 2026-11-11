@@ -1,9 +1,8 @@
 //! Hot reload of `screens/screen_<id>.json`.
 //!
 //! The calibration wizard, hand edits and manual calibration all write these
-//! files while the hub is running. A cheap mtime poll picks the changes up;
-//! `notify` is not in the dependency tree and six `stat` calls a second cost
-//! nothing.
+//! files while the hub is running. A cheap mtime poll picks up the changes, since
+//! `notify` is not in the dependency tree and six `stat` calls a second cost nothing.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,7 +41,7 @@ pub(crate) struct ScreenCalibrationWatcher {
     dir: PathBuf,
     /// Fingerprints of the last fully successful load.
     applied: Fingerprints,
-    /// A differing scan seen once; it loads when the next scan matches it.
+    /// A differing scan seen once. It loads when the next scan matches it.
     pending: Option<Fingerprints>,
 }
 
@@ -107,7 +106,7 @@ impl ScreenCalibrationWatcher {
 
         let loaded = screen_calibrations_from_dir_async(&self.dir).await;
         let has_unreadable = !loaded.corrupted_screens.is_empty();
-        let (merged, kept_previous) = merge(&target.load(), loaded);
+        let (merged, kept_previous) = merge(&target.load(), &loaded);
         target.store(Arc::new(merged));
         if has_unreadable {
             // Read failures can clear without changing mtime/length/inode (for
@@ -136,7 +135,7 @@ fn log_reload(active: &Calibrations, reload: &Reload) {
 
 /// Combines a fresh load with the active calibrations: a file that loaded
 /// replaces its screen, a missing file removes it, an unreadable file keeps it.
-fn merge(previous: &Calibrations, loaded: ScreenCalibrationsResult) -> (Calibrations, Vec<u8>) {
+fn merge(previous: &Calibrations, loaded: &ScreenCalibrationsResult) -> (Calibrations, Vec<u8>) {
     let mut merged = Calibrations::new();
     let mut kept_previous = Vec::new();
     for id in 0..=odyssey_common::MAX_SCREEN_ID {
@@ -162,8 +161,8 @@ fn merge(previous: &Calibrations, loaded: ScreenCalibrationsResult) -> (Calibrat
 async fn scan(dir: &Path) -> Fingerprints {
     let mut out = [None; SLOTS];
     for (id, slot) in out.iter_mut().enumerate() {
-        // Any metadata failure reads as absent; the loader decides what an
-        // unreadable file means.
+        // Any metadata failure reads as absent. The loader decides what an unreadable
+        // file means.
         if let Ok(meta) = tokio::fs::metadata(dir.join(screen_file_name(id as u8))).await {
             *slot = meta.modified().ok().map(|m| (m, meta.len(), inode(&meta)));
         }
@@ -378,7 +377,7 @@ mod tests {
             .poll_once(&target)
             .await
             .expect("failed load is retried");
-        assert!(reload.kept_previous.is_empty());
+        assert_eq!(reload.kept_previous, Vec::<u8>::new());
         assert_eq!(scale_of(&target.load(), 0), Some(9.0));
     }
 
@@ -390,7 +389,7 @@ mod tests {
         write_raw(&dir.0, 4, "not json");
         let reload = settle(&mut watcher, &target).await;
 
-        assert!(reload.kept_previous.is_empty());
+        assert_eq!(reload.kept_previous, Vec::<u8>::new());
         assert_eq!(scale_of(&target.load(), 4), None);
     }
 
@@ -409,7 +408,7 @@ mod tests {
             .await
             .expect("change did not apply");
 
-        assert!(reload.kept_previous.is_empty());
+        assert_eq!(reload.kept_previous, Vec::<u8>::new());
         assert_eq!(scale_of(&target.load(), 0), Some(2.0));
     }
 

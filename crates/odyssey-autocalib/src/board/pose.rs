@@ -120,15 +120,12 @@ impl Observations<'_> {
     fn residual_vector(&self, r: &Matrix3<f64>, t: &Vector3<f64>) -> DVector<f64> {
         let mut out = DVector::zeros(2 * self.grid.len());
         for (i, (g, px)) in self.grid.iter().zip(self.pixels).enumerate() {
-            match reproject(self.intrinsics, r, t, *g) {
-                Some(p) => {
-                    out[2 * i] = p.x - px.x;
-                    out[2 * i + 1] = p.y - px.y;
-                }
-                None => {
-                    out[2 * i] = UNPROJECTABLE_RESIDUAL_PX;
-                    out[2 * i + 1] = UNPROJECTABLE_RESIDUAL_PX;
-                }
+            if let Some(p) = reproject(self.intrinsics, r, t, *g) {
+                out[2 * i] = p.x - px.x;
+                out[2 * i + 1] = p.y - px.y;
+            } else {
+                out[2 * i] = UNPROJECTABLE_RESIDUAL_PX;
+                out[2 * i + 1] = UNPROJECTABLE_RESIDUAL_PX;
             }
         }
         out

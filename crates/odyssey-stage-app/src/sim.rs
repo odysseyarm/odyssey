@@ -21,12 +21,11 @@ pub(crate) struct SimLink {
 
 impl SimLink {
     async fn open(&mut self) -> Result<Control, ControlError> {
-        match self.control.take() {
-            Some(control) => Ok(control),
-            None => {
-                self.set_up_for = None;
-                Control::connect().await
-            }
+        if let Some(control) = self.control.take() {
+            Ok(control)
+        } else {
+            self.set_up_for = None;
+            Control::connect().await
         }
     }
 

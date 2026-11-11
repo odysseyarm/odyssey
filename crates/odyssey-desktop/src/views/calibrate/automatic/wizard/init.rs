@@ -65,8 +65,8 @@ impl Wizard {
             this.host_display = window.display(cx).map(|display| display.id());
         })
         .detach();
-        // Closing the window drops the wizard, and with it the camera thread;
-        // the pattern window is a separate window that has to be closed too.
+        // Closing the window drops the wizard, and with it the camera thread.
+        // The pattern window is a separate window that has to be closed too.
         cx.on_release(|this, cx| {
             if let Some(pattern) = this.pattern.take() {
                 pattern.close(cx);
@@ -96,7 +96,7 @@ impl Wizard {
             ui_state_writer: cx.global::<UiStateWriter>().clone(),
             cameras: CameraList::Searching,
             camera_choice: args.camera.clone(),
-            size_text: args.diagonal_in.map(|d| d.to_string()).unwrap_or_default(),
+            size_text: args.diagonal_in.map_or_default(|d| d.to_string()),
             size_field: SizeField::Diagonal,
             kind_choice: args.kind,
             finding: None,
@@ -194,14 +194,13 @@ impl Wizard {
             let (Ok(state), Ok(saved)) = (state.await, saved.await) else {
                 return;
             };
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.ui_state = state;
                 this.saved = saved.unwrap_or([false; SCREEN_COUNT]);
                 this.setup_ready = true;
                 cx.notify();
                 this.maybe_auto_start(cx);
-            })
-            .ok();
+            });
         })
     }
 
@@ -211,15 +210,14 @@ impl Wizard {
         let read = runtime::spawn(read_finding(key.clone(), demo));
         cx.spawn(async move |this, cx| {
             let Ok(finding) = read.await else { return };
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 // The selection may have moved on while the files were read.
                 if this.selected.as_ref() == Some(&key) {
                     this.finding = Some(finding);
                     cx.notify();
                     this.maybe_auto_start(cx);
                 }
-            })
-            .ok();
+            });
         })
     }
 
@@ -232,7 +230,7 @@ impl Wizard {
         if key == self.selected {
             return;
         }
-        self.selected = key.clone();
+        self.selected.clone_from(&key);
         let moved = self
             .helper
             .as_ref()
@@ -247,9 +245,7 @@ impl Wizard {
 
 pub(super) async fn read_saved_screens() -> Option<[bool; SCREEN_COUNT]> {
     tokio::task::spawn_blocking(|| {
-        config::screens_dir()
-            .map(|dir| saved_screens(&dir))
-            .unwrap_or([false; SCREEN_COUNT])
+        config::screens_dir().map_or_else(|_error| [false; SCREEN_COUNT], |dir| saved_screens(&dir))
     })
     .await
     .ok()

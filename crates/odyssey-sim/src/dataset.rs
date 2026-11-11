@@ -6,38 +6,57 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use odyssey_common::ScreenCalibration;
 use serde::{Deserialize, Serialize};
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const SCENE_SCHEMA_VERSION: u32 = 1;
 
 /// World and camera axes are +X right, +Y down, +Z forward.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SceneCoordinateBasis {
+    /// Since: Odyssey Desktop 0.7.0.
     ScreenXRightYDownZForward,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneDescription {
+    /// Since: Odyssey Desktop 0.7.0.
     pub schema_version: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub provenance: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub coordinate_basis: SceneCoordinateBasis,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screens: Vec<SceneScreen>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub cameras: Vec<SceneCamera>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub frames: Vec<SceneFrame>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneScreen {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: u8,
     /// Planar fit plus, optionally, the measured display surface the tracker uses.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub calibration: ScreenCalibration<f32>,
-    /// Stable identities, in calibration.object_points order; geometry is not duplicated.
+    /// Stable identities, in `calibration.object_points` order. Geometry is not duplicated.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub marker_ids: [String; 6],
 }
 
 impl SceneScreen {
     /// A calibrated screen with marker identities derived from its ID.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn from_calibration(id: u8, calibration: ScreenCalibration<f32>) -> Self {
         Self {
             id,
@@ -47,89 +66,143 @@ impl SceneScreen {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneCamera {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub source_id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_size_px: [u32; 2],
-    /// Row-major OpenCV pinhole matrix; pixels have top-left origin.
+    /// Row-major OpenCV pinhole matrix. Pixels have a top-left origin.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub intrinsics: [[f64; 3]; 3],
     /// OpenCV k1, k2, p1, p2, k3 coefficients.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub distortion: [f64; 5],
-    /// Image sensor effects applied to renders; `None` renders ideal light.
+    /// Image sensor effects applied to renders. `None` renders ideal light.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensor: Option<SceneSensor>,
 }
 
 /// Renderer sensor model. Rendered linear intensity 1.0 is a full well, so
 /// brighter light saturates. Values should come from a measured sensor.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneSensor {
     /// Gaussian point spread, standard deviation in pixels.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub blur_sigma_px: f64,
-    /// Electrons at saturation; sets shot noise relative to signal.
+    /// Electrons at saturation. Sets shot noise relative to signal.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub full_well_electrons: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub read_noise_electrons: f64,
     /// ADC resolution, 1..=16 bits.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub bit_depth: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     pub seed: u64,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneFrame {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub elapsed_us: u64,
     /// Zero means instantaneous exposure, not an unknown exposure duration.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub exposure_us: u64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub camera_id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub camera_to_world: ScenePose,
     /// Geometry visibility labels, independent of dropped/noisy detector observations.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub visible_marker_ids: Vec<String>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub truth: SceneTruth,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenePose {
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_m: [f64; 3],
     /// Unit quaternion rotating camera vectors into world space, in x,y,z,w order.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub orientation_xyzw: [f64; 4],
 }
 
 /// Independent labels in Odyssey client coordinates: world X, negated world Y and Z.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTruth {
+    /// Since: Odyssey Desktop 0.7.0.
     pub aimpoint: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_m: Option<[f64; 3]>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screen_id: u32,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DatasetError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("unsupported scene schema or missing provenance")]
     Schema,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("scene requires screens, cameras and frames")]
     Empty,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid screen or marker geometry, or duplicate ID")]
     Geometry,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid camera calibration or duplicate camera ID")]
     Camera,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid frame, exposure, pose, truth or label reference")]
     Frame,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid calibrated surface: {0}")]
     Surface(#[from] crate::surface::SurfaceError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("camera forward ray misses selected target screen")]
     TargetMiss,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("scene asset calibration or tagged geometry differs from scene")]
     AssetIdentity,
 }
 
 impl SceneDescription {
     /// Validate labels before handing them to another renderer or model backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scene metadata, geometry, camera data, or frame labels are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn validate(&self) -> Result<(), DatasetError> {
         self.validate_with_labels(true)
     }
@@ -167,13 +240,16 @@ impl SceneDescription {
                 || camera.intrinsics[0][0] <= 0.0
                 || camera.intrinsics[1][1] <= 0.0
                 || camera.intrinsics[1][0] != 0.0
-                || camera.intrinsics[2] != [0.0, 0.0, 1.0]
+                || camera.intrinsics[2][0] != 0.0
+                || camera.intrinsics[2][1] != 0.0
+                || camera.intrinsics[2][2].total_cmp(&1.0).is_ne()
                 || camera.sensor.is_some_and(|sensor| {
-                    !(sensor.blur_sigma_px.is_finite() && sensor.blur_sigma_px >= 0.0)
-                        || !(sensor.full_well_electrons.is_finite()
-                            && sensor.full_well_electrons >= 1.0)
-                        || !(sensor.read_noise_electrons.is_finite()
-                            && sensor.read_noise_electrons >= 0.0)
+                    !sensor.blur_sigma_px.is_finite()
+                        || sensor.blur_sigma_px < 0.0
+                        || !sensor.full_well_electrons.is_finite()
+                        || sensor.full_well_electrons < 1.0
+                        || !sensor.read_noise_electrons.is_finite()
+                        || sensor.read_noise_electrons < 0.0
                         || !(1..=16).contains(&sensor.bit_depth)
                 })
             {
@@ -213,13 +289,25 @@ impl SceneDescription {
 
     /// Recompute geometry-only labels after authoring edits, preserving target screen IDs.
     /// Distorted camera frusta and intervening display surfaces determine marker visibility.
-    /// Failure leaves every frame label unchanged; no production tracker is involved.
+    /// Failure leaves every frame label unchanged. No production tracker is involved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scene geometry, camera data, or frame metadata is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn relabel(&mut self) -> Result<(), DatasetError> {
         self.relabel_geometry(None)
     }
 
     /// Recompute labels with static opaque GLB environment occlusion. Asset metadata
-    /// must match authoritative calibration; failure leaves labels unchanged.
+    /// must match authoritative calibration. Failure leaves labels unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scene geometry is invalid or asset metadata does not match.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn relabel_with_asset(
         &mut self,
         asset: &crate::scene_asset::SceneAsset,
@@ -319,7 +407,9 @@ fn pose_rotation(pose: &ScenePose) -> UnitQuaternion<f64> {
 }
 
 impl SceneCamera {
-    /// OpenCV projection including k1,k2,p1,p2,k3 distortion; None means behind/outside.
+    /// OpenCV projection including k1,k2,p1,p2,k3 distortion. None means behind/outside.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn project_world(&self, pose: &ScenePose, point_world_m: [f64; 3]) -> Option<[f64; 2]> {
         project_world(
             self.image_size_px,
@@ -333,6 +423,8 @@ impl SceneCamera {
 
 /// [`SceneCamera::project_world`] for optics that are not part of a scene, such
 /// as a simulated unit's own camera configuration.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub fn project_world(
     image_size_px: [u32; 2],
     intrinsics: &[[f64; 3]; 3],

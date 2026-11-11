@@ -53,7 +53,7 @@ impl PairingView {
 
 impl Render for PairingView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl gpui::IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let hub = self.hub.clone();
         let (dongles, devices) = {
             let hub = hub.read(cx);

@@ -1,6 +1,6 @@
 //! Owned USB image sessions with a single latest-frame mailbox.
 //!
-//! Dropping a stream cancels its session; the device's supervised dispatcher
+//! Dropping a stream cancels its session. The device's supervised dispatcher
 //! owns and awaits the stop handshake before accepting a replacement. Prefer
 //! `stop().await` when the caller needs proof that object capture has resumed.
 
@@ -26,10 +26,11 @@ struct Latest {
     waker: Option<Waker>,
 }
 
-/// A Send + 'static stream of complete images. Slow consumers observe the most
-/// recent complete frame rather than accumulating an unbounded image backlog.
-/// Validation failures are terminal and cannot be overwritten by later frames.
-/// The stream owns cancellation; it does not borrow the VmDevice that opened it.
+/// A bounded, cancellation-owning stream of complete images.
+/// Slow consumers get the newest complete frame, and invalid metadata ends the
+/// stream. It does not borrow the `VmDevice` that opened it.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct ImageStream {
     latest: Arc<parking_lot::Mutex<Latest>>,
@@ -58,12 +59,15 @@ impl ImageStream {
 
     /// Extend the device's capture lease (see
     /// [`IMAGE_LEASE_RENEW_INTERVAL_MS`](odyssey_protocol::image::IMAGE_LEASE_RENEW_INTERVAL_MS)).
-    /// Call it only from the code that is actually consuming frames: modern firmware
+    /// Call it only from the code that consumes frames: modern firmware
     /// ends capture and restores tracking once renewals stop. Repeated calls before
     /// the dispatcher sends one coalesce. Never blocks.
     ///
     /// # Errors
     /// [`Error::Closed`] once the stream is stopped or dropped.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub fn renew_lease(&self) -> Result<()> {
         if self.cancel.is_cancelled() {
             return Err(Error::Closed);
@@ -74,6 +78,10 @@ impl ImageStream {
 
     /// Cancel capture and wait for the generation-specific Stop acknowledgment.
     /// A replacement cannot start while this handshake is still in flight.
+    ///
+    /// # Errors
+    /// Returns stop-handshake or timeout errors.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn stop(&mut self) -> Result<()> {
         self.cancel.cancel();
         let wake = {
@@ -154,7 +162,7 @@ impl Drop for FrameSender {
 }
 
 /// At most one frame and 16 sensor features can be in progress. Frame ids use
-/// wrapping serial-number order; repeats and backwards ids cannot resurrect a
+/// wrapping serial-number order, so repeats and backwards ids cannot resurrect a
 /// rejected/complete frame. Every failure invalidates the entire partial frame.
 pub(crate) struct Reassembler {
     generation: u32,
@@ -229,7 +237,7 @@ impl Reassembler {
         objects.push(feature);
         Ok(())
     }
-    pub(crate) fn chunk(&mut self, chunk: ImageChunk) -> Result<Option<ImageFrame>> {
+    pub(crate) fn chunk(&mut self, chunk: &ImageChunk) -> Result<Option<ImageFrame>> {
         if chunk.generation != self.generation || !self.select_frame(chunk.frame_id) {
             return Ok(None);
         }

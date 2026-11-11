@@ -26,20 +26,18 @@ pub(crate) struct PatternDisplay {
 
 impl PatternDisplay {
     pub(crate) fn show(&self, mode: PatternMode, cx: &mut App) {
-        self.window
-            .update(cx, |view, _, cx| {
-                view.set_mode(mode);
-                cx.notify();
-            })
-            .ok();
+        let _ = self.window.update(cx, |view, _, cx| {
+            view.set_mode(mode);
+            cx.notify();
+        });
     }
 
     /// Closes the window without reporting it lost.
     pub(crate) fn close(self, cx: &mut App) {
         self.wizard_closed.set(true);
-        self.window
-            .update(cx, |_, window, _| window.remove_window())
-            .ok();
+        let _ = self
+            .window
+            .update(cx, |_, window, _| window.remove_window());
     }
 }
 

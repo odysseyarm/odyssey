@@ -18,10 +18,10 @@ let
   # Private-source boundary. Every vendored copy of odyssey-cv (and the eskf it
   # carries) is a stub: the real manifests, so features and the dependency graph
   # are unchanged, with empty sources. Dependency layers (buildDepsOnly) compile
-  # only that stub and are safe for public caches. Builds that need the real
-  # code go through `withPrivateSource`: inside the sandbox it copies the stub's
-  # vendored crates, overlays the flake input's sources, and repoints only that
-  # one Cargo source at the copy. The real source is never a derivation output,
+  # only that stub, so they are safe for public caches. Builds that need the real
+  # code go through `withPrivateSource`. Inside the sandbox it copies the stub's
+  # vendored crates, overlays the flake input's sources and repoints only that
+  # one Cargo source at the copy. The real source is never a derivation output
   # and every other vendored path stays byte-identical, so Cargo rebuilds only
   # odyssey-cv, eskf and their dependents on top of the cached layer.
   # The stub is addressed by manifest content alone, so dependency layers stay
@@ -64,7 +64,7 @@ let
         drv.overrideAttrs (old: {
           src = privateManifests;
           postPatch = (old.postPatch or "") + ''
-            # Upstream eskf names an absent README; Cargo packaging validates it.
+            # Upstream eskf names a README that does not exist, and Cargo packaging validates it.
             substituteInPlace third_party/eskf/Cargo.toml \
               --replace-fail 'readme = "README.md"' 'readme = false'
             find . -mindepth 2 -name Cargo.toml -execdir sh -c 'mkdir -p src && : > src/lib.rs' \;
@@ -87,7 +87,7 @@ let
       PROTOC = "${pkgs.protobuf}/bin/protoc";
     } // lib.optionalAttrs (workspace == ".") {
       # Cargo artifact archives of the root workspace hold compiled private
-      # code; only dependency layers (which force this on) may install one.
+      # code, so only dependency layers (which force this on) may install one.
       doInstallCargoArtifacts = false;
       # Release binaries carry no symbol table. Profiles are part of every
       # fingerprint, so this applies to the dependency layer too.

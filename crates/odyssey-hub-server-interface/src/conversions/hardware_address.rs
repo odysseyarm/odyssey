@@ -17,7 +17,7 @@ pub(super) fn address_to_key(address: [u8; ADDRESS_LEN]) -> u64 {
     u64::from_le_bytes([a, b, c, d, e, f, 0, 0])
 }
 
-/// Inverse of [`address_to_key`]; high bits must not alias a real map entry.
+/// Inverse of [`address_to_key`]. High bits must not alias a real map entry.
 pub(super) fn address_from_key(key: u64) -> Result<[u8; ADDRESS_LEN], &'static str> {
     if key >> 48 != 0 {
         return Err("hardware address map key exceeds 48 bits");
@@ -39,13 +39,13 @@ mod tests {
 
     #[test]
     fn malformed_map_keys_are_not_aliased_to_valid_addresses() {
-        assert!(address_from_key(u64::MAX).is_err());
+        address_from_key(u64::MAX).expect_err("address key exceeding 48 bits must be rejected");
     }
 
     #[test]
     fn malformed_byte_lengths_are_refused() {
-        assert!(address_from_bytes(&[1; 5]).is_err());
-        assert!(address_from_bytes(&[1; 7]).is_err());
+        address_from_bytes(&[1; 5]).expect_err("short address must be rejected");
+        address_from_bytes(&[1; 7]).expect_err("long address must be rejected");
         assert_eq!(address_from_bytes(&[1; 6]).unwrap(), [1; 6]);
     }
 }
