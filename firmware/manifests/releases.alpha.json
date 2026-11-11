@@ -1036,6 +1036,19 @@
     "marker-control-board": {
       "firmwares": [
         {
+          "version": "0.1.2",
+          "requires_bootloader": 1,
+          "requires_netcore": 0,
+          "min_desktop": "0.7.3",
+          "files": {
+            "app": {
+              "sha256": "122d43dca10e5d11d898624151ee9775fcadd01c83c862d1c2b1e736eca05c66",
+              "size": 169736
+            }
+          },
+          "released": "2026-11-11"
+        },
+        {
           "version": "0.1.1",
           "requires_bootloader": 1,
           "requires_netcore": 0,
