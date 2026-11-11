@@ -243,6 +243,228 @@ unsafe impl Serialize for CombinedMarkersReport {
     }
 }
 
+#[cfg(all(kani, feature = "std"))]
+mod kani_proofs {
+    use core::mem::MaybeUninit;
+    use std::vec::Vec;
+
+    use super::{Parse, Serialize};
+    use crate::legacy::{CombinedMarkersReport, MotData, ObjectReport};
+    use crate::{Error, Packet, PacketType};
+
+    #[kani::proof]
+    #[kani::unwind(18)]
+    fn mot_data_offsets_masks_and_canonical_bytes() {
+        let raw: [u8; 16] = kani::any();
+        let mut input = &raw[..];
+        let Ok(data) = MotData::parse(&mut input) else {
+            panic!("full object record rejected");
+        };
+        assert!(input.is_empty());
+        assert_eq!(data.area, u16::from_le_bytes([raw[0], raw[1]]));
+        assert_eq!(data.cx, u16::from_le_bytes([raw[2], raw[3] & 0x0f]));
+        assert_eq!(data.cy, u16::from_le_bytes([raw[4], raw[5] & 0x0f]));
+        assert_eq!(data.avg_brightness, raw[6]);
+        assert_eq!(data.max_brightness, raw[7]);
+        assert_eq!(data.range, raw[8] >> 4);
+        assert_eq!(data.radius, raw[8] & 0x0f);
+        assert_eq!(data.boundary_left, raw[9] & 0x7f);
+        assert_eq!(data.boundary_right, raw[10] & 0x7f);
+        assert_eq!(data.boundary_up, raw[11] & 0x7f);
+        assert_eq!(data.boundary_down, raw[12] & 0x7f);
+        assert_eq!(data.aspect_ratio, raw[13]);
+        assert_eq!(data.vx, raw[14]);
+        assert_eq!(data.vy, raw[15]);
+        let mut encoded = Vec::new();
+        data.serialize_to_vec(&mut encoded);
+        assert_eq!(
+            encoded.as_slice(),
+            &[
+                raw[0],
+                raw[1],
+                raw[2],
+                raw[3] & 0x0f,
+                raw[4],
+                raw[5] & 0x0f,
+                raw[6],
+                raw[7],
+                raw[8],
+                raw[9] & 0x7f,
+                raw[10] & 0x7f,
+                raw[11] & 0x7f,
+                raw[12] & 0x7f,
+                raw[13],
+                raw[14],
+                raw[15],
+            ]
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn mot_data_short_input_preserves_cursor() {
+        let raw: [u8; 16] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len < 16);
+        let mut input = &raw[..len];
+        let before = input;
+        assert!(matches!(
+            MotData::parse(&mut input),
+            Err(Error::UnexpectedEof { packet_type: None })
+        ));
+        assert_eq!(input.len(), before.len());
+        assert_eq!(input.as_ptr(), before.as_ptr());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(34)]
+    #[expect(
+        unsafe_code,
+        reason = "the proof buffer is initialized before serialization"
+    )]
+    fn combined_markers_uses_frozen_12_bit_layout_and_roundtrips() {
+        let raw: [u8; 96] = kani::any();
+        let mut input = &raw[..];
+        let Ok(report) = CombinedMarkersReport::parse(&mut input) else {
+            panic!("full marker report rejected");
+        };
+        assert!(input.is_empty());
+        for i in 0..32 {
+            let offset = i * 3;
+            let point = if i < 16 {
+                report.nf_points[i]
+            } else {
+                report.wf_points[i - 16]
+            };
+            let x = u16::from(raw[offset]) | (u16::from(raw[offset + 1] & 0x0f) << 8);
+            let y = u16::from(raw[offset + 1] >> 4) | (u16::from(raw[offset + 2]) << 4);
+            assert_eq!(point.x, x);
+            assert_eq!(point.y, y);
+        }
+        let mut encoded = [MaybeUninit::new(0xa5); 96];
+        let mut cursor = &mut encoded[..];
+        report.serialize(&mut cursor);
+        assert!(cursor.is_empty());
+        let byte: usize = kani::any();
+        kani::assume(byte < 96);
+        // SAFETY: every buffer slot starts initialized; serialization only writes u8 values.
+        let actual = unsafe { encoded[byte].assume_init() };
+        assert_eq!(actual, raw[byte]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(34)]
+    #[expect(
+        unsafe_code,
+        reason = "the proof buffer is initialized before serialization"
+    )]
+    fn object_report_has_frozen_offsets_and_trailer() {
+        let raw: [u8; 518] = kani::any();
+        let mut input = &raw[..];
+        let Ok(report) = ObjectReport::parse(&mut input) else {
+            panic!("full object report rejected");
+        };
+        assert!(input.is_empty());
+        assert_eq!(
+            report.timestamp,
+            u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])
+        );
+        for i in 0..32 {
+            let offset = 4 + i * 16;
+            let item = if i < 16 {
+                report.mot_data_nf[i]
+            } else {
+                report.mot_data_wf[i - 16]
+            };
+            assert_eq!(
+                item.area,
+                u16::from_le_bytes([raw[offset], raw[offset + 1]])
+            );
+            assert_eq!(item.vy, raw[offset + 15]);
+        }
+        let mut encoded = [MaybeUninit::new(0xa5); 518];
+        let mut cursor = &mut encoded[..];
+        report.serialize(&mut cursor);
+        assert!(cursor.is_empty());
+        let byte: usize = kani::any();
+        kani::assume(byte < 518);
+        let expected = match byte {
+            516 => 1,
+            517 => 0,
+            0..=3 => raw[byte],
+            _ => match (byte - 4) % 16 {
+                3 | 5 => raw[byte] & 0x0f,
+                9..=12 => raw[byte] & 0x7f,
+                _ => raw[byte],
+            },
+        };
+        // SAFETY: every buffer slot starts initialized; serialization only writes u8 values.
+        let actual = unsafe { encoded[byte].assume_init() };
+        assert_eq!(actual, expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn object_report_short_input_preserves_cursor() {
+        let raw: [u8; 518] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len < 518);
+        let mut input = &raw[..len];
+        let before = input;
+        assert!(matches!(
+            ObjectReport::parse(&mut input),
+            Err(Error::UnexpectedEof {
+                packet_type: Some(PacketType::LegacyObjectReport())
+            })
+        ));
+        assert_eq!(input.len(), before.len());
+        assert_eq!(input.as_ptr(), before.as_ptr());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn combined_markers_short_input_preserves_cursor() {
+        let raw: [u8; 96] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len < 96);
+        let mut input = &raw[..len];
+        let before = input;
+        assert!(matches!(
+            CombinedMarkersReport::parse(&mut input),
+            Err(Error::UnexpectedEof {
+                packet_type: Some(PacketType::LegacyCombinedMarkersReport())
+            })
+        ));
+        assert_eq!(input.len(), before.len());
+        assert_eq!(input.as_ptr(), before.as_ptr());
+    }
+
+    #[kani::proof]
+    #[kani::unwind(22)]
+    #[expect(
+        unsafe_code,
+        reason = "Packet::serialize_parts writes the full fixed header and payload"
+    )]
+    fn packet_header_uses_frozen_length_type_and_id_bytes() {
+        let id: u8 = kani::any();
+        let data = MotData::default();
+        let mut storage = [MaybeUninit::uninit(); 20];
+        let written = Packet::serialize_parts(
+            id,
+            PacketType::LegacyObjectReport(),
+            &data,
+            &mut storage[..],
+        );
+        assert_eq!(written, 20);
+        let mut bytes = [0; 20];
+        for (destination, source) in bytes.iter_mut().zip(storage) {
+            // SAFETY: Serialize guarantees initialization of its entire fixed payload.
+            *destination = unsafe { source.assume_init() };
+        }
+        assert_eq!(&bytes[..4], &[10, 0, 9, id]);
+    }
+}
+
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;

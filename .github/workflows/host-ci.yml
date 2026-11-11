@@ -40,3 +40,5 @@ jobs:
         run: nix build -L --no-link .#checks.x86_64-linux.host-tests .#checks.x86_64-linux.xtask-tests
       - name: Lint host applications
         run: nix build -L --no-link .#checks.x86_64-linux.host-lint .#checks.x86_64-linux.host-lint-bins
+      - name: Prove release rules and wire layouts
+        run: nix build -L --no-link .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs

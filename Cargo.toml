@@ -64,6 +64,7 @@ ambiguous_negative_literals = "warn"
 elided_lifetimes_in_paths = "warn"
 # Finds unused `pub` items in binary crates, which rustc cannot see on its own.
 dead_code_pub_in_binary = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.lints.clippy]
 # Readability and modernisation (pedantic, low noise).

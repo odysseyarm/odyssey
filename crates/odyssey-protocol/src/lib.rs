@@ -12,6 +12,8 @@ mod error;
 mod list;
 mod packet;
 mod product_id;
+#[cfg(kani)]
+mod proofs;
 mod props;
 #[cfg(feature = "pyo3")]
 mod py;

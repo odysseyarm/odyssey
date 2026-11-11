@@ -9,6 +9,7 @@ mod desktop;
 mod dongle;
 mod firmware;
 mod release;
+mod release_rules;
 mod sdk;
 
 use clap::{Parser, Subcommand};

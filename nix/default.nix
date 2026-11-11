@@ -22,6 +22,28 @@ let
   orbbecSdk = pkgs.callPackage ./pkgs/orbbec-sdk.nix {
     pin = builtins.fromJSON (builtins.readFile ../crates/odyssey-desktop/orbbec-sdk.json);
   };
+  kani = pkgs.callPackage ./pkgs/kani.nix {
+    toolchain = pkgs.rust-bin.nightly."2026-08-21".default.override {
+      extensions = [ "llvm-tools" "rustc-dev" "rust-src" "rustfmt" ];
+    };
+  };
+  releaseProofs = pkgs.runCommand "release-proofs" { nativeBuildInputs = [ kani ]; } ''
+    cp ${../crates/xtask/src/release_rules.rs} release_rules.rs
+    kani release_rules.rs --output-format terse
+    touch $out
+  '';
+  wireProofs = craneLib.mkCargoDerivation ((common.mkArgs {
+    pname = "odyssey-wire-proofs";
+  }) // {
+    nativeBuildInputs = [ kani ];
+    cargoArtifacts = null;
+    buildPhaseCargoCommand = ''
+      cargo-kani kani -p odyssey-protocol --features minicbor --output-format terse
+      cargo-kani kani -p odyssey-protocol --no-default-features --harness proofs:: --output-format terse
+    '';
+    doCheck = false;
+    installPhaseCommand = "touch $out";
+  });
   nativeInputs = [ pkgs.pkg-config pkgs.protobuf pkgs.cmake pkgs.llvmPackages.libclang pkgs.makeWrapper ];
   nativeLibraries = [ pkgs.openssl pkgs.opencv4 ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     pkgs.udev pkgs.dbus pkgs.libxkbcommon pkgs.libxcb pkgs.fontconfig
@@ -77,9 +99,13 @@ let
 in {
   inherit pkgs;
   packages = host.packages // sdk.packages // firmware.packages // appimage.packages // desktopNixos.packages // windows.packages
-    // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; };
+    // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; inherit kani; };
   checks = host.checks // sdk.checks // firmware.checks // appimage.checks // desktopNixos.checks // windows.checks
-    // { private-source-boundary = common.privateBoundaryCheck; };
+    // { private-source-boundary = common.privateBoundaryCheck; }
+    // lib.optionalAttrs (system == "x86_64-linux") {
+      release-proofs = releaseProofs;
+      wire-proofs = wireProofs;
+    };
   devShells = {
     default = shell;
     sdk = sdk.devShell;

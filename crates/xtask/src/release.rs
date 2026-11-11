@@ -5,7 +5,6 @@
 //! its lock file or in its memory map differs between its newest tag and HEAD.
 //! That errs toward bumping: a comment-only edit in a shared crate counts.
 
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -16,6 +15,7 @@ use eros::Context as _;
 use serde_json::Value;
 
 use crate::firmware::{self, Task};
+use crate::release_rules::{self as rules, Kind, Link, Refusal, State};
 use crate::{cmd, dongle};
 
 const DESKTOP: &str = "odyssey-desktop";
@@ -153,7 +153,7 @@ const fn part(
 const LITE1_MEMORY: &[&str] = &["firmware/memory/memory-lite1.kdl"];
 const LEGACY_MEMORY: &[&str] = &["firmware/memory/memory-atslite.kdl"];
 
-const COMPONENTS: [Component; 11] = [
+const COMPONENTS: [Component; rules::COMPONENT_COUNT] = [
     component(DESKTOP, "crates/odyssey-desktop", Role::Workflow),
     component(
         "odyssey-hub-client-ffi",
@@ -413,32 +413,6 @@ fn source_version(component: &Component) -> eros::Result<Vec<u64>> {
     Ok(version)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum State {
-    /// Released as it is.
-    Current,
-    /// Changed since its tag under the tag's version.
-    NeedsBump,
-    /// The source is ahead of the newest tag, or was never released.
-    Ready,
-}
-
-fn state(source: &[u64], released: Option<&[u64]>, changed: bool) -> eros::Result<State> {
-    let Some(released) = released else {
-        return Ok(State::Ready);
-    };
-    match source.cmp(released) {
-        Ordering::Less => eros::bail!(
-            "the source says {} but {} is already released",
-            dotted(source),
-            dotted(released)
-        ),
-        Ordering::Greater => Ok(State::Ready),
-        Ordering::Equal if changed => Ok(State::NeedsBump),
-        Ordering::Equal => Ok(State::Current),
-    }
-}
-
 struct Row {
     component: &'static Component,
     closure: Closure,
@@ -451,25 +425,68 @@ struct Row {
 struct Plan {
     rows: Vec<Row>,
     tags: Vec<(String, String)>,
+    links: [Link; rules::COMPONENT_COUNT],
 }
 
 impl Plan {
-    fn row(&self, name: &str) -> eros::Result<&Row> {
-        let row = self
-            .rows
+    fn index(name: &str) -> eros::Result<usize> {
+        let index = COMPONENTS
             .iter()
-            .find(|row| row.component.name == name)
+            .position(|component| component.name == name)
             .with_context(|| {
                 let known: Vec<&str> = COMPONENTS.iter().map(|component| component.name).collect();
                 format!("no component '{name}'; known: {}", known.join(", "))
             })?;
-        Ok(row)
+        Ok(index)
+    }
+
+    fn row(&self, name: &str) -> eros::Result<&Row> {
+        Ok(&self.rows[Self::index(name)?])
+    }
+
+    fn states(&self) -> [State; rules::COMPONENT_COUNT] {
+        std::array::from_fn(|index| self.rows[index].state)
+    }
+
+    /// The components `names` selects, or `None` when it names none.
+    fn named(names: &[String]) -> eros::Result<Option<[bool; rules::COMPONENT_COUNT]>> {
+        if names.is_empty() {
+            return Ok(None);
+        }
+        let mut named = [false; rules::COMPONENT_COUNT];
+        for name in names {
+            named[Self::index(name)?] = true;
+        }
+        Ok(Some(named))
     }
 }
 
+/// The component table as the rules see it. A part naming no component maps
+/// past the table, which `rules::valid` rejects.
+fn links() -> [Link; rules::COMPONENT_COUNT] {
+    COMPONENTS.each_ref().map(|component| Link {
+        kind: match component.role {
+            Role::Part { app, .. } => Kind::Part {
+                app: COMPONENTS
+                    .iter()
+                    .position(|other| other.name == app)
+                    .unwrap_or(usize::MAX),
+            },
+            Role::App(_) => Kind::App,
+            Role::Workflow | Role::Dongle => Kind::Other,
+        },
+        manual: component.manual,
+    })
+}
+
 fn plan() -> eros::Result<Plan> {
+    let links = links();
+    if !rules::valid(&links) {
+        eros::bail!("the component table names a part without an application to deliver it");
+    }
     let tags = remote_tags()?;
     let mut rows = Vec::new();
+    let mut behind = [false; rules::COMPONENT_COUNT];
     for component in &COMPONENTS {
         let closure = closure(component)?;
         let source = source_version(component)?;
@@ -478,9 +495,20 @@ fn plan() -> eros::Result<Plan> {
             Some(tag) => changed_since(&tag.commit, &closure.paths)?,
             None => Vec::new(),
         };
-        let released = tag.as_ref().map(|tag| tag.version.as_slice());
-        let state = state(&source, released, !changed.is_empty())
-            .with_context(|| component.name.to_owned())?;
+        let ahead = tag.as_ref().map(|tag| source.cmp(&tag.version));
+        let Ok(state) = rules::state(ahead, !changed.is_empty()) else {
+            eros::bail!(
+                "{} is at {} in the source, below its newest release",
+                component.name,
+                dotted(&source)
+            );
+        };
+        if let Role::Part { app, file } = component.role {
+            let carried = firmware::alpha_head(app)?
+                .and_then(|entry| entry["files"][file]["release"].as_u64())
+                .unwrap_or(0);
+            behind[rows.len()] = carried < source.first().copied().unwrap_or(0);
+        }
         let why = match (&tag, changed.as_slice()) {
             (None, _) => "never released".to_owned(),
             (Some(_), []) => String::new(),
@@ -495,40 +523,16 @@ fn plan() -> eros::Result<Plan> {
             why,
         });
     }
-    deliver_parts(&mut rows)?;
-    Ok(Plan { rows, tags })
-}
-
-/// A unit only receives a net core or bootloader through an application entry
-/// that carries it, so a part on its way out makes its application release too.
-fn deliver_parts(rows: &mut [Row]) -> eros::Result<()> {
-    let mut carriers = Vec::new();
-    for row in rows.iter() {
-        let Role::Part { app, file } = row.component.role else {
-            continue;
-        };
-        let carried = firmware::alpha_head(app)?
-            .and_then(|entry| entry["files"][file]["release"].as_u64())
-            .unwrap_or(0);
-        let counter = row.source.first().copied().unwrap_or(0);
-        let on_its_way = match row.state {
-            State::Ready => true,
-            State::NeedsBump => !row.component.manual,
-            State::Current => false,
-        };
-        if on_its_way || carried < counter {
-            carriers.push((app, row.component.name));
+    let mut states: [State; rules::COMPONENT_COUNT] =
+        std::array::from_fn(|index| rows[index].state);
+    let forced = rules::deliver(&links, &mut states, &behind);
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.state = states[index];
+        if let Some(part) = forced[index] {
+            row.why = format!("delivers {}", COMPONENTS[part].name);
         }
     }
-    for (app, part) in carriers {
-        for row in rows.iter_mut() {
-            if row.component.name == app && row.state == State::Current {
-                row.state = State::NeedsBump;
-                row.why = format!("delivers {part}");
-            }
-        }
-    }
-    Ok(())
+    Ok(Plan { rows, tags, links })
 }
 
 fn wire_constant(source: &str, name: &str) -> Option<[u64; 3]> {
@@ -541,19 +545,6 @@ fn wire_constant(source: &str, name: &str) -> Option<[u64; 3]> {
         .map(|part| part.parse().ok())
         .collect::<Option<_>>()?;
     parts.try_into().ok()
-}
-
-/// The oldest Desktop from which every later one speaks at least `want`.
-/// `desktops` is oldest first; `None` marks a release without the constant.
-fn oldest_covering(want: [u64; 3], desktops: &[(Vec<u64>, Option<[u64; 3]>)]) -> Option<&Vec<u64>> {
-    let mut floor = None;
-    for (version, speaks) in desktops.iter().rev() {
-        if !speaks.is_some_and(|speaks| speaks >= want) {
-            break;
-        }
-        floor = Some(version);
-    }
-    floor
 }
 
 /// The `min_desktop` of the row's next manifest entry: the oldest Desktop release
@@ -579,8 +570,9 @@ fn min_desktop(row: &Row, plan: &Plan) -> eros::Result<Option<String>> {
         desktops.push((version, speaks));
     }
     desktops.sort();
-    let mut floor = if let Some(version) = oldest_covering(want, &desktops) {
-        version.clone()
+    let speaks: Vec<Option<[u64; 3]>> = desktops.iter().map(|(_, speaks)| *speaks).collect();
+    let mut floor = if let Some(oldest) = rules::oldest_covering(want, &speaks) {
+        desktops[oldest].0.clone()
     } else {
         let desktop = plan.row(DESKTOP)?;
         if desktop.state != State::Ready {
@@ -629,38 +621,14 @@ fn print(plan: &Plan) -> eros::Result<()> {
 
 fn bump(names: &[String]) -> eros::Result<()> {
     let plan = plan()?;
-    let mut targets: Vec<&Row> = Vec::new();
-    if names.is_empty() {
-        targets.extend(
-            plan.rows
-                .iter()
-                .filter(|row| row.state == State::NeedsBump && !row.component.manual),
-        );
-    }
-    for name in names {
-        let row = plan.row(name)?;
-        if row.state == State::Ready {
-            println!("{name} is already ahead of its tag");
-        } else {
-            targets.push(row);
-        }
-    }
-    for index in 0..targets.len() {
-        let Role::Part { app, .. } = targets[index].component.role else {
-            continue;
-        };
-        let app = plan.row(app)?;
-        let listed = targets
-            .iter()
-            .any(|row| row.component.name == app.component.name);
-        if app.state != State::Ready && !listed {
-            println!(
-                "{} added: it delivers {}",
-                app.component.name, targets[index].component.name
-            );
-            targets.push(app);
-        }
-    }
+    let named = Plan::named(names)?;
+    let raise_these = rules::bump_set(&plan.links, &plan.states(), named.as_ref());
+    let targets: Vec<&Row> = plan
+        .rows
+        .iter()
+        .zip(raise_these)
+        .filter_map(|(row, raise)| raise.then_some(row))
+        .collect();
     if targets.is_empty() {
         println!("Nothing to bump");
         return Ok(());
@@ -680,9 +648,26 @@ fn bump(names: &[String]) -> eros::Result<()> {
 
 fn raise(row: &Row) -> eros::Result<Vec<u64>> {
     let mut next = row.source.clone();
-    if let Some(last) = next.last_mut() {
-        *last += 1;
-    }
+    let maximum = match row.component.role {
+        Role::Part {
+            file: "net-core", ..
+        } => u64::from(u16::MAX),
+        Role::Part {
+            file: "stage2-bootloader",
+            ..
+        } => 0x0FFF,
+        _ => u64::MAX,
+    };
+    let last = next
+        .last_mut()
+        .with_context(|| format!("{} has no version components", row.component.name))?;
+    *last = rules::successor(*last, maximum).with_context(|| {
+        format!(
+            "{} release counter exhausted at {}",
+            row.component.name,
+            dotted(&row.source)
+        )
+    })?;
     let (old, new) = (dotted(&row.source), dotted(&next));
     let dir = cmd::root().join(row.component.dir);
     if matches!(row.component.role, Role::Part { .. }) {
@@ -745,19 +730,27 @@ fn publish(names: &[String], dry_run: bool) -> eros::Result<()> {
         eros::bail!("{head} is not on origin/master. Push it first.");
     }
     let plan = plan()?;
-    let mut targets: Vec<&Row> = Vec::new();
-    if names.is_empty() {
-        targets.extend(plan.rows.iter().filter(|row| row.state == State::Ready));
-    }
-    for name in names {
-        let row = plan.row(name)?;
-        if row.state != State::Ready {
+    let named = Plan::named(names)?;
+    let order = match rules::publish_order(&plan.links, &plan.states(), named.as_ref()) {
+        Ok(order) => order,
+        Err(Refusal::NotReady(index)) => {
+            let name = COMPONENTS[index].name;
             eros::bail!(
                 "{name} is not ahead of its tag: run `cargo xtask release bump {name}` first"
             );
         }
-        targets.push(row);
-    }
+        Err(Refusal::NoCarrier { part, app }) => {
+            let (part, app) = (COMPONENTS[part].name, COMPONENTS[app].name);
+            eros::bail!(
+                "{part} has no {app} release to deliver it: run `cargo xtask release bump {app}` first"
+            );
+        }
+    };
+    let targets: Vec<&Row> = order
+        .as_slice()
+        .iter()
+        .map(|&index| &plan.rows[index])
+        .collect();
     for row in &plan.rows {
         if row.state == State::NeedsBump && !row.component.manual {
             eprintln!(
@@ -766,12 +759,6 @@ fn publish(names: &[String], dry_run: bool) -> eros::Result<()> {
             );
         }
     }
-    // An application entry hashes the published net core and bootloader.
-    targets.sort_by_key(|row| match row.component.role {
-        Role::Part { .. } => 0,
-        Role::App(_) => 1,
-        Role::Workflow | Role::Dongle => 2,
-    });
     // Every part is tagged before any is waited on, so their workflows overlap.
     for row in &targets {
         if matches!(row.component.role, Role::Part { .. }) && !dry_run {
@@ -933,27 +920,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_component_needs_a_bump_only_when_it_changed_under_its_released_version() {
-        type Case = (&'static [u64], Option<&'static [u64]>, bool, Option<State>);
-        let cases: [Case; 7] = [
-            (&[0, 1, 2], Some(&[0, 1, 2]), false, Some(State::Current)),
-            (&[0, 1, 2], Some(&[0, 1, 2]), true, Some(State::NeedsBump)),
-            (&[0, 1, 3], Some(&[0, 1, 2]), true, Some(State::Ready)),
-            (&[0, 1, 10], Some(&[0, 1, 9]), false, Some(State::Ready)),
-            (&[3], Some(&[2]), true, Some(State::Ready)),
-            (&[0, 1, 0], None, false, Some(State::Ready)),
-            (&[0, 1, 1], Some(&[0, 1, 2]), true, None),
-        ];
-        for (source, released, changed, want) in cases {
-            assert_eq!(
-                state(source, released, changed).ok(),
-                want,
-                "{source:?} {released:?} {changed}"
-            );
-        }
-    }
-
-    #[test]
     fn the_newest_tag_is_by_version_and_ignores_other_components() {
         let tags: Vec<(String, String)> = [
             "atslite1-v0.1.9",
@@ -970,23 +936,6 @@ mod tests {
         assert_eq!(newest.commit, "commit-of-atslite1-v0.1.22");
         assert_eq!(newest_tag(&tags, "atslite1-netcore").unwrap().version, [2]);
         assert!(newest_tag(&tags, "dongle").is_none());
-    }
-
-    #[test]
-    fn the_desktop_floor_is_the_oldest_release_with_no_gap_after_it() {
-        let desktops = [
-            (vec![0, 6, 7], None),
-            (vec![0, 7, 0], Some([0, 1, 6])),
-            (vec![0, 7, 1], Some([0, 1, 5])),
-            (vec![0, 7, 2], Some([0, 1, 6])),
-            (vec![0, 7, 4], Some([0, 2, 0])),
-        ];
-        let floor = |want| oldest_covering(want, &desktops).cloned();
-        assert_eq!(floor([0, 1, 6]), Some(vec![0, 7, 2]));
-        assert_eq!(floor([0, 1, 5]), Some(vec![0, 7, 0]));
-        assert_eq!(floor([0, 2, 0]), Some(vec![0, 7, 4]));
-        assert_eq!(floor([0, 2, 1]), None);
-        assert_eq!(oldest_covering([0, 0, 0], &[]), None);
     }
 
     #[test]
@@ -1059,17 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn every_part_names_an_application_in_the_table() {
-        for component in &COMPONENTS {
-            let Role::Part { app, .. } = component.role else {
-                continue;
-            };
-            let carrier = COMPONENTS.iter().find(|other| other.name == app);
-            assert!(
-                carrier.is_some_and(|carrier| matches!(carrier.role, Role::App(_))),
-                "{} names {app}",
-                component.name
-            );
-        }
+    fn the_component_table_is_one_the_proofs_cover() {
+        assert!(rules::valid(&links()));
     }
 }

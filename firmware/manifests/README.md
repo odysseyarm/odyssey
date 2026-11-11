@@ -45,6 +45,48 @@ cargo xtask release publish   # tag and publish whatever is ahead of its tag
   `releases.alpha.json`: commit and push it, or no unit is offered the release.
   The marker board's workflow commits its own entry.
 
+The bump and publish decisions live in `crates/xtask/src/release_rules.rs`.
+Host CI runs Kani over the production functions:
+
+```
+nix build .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs
+```
+
+Release proofs cover every valid component table and combination of states at
+the production table size (11 components):
+
+- changed components are never current; source-version regressions are refused;
+- outgoing parts force their carrier application to become releasable;
+- one automatic bump reaches a fixed point; default publication accepts its
+  ready components, ordered parts before applications, without duplicates;
+- named publication requires a ready carrier, but does not publish it unless
+  selected; default publication selects every ready carrier;
+- numeric increments are monotonic and reject representation exhaustion
+  (net-core counters: 65535; bootloader counters: 4095; other components: u64);
+- the Desktop floor is the oldest compatible suffix, checked for histories of
+  zero through five releases with arbitrary u64 version triples.
+
+Wire proofs call production codecs against fixed byte layouts, not just
+encode/decode roundtrips. Coverage includes legacy object records, object and
+marker reports, packet headers, current marker GATT writes, USB application and
+bootloader version fields, and device-version CBOR encoding plus fixed-width
+unsigned-16-bit CBOR decoding. Legacy proofs use `std`;
+marker and USB proofs also run without default features. Marker GATT input
+lengths are bounded to 0..=3; other payloads have their fixed protocol sizes.
+All bytes and version values within those bounds are symbolic.
+
+Fixed payload proofs use fixed buffers instead of modeling heap allocation.
+An arbitrary checked position covers every byte or suffix position without
+repeating the same property in an unrolled loop. The Desktop-floor proof uses
+Kissat; solver selection is per harness, based on measured verification time.
+
+These checks do not infer whether an arbitrary source change needs a major
+version bump. Uncovered packet payloads, transport behavior, semantic changes,
+GitHub responses, dependency discovery, compatibility-floor selection beyond
+the stated proof bound, and real hardware remain outside the proofs. Updating
+both a codec and its frozen specification still requires review. A successful
+proof is not a guarantee that an entire release is safe.
+
 ## Components and tags
 
 Each image is released under its own tag. A manifest entry for an application
