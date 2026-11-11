@@ -54,7 +54,7 @@ macro_rules! release {
     };
 }
 
-const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::BootloaderRelease::bcd_device(release!());
 
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;

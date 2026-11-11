@@ -306,6 +306,7 @@ dependencies = [
  "embassy-sync",
  "embassy-usb",
  "odyssey-protocol",
+ "odyssey-version",
  "postcard",
  "static_cell",
 ]
@@ -901,8 +902,6 @@ dependencies = [
 name = "odyssey-protocol"
 version = "0.2.0"
 dependencies = [
- "arbitrary-int",
- "bitbybit",
  "defmt",
  "enumn",
  "heapless 0.9.3",
@@ -920,6 +919,14 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+]
+
+[[package]]
+name = "odyssey-version"
+version = "0.0.0"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
 ]
 
 [[package]]

@@ -17,6 +17,9 @@ path = "../../crates/odyssey-protocol"
 default-features = false
 features = ["defmt", "device"]
 
+[dependencies.odyssey-version]
+path = "../../crates/odyssey-version"
+
 [dependencies.embassy-nrf]
 version = "0.9.0"
 optional = true

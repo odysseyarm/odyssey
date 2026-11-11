@@ -1,7 +1,7 @@
 //! USB DFU-only peripherals and bootloader recovery entries without hub protocol handlers.
 
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
-use odyssey_protocol::{UsbDeviceRelease, UsbVersionReport};
+use odyssey_version::{UsbDeviceRelease, UsbVersionReport};
 use tracing::{info, warn};
 
 use super::{PresentUsbDevices, UsbDeviceManager};

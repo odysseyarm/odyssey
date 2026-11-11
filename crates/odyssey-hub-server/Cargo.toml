@@ -36,6 +36,7 @@ odyssey-playback = { path = "../odyssey-playback", optional = true }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", features = ["std"], optional = true }
 nusb = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
+odyssey-version = { path = "../odyssey-version" }
 nalgebra = "0.35"
 cam-geom = { workspace = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }

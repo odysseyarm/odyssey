@@ -12,7 +12,7 @@ use dfu_core::DfuIo as _;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
 use nusb::MaybeFuture as _;
-use odyssey_protocol::BootloaderRelease;
+use odyssey_version::BootloaderRelease;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;

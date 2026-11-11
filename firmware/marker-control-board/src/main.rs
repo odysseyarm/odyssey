@@ -37,7 +37,7 @@ use static_cell::StaticCell;
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
 include!(concat!(env!("OUT_DIR"), "/owner_bonds.rs"));
 const FIRMWARE_BCD_DEVICE: u16 =
-    odyssey_protocol::UsbDeviceRelease::from_version(FIRMWARE_VERSION).raw_value();
+    odyssey_version::UsbDeviceRelease::from_version(FIRMWARE_VERSION).raw_value();
 
 struct SafeDfuMarker;
 struct DeferredDfuReset;
