@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use eros::Context as _;
-use pure_release::{self as rules, Kind, Link, Refusal, State};
+use pure_release::{COMPONENT_COUNT, Kind, Link, Refusal, State};
 use serde_json::Value;
 
 use crate::firmware::{self, Task};
@@ -153,7 +153,7 @@ const fn part(
 const LITE1_MEMORY: &[&str] = &["firmware/memory/memory-lite1.kdl"];
 const LEGACY_MEMORY: &[&str] = &["firmware/memory/memory-atslite.kdl"];
 
-const COMPONENTS: [Component; rules::COMPONENT_COUNT] = [
+const COMPONENTS: [Component; COMPONENT_COUNT] = [
     component(DESKTOP, "crates/odyssey-desktop", Role::Workflow),
     component(
         "odyssey-hub-client-ffi",
@@ -425,7 +425,7 @@ struct Row {
 struct Plan {
     rows: Vec<Row>,
     tags: Vec<(String, String)>,
-    links: [Link; rules::COMPONENT_COUNT],
+    links: [Link; COMPONENT_COUNT],
 }
 
 impl Plan {
@@ -444,16 +444,16 @@ impl Plan {
         Ok(&self.rows[Self::index(name)?])
     }
 
-    fn states(&self) -> [State; rules::COMPONENT_COUNT] {
+    fn states(&self) -> [State; COMPONENT_COUNT] {
         std::array::from_fn(|index| self.rows[index].state)
     }
 
     /// The components `names` selects, or `None` when it names none.
-    fn named(names: &[String]) -> eros::Result<Option<[bool; rules::COMPONENT_COUNT]>> {
+    fn named(names: &[String]) -> eros::Result<Option<[bool; COMPONENT_COUNT]>> {
         if names.is_empty() {
             return Ok(None);
         }
-        let mut named = [false; rules::COMPONENT_COUNT];
+        let mut named = [false; COMPONENT_COUNT];
         for name in names {
             named[Self::index(name)?] = true;
         }
@@ -462,8 +462,8 @@ impl Plan {
 }
 
 /// The component table as the rules see it. A part naming no component maps
-/// past the table, which `rules::valid` rejects.
-fn links() -> [Link; rules::COMPONENT_COUNT] {
+/// past the table, which `pure_release::valid` rejects.
+fn links() -> [Link; COMPONENT_COUNT] {
     COMPONENTS.each_ref().map(|component| Link {
         kind: match component.role {
             Role::Part { app, .. } => Kind::Part {
@@ -481,12 +481,12 @@ fn links() -> [Link; rules::COMPONENT_COUNT] {
 
 fn plan() -> eros::Result<Plan> {
     let links = links();
-    if !rules::valid(&links) {
+    if !pure_release::valid(&links) {
         eros::bail!("the component table names a part without an application to deliver it");
     }
     let tags = remote_tags()?;
     let mut rows = Vec::new();
-    let mut behind = [false; rules::COMPONENT_COUNT];
+    let mut behind = [false; COMPONENT_COUNT];
     for component in &COMPONENTS {
         let closure = closure(component)?;
         let source = source_version(component)?;
@@ -496,7 +496,7 @@ fn plan() -> eros::Result<Plan> {
             None => Vec::new(),
         };
         let ahead = tag.as_ref().map(|tag| source.cmp(&tag.version));
-        let Ok(state) = rules::state(ahead, !changed.is_empty()) else {
+        let Ok(state) = pure_release::state(ahead, !changed.is_empty()) else {
             eros::bail!(
                 "{} is at {} in the source, below its newest release",
                 component.name,
@@ -523,9 +523,8 @@ fn plan() -> eros::Result<Plan> {
             why,
         });
     }
-    let mut states: [State; rules::COMPONENT_COUNT] =
-        std::array::from_fn(|index| rows[index].state);
-    let forced = rules::deliver(&links, &mut states, &behind);
+    let mut states: [State; COMPONENT_COUNT] = std::array::from_fn(|index| rows[index].state);
+    let forced = pure_release::deliver(&links, &mut states, &behind);
     for (index, row) in rows.iter_mut().enumerate() {
         row.state = states[index];
         if let Some(part) = forced[index] {
@@ -571,7 +570,7 @@ fn min_desktop(row: &Row, plan: &Plan) -> eros::Result<Option<String>> {
     }
     desktops.sort();
     let speaks: Vec<Option<[u64; 3]>> = desktops.iter().map(|(_, speaks)| *speaks).collect();
-    let mut floor = if let Some(oldest) = rules::oldest_covering(want, &speaks) {
+    let mut floor = if let Some(oldest) = pure_release::oldest_covering(want, &speaks) {
         desktops[oldest].0.clone()
     } else {
         let desktop = plan.row(DESKTOP)?;
@@ -622,7 +621,7 @@ fn print(plan: &Plan) -> eros::Result<()> {
 fn bump(names: &[String]) -> eros::Result<()> {
     let plan = plan()?;
     let named = Plan::named(names)?;
-    let raise_these = rules::bump_set(&plan.links, &plan.states(), named.as_ref());
+    let raise_these = pure_release::bump_set(&plan.links, &plan.states(), named.as_ref());
     let targets: Vec<&Row> = plan
         .rows
         .iter()
@@ -661,7 +660,7 @@ fn raise(row: &Row) -> eros::Result<Vec<u64>> {
     let last = next
         .last_mut()
         .with_context(|| format!("{} has no version components", row.component.name))?;
-    *last = rules::successor(*last, maximum).with_context(|| {
+    *last = pure_release::successor(*last, maximum).with_context(|| {
         format!(
             "{} release counter exhausted at {}",
             row.component.name,
@@ -731,7 +730,7 @@ fn publish(names: &[String], dry_run: bool) -> eros::Result<()> {
     }
     let plan = plan()?;
     let named = Plan::named(names)?;
-    let order = match rules::publish_order(&plan.links, &plan.states(), named.as_ref()) {
+    let order = match pure_release::publish_order(&plan.links, &plan.states(), named.as_ref()) {
         Ok(order) => order,
         Err(Refusal::NotReady(index)) => {
             let name = COMPONENTS[index].name;
@@ -1009,6 +1008,6 @@ mod tests {
 
     #[test]
     fn the_component_table_is_one_the_proofs_cover() {
-        assert!(rules::valid(&links()));
+        assert!(pure_release::valid(&links()));
     }
 }
