@@ -9,38 +9,63 @@ use crate::StageError;
 const EDGE: f64 = 0.02;
 
 /// A path over the display in display fractions, `[0, 1]` on both axes.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Pattern {
+    /// Since: Odyssey Desktop 0.7.5.
     Hold {
+        /// Since: Odyssey Desktop 0.7.5.
         at: [f64; 2],
     },
+    /// Since: Odyssey Desktop 0.7.5.
     Circle {
+        /// Since: Odyssey Desktop 0.7.5.
         center: [f64; 2],
+        /// Since: Odyssey Desktop 0.7.5.
         radius: [f64; 2],
+        /// Since: Odyssey Desktop 0.7.5.
         period_s: f64,
     },
-    /// `frequency` counts cycles per period on each axis; `[1, 2]` draws a figure eight.
+    /// `frequency` counts cycles per period on each axis. `[1, 2]` draws a figure eight.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     Lissajous {
+        /// Since: Odyssey Desktop 0.7.5.
         center: [f64; 2],
+        /// Since: Odyssey Desktop 0.7.5.
         amplitude: [f64; 2],
+        /// Since: Odyssey Desktop 0.7.5.
         frequency: [f64; 2],
+        /// Since: Odyssey Desktop 0.7.5.
         phase_deg: f64,
+        /// Since: Odyssey Desktop 0.7.5.
         period_s: f64,
     },
     /// Back-and-forth sweep over `rows` lines.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     Raster {
+        /// Since: Odyssey Desktop 0.7.5.
         rows: u32,
+        /// Since: Odyssey Desktop 0.7.5.
         margin: f64,
+        /// Since: Odyssey Desktop 0.7.5.
         period_s: f64,
     },
     /// Visit points in order along straight lines, then return to the first.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     Tour {
+        /// Since: Odyssey Desktop 0.7.5.
         points: Vec<[f64; 2]>,
+        /// Since: Odyssey Desktop 0.7.5.
         period_s: f64,
     },
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 pub const PATTERN_NAMES: [&str; 6] = [
     "hold",
     "circle",
@@ -51,6 +76,7 @@ pub const PATTERN_NAMES: [&str; 6] = [
 ];
 
 impl Pattern {
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn named(name: &str) -> Option<Self> {
         Some(match name {
             "hold" => Self::Hold { at: [0.5, 0.5] },
@@ -93,6 +119,11 @@ impl Pattern {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if any aim-pattern parameter is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         let finite = |values: &[f64]| values.iter().all(|value| value.is_finite());
         let ok = match self {
@@ -141,6 +172,8 @@ impl Pattern {
     }
 
     /// Aim at `t_s` seconds, kept inside the display.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn uv(&self, t_s: f64) -> [f64; 2] {
         let raw = match self {
             Self::Hold { at } => *at,
@@ -229,18 +262,28 @@ fn along(points: &[[f64; 2]], s: f64, closed: bool) -> [f64; 2] {
     first
 }
 
-/// How the shooter's body moves the tracker. All angles are degrees; the phases
+/// How the shooter's body moves the tracker. All angles are degrees. The phases
 /// derive from `seed`, so a run repeats exactly.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Handling {
-    /// Physiological tremor amplitude; real hands shake around 8–12 Hz.
+    /// Physiological tremor amplitude. Real hands shake around 8–12 Hz.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub tremor_deg: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub tremor_hz: f64,
     /// Slow wander of the aim.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub drift_deg: f64,
     /// Upward kick on each trigger pull, decaying within a fraction of a second.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub recoil_deg: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub seed: u64,
 }
 
@@ -259,6 +302,11 @@ impl Default for Handling {
 const RECOIL_DECAY_S: f64 = 0.12;
 
 impl Handling {
+    /// # Errors
+    ///
+    /// Returns an error if any handling parameter is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         let ok = [
             self.tremor_deg,
@@ -279,7 +327,9 @@ impl Handling {
         }
     }
 
-    /// Yaw and pitch offsets in radians at `t_s`; positive pitch aims up.
+    /// Yaw and pitch offsets in radians at `t_s`. Positive pitch aims up.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn angles(&self, t_s: f64, triggers: &[f64]) -> (f64, f64) {
         let phase = |index: u64| {
             let mut x = self
@@ -311,18 +361,40 @@ impl Handling {
 }
 
 /// Where the tracker is, apart from where it points.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Movement {
+    /// Since: Odyssey Desktop 0.7.5.
     #[default]
     Still,
     /// Glides between the device's position and `to`, and back.
-    Walk { to: [f64; 3], period_s: f64 },
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    Walk {
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        to: [f64; 3],
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        period_s: f64,
+    },
     /// Circles the device's position in the floor plane.
-    Orbit { radius_m: f64, period_s: f64 },
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    Orbit {
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        radius_m: f64,
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        period_s: f64,
+    },
 }
 
 impl Movement {
+    /// # Errors
+    ///
+    /// Returns an error if movement parameters are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         let ok = match self {
             Self::Still => true,
@@ -340,6 +412,7 @@ impl Movement {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn position(&self, home: [f64; 3], t_s: f64) -> [f64; 3] {
         match self {
             Self::Still => home,
@@ -359,20 +432,28 @@ impl Movement {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Button {
+    /// Since: Odyssey Desktop 0.7.5.
     Trigger,
+    /// Since: Odyssey Desktop 0.7.5.
     Pair,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Press {
+    /// Since: Odyssey Desktop 0.7.5.
     pub at_s: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub button: Button,
 }
 
 /// Trigger pull times in seconds, in ascending order.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub fn trigger_times(presses: &[Press]) -> Vec<f64> {
     let mut times: Vec<f64> = presses
         .iter()

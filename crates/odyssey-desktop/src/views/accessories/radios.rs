@@ -164,7 +164,7 @@ impl AccessoriesView {
                             return;
                         };
                         if this.edit_pending {
-                            // The select kept the user's pick; force a resync to the saved radio.
+                            // The select kept the user's pick, so force a resync to the saved radio.
                             this.forget_shown_assignments();
                             cx.notify();
                             return;
@@ -195,13 +195,13 @@ impl AccessoriesView {
         id: [u8; 6],
         info: &AccessoryInfo,
         radios: &[AccessoryRadioInfo],
-        p: Palette,
+        p: &Palette,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let draft = self.radio_drafts.get(&id).unwrap_or(&info.radio);
         let available = find_radio(radios, draft)
             .is_some_and(|radio| radio.available && radio.accessory_supported);
-        let expires = pairing_expiry(radios, draft, &id);
+        let expires = pairing_expiry(radios, draft, id);
         let can_enroll = info.ty != AccessoryType::MarkerControlBoard
             || pairing_window(expires, unix_time_ms()) == PairingWindow::Open;
         let mut controls = div()
@@ -228,7 +228,7 @@ impl AccessoriesView {
             .child(
                 div().flex().child(
                     button(
-                        (ElementId::from(format_address(&id)), "enroll-radio"),
+                        (ElementId::from(format_address(id)), "enroll-radio"),
                         if self.enrolling == Some(id) {
                             "Enrolling…"
                         } else {
@@ -254,7 +254,7 @@ impl AccessoriesView {
     pub(super) fn radios_panel(
         &self,
         radios: &[AccessoryRadioInfo],
-        p: Palette,
+        p: &Palette,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let mut panel = card(p).child(card_title(p, "Radios"));
@@ -272,8 +272,7 @@ impl AccessoriesView {
             let capacity = if is_dongle {
                 radio
                     .capacity
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "unknown".into())
+                    .map_or_else(|| "unknown".into(), |capacity| capacity.to_string())
             } else {
                 "unknown".into()
             };
@@ -373,7 +372,10 @@ impl AccessoriesView {
                                 format!(
                                     "Reported total link budget: {}; accessory budget: {}.",
                                     capacity,
-                                    radio.accessory_capacity.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into()),
+                                    radio.accessory_capacity.map_or_else(
+                                        || "unknown".into(),
+                                        |capacity| capacity.to_string(),
+                                    ),
                                 )
                             } else {
                                 "Native global usage and capacity are unknown; limits depend on the controller and other applications.".into()

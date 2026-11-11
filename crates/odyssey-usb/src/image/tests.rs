@@ -32,25 +32,22 @@ fn publishes_exact_complete_pixels_and_rejects_replays() {
     let mut assembler = Reassembler::new(7, Port::Nf);
     let packets = chunks(7, u32::MAX);
     for packet in &packets[..packets.len() - 1] {
-        assert_eq!(assembler.chunk(packet.clone()).unwrap(), None);
+        assert_eq!(assembler.chunk(packet).unwrap(), None);
     }
-    let frame = assembler
-        .chunk(packets.last().unwrap().clone())
-        .unwrap()
-        .unwrap();
+    let frame = assembler.chunk(packets.last().unwrap()).unwrap().unwrap();
     assert_eq!(
         frame.pixels,
-        (0..98 * 98).map(|i| (i % 251) as u8).collect::<Vec<_>>()
+        (0u32..98 * 98).map(|i| (i % 251) as u8).collect::<Vec<_>>()
     );
     assert_eq!(frame.timestamp_us, 500);
     assert_eq!(frame.objects_timestamp_us, 400);
     for replay in packets {
-        assert_eq!(assembler.chunk(replay).unwrap(), None);
+        assert_eq!(assembler.chunk(&replay).unwrap(), None);
     }
     // Wrapping frame ids are forward progress, not stale frames.
     let mut next = None;
     for chunk in chunks(7, 0) {
-        next = assembler.chunk(chunk).unwrap().or(next);
+        next = assembler.chunk(&chunk).unwrap().or(next);
     }
     assert_eq!(next.unwrap().frame_id, 0);
 }
@@ -72,20 +69,20 @@ fn malformed_frame_is_discarded_until_a_new_frame_boundary() {
     for mutate in mutations {
         let mut assembler = Reassembler::new(7, Port::Nf);
         let packets = chunks(7, 10);
-        assembler.chunk(packets[0].clone()).unwrap();
+        assembler.chunk(&packets[0]).unwrap();
         let mut malformed = packets[1].clone();
         mutate(&mut malformed);
         assert!(matches!(
-            assembler.chunk(malformed),
+            assembler.chunk(&malformed),
             Err(Error::InvalidImage(_))
         ));
         for rest in packets.iter().skip(1) {
-            assert_eq!(assembler.chunk(rest.clone()).unwrap(), None);
+            assert_eq!(assembler.chunk(rest).unwrap(), None);
         }
         // The receiver recovers without publishing any pixels from frame 10.
         let mut recovered = None;
         for packet in chunks(7, 11) {
-            recovered = assembler.chunk(packet).unwrap().or(recovered);
+            recovered = assembler.chunk(&packet).unwrap().or(recovered);
         }
         assert_eq!(recovered.unwrap().frame_id, 11);
     }
@@ -95,21 +92,21 @@ fn malformed_frame_is_discarded_until_a_new_frame_boundary() {
 fn stale_generations_and_missing_chunks_cannot_complete_partial_frames() {
     let mut assembler = Reassembler::new(8, Port::Nf);
     let fresh = chunks(8, 4);
-    assembler.chunk(fresh[0].clone()).unwrap();
+    assembler.chunk(&fresh[0]).unwrap();
     for stale in chunks(7, 99) {
-        assert_eq!(assembler.chunk(stale).unwrap(), None);
+        assert_eq!(assembler.chunk(&stale).unwrap(), None);
     }
     // Missing offset 192 invalidates this frame even if its lost packet arrives later.
     assert!(matches!(
-        assembler.chunk(fresh[2].clone()),
+        assembler.chunk(&fresh[2]),
         Err(Error::InvalidImage(_))
     ));
     for packet in fresh.into_iter().skip(1) {
-        assert_eq!(assembler.chunk(packet).unwrap(), None);
+        assert_eq!(assembler.chunk(&packet).unwrap(), None);
     }
     let mut frame = None;
     for chunk in chunks(8, 5) {
-        frame = assembler.chunk(chunk).unwrap().or(frame);
+        frame = assembler.chunk(&chunk).unwrap().or(frame);
     }
     assert_eq!(frame.unwrap().frame_id, 5);
 }
@@ -140,7 +137,7 @@ fn metadata_must_be_complete_ordered_and_within_native_image() {
     let mut frame = None;
     for mut chunk in chunks(2, 1) {
         chunk.object_count = 1;
-        frame = assembler.chunk(chunk).unwrap().or(frame);
+        frame = assembler.chunk(&chunk).unwrap().or(frame);
     }
     assert_eq!(frame.unwrap().objects, vec![feature]);
     assert!(matches!(
@@ -165,7 +162,7 @@ fn metadata_must_be_complete_ordered_and_within_native_image() {
     let mut initial = chunks(2, 3).remove(0);
     initial.object_count = 1;
     assert!(matches!(
-        assembler.chunk(initial),
+        assembler.chunk(&initial),
         Err(Error::InvalidImage(_))
     ));
 }

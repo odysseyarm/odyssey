@@ -24,7 +24,7 @@ const GRAVITY_M_S2: f64 = 9.80665;
 /// Untimed poses further apart than this are a series of stops: the unit
 /// jumps to each.
 const MAX_POSE_INTERVAL_MS: u64 = 100;
-/// The simulator's clock step; no move takes less.
+/// The simulator's clock step. No move takes less.
 const STEP_MS: u64 = 10;
 const MAX_POSES_AHEAD: usize = 256;
 /// Pose changes faster than a hand moves are jumps, not motion.
@@ -96,7 +96,7 @@ fn turn(from: &ScenePose, to: &ScenePose) -> Vector3<f64> {
     (rotation(from).inverse() * rotation(to)).scaled_axis()
 }
 
-/// Whether a hand can carry the unit from one timed pose to the next; if not,
+/// Whether a hand can carry the unit from one timed pose to the next. If not,
 /// the unit holds still and jumps when the second is due.
 fn travels(from: &(u64, ScenePose), to: &(u64, ScenePose)) -> bool {
     let dt_s = to.0.saturating_sub(from.0).max(STEP_MS) as f64 / 1000.0;
@@ -182,11 +182,11 @@ impl Unit {
         let configs = [
             GeneralConfig::ImpactThreshold(100),
             GeneralConfig::SuppressMs(100),
-            GeneralConfig::AccelConfig(Default::default()),
-            GeneralConfig::GyroConfig(Default::default()),
+            GeneralConfig::AccelConfig(odyssey_protocol::AccelConfig::default()),
+            GeneralConfig::GyroConfig(odyssey_protocol::GyroConfig::default()),
             GeneralConfig::CameraModelNf(camera.clone().into()),
             GeneralConfig::CameraModelWf(camera.into()),
-            GeneralConfig::StereoIso(Default::default()),
+            GeneralConfig::StereoIso(nalgebra::Isometry3::default()),
         ];
         let mut unit = Self {
             uuid,
@@ -473,7 +473,7 @@ impl Unit {
                 Some(PacketData::Ack())
             }
             PacketData::WriteRegister(register) => {
-                // Lite has one PAG sensor; firmware ignores the requested port.
+                // Lite has one PAG sensor. Firmware ignores the requested port.
                 self.registers
                     .insert((register.bank, register.address), register.data);
                 Some(PacketData::Ack())
@@ -491,7 +491,7 @@ impl Unit {
                 }))
             }
             PacketData::SetDeviceName(name) => {
-                self.name = name.as_str().to_owned();
+                name.as_str().clone_into(&mut self.name);
                 Some(PacketData::SetDeviceNameResponse(SetDeviceNameResult::Ok()))
             }
             PacketData::ImageCommand(command) => self
@@ -642,7 +642,7 @@ impl Unit {
                 self.event(DeviceMsg::FlashSettingsAck(), errors);
             }
             DeviceMsg::SetDeviceName(name) => {
-                self.name = name.as_str().to_owned();
+                name.as_str().clone_into(&mut self.name);
                 self.event(
                     DeviceMsg::SetDeviceNameResponse(SetDeviceNameResult::Ok()),
                     errors,
@@ -708,7 +708,11 @@ impl Unit {
             self.turned += turn(&from, &pose);
             self.accel = resting_accel(&pose);
             self.pose = pose;
-        } else if self.gyro != [0.0; 3] {
+        } else if self
+            .gyro
+            .iter()
+            .any(|value| !value.is_finite() || value.abs() > 0.0)
+        {
             let [x, y, z] = self.gyro.map(f64::from);
             let turned = rotation(&self.pose)
                 * UnitQuaternion::from_scaled_axis(Vector3::new(-x, -z, -y) * dt_s);
@@ -723,7 +727,7 @@ impl Unit {
         if self.reboot_at.is_some_and(|deadline| deadline <= now_ms) {
             self.reboot_at = None;
             self.image_mode_generation = None;
-            // Reset closes the USB session; the manager observes a new generation and reopens it.
+            // Reset closes the USB session. The manager sees a new generation and reopens it.
             self.disconnect_usb();
             self.usb_generation = self.usb_generation.wrapping_add(1);
         }

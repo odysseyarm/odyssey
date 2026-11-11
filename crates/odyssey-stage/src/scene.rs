@@ -28,8 +28,14 @@ pub(crate) fn empty(screen: &SceneScreen) -> SceneDescription {
 
 impl Compiled {
     /// One tracker's run as scene frames at `fps`. Truth and marker visibility
-    /// come from the shared relabel pass; markers hidden by the stage lighting
+    /// come from the shared relabel pass. Markers hidden by the stage lighting
     /// are then removed from the visible list.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if device, frame rate, or generated scene is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn scene(&self, device_id: &str, fps: f64) -> Result<SceneDescription, StageError> {
         let stage = self.stage();
         let device = stage.device(device_id)?;
@@ -150,9 +156,15 @@ mod tests {
             ..Stage::default()
         };
         let compiled = stage.compile().unwrap();
-        assert!(compiled.scene("dongle-1", 30.0).is_err());
-        assert!(compiled.scene("tracker-1", 240.0).is_err());
-        assert!(compiled.scene("nope", 30.0).is_err());
+        compiled
+            .scene("dongle-1", 30.0)
+            .expect_err("a dongle has no scene");
+        compiled
+            .scene("tracker-1", 240.0)
+            .expect_err("a run beyond the limit is refused");
+        compiled
+            .scene("nope", 30.0)
+            .expect_err("an unknown device has no scene");
     }
 
     #[test]

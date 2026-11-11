@@ -197,7 +197,7 @@ impl DeviceControls {
 
     pub(super) fn shot_delay_row(
         &mut self,
-        p: Palette,
+        p: &Palette,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let busy =

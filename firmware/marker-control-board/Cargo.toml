@@ -5,6 +5,53 @@ edition = "2024"
 license = "MIT"
 description = "nRF52833 marker control board firmware"
 
+[lints.rust]
+missing_debug_implementations = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+ambiguous_negative_literals = "warn"
+dead_code_pub_in_binary = "warn"
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+redundant_imports = "warn"
+elided_lifetimes_in_paths = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+similar_names = "allow"
+many_single_char_names = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+implicit_hasher = "allow"
+must_use_candidate = "allow"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+fn_to_numeric_cast_any = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+unwrap_used = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+
+[lints.cargo]
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
+
 [package.metadata.firmware]
 min-desktop = "0.7.3"
 upstream = "https://github.com/odysseyarm/marker-control-board"
@@ -16,8 +63,6 @@ path = "src/main.rs"
 test = false
 bench = false
 
-[lints.rust]
-unsafe_code = "deny"
 
 [dependencies]
 odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
@@ -26,6 +71,7 @@ embedded-storage-async = "0.4.1"
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
 better-dfu = { path = "../better-dfu", features = ["application", "cortex-m"] }
+better-ota = { path = "../better-ota" }
 embassy-boot = "0.6.1"
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-nrf = { version = "0.9.0", features = ["nrf52833", "gpiote", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }

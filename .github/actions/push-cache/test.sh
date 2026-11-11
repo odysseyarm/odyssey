@@ -3,7 +3,7 @@ set -euo pipefail
 selector=$(realpath "$(dirname "$0")/paths.sh")
 local_selector=$(realpath "$(dirname "$0")/local.sh")
 queue_check=$(realpath "$(dirname "$0")/queue_test.py")
-# The fixture's builder has to be a store path; a runner's /usr/bin/bash is not one.
+# The fixture's builder has to be a store path. A runner's /usr/bin/bash is not one.
 repo=$(realpath "$(dirname "$0")/../../..")
 shell=$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#bash.out)/bin/bash
 work=$(mktemp -d)

@@ -186,6 +186,7 @@ fn fill_polygon(img: &mut [f32], w: usize, h: usize, polygon: &[Point2<f64>], va
 /// distortion, antialiased ink (8 x 8 supersampling), uneven lighting and
 /// noise.
 fn render(scene: &Scene) -> RgbImage {
+    const N: usize = 8;
     let k = &scene.intrinsics;
     let (w, h) = (k.width as usize, k.height as usize);
     let mut img = vec![SURROUND; w * h];
@@ -241,7 +242,6 @@ fn render(scene: &Scene) -> RgbImage {
                 vertices.push(undistort_pixel(k, p).expect("inside the image"));
             }
         }
-        const N: usize = 8;
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let mut inside = 0;
@@ -330,10 +330,10 @@ fn test_geometry(color: Intrinsics) -> CameraGeometry {
     }
 }
 
-/// Depth image of the board's plane seen from the depth camera, every
-/// depth scaled by `1 + bias` about the depth camera (a sensor scale
-/// error), with noise, dropouts and a few wrong values on the board, and
-/// a far wall around it.
+/// Depth image of the board's plane as the depth camera sees it. Every depth
+/// is scaled by `1 + bias` about the depth camera (a sensor scale error).
+/// Adds noise, dropouts and a few wrong values on the board, and a far wall
+/// around it.
 fn render_depth(scene: &Scene, geometry: &CameraGeometry, bias: f64, seed: u64) -> DepthImage {
     let mut rng = StdRng::seed_from_u64(seed);
     let intr = &geometry.depth;
@@ -537,7 +537,7 @@ fn a_partly_hidden_board_still_works_above_the_minimum() {
 #[test]
 fn hiding_the_dot_opposite_the_hole_leaves_the_orientation_open() {
     // With the corner opposite the missing dot covered, the board turned
-    // by 180 degrees explains the visible dots equally well; guessing
+    // by 180 degrees explains the visible dots equally well. Guessing
     // would move the grid center by up to four pitches.
     let mut scene = Scene::new(intrinsics_720(), 8.0, 5.0, 0.0, 1.2);
     hide(&mut scene, (0, 2), (3, 4));
@@ -710,7 +710,7 @@ fn scale_frames(scene: &Scene, geometry: &CameraGeometry, bias: f64) -> Vec<Fram
         .collect()
 }
 
-/// What the ratio must be for a depth error `bias`: the depth plane is the
+/// What the ratio must be for a depth error `bias`. The depth plane is the
 /// board's plane scaled about the *depth* camera, but the comparison runs
 /// along the *color* camera's ray. With `D` the depth camera's distance to
 /// the plane and `d` the color camera's, the plane meets that ray at
@@ -727,10 +727,10 @@ fn expected_ratio(scene: &Scene, geometry: &CameraGeometry, bias: f64) -> f64 {
 }
 
 /// Half a pixel of dot-center error moves the board distance by at most
-/// about 0.3% at these sizes (see `distance_tolerance`); the observed
-/// errors are a few hundredths of a percent. This bound is for the whole
-/// chain (board distance, depth plane, ray intersection), set an order of
-/// magnitude under the 1-3% effects the test injects.
+/// about 0.3% at these sizes (see `distance_tolerance`), and the observed
+/// errors are a few hundredths of a percent. This bound covers the whole
+/// chain (board distance, depth plane, ray intersection) and sits an order
+/// of magnitude under the 1-3% effects the test injects.
 const RATIO_TOLERANCE: f64 = 0.0006;
 
 #[test]

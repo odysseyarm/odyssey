@@ -1,12 +1,17 @@
+/// Since: Odyssey Desktop 0.7.4.
 pub const ENROLLMENT_HOLD_MS: u64 = 3000;
 
+/// Since: Odyssey Desktop 0.7.4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonAction {
+    /// Since: Odyssey Desktop 0.7.4.
     Click,
+    /// Since: Odyssey Desktop 0.7.4.
     Enroll,
 }
 
-#[derive(Default)]
+/// Since: Odyssey Desktop 0.7.4.
+#[derive(Debug, Default)]
 pub struct PowerButton {
     armed: bool,
     pressed_at: Option<u64>,
@@ -14,6 +19,7 @@ pub struct PowerButton {
 }
 
 impl PowerButton {
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn observe(&mut self, is_low: bool, now: u64) -> Option<ButtonAction> {
         if is_low {
             if !self.armed {

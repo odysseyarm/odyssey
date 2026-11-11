@@ -110,7 +110,7 @@ async fn connect_to_device(device_index: Option<usize>) -> Result<MuxDevice> {
         .context("Failed to connect to dongle")?)
 }
 
-fn format_device_addr(addr: &[u8; 6]) -> String {
+fn format_device_addr(addr: [u8; 6]) -> String {
     format!(
         "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
@@ -153,7 +153,7 @@ async fn cmd_list(device: &MuxDevice) -> Result<()> {
     } else {
         println!("Connected devices ({}):", devices.len());
         for dev in &devices {
-            println!("  {}", format_device_addr(dev));
+            println!("  {}", format_device_addr(*dev));
         }
     }
     Ok(())
@@ -191,7 +191,7 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> Result<()> {
         odyssey_usb::device::PairingEvent::Result(bond) => {
             println!(
                 "Paired with device {} ({})",
-                format_device_addr(&bond.uuid),
+                format_device_addr(bond.uuid),
                 bond.name.as_str()
             );
         }

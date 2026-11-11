@@ -1,11 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "devices": {
     "legacy-atslite1": {
       "firmwares": [
         {
           "version": "0.1.24",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.7.0",
           "files": {
@@ -25,14 +25,14 @@
             "stage2-bootloader": {
               "sha256": "27f7703e8cb054c9d28b3c89b072b29ee05188132d09978cd90efaf0cacebe6e",
               "size": 40992,
-              "release": 5
+              "version": "0.0.5"
             }
           },
           "released": "2026-11-10"
         },
         {
           "version": "0.1.23",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.7.0",
           "files": {
@@ -52,14 +52,14 @@
             "stage2-bootloader": {
               "sha256": "27f7703e8cb054c9d28b3c89b072b29ee05188132d09978cd90efaf0cacebe6e",
               "size": 40992,
-              "release": 5
+              "version": "0.0.5"
             }
           },
           "released": "2026-11-04"
         },
         {
           "version": "0.1.22",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -79,14 +79,14 @@
             "stage2-bootloader": {
               "sha256": "e3fa80972ca21ddb33d8c12e4173ca0ea68161360cc11d7f2c1bfb86d3e752fa",
               "size": 44336,
-              "release": 4
+              "version": "0.0.4"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.21",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -106,14 +106,14 @@
             "stage2-bootloader": {
               "sha256": "b6ee27f30682e303f01bab50ece8e125e0ae9c3aca1346678c9c619959e61621",
               "size": 44040,
-              "release": 3
+              "version": "0.0.3"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -133,14 +133,14 @@
             "stage2-bootloader": {
               "sha256": "3daed58c642a6fda716fd7adbff624bde6fca65b9532f8f54886581020d444db",
               "size": 43528,
-              "release": 2
+              "version": "0.0.2"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.19",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -160,7 +160,7 @@
             "stage2-bootloader": {
               "sha256": "dcc4058788c6e5318f0eb8a613774214541570522feb4dbd8ff8d7558db06230",
               "size": 43472,
-              "release": 1
+              "version": "0.0.1"
             }
           },
           "released": "2026-10-17"
@@ -186,7 +186,7 @@
             }
           },
           "released": "2026-10-17",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -211,7 +211,7 @@
             }
           },
           "released": "2026-10-13",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -236,7 +236,7 @@
             }
           },
           "released": "2026-05-22",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -261,7 +261,7 @@
             }
           },
           "released": "2026-03-24",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -286,7 +286,7 @@
             }
           },
           "released": "2026-03-23",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -311,7 +311,7 @@
             }
           },
           "released": "2026-03-20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -336,7 +336,7 @@
             }
           },
           "released": "2026-03-20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -361,7 +361,7 @@
             }
           },
           "released": "2026-03-20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -386,7 +386,7 @@
             }
           },
           "released": "2026-03-03",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -411,7 +411,7 @@
             }
           },
           "released": "2026-02-26",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -436,7 +436,7 @@
             }
           },
           "released": "2026-02-19",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -461,7 +461,7 @@
             }
           },
           "released": "2026-02-09",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -486,7 +486,7 @@
             }
           },
           "released": "2026-02-02",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         }
@@ -496,7 +496,7 @@
       "firmwares": [
         {
           "version": "0.1.23",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.7.0",
           "files": {
@@ -516,14 +516,14 @@
             "stage2-bootloader": {
               "sha256": "ac44fa967cd9f446521c2823e2465e8d36149094c75440fefd82490766d64684",
               "size": 44168,
-              "release": 5
+              "version": "0.0.5"
             }
           },
           "released": "2026-11-10"
         },
         {
           "version": "0.1.22",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.7.0",
           "files": {
@@ -543,14 +543,14 @@
             "stage2-bootloader": {
               "sha256": "ac44fa967cd9f446521c2823e2465e8d36149094c75440fefd82490766d64684",
               "size": 44168,
-              "release": 5
+              "version": "0.0.5"
             }
           },
           "released": "2026-11-05"
         },
         {
           "version": "0.1.19",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -570,14 +570,14 @@
             "stage2-bootloader": {
               "sha256": "375785f25a91393f0ff2ddcafd8b3a6d88f0e80351d7e0488ef4d1875710bdd8",
               "size": 44336,
-              "release": 4
+              "version": "0.0.4"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.18",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -597,14 +597,14 @@
             "stage2-bootloader": {
               "sha256": "f626e7f85d630b5deb792a3b73dbbf92ff0ada33e4d7355f3a2288a6ec754667",
               "size": 44032,
-              "release": 3
+              "version": "0.0.3"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.17",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -624,14 +624,14 @@
             "stage2-bootloader": {
               "sha256": "30b6e06f46deb9b46b4b9dd0c3710fc91ae86d9886548327e3e544b62887bef0",
               "size": 43512,
-              "release": 2
+              "version": "0.0.2"
             }
           },
           "released": "2026-10-17"
         },
         {
           "version": "0.1.16",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.4",
           "files": {
@@ -651,7 +651,7 @@
             "stage2-bootloader": {
               "sha256": "01234eb533710e7c5127d1efe56e9d2c09a00a01218aba3ec53aca7fea16d104",
               "size": 43488,
-              "release": 1
+              "version": "0.0.1"
             }
           },
           "released": "2026-10-17"
@@ -677,7 +677,7 @@
             }
           },
           "released": "2026-10-17",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -702,7 +702,7 @@
             }
           },
           "released": "2026-10-13",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -727,7 +727,7 @@
             }
           },
           "released": "2026-05-22",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -752,7 +752,7 @@
             }
           },
           "released": "2026-03-24",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -777,7 +777,7 @@
             }
           },
           "released": "2026-03-23",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -802,7 +802,7 @@
             }
           },
           "released": "2026-03-20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -827,7 +827,7 @@
             }
           },
           "released": "2026-03-20",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -852,7 +852,7 @@
             }
           },
           "released": "2026-03-18",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -877,7 +877,7 @@
             }
           },
           "released": "2026-03-10",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -902,7 +902,7 @@
             }
           },
           "released": "2026-03-05",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -927,7 +927,7 @@
             }
           },
           "released": "2026-03-03",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -952,7 +952,7 @@
             }
           },
           "released": "2026-02-26",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -977,7 +977,7 @@
             }
           },
           "released": "2026-02-19",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -1002,7 +1002,7 @@
             }
           },
           "released": "2026-02-11",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         },
@@ -1027,7 +1027,7 @@
             }
           },
           "released": "2026-02-11",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.6.0"
         }
@@ -1037,7 +1037,7 @@
       "firmwares": [
         {
           "version": "0.1.2",
-          "requires_bootloader": 1,
+          "requires_bootloader": "0.0.1",
           "requires_netcore": 0,
           "min_desktop": "0.7.3",
           "files": {
@@ -1050,7 +1050,7 @@
         },
         {
           "version": "0.1.1",
-          "requires_bootloader": 1,
+          "requires_bootloader": "0.0.1",
           "requires_netcore": 0,
           "min_desktop": "0.7.3",
           "files": {
@@ -1067,7 +1067,7 @@
       "firmwares": [
         {
           "version": "0.1.14",
-          "requires_bootloader": 0,
+          "requires_bootloader": "0.0.0",
           "requires_netcore": 0,
           "min_desktop": "0.7.5",
           "files": {

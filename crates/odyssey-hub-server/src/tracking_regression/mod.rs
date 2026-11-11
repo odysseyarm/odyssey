@@ -9,7 +9,9 @@ use nalgebra::{Point2, Vector3};
 use odyssey_common::ScreenCalibration;
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event, TrackingEvent};
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_sim::dataset::SceneDescription;
+/// Since: Odyssey Desktop 0.7.0.
 pub use odyssey_sim::dataset::SceneTruth as Truth;
 use odyssey_usb::device::GeneralSettings;
 use odyssey_usb::packets::vm::legacy::CombinedMarkersReport;
@@ -22,146 +24,230 @@ use super::context::{DeviceTaskContext, ScreenCalibrationList};
 use super::sensor_streams::DeviceStreamEvent;
 use super::tracking::DeviceTracker;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub mod marker_noise;
+/// Since: Odyssey Desktop 0.7.0.
 pub mod recording;
+/// Since: Odyssey Desktop 0.7.0.
 pub mod scenarios;
+/// Since: Odyssey Desktop 0.7.5.
 pub mod staged;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const SCHEMA_VERSION: u32 = 1;
+/// Since: Odyssey Desktop 0.7.0.
 pub const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SAMPLES: usize = 100_000;
 const MAX_SOURCES: usize = 32;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("tracking regression: {0}")]
     Invalid(String),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("tracking regression JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("tracking regression I/O: {0}")]
     Io(#[from] std::io::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("tracking regression CBOR: {0}")]
     CborDecode(#[from] minicbor_serde::error::DecodeError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("tracking regression CBOR: {0}")]
     CborEncode(#[from] minicbor_serde::error::EncodeError<core::convert::Infallible>),
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Provenance {
+    /// Since: Odyssey Desktop 0.7.0.
     pub description: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub generator: Option<String>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub device_uuid: [u8; 6],
     /// Identifies arrival-clock origin/unit and sensor-clock relationship, including unknown relationships.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub clock_basis: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub settings: GeneralSettings,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Screen {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     pub calibration: ScreenCalibration<f32>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Trace {
+    /// Since: Odyssey Desktop 0.7.0.
     pub schema_version: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub name: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub provenance: Provenance,
+    /// Since: Odyssey Desktop 0.7.0.
     pub scene: Option<SceneDescription>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub sources: Vec<Source>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screens: Vec<Screen>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub samples: Vec<Sample>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub thresholds: Thresholds,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sample {
     /// Arrival-clock microseconds since trace origin. Equal times preserve array order.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub elapsed_us: u64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub source_id: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub input: Input,
-    /// Independent truth in client coordinates; never inferred from tracker state.
+    /// Independent truth in client coordinates, never inferred from tracker state.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub truth: Option<Truth>,
     /// Expected valid raycast, not whether marker pixels exist. None means unspecified.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub expectation: Option<bool>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub score: bool,
     /// Metadata only: classical replay consumes raw reports, not these images.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_artifacts: Vec<String>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Input {
+    /// Since: Odyssey Desktop 0.7.0.
     Imu {
+        /// Since: Odyssey Desktop 0.7.0.
         timestamp: u32,
+        /// Since: Odyssey Desktop 0.7.0.
         accel: [f32; 3],
+        /// Since: Odyssey Desktop 0.7.0.
         gyro: [f32; 3],
     },
     // Stored traces, and the captures hashed against them, carry this tag.
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(rename = "poc")]
     Markers {
+        /// Since: Odyssey Desktop 0.7.5.
         points: [[u16; 2]; 16],
     },
+    /// Since: Odyssey Desktop 0.7.0.
     Combined {
+        /// Since: Odyssey Desktop 0.7.0.
         nf_points: [[u16; 2]; 16],
+        /// Since: Odyssey Desktop 0.7.0.
         wf_points: [[u16; 2]; 16],
     },
+    /// Since: Odyssey Desktop 0.7.0.
     Reset,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Thresholds {
+    /// Since: Odyssey Desktop 0.7.0.
     pub min_availability: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub min_truth_matches: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_aim_rmse: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_position_rmse_m: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_jump: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_reacquisition_us: Option<u64>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capture {
+    /// Since: Odyssey Desktop 0.7.0.
     pub schema_version: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub trace_name: String,
     /// SHA256 of the trace's canonical CBOR encoding ([`to_cbor`]), including
-    /// settings, truth and limits; equals the SHA256 of a `.cbor` trace file
+    /// settings, truth and limits. Equals the SHA256 of a `.cbor` trace file
     /// written by this crate.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub trace_sha256: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub backend: String,
     /// Exactly one entry per trace sample, including reset and missing outputs.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub outputs: Vec<Output>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
+    /// Since: Odyssey Desktop 0.7.0.
     pub sample_index: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub tracking: Option<Tracked>,
     /// Preserves non-finite output failures without attempting invalid JSON floats.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub non_finite: bool,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tracked {
+    /// Since: Odyssey Desktop 0.7.0.
     pub timestamp: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub aimpoint: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_m: [f64; 3],
     /// Row-major rotation in the public client coordinate convention.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub rotation: [[f64; 3]; 3],
+    /// Since: Odyssey Desktop 0.7.0.
     pub distance_m: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screen_id: u32,
 }
 
@@ -189,45 +275,75 @@ impl Tracked {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AccuracyStatus {
+    /// Since: Odyssey Desktop 0.7.0.
     Checked,
+    /// Since: Odyssey Desktop 0.7.0.
     NotAccuracyChecked,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Metrics {
+    /// Since: Odyssey Desktop 0.7.0.
     pub sample_count: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub scored_samples: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub available_samples: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub availability: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub truth_samples: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub truth_matches: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_matches: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub aim_rmse: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_rmse_m: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_jump: Option<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub non_finite_outputs: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub expectation_mismatches: usize,
+    /// Since: Odyssey Desktop 0.7.0.
     pub screen_mismatches: usize,
     /// Arrival-clock time from start of an expected-valid segment to its first valid output.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub max_reacquisition_us: Option<u64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub unreacquired_segments: usize,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
+    /// Since: Odyssey Desktop 0.7.0.
     pub schema_version: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub trace_name: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub backend: String,
+    /// Since: Odyssey Desktop 0.7.0.
     pub provenance: Provenance,
+    /// Since: Odyssey Desktop 0.7.0.
     pub passed: bool,
+    /// Since: Odyssey Desktop 0.7.0.
     pub accuracy_status: AccuracyStatus,
+    /// Since: Odyssey Desktop 0.7.0.
     pub metrics: Metrics,
+    /// Since: Odyssey Desktop 0.7.0.
     pub violations: Vec<String>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub capture: Capture,
 }
 
@@ -284,6 +400,12 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>, Error> {
 }
 
 /// Bounded JSON reader rejecting unknown and duplicate fields, including reused settings.
+///
+/// # Errors
+/// Returns an error for oversized input, invalid JSON, unknown or duplicate fields,
+/// or serialization/deserialization failures.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn read_json<T: serde::de::DeserializeOwned + Serialize>(
     reader: impl Read,
 ) -> Result<T, Error> {
@@ -297,6 +419,12 @@ pub fn read_json<T: serde::de::DeserializeOwned + Serialize>(
 }
 
 /// Bounded CBOR reader rejecting unknown and duplicate fields and trailing data.
+///
+/// # Errors
+/// Returns an error for oversized input, malformed or trailing CBOR, unknown or
+/// duplicate fields, or serialization/deserialization failures.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn read_cbor<T: serde::de::DeserializeOwned + Serialize>(
     reader: impl Read,
 ) -> Result<T, Error> {
@@ -316,11 +444,20 @@ pub fn read_cbor<T: serde::de::DeserializeOwned + Serialize>(
 }
 
 /// Canonical CBOR: string-keyed maps in field order, floats at their declared width.
+///
+/// # Errors
+/// Returns an error if value cannot be encoded.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn to_cbor(value: &impl Serialize) -> Result<Vec<u8>, Error> {
     Ok(minicbor_serde::to_vec(value)?)
 }
 
 impl Trace {
+    /// # Errors
+    /// Returns an error when trace violates schema or semantic validation rules.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn validate(&self) -> Result<(), Error> {
         require(
             self.schema_version == SCHEMA_VERSION,
@@ -525,12 +662,22 @@ impl Trace {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if canonical CBOR encoding fails.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn sha256(&self) -> Result<String, Error> {
         Ok(hex::encode(Sha256::digest(to_cbor(self)?)))
     }
 }
 
-/// Replay exact array order through production DeviceTracker, with no sleeps or wall-clock dependencies.
+/// Replay exact array order through production `DeviceTracker`, with no sleeps or wall-clock dependencies.
+///
+/// # Errors
+/// Returns an error for an invalid trace, duplicate or lost tracker outputs, or
+/// capture evaluation failure.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn replay(trace: &Trace) -> Result<Report, Error> {
     trace.validate()?;
     let screens: ScreenCalibrationList = trace
@@ -562,6 +709,7 @@ pub async fn replay(trace: &Trace) -> Result<Report, Error> {
             uuid: source.device_uuid,
             transport: Transport::Usb,
             capabilities: DeviceCapabilities::new(DeviceCapabilities::EVENTS),
+            firmware_identity: FirmwareVersion::default(),
             firmware_version: [0; 3],
             events_transport: EventsTransport::Wired,
             events_connected: true,
@@ -640,6 +788,12 @@ pub async fn replay(trace: &Trace) -> Result<Report, Error> {
 }
 
 /// Score real captures or replay outputs against the same independently supplied truth and limits.
+///
+/// # Errors
+/// Returns an error when trace or capture is invalid, identities/order do not match,
+/// or metric computation overflows.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn evaluate(trace: &Trace, capture: &Capture) -> Result<Report, Error> {
     trace.validate()?;
     require(

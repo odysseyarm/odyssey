@@ -1,4 +1,5 @@
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
+use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_server::firmware::FirmwareManifest;
 
@@ -10,7 +11,7 @@ use crate::components::ui::{ButtonKind, button};
 use crate::theme::Palette;
 
 pub(super) struct Offer<'a> {
-    pub current: [u16; 3],
+    pub current: [u32; 3],
     pub available: &'a str,
     pub device_type: &'a str,
     pub vid: u16,
@@ -24,8 +25,9 @@ pub(super) fn update_available(
     device: &Device,
     manifest: Option<&FirmwareManifest>,
     manager: &FirmwareUpdateManager,
-    offer: Offer<'_>,
-    p: Palette,
+    client: Option<Client>,
+    offer: &Offer<'_>,
+    p: &Palette,
 ) -> AnyElement {
     let available = offer.available;
     let text = if is_in_bootloader(device) {
@@ -61,7 +63,7 @@ pub(super) fn update_available(
             p,
         )
         .small()
-        .disabled(manager.is_updating(&device.uuid))
+        .disabled(manager.is_updating(device.uuid))
         .on_click(move |_, _, _| {
             start_firmware_update(
                 manager.clone(),
@@ -70,6 +72,7 @@ pub(super) fn update_available(
                 device_type.clone(),
                 vid,
                 pid,
+                client.clone(),
             );
         }),
     )

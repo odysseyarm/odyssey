@@ -6,7 +6,10 @@
 //! "unknown" (0).
 
 // The bt-hci macros test their own `defmt` feature name, which this crate does not declare.
-#![allow(unexpected_cfgs)]
+#![expect(
+    unexpected_cfgs,
+    reason = "bt-hci macros test undeclared defmt feature cfgs in this crate"
+)]
 
 use core::sync::atomic::{AtomicU16, Ordering};
 
@@ -31,13 +34,15 @@ static NETCORE_RELEASE: AtomicU16 = AtomicU16::new(0);
 
 /// Release counter of the net-core firmware, or 0 when the net core did not report one (older
 /// net-core firmware, or not queried yet).
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn netcore_release() -> u16 {
     NETCORE_RELEASE.load(Ordering::Relaxed)
 }
 
 /// Pause before the first query, so the net core has a moment to start answering.
 const INITIAL_DELAY_MS: u64 = 100;
-/// Delay before the second query; each later retry waits twice as long as the one before. The
+/// Delay before the second query. Each later retry waits twice as long as the one before. The
 /// retries together give the net core a few seconds to start answering before giving up.
 const RETRY_MIN_DELAY: core::time::Duration = core::time::Duration::from_millis(250);
 /// Queries made in total, the first included.
@@ -48,13 +53,15 @@ const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
 enum QueryError {
     /// The controller answered but does not implement the command; retrying cannot help.
     Unavailable(bt_hci::param::Error),
-    /// The query failed or timed out; the net core may still be starting.
+    /// The query failed or timed out. The net core may still be starting.
     Transient,
 }
 
 /// Query the net-core release once the host runner is being polled, and store it for
-/// [`netcore_release`]. Retries with backoff because the net core may still be starting; gives up
-/// quietly so BLE and USB never depend on the answer.
+/// [`netcore_release`]. Retries with backoff because the net core may still be starting. Gives up
+/// quietly, so BLE and USB never depend on the answer.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn query<C, P>(stack: &Stack<'_, C, P>)
 where
     C: Controller + ControllerCmdSync<ReadNetCoreRelease>,

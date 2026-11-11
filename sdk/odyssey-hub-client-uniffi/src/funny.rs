@@ -1,23 +1,38 @@
-#[allow(unused)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(Debug)]
 pub struct Client;
 
-#[derive(uniffi::Record, Clone, Copy, Default)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Copy, Default, Debug)]
 pub struct Matrix3f32 {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m11: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m12: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m13: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m21: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m22: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m23: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m31: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m32: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub m33: f32,
 }
 
-#[derive(uniffi::Record, Clone, Copy, Default)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Copy, Default, Debug)]
 pub struct Matrix3x1f32 {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub x: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub y: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub z: f32,
 }
 
@@ -61,10 +76,14 @@ impl From<nalgebra::Matrix3x1<f32>> for Matrix3x1f32 {
     }
 }
 
-#[derive(uniffi::Record, Clone, Copy, Default)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Copy, Default, Debug)]
 pub struct Vector3f32 {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub x: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub y: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub z: f32,
 }
 
@@ -84,9 +103,12 @@ impl From<Vector3f32> for nalgebra::Vector3<f32> {
     }
 }
 
-#[derive(uniffi::Record, Clone, Copy, Default)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Copy, Default, Debug)]
 pub struct Vector2f32 {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub x: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub y: f32,
 }
 

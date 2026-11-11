@@ -19,7 +19,7 @@ stdenv.mkDerivation rec {
     cp -a . "$out/libexec/kani"
     ln -s ${toolchain} "$out/libexec/kani/toolchain"
     # The driver picks cargo or standalone mode from argv[0] and finds cbmc on
-    # PATH; goto-cc preprocesses Kani's C stubs with gcc.
+    # PATH. goto-cc preprocesses Kani's C stubs with gcc.
     for name in cargo-kani kani; do
       makeWrapper "$out/libexec/kani/bin/kani-driver" "$out/bin/$name" \
         --argv0 "$name" --prefix PATH : "$out/libexec/kani/bin:${gcc}/bin"

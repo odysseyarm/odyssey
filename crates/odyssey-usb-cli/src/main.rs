@@ -202,16 +202,14 @@ mod tests {
 
     #[test]
     fn calibration_output_modes_are_mutually_exclusive() {
-        assert!(
-            Args::try_parse_from([
-                "odyssey-usb-cli",
-                "--accel",
-                "accel.json",
-                "--gyro",
-                "gyro.json"
-            ])
-            .is_err()
-        );
+        Args::try_parse_from([
+            "odyssey-usb-cli",
+            "--accel",
+            "accel.json",
+            "--gyro",
+            "gyro.json",
+        ])
+        .unwrap_err();
     }
 
     #[tokio::test]

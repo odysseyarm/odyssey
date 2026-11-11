@@ -152,7 +152,7 @@ impl Wizard {
                     .timer(Duration::from_millis(100))
                     .await;
             }
-            this.update(cx, Self::measure_screen).ok();
+            let _ = this.update(cx, Self::measure_screen);
         }));
     }
 

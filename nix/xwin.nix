@@ -36,7 +36,7 @@ let
         --cache-dir "$TMPDIR/xwin-cache" \
         --arch x86_64 \
         splat --output "$TMPDIR/splat"
-      # splat renames across the build dir; $out may sit on another mount.
+      # splat renames across the build dir, and $out may sit on another mount.
       cp -a "$TMPDIR/splat" "$out"
     '';
   };
@@ -52,7 +52,7 @@ let
 in rec {
   inherit sysroot channelManifest clangCl;
   target = "x86_64-pc-windows-msvc";
-  # llvm provides llvm-lib/llvm-dlltool (cc-rs archives with llvm-lib); lld
+  # llvm provides llvm-lib/llvm-dlltool (cc-rs archives with llvm-lib). lld
   # provides lld-link.
   tools = [ clangCl pkgs.llvmPackages.lld pkgs.llvmPackages.llvm pkgs.cargo-xwin ];
   # Shell snippet: build a writable cargo-xwin cache at `dir` around the

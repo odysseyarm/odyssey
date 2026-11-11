@@ -2,14 +2,17 @@ mod bootloader_devices;
 mod direct_usb;
 
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU8;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt as _;
+use nusb::MaybeFuture as _;
 use nusb::hotplug::HotplugWatch;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_common::events::Event;
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_protocol::ProductId;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::sleep;
@@ -21,6 +24,23 @@ use super::context::{
 };
 use super::hub_manager::{HubManager, HubManagerInit};
 use super::messages::Message;
+
+/// The application version in USB string descriptor 4, `None` when it is missing or
+/// is not an Odyssey release version.
+fn read_firmware_identity(info: &nusb::DeviceInfo) -> Option<FirmwareVersion> {
+    let device = info.open().wait().ok()?;
+    let language = device
+        .get_string_descriptor_supported_languages(Duration::from_secs(3))
+        .wait()
+        .ok()?
+        .next()?;
+    device
+        .get_string_descriptor(NonZeroU8::new(4)?, language, Duration::from_secs(3))
+        .wait()
+        .ok()?
+        .parse()
+        .ok()
+}
 
 /// Nordic Semiconductor's USB vendor id, which every Odyssey unit enumerates under.
 const ODYSSEY_USB_VENDOR_ID: u16 = 0x1915;
@@ -102,7 +122,7 @@ struct UsbDeviceManager {
     last_uuid_by_pid: HashMap<u16, DeviceAddress>,
     /// USB ids of DFU-only peripherals and recovery devices, with their device-list entries.
     dfu_devices: HashMap<String, Device>,
-    /// Devices in the last scan whose list was logged; the timer rescans every
+    /// Devices in the last scan whose list was logged. The timer rescans every
     /// `SCAN_INTERVAL`, so an unchanged list is not logged again.
     logged_device_ids: Vec<nusb::DeviceId>,
     #[cfg(feature = "sim")]
@@ -339,7 +359,7 @@ impl UsbDeviceManager {
                 trace!("Hub already being managed, skipping: {:?}", dev_info.id());
                 return;
             }
-            // The task finished; dropping it lets the dongle get a fresh manager.
+            // The task finished. Dropping it lets the dongle get a fresh manager.
             info!(
                 "Hub manager task finished for {:?}, removing from list to allow reconnect",
                 dev_info.id()
@@ -363,7 +383,7 @@ impl UsbDeviceManager {
         }
         tracing::info!("Subscribed to device list changes");
 
-        // Runs until the hub disconnects; `hubs` owns the task and notices it finishing.
+        // Runs until the hub disconnects. `hubs` owns the task and notices it finishing.
         let (shutdown, shutdown_rx) = oneshot::channel();
         let task = HubManager::spawn(HubManagerInit {
             hub,
@@ -494,6 +514,7 @@ impl UsbDeviceManager {
 #[cfg(all(test, feature = "sim"))]
 mod tests {
     use arc_swap::ArcSwap;
+    use arrayvec::ArrayVec;
     use odyssey_sim::{Command, DONGLE_UUID, Simulator, Target, UNIT_UUID, dongle_uuid, unit_uuid};
     use tokio::sync::RwLock;
 
@@ -524,10 +545,10 @@ mod tests {
         let (message_channel, mut messages) = mpsc::channel(64);
         let manager = tokio::spawn(device_tasks(
             message_channel,
-            Arc::new(ArcSwap::from_pointee(Default::default())),
-            Arc::new(Mutex::new(Default::default())),
-            Arc::new(RwLock::new(Default::default())),
-            Arc::new(RwLock::new(Default::default())),
+            Arc::new(ArcSwap::from_pointee(ArrayVec::default())),
+            Arc::new(Mutex::new(HashMap::default())),
+            Arc::new(RwLock::new(HashMap::default())),
+            Arc::new(RwLock::new(HashMap::default())),
             broadcast::channel(16).0,
             Simulation {
                 simulator: Some(simulator),

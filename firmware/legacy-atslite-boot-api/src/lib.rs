@@ -1,7 +1,12 @@
+#![expect(
+    unsafe_code,
+    reason = "boot state address comes from linker-defined flash symbols"
+)]
 #![no_std]
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
+/// Since: Odyssey Desktop 0.7.0.
 pub use better_boot::{BootState, BootStateManager};
 use embassy_nrf::nvmc::Nvmc;
 
@@ -16,14 +21,18 @@ fn bootloader_state_addr() -> u32 {
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: linker places this symbol at the reserved boot-state flash page.
     unsafe { &__bootloader_state_start as *const u32 as u32 }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct BootConfirmation;
 
 impl BootConfirmation {
     /// Marks the running image as booted in flash and caches the resulting
     /// slots for [`Self::request_dfu_with`]. Call once the app has come up.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn mark_booted(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 
@@ -57,6 +66,8 @@ impl BootConfirmation {
 
     /// Confirms the current boot: zeroes `boot_counter`, promotes `pending_slot`
     /// to `active_slot`, caches the slots and writes the state to flash.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn confirm_boot_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
         let mut state = manager.read();
@@ -107,6 +118,8 @@ impl BootConfirmation {
 
     /// Requests DFU by writing SWAP_MAGIC to the flash boot state, keeping the
     /// active and pending slots cached by the last confirmation.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn request_dfu_with(nvmc: &mut Nvmc) -> Result<(), ()> {
         let manager = BootStateManager::new(bootloader_state_addr());
 

@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "bootloader entry accesses Cortex-M hardware registers"
+)]
 #![no_std]
 #![no_main]
 
@@ -22,16 +26,8 @@ embassy_nrf::bind_interrupts!(struct Irqs {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C}"];
 
-/// This bootloader's release counter. Raise it whenever the image changes: the
-/// host replaces a bootloader only when the published counter is higher.
-macro_rules! release {
-    () => {
-        1
-    };
-}
-
-const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::BootloaderRelease::bcd_device(release!());
-
+const VERSION: [u32; 3] = odyssey_version::parse_cargo_version(env!("CARGO_PKG_VERSION"));
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(VERSION[0]);
 #[entry]
 fn main() -> ! {
     let p = embassy_nrf::init(Default::default());
@@ -55,7 +51,7 @@ fn main() -> ! {
     if state == embassy_boot::State::DfuDetach {
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
         // Own product id, so the host can tell bootloader from application
-        // without opening the device; bcdDevice then carries this bootloader's
+        // without opening the device. bcdDevice then carries this bootloader's
         // version. The application's id plus 0x10.
         let mut config = embassy_usb::Config::new(0x1915, 0x521F);
         config.manufacturer = Some("Odyssey Arm");
@@ -78,8 +74,9 @@ fn main() -> ! {
             ResetImmediate,
             NullForwarder,
             NullDualBankWriter,
-            false, // active_bank_is_a; irrelevant for a single-bank layout
+            false, // active_bank_is_a, irrelevant for a single-bank layout
         );
+        state.set_firmware_version(env!("CARGO_PKG_VERSION"));
         let mut builder = Builder::new(
             driver,
             config,
@@ -113,6 +110,7 @@ fn main() -> ! {
         embassy_futures::block_on(dev.run());
     }
 
+    // SAFETY: bootloader owns Cortex-M peripherals after app has returned; active_offset is aligned linked vector table.
     unsafe {
         let mut p = cortex_m::Peripherals::steal();
         cortex_m::interrupt::disable();
@@ -124,6 +122,8 @@ fn main() -> ! {
 }
 
 #[exception]
+/// # Safety
+/// Called by Cortex-M exception entry with privileged access to system registers.
 unsafe fn DefaultHandler(_: i16) -> ! {
     const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
     let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;

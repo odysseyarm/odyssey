@@ -27,20 +27,30 @@ use super::{
 };
 
 /// A release left out of the offered ones, and why.
+///
+/// Since: Odyssey Desktop 0.6.6.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dropped {
+    /// Since: Odyssey Desktop 0.6.6.
     pub device: String,
+    /// Since: Odyssey Desktop 0.6.6.
     pub version: String,
+    /// Since: Odyssey Desktop 0.6.6.
     pub problems: Vec<String>,
 }
 
 /// A manifest read from a pack, with only the releases the folder can complete.
+///
+/// Since: Odyssey Desktop 0.6.6.
 #[derive(Debug)]
 pub struct Loaded {
+    /// Since: Odyssey Desktop 0.6.6.
     pub manifest: FirmwareManifest,
+    /// Since: Odyssey Desktop 0.6.6.
     pub dropped: Vec<Dropped>,
 }
 
+/// Since: Odyssey Desktop 0.6.6.
 pub fn manifest_path(dir: &Path, channel: FirmwareChannel) -> PathBuf {
     dir.join(format!("releases.{}.json", channel.name()))
 }
@@ -50,23 +60,19 @@ fn relative_path(device: &str, source: ReleaseSource<'_>, filename: &str) -> Pat
     PathBuf::from(source.tag(device)).join(super::asset_filename(device, source, filename))
 }
 
-/// Which GitHub release holds a manifest file, which is also its folder here.
-///
-/// `None` for a net core or bootloader entry without a release number. Older manifest
-/// entries list those two for the record only: the updater never downloads one that has
-/// no release, so the pack does not need it either.
 fn source_of<'a>(
     entry: &'a FirmwareEntry,
     key: &str,
-    file: &FileEntry,
+    file: &'a FileEntry,
 ) -> Option<ReleaseSource<'a>> {
     match key {
         "net-core" => file
             .release
             .map(|release| ReleaseSource::NetCore { release }),
         "stage2-bootloader" => file
-            .release
-            .map(|release| ReleaseSource::Bootloader { release }),
+            .version
+            .as_ref()
+            .map(|version| ReleaseSource::Bootloader { version }),
         _ => Some(ReleaseSource::Application {
             version: &entry.version,
         }),
@@ -110,6 +116,16 @@ fn problems(dir: &Path, device: &str, entry: &FirmwareEntry) -> Vec<String> {
 
 /// Reads the pack's manifest for `channel` and keeps the releases whose files are
 /// all there. Fails, saying what is missing, when no release is complete.
+///
+/// # Errors
+/// Returns [`super::FirmwareSourceError::MissingPack`] when the channel manifest
+/// is absent, [`super::FirmwareSourceError::Read`] when it cannot be read,
+/// [`super::FirmwareSourceError::Manifest`] when JSON parsing fails,
+/// [`super::FirmwareSourceError::ManifestVersion`] when its version is unsupported,
+/// and [`super::FirmwareSourceError::IncompletePack`] when no release has all
+/// required files at their declared sizes.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn load_manifest(
     dir: &Path,
     channel: FirmwareChannel,
@@ -131,7 +147,7 @@ pub fn load_manifest(
     };
     let mut manifest: FirmwareManifest = serde_json::from_str(&text)
         .map_err(|source| super::FirmwareSourceError::Manifest { path, source })?;
-    if manifest.version > SUPPORTED_MANIFEST_VERSION {
+    if manifest.version != SUPPORTED_MANIFEST_VERSION {
         return Err(super::FirmwareSourceError::ManifestVersion(
             manifest.version,
         ));
@@ -174,6 +190,13 @@ pub fn load_manifest(
 }
 
 /// Reads one firmware file, bounded by its declared size, and checks its manifest hash.
+///
+/// # Errors
+/// Returns [`super::FirmwareSourceError::Read`] if the file cannot be opened or
+/// read, [`super::FirmwareSourceError::ImageSize`] if its size differs from the
+/// manifest, or [`super::FirmwareSourceError::HashMismatch`] if its SHA256 differs.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn read_file(
     dir: &Path,
     device: &str,
@@ -235,16 +258,21 @@ mod tests {
                 data.len()
             )
         };
+        let boot = format!(
+            r#"{{ "sha256": "{}", "size": {}, "version": "0.0.4" }}"#,
+            sha(b"boot"),
+            b"boot".len()
+        );
         format!(
-            r#"{{ "version": 1, "devices": {{ "atslite1": {{ "firmwares": [ {{
-                "version": "{version}", "requires_bootloader": 0, "requires_netcore": 0,
+            r#"{{ "version": 2, "devices": {{ "atslite1": {{ "firmwares": [ {{
+                "version": "{version}", "requires_bootloader": "0.0.0", "requires_netcore": 0,
                 "min_desktop": "0.6.0",
                 "files": {{ "app-a": {}, "app-b": {}, "net-core": {}, "stage2-bootloader": {} }}
             }} ] }} }} }}"#,
             file(b"slot a", None),
             file(b"slot b", None),
             file(b"net core", Some(1)),
-            file(b"boot", Some(4)),
+            boot,
         )
     }
 
@@ -280,7 +308,7 @@ mod tests {
         let dir = complete_pack("complete");
         let loaded = load_manifest(&dir, FirmwareChannel::Stable).unwrap();
         assert_eq!(versions(&loaded), ["0.2.0"]);
-        assert!(loaded.dropped.is_empty());
+        assert_eq!(loaded.dropped, []);
     }
 
     #[test]
@@ -288,9 +316,9 @@ mod tests {
         let dir = scratch("single-core");
         let image = b"single application";
         let manifest = serde_json::json!({
-            "version": 1,
+            "version": 2,
             "devices": { "marker-control-board": { "firmwares": [{
-                "version": "0.1.0", "requires_bootloader": 1, "requires_netcore": 0,
+                "version": "0.1.0", "requires_bootloader": "0.0.0", "requires_netcore": 0,
                 "min_desktop": "0.7.3",
                 "files": { "app": { "sha256": sha(image), "size": image.len() } }
             }] } }
@@ -326,8 +354,8 @@ mod tests {
         let bytes = b"signed package";
         let file = serde_json::json!({"size": bytes.len(), "sha256": sha(bytes)});
         let manifest = serde_json::json!({
-            "version": 1, "devices": {"dongle": {"firmwares": [{
-                "version": "0.1.13", "requires_bootloader": 0, "requires_netcore": 0,
+            "version": 2, "devices": {"dongle": {"firmwares": [{
+                "version": "0.1.13", "requires_bootloader": "0.0.0", "requires_netcore": 0,
                 "min_desktop": "0.7.4", "files": {"dfu-fanstel": file, "dfu-laird": file}
             }]}}
         });
@@ -396,13 +424,11 @@ mod tests {
     }
 
     #[test]
-    fn an_older_entry_without_net_core_or_bootloader_releases_needs_only_its_slots() {
-        // Older manifest entries list a net core and bootloader with no release number;
-        // the updater never downloads those, so a pack need not carry them.
+    fn entries_without_component_images_need_only_application_slots() {
         let dir = scratch("old-style");
         let without_releases = manifest_json("0.1.9")
             .replace(r#", "release": 1"#, "")
-            .replace(r#", "release": 4"#, "");
+            .replace(r#", "version": "0.0.4""#, "");
         put(&dir, "releases.stable.json", without_releases.as_bytes());
         put(&dir, "atslite1-v0.1.9/app-a.bin", b"slot a");
         put(&dir, "atslite1-v0.1.9/app-b.bin", b"slot b");
@@ -493,12 +519,27 @@ mod tests {
             &dir,
             "releases.stable.json",
             manifest_json("0.2.0")
-                .replace(r#""version": 1,"#, r#""version": 99,"#)
+                .replace(r#""version": 2,"#, r#""version": 99,"#)
                 .as_bytes(),
         );
         assert!(matches!(
             load_manifest(&dir, FirmwareChannel::Stable),
             Err(super::super::FirmwareSourceError::ManifestVersion(99))
+        ));
+    }
+    #[test]
+    fn older_manifest_schema_is_refused() {
+        let dir = complete_pack("old-schema");
+        put(
+            &dir,
+            "releases.stable.json",
+            manifest_json("0.2.0")
+                .replace(r#""version": 2,"#, r#""version": 1,"#)
+                .as_bytes(),
+        );
+        assert!(matches!(
+            load_manifest(&dir, FirmwareChannel::Stable),
+            Err(super::super::FirmwareSourceError::ManifestVersion(1))
         ));
     }
 
@@ -523,7 +564,8 @@ mod tests {
         assert_eq!(data, b"slot a");
 
         let net = ReleaseSource::NetCore { release: 1 };
-        assert!(read_file(&dir, "atslite1", net, "net-core", &sha(b"net core"), 8).is_ok());
+        read_file(&dir, "atslite1", net, "net-core", &sha(b"net core"), 8)
+            .expect("a net core image with the right digest reads");
 
         // The wrong content under the right name is caught.
         put(&dir, "atslite1-v0.2.0/app-a.bin", b"slot X");

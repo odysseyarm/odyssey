@@ -30,80 +30,131 @@ const MAX_ASPECT_DEVIATION: f64 = 0.03;
 /// size, as `(width, height)`.
 const PLACEHOLDER_CM: [(u32, u32); 3] = [(16, 9), (16, 10), (4, 3)];
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EdidError {
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("EDID is {len} bytes, shorter than the 128-byte base block")]
-    TooShort { len: usize },
+    TooShort {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        len: usize,
+    },
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("EDID does not start with the fixed 8-byte header")]
     BadHeader,
 }
 
 /// How finely the display reported its size.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SizePrecision {
     /// From the preferred timing's 12-bit millimeter fields.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Millimeters,
     /// From the base block's whole-centimeter bytes: up to 5 mm per axis off,
     /// about 0.4% of a 1.2 m panel.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Centimeters,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PhysicalSize {
+    /// Since: Odyssey Desktop 0.6.5.
     Dimensions {
+        /// Since: Odyssey Desktop 0.6.5.
         width_mm: u32,
+        /// Since: Odyssey Desktop 0.6.5.
         height_mm: u32,
+        /// Since: Odyssey Desktop 0.6.5.
         precision: SizePrecision,
     },
     /// Only the aspect ratio (width over height), which the base block encodes
     /// by zeroing exactly one of its two size bytes.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     AspectOnly(f64),
     /// Both size bytes are zero: what a projector reports.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Undefined,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SuspectReason {
+    /// Since: Odyssey Desktop 0.6.5.
     TooSmall,
+    /// Since: Odyssey Desktop 0.6.5.
     TooLarge,
     /// The centimeter bytes hold an aspect ratio such as 16 by 9, not a size.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     AspectPlaceholder,
     /// The size's aspect ratio disagrees with the native resolution's.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     AspectMismatch {
+        /// Since: Odyssey Desktop 0.6.5.
         size_aspect: f64,
+        /// Since: Odyssey Desktop 0.6.5.
         native_aspect: f64,
     },
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reliability {
+    /// Since: Odyssey Desktop 0.6.5.
     Reliable,
     /// A size was reported but should not be used as a scale anchor.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Suspect(SuspectReason),
     /// There is no size to judge.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     NoDimensions,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdidInfo {
-    /// Three-letter PnP vendor id, e.g. "SAM".
+    /// Three-letter `PnP` vendor id, e.g. `SAM`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub manufacturer: String,
+    /// Since: Odyssey Desktop 0.6.5.
     pub product_code: u16,
     /// Name from the monitor-name descriptor, e.g. "LG TV".
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub monitor_name: Option<String>,
     /// Active pixels of the preferred timing.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub native_resolution: Option<(u32, u32)>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub refresh_hz: Option<f64>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub physical_size: PhysicalSize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub reliability: Reliability,
     /// Whether the base block and every extension block present sum to zero.
     /// A bad sum flags a corrupt or hand-edited EDID but the fields are still
     /// reported, since many working displays ship one.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub checksums_valid: bool,
 }
 
 impl EdidInfo {
     /// Width over height of the physical panel, when the EDID gives one.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn physical_aspect(&self) -> Option<f64> {
         match self.physical_size {
             PhysicalSize::Dimensions {
@@ -118,6 +169,8 @@ impl EdidInfo {
 
     /// The panel size to use as a scale anchor: present only when the EDID
     /// reports dimensions and they pass every reliability check.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn known_size(&self) -> Option<KnownSize> {
         match (self.physical_size, self.reliability) {
             (
@@ -236,6 +289,13 @@ fn judge(size: PhysicalSize, native: Option<(u32, u32)>) -> Reliability {
 }
 
 /// Parses an EDID blob, as read from sysfs or the registry.
+///
+/// Since: Odyssey Desktop 0.6.5.
+///
+/// # Errors
+///
+/// Returns [`EdidError::TooShort`] when `bytes` lacks a complete base block,
+/// or [`EdidError::BadHeader`] when its header is invalid.
 pub fn parse_edid(bytes: &[u8]) -> Result<EdidInfo, EdidError> {
     if bytes.len() < BLOCK_LEN {
         return Err(EdidError::TooShort { len: bytes.len() });
@@ -265,7 +325,7 @@ pub fn parse_edid(bytes: &[u8]) -> Result<EdidInfo, EdidError> {
     let physical_size = {
         let (cm_w, cm_h) = (u32::from(bytes[21]), u32::from(bytes[22]));
         match preferred.as_ref().map(|t| t.image_mm) {
-            // The timing's millimeters are the finer figure; the base block
+            // The timing's millimeters are the finer figure. The base block
             // rounds to centimeters.
             Some((w, h)) if w > 0 && h > 0 => PhysicalSize::Dimensions {
                 width_mm: w,
@@ -298,44 +358,73 @@ pub fn parse_edid(bytes: &[u8]) -> Result<EdidInfo, EdidError> {
     })
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LookupSource {
     /// A `/sys/class/drm/<connector>/edid` file.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Sysfs(PathBuf),
-    /// The registry's per-monitor `EDID` value; holds the monitor's device id.
+    /// The registry's per-monitor `EDID` value. Holds the monitor's device id.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     WindowsRegistry(String),
     /// This platform has no lookup, or none was attempted.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Unavailable,
 }
 
 /// Why a lookup found no EDID.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LookupNote {
+    /// Since: Odyssey Desktop 0.6.5.
     UnsupportedPlatform,
     /// The caller has no monitor name to match on.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     NoMonitorName,
     /// No connected display carries that name.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     NotFound,
     /// More than one display matches, so any pick would be a guess.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Ambiguous {
+        /// Since: Odyssey Desktop 0.6.5.
         candidates: usize,
     },
     /// The EDID has no native resolution to check the monitor's size against.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     NoNativeResolution,
     /// The EDID's resolution and aspect do not fit the monitor's pixel size,
     /// which means the name matched a different display than the one shown.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     ResolutionMismatch {
+        /// Since: Odyssey Desktop 0.6.5.
         native: (u32, u32),
+        /// Since: Odyssey Desktop 0.6.5.
         screen: (u32, u32),
     },
+    /// Since: Odyssey Desktop 0.6.5.
     Unreadable(io::ErrorKind),
+    /// Since: Odyssey Desktop 0.6.5.
     Invalid(EdidError),
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayLookup {
+    /// Since: Odyssey Desktop 0.6.5.
     pub edid: Option<EdidInfo>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub source: LookupSource,
+    /// Since: Odyssey Desktop 0.6.5.
     pub note: Option<LookupNote>,
 }
 
@@ -385,7 +474,7 @@ fn check_consistency(
 }
 
 /// Kernel connector names carry the connector type's variant letter
-/// (`HDMI-A-1`) that X11 drivers drop (`HDMI-1`); compare without it.
+/// (`HDMI-A-1`) that X11 drivers drop (`HDMI-1`), so compare without it.
 fn normalize_connector(name: &str) -> String {
     name.trim()
         .to_ascii_uppercase()
@@ -430,9 +519,10 @@ fn read_sysfs_displays(root: &Path) -> Result<Vec<SysfsDisplay>, io::Error> {
         let Ok(edid) = parse_edid(&bytes) else {
             continue;
         };
-        let modes = fs::read_to_string(entry.path().join("modes"))
-            .map(|text| text.lines().filter_map(parse_mode).collect())
-            .unwrap_or_default();
+        let modes = fs::read_to_string(entry.path().join("modes")).map_or_else(
+            |_| Vec::new(),
+            |text| text.lines().filter_map(parse_mode).collect(),
+        );
         found.push(SysfsDisplay {
             connector: connector.to_owned(),
             path: edid_path,
@@ -443,10 +533,11 @@ fn read_sysfs_displays(root: &Path) -> Result<Vec<SysfsDisplay>, io::Error> {
     Ok(found)
 }
 
-/// Finds the EDID of the display called `monitor_name` under a sysfs DRM
-/// directory such as `/sys/class/drm`. The name is first matched against
-/// connector names, then against the EDID's own monitor name. Anything but a
-/// single consistent match yields no EDID.
+/// Finds the EDID for `monitor_name` under a sysfs DRM directory.
+/// Matches connector names first, then EDID monitor names. Ambiguous matches
+/// return no EDID.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn lookup_in_sysfs(
     root: &Path,
     monitor_name: Option<&str>,
@@ -525,7 +616,7 @@ mod windows_registry {
         parse_monitor_device_id,
     };
 
-    /// Registry values here are a few hundred bytes; anything larger is not an EDID.
+    /// Registry values here are a few hundred bytes. Anything larger is not an EDID.
     const MAX_VALUE_BYTES: u32 = 64 * 1024;
     /// Registry key names are at most 255 characters.
     const MAX_KEY_NAME: usize = 256;
@@ -676,7 +767,7 @@ mod windows_registry {
     fn adapter_named(name: &str) -> Option<DISPLAY_DEVICEW> {
         for index in 0..MAX_ADAPTERS {
             let mut adapter = display_device();
-            // SAFETY: a null device name enumerates adapters; `adapter` has `cb` set.
+            // SAFETY: a null device name enumerates adapters, and `adapter` has `cb` set.
             let ok = unsafe { EnumDisplayDevicesW(null(), index, &mut adapter, 0) };
             if ok == 0 {
                 return None;
@@ -710,6 +801,7 @@ mod windows_registry {
         None
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn lookup(monitor_name: Option<&str>, size_px: (u32, u32)) -> DisplayLookup {
         let Some(name) = monitor_name.map(str::trim).filter(|n| !n.is_empty()) else {
             return DisplayLookup::none(LookupNote::NoMonitorName);
@@ -721,7 +813,7 @@ mod windows_registry {
         let device_id = match ids.as_slice() {
             [] => return DisplayLookup::none(LookupNote::NotFound),
             [one] => one.clone(),
-            // Mirrored displays share the adapter name; they may differ in size.
+            // Mirrored displays share the adapter name and may differ in size.
             many => {
                 return DisplayLookup::none(LookupNote::Ambiguous {
                     candidates: many.len(),
@@ -749,11 +841,13 @@ mod windows_registry {
     }
 }
 
-/// Looks up the EDID of the monitor the desktop calls `monitor_name` (the
-/// connector name on Linux, `\\.\DISPLAYn` on Windows) whose current size is
-/// `size_px`. Returns no EDID, with a note saying why, rather than a guess.
-/// Never panics, reads only user-readable files and registry keys, and does no
-/// network or device I/O.
+/// Looks up EDID for `monitor_name`.
+///
+/// Takes the connector name on Linux or `\\.\DISPLAYn` on Windows, plus the
+/// current size `size_px`. Returns no EDID and a note on failure. Reads
+/// user-readable files and registry keys only, with no network or device I/O.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn lookup(monitor_name: Option<&str>, size_px: (u32, u32)) -> DisplayLookup {
     #[cfg(target_os = "linux")]
     {
@@ -804,7 +898,7 @@ mod tests {
         let mut e = vec![0u8; BLOCK_LEN * (1 + usize::from(spec.extension_blocks))];
         e[..8].copy_from_slice(&HEADER);
         // "SAM": S=19, A=1, M=13.
-        e[8..10].copy_from_slice(&((19u16 << 10) | (1 << 5) | 13).to_be_bytes());
+        e[8..10].copy_from_slice(&((19u16 << 10) | (1 << 5) | 0x0D).to_be_bytes());
         e[10..12].copy_from_slice(&0x0F1Au16.to_le_bytes());
         e[21] = spec.cm.0;
         e[22] = spec.cm.1;

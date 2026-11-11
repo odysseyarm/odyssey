@@ -1,19 +1,20 @@
 //! Stages what the MSI needs for one build variant.
 //!
-//! Writes `<stage>/orbbec.wxs`, the WiX fragment the `wix` section of
+//! Writes `<stage>/orbbec.wxs`, the `WiX` fragment the `wix` section of
 //! crates/odyssey-desktop/Cargo.toml points at, and for the full variant also the files it
 //! installs. `cargo-packager` runs afterwards with
 //! `CARGO_PACKAGER_ODYSSEY_MSI_VARIANT=<variant>` and
 //! `CARGO_PACKAGER_ODYSSEY_ORBBEC_STAGE=<stage>` (absolute; the template reads EULA.rtf from it).
 //!
 //! online   A fragment with a hidden, empty feature. The installer carries nothing; the
-//!          app downloads the SDK itself (see src/sdk_install/).
+//!          app downloads the SDK itself (see `src/sdk_install`).
 //! full     Downloads the SDK release in orbbec-sdk.json, checks its sha256, unpacks the
 //!          listed files into `<stage>/orbbec-sdk`, fetches the EULA (checked too), turns
 //!          it into the installer's licence page, and writes a fragment that installs it
 //!          all as an optional feature on by default.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{Cursor, Read as _};
 use std::path::{Component, Path, PathBuf};
@@ -30,11 +31,11 @@ use crate::cmd;
 const PIN_FILE: &str = "orbbec-sdk.json";
 
 /// Component GUIDs must stay the same from one release to the next or an upgrade
-/// treats every file as new; deriving them from the install path (inside this fixed
+/// treats every file as new. Deriving them from the install path (inside this fixed
 /// namespace) makes them stable. Never change this value.
 const GUID_NAMESPACE: &str = "5a1c0f4e-2f0f-4a52-9d57-6b3d2e0c2b91";
 
-/// WiX rejects longer identifiers.
+/// `WiX` rejects longer identifiers.
 const WIX_ID_MAX: usize = 72;
 
 const FEATURE_TITLE: &str = "Orbbec camera support";
@@ -57,7 +58,7 @@ const ONLINE_FRAGMENT: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 </Wix>
 "#;
 
-/// The SDK this build is tested with; the app reads the same file.
+/// The SDK this build is tested with. The app reads the same file.
 #[derive(Deserialize)]
 struct Pin {
     version: String,
@@ -253,7 +254,7 @@ fn rtf_escape(text: &str) -> String {
                 // RTF takes UTF-16 code units as signed 16-bit numbers, `?` as the fallback.
                 let mut units = [0; 2];
                 for unit in ch.encode_utf16(&mut units) {
-                    out.push_str(&format!("\\u{}?", *unit as i16));
+                    write!(out, "\\u{}?", *unit as i16).expect("writing to String cannot fail");
                 }
             }
         }
@@ -269,7 +270,7 @@ fn eula_rtf(eula: &str) -> String {
     )
 }
 
-/// A WiX identifier: letters, digits, `_` and `.`, at most [`WIX_ID_MAX`] characters.
+/// A `WiX` identifier: letters, digits, `_` and `.`, at most [`WIX_ID_MAX`] characters.
 fn wix_id(prefix: &str, path: &str) -> String {
     let cleaned: String = path
         .chars()
@@ -329,7 +330,7 @@ fn quote_attr(value: &str) -> String {
 }
 
 #[derive(Default)]
-struct DirTree(BTreeMap<String, DirTree>);
+struct DirTree(BTreeMap<String, Self>);
 
 fn parent_dir(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
@@ -360,10 +361,12 @@ fn full_fragment(stage: &Path, installed: &[String]) -> eros::Result<String> {
     sorted.sort();
     let mut refs = String::new();
     for path in &sorted {
-        refs.push_str(&format!(
-            "            <ComponentRef Id={} />\n",
+        writeln!(
+            refs,
+            "            <ComponentRef Id={} />",
             quote_attr(&wix_id("C", path))
-        ));
+        )
+        .expect("writing to String cannot fail");
     }
     let title = quote_attr(FEATURE_TITLE);
     let description = quote_attr(FEATURE_DESCRIPTION);
@@ -430,7 +433,7 @@ fn directory_xml(
             indent + 1,
         ));
     }
-    xml.push_str(&format!("{pad}</Directory>\n"));
+    writeln!(xml, "{pad}</Directory>").expect("writing to String cannot fail");
     xml
 }
 
@@ -516,14 +519,15 @@ mod tests {
     #[test]
     fn verify_compares_sha256_case_insensitively() {
         let empty = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
-        assert!(verify(b"", empty, "empty").is_ok());
-        assert!(verify(b"x", empty, "x").is_err());
+        verify(b"", empty, "empty").expect("matching SHA-256 is accepted");
+        verify(b"x", empty, "x").expect_err("mismatched SHA-256 is rejected");
     }
 
     #[test]
     fn duplicate_ids_are_refused() {
         let installed = strings(&["a-b.dll", "a_b.dll"]);
-        assert!(full_fragment(Path::new("/stage"), &installed).is_err());
+        full_fragment(Path::new("/stage"), &installed)
+            .expect_err("duplicate WiX identifiers are refused");
     }
 
     #[test]
@@ -538,7 +542,7 @@ mod tests {
             .map(|file| install_path(file).to_owned())
             .collect();
         installed.push("EULA.txt".to_owned());
-        assert!(full_fragment(Path::new("/stage"), &installed).is_ok());
+        full_fragment(Path::new("/stage"), &installed).expect("unique identifiers are accepted");
         assert_eq!(pin.eula.sha256.len(), 64);
         assert_eq!(pin.windows_x64.sha256.len(), 64);
     }

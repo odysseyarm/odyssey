@@ -15,7 +15,7 @@ struct FirmwareChannelHandle(Entity<FirmwareChannelModel>);
 impl Global for FirmwareChannelHandle {}
 
 impl FirmwareChannelModel {
-    /// The app-wide model; the first call creates it and starts loading the
+    /// The app-wide model. The first call creates it and starts loading the
     /// saved choice.
     pub(crate) fn global(cx: &mut App) -> Entity<Self> {
         if let Some(handle) = cx.try_global::<FirmwareChannelHandle>() {
@@ -25,8 +25,7 @@ impl FirmwareChannelModel {
             let load = runtime::spawn(FirmwareChannel::load());
             cx.spawn(async move |this, cx| {
                 let Ok(saved) = load.await else { return };
-                this.update(cx, |this, cx| this.set_if_unset(saved, cx))
-                    .ok();
+                let _ = this.update(cx, |this, cx| this.set_if_unset(saved, cx));
             })
             .detach();
             Self { channel: None }

@@ -10,7 +10,7 @@ use crate::views::calibrate::automatic::kind::DisplayKind;
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 pub(super) fn size_section(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     size_box: &Entity<SizeBox>,
     details_open: &Entity<bool>,

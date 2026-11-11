@@ -1,6 +1,8 @@
 use odyssey_hub_common::events::TrackingEvent;
 
 /// Ring buffer of the most recent tracking events of one device.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Debug)]
 pub struct TrackingHistory {
     buffer: Vec<Option<TrackingEvent>>,
@@ -10,6 +12,7 @@ pub struct TrackingHistory {
 }
 
 impl TrackingHistory {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn new(capacity: usize) -> Self {
         Self {
             buffer: vec![None; capacity],
@@ -20,6 +23,8 @@ impl TrackingHistory {
     }
 
     /// A zero-capacity history discards events.
+    ///
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn push(&mut self, event: TrackingEvent) {
         if self.capacity == 0 {
             return;
@@ -31,6 +36,7 @@ impl TrackingHistory {
         }
     }
 
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn latest(&self) -> Option<TrackingEvent> {
         if self.head == 0 && !self.full {
             return None;
@@ -39,8 +45,10 @@ impl TrackingHistory {
         self.buffer[idx]
     }
 
-    /// The stored event whose timestamp is nearest to `timestamp`; the oldest
+    /// The stored event whose timestamp is nearest to `timestamp`. The oldest
     /// one wins a tie.
+    ///
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn get_closest(&self, timestamp: u32) -> Option<TrackingEvent> {
         let len = if self.full { self.capacity } else { self.head };
         let mut best: Option<TrackingEvent> = None;
@@ -68,6 +76,10 @@ impl TrackingHistory {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::default_trait_access,
+        reason = "the vector and matrix types belong to nalgebra, which this crate does not depend on"
+    )]
     fn event_at(timestamp: u32) -> TrackingEvent {
         TrackingEvent {
             timestamp,

@@ -78,7 +78,7 @@ binaries = [{ path = "odyssey-desktop", main = true }]
 
 # The installer is built in two variants from one tree (see wix/main.wxs and
 # crates/xtask/src/desktop/orbbec.rs): online carries no camera SDK and the app
-# downloads it; full carries it as an optional feature. The fragment below is
+# downloads it. Full carries it as an optional feature. The fragment below is
 # generated per variant by `cargo xtask desktop bundle online|full`, which also
 # sets the environment the template reads. The upgrade code lives in the template.
 [package.metadata.packager.wix]

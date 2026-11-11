@@ -69,10 +69,10 @@ pub(crate) async fn handle_command(command: AccessoryCommands) -> eros::Result<(
                 .map(|(address, (info, _))| (address, info))
                 .collect();
             if map.remove(&address).is_none() {
-                eros::bail!("{} is not configured", format_bd_addr(&address));
+                eros::bail!("{} is not configured", format_bd_addr(address));
             }
             client.update_accessory_info_map(map).await?;
-            println!("Forgot {}", format_bd_addr(&address));
+            println!("Forgot {}", format_bd_addr(address));
         }
     }
     Ok(())
@@ -84,13 +84,15 @@ async fn watch(client: &Client) -> eros::Result<()> {
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => return Ok(()),
-            update = radios.next() => match update {
-                Some(update) => print_radios(&update?),
-                None => eros::bail!("hub closed the radio stream"),
+            update = radios.next() => if let Some(update) = update {
+                print_radios(&update?);
+            } else {
+                eros::bail!("hub closed the radio stream");
             },
-            update = accessories.next() => match update {
-                Some(update) => print_accessories(&update?),
-                None => eros::bail!("hub closed the accessory stream"),
+            update = accessories.next() => if let Some(update) = update {
+                print_accessories(&update?);
+            } else {
+                eros::bail!("hub closed the accessory stream");
             },
         }
     }
@@ -107,19 +109,17 @@ fn print_radios(radios: &[AccessoryRadioInfo]) {
             radio
                 .error
                 .as_ref()
-                .map(|error| format!(" error: {error}"))
-                .unwrap_or_default(),
+                .map_or_else(String::new, |error| format!(" error: {error}")),
         );
         for connection in &radio.connections {
             println!(
                 "    {} {:?}{}",
-                format_bd_addr(&connection.address),
+                format_bd_addr(connection.address),
                 connection.state,
                 connection
                     .error
                     .as_ref()
-                    .map(|error| format!(": {error}"))
-                    .unwrap_or_default(),
+                    .map_or_else(String::new, |error| format!(": {error}")),
             );
         }
         for nearby in &radio.nearby {
@@ -130,7 +130,7 @@ fn print_radios(radios: &[AccessoryRadioInfo]) {
             };
             println!(
                 "    nearby {} {} ({}), {window}",
-                format_bd_addr(&nearby.address),
+                format_bd_addr(nearby.address),
                 nearby.name,
                 nearby.ty.name(),
             );
@@ -147,7 +147,7 @@ fn print_accessories(map: &AccessoryMap) {
     for (address, (info, connected)) in map {
         println!(
             "  {} {} ({}) on {}{}",
-            format_bd_addr(address),
+            format_bd_addr(*address),
             info.name,
             info.ty.name(),
             radio_value(&info.radio),
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn addresses_round_trip_and_reject_malformed_input() {
         let address = [0xC0, 0x48, 0x4D, 0x00, 0x00, 0x01];
-        assert_eq!(parse_address(&format_bd_addr(&address)).unwrap(), address);
+        assert_eq!(parse_address(&format_bd_addr(address)).unwrap(), address);
         for bad in [
             "C0:48:4D:00:00",
             "C0:48:4D:00:00:01:02",
@@ -220,7 +220,7 @@ mod tests {
         ] {
             assert_eq!(parse_radio(&radio_value(&radio)).unwrap(), radio);
         }
-        assert!(parse_radio("dongle:").is_err());
-        assert!(parse_radio("usb:1").is_err());
+        parse_radio("dongle:").unwrap_err();
+        parse_radio("usb:1").unwrap_err();
     }
 }

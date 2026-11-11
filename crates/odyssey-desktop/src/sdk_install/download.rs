@@ -11,12 +11,12 @@ use super::managed_copy::{
 };
 use super::pin_file::{install_path, pin};
 
-/// Largest file taken out of the archive. The real ones are a few MB; this
+/// Largest file taken out of the archive. The real ones are a few MB, so this
 /// only stops a corrupt or hostile archive from filling the disk.
 const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EULA_BYTES: u64 = 1024 * 1024;
 /// Covers headers and body, so a stalled server cannot leave Setup working forever.
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// What the download is doing, for a progress display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,8 +277,8 @@ mod tests {
     #[test]
     fn a_wrong_hash_is_refused_and_a_right_one_accepted_in_either_case() {
         let hash = hex::encode(Sha256::digest(b"abc"));
-        assert!(verify(b"abc", &hash).is_ok());
-        assert!(verify(b"abc", &hash.to_uppercase()).is_ok());
+        verify(b"abc", &hash).unwrap();
+        verify(b"abc", &hash.to_uppercase()).unwrap();
         assert!(verify(b"abd", &hash).is_err());
     }
     async fn response(raw: &'static [u8]) -> reqwest::Response {
@@ -345,7 +345,9 @@ mod tests {
     async fn a_short_complete_response_cannot_satisfy_the_pinned_size() {
         let response =
             response(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await;
-        assert!(read_response(response, 4, 4, &mut |_| {}).await.is_err());
+        read_response(response, 4, 4, &mut |_| {})
+            .await
+            .unwrap_err();
     }
 
     #[test]

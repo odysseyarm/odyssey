@@ -29,13 +29,8 @@ use hardware::{DEVICE_INTERFACE_GUIDS, Irqs, Markers, force_markers_off, reset_s
 
 include!(concat!(env!("OUT_DIR"), "/layout.rs"));
 
-macro_rules! release {
-    () => {
-        1
-    };
-}
-const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::BootloaderRelease::bcd_device(release!());
-
+const VERSION: [u32; 3] = odyssey_version::parse_cargo_version(env!("CARGO_PKG_VERSION"));
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(VERSION[0]);
 embassy_nrf::bind_interrupts!(struct VbusIrqs {
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;
 });
@@ -115,6 +110,7 @@ fn main() -> ! {
         ResetImmediate,
         (ACTIVE_END - ACTIVE_START) as usize,
     );
+    state.set_firmware_version(env!("CARGO_PKG_VERSION"));
     let mut builder = Builder::new(
         driver,
         config,

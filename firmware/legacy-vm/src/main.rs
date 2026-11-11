@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "timer interrupt accesses TIMER1 peripheral registers"
+)]
 #![no_main]
 #![no_std]
 
@@ -41,6 +45,7 @@ impl
     > for TimerIrq
 {
     unsafe fn on_interrupt() {
+        // SAFETY: TIMER1 is owned by this handler; PAC pointer addresses its register block.
         let regs = unsafe { embassy_nrf::pac::timer::Timer::from_ptr(pac::TIMER1.as_ptr()) };
         regs.events_compare(1).write(|w| *w = 0);
         legacy_common::fodtrigger::FOD_TICK_SIG.signal(());
@@ -64,6 +69,7 @@ async fn main(spawner: Spawner) {
     let (usb_dev, usb_snd, usb_rcv, usb_signal) = usb::usb_device(
         0x520F, // USB VM PID
         utils::FIRMWARE_VERSION,
+        odyssey_version::cargo_semver!(),
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,

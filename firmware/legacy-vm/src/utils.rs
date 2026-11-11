@@ -1,5 +1,7 @@
-pub const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
+/// Since: Odyssey Desktop 0.7.0.
+pub const FIRMWARE_VERSION: [u32; 3] = odyssey_version::cargo_version!();
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn device_id() -> [u8; 8] {
     let ficr = embassy_nrf::pac::FICR;
     let low = ficr.deviceid(0).read();
