@@ -14,6 +14,14 @@ const PAIRING_TIMEOUT_MS: u32 = 30_000;
 /// zero keeps a marginal link from flapping.
 const REJOIN_MARGIN_DB: f64 = 3.0;
 
+/// The staged moment the simulator should show at its own time `at_ms`
+/// ([`Snapshot::time_ms`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cue {
+    pub t_s: f64,
+    pub at_ms: u64,
+}
+
 type Addressed = (Target, Command);
 type Bound<'a> = Vec<(Uuid, &'a Device)>;
 
@@ -32,14 +40,16 @@ pub struct SimFeed {
 impl SimFeed {
     /// Commands for the interval since the previous call, ending at `t_s`,
     /// given the simulator's current state. The first call also makes the
-    /// simulator's devices match the stage's and connects them. Time must
-    /// advance; a rewind (loop or scrub) forgets press history so presses
-    /// replay instead of being skipped.
+    /// simulator's devices match the stage's and connects them. Trackers are
+    /// posed as at `cue`, or at `t_s` at once without one. Time must advance;
+    /// a rewind (loop or scrub) forgets press history so presses replay
+    /// instead of being skipped.
     pub fn step(
         &mut self,
         compiled: &Compiled,
         snapshot: &Snapshot,
         t_s: f64,
+        cue: Option<Cue>,
     ) -> Result<Vec<Addressed>, StageError> {
         let (mut units, mut dongles): (Bound<'_>, Bound<'_>) = (Vec::new(), Vec::new());
         for (uuid, device) in compiled.stage().hub_devices() {
@@ -61,6 +71,7 @@ impl SimFeed {
             _ => f64::NEG_INFINITY,
         };
         self.last_t_s = Some(t_s);
+        let posed_at = cue.map_or((t_s, None), |cue| (cue.t_s, Some(cue.at_ms)));
         let geometry = compiled.geometry()?;
         for (uuid, device) in &units {
             if let Some(dongle) = snapshot.unit(*uuid).and_then(|unit| unit.dongle) {
@@ -82,6 +93,7 @@ impl SimFeed {
                 target,
                 radio,
                 (since, t_s),
+                posed_at,
                 &mut in_range,
                 &mut commands,
             )?;
@@ -174,9 +186,10 @@ impl SimFeed {
     }
 }
 
-/// One tracker's commands for the interval `(since, t_s]`. `radio` is the
-/// stage's links and the dongle the tracker belongs to; without a dongle it is
-/// the one that hears the tracker best.
+/// One tracker's commands for the interval `(since, t_s]`, posed as at stage
+/// time `posed_at.0` for simulator time `posed_at.1`. `radio` is the stage's
+/// links and the dongle the tracker belongs to; without a dongle it is the one
+/// that hears the tracker best.
 #[expect(
     clippy::too_many_arguments,
     reason = "one tracker's step: where it is, whom it reports to, and what was already sent"
@@ -188,13 +201,14 @@ fn track(
     target: Target,
     radio: Option<(&[LinkReport], Option<&str>)>,
     (since, t_s): (f64, f64),
+    (pose_t_s, at_ms): (f64, Option<u64>),
     in_range: &mut Option<bool>,
     out: &mut Vec<Addressed>,
 ) -> Result<(), StageError> {
     let tracker = device
         .tracker()
         .ok_or_else(|| StageError::NotATracker(device.id.clone()))?;
-    let pose = compiled.pose(geometry, device, t_s)?;
+    let pose = compiled.pose(geometry, device, pose_t_s)?;
     let (position_m, orientation_xyzw) = compiled
         .stage()
         .display
@@ -204,6 +218,7 @@ fn track(
         Command::Pose {
             position_m,
             orientation_xyzw,
+            at_ms,
         },
     ));
     for press in &tracker.presses {
@@ -280,6 +295,7 @@ pub fn scenario(
             target,
             Some((&links, None)),
             (since, t_s),
+            (t_s, None),
             &mut in_range,
             &mut commands,
         )?;
@@ -351,7 +367,7 @@ mod tests {
         let compiled = stage.compile().unwrap();
         let mut feed = SimFeed::default();
         let mut shots = |t_s| {
-            feed.step(&compiled, &fresh(), t_s)
+            feed.step(&compiled, &fresh(), t_s, None)
                 .unwrap()
                 .iter()
                 .filter(|(_, command)| matches!(command, Command::Shot))
@@ -380,7 +396,7 @@ mod tests {
         let mut events = Vec::new();
         for step in 0..=40 {
             for (target, command) in feed
-                .step(&compiled, &fresh(), f64::from(step) * 0.5)
+                .step(&compiled, &fresh(), f64::from(step) * 0.5, None)
                 .unwrap()
             {
                 if let Command::BleRange { in_range } = command {
@@ -407,7 +423,7 @@ mod tests {
         });
         let mut feed = SimFeed::default();
         let setup: Vec<String> = feed
-            .step(&compiled, &snapshot, 0.0)
+            .step(&compiled, &snapshot, 0.0, None)
             .unwrap()
             .iter()
             .filter(|(_, command)| {
@@ -432,12 +448,18 @@ mod tests {
             ]
         );
         assert_eq!(feed.target(unit_uuid(1)).dongle, Some(DONGLE_UUID));
-        let later = feed.step(&compiled, &snapshot, 0.1).unwrap();
-        assert!(
-            later
-                .iter()
-                .all(|(_, command)| matches!(command, Command::Pose { .. }))
-        );
+        let cue = Cue {
+            t_s: 0.2,
+            at_ms: 1234,
+        };
+        let later = feed.step(&compiled, &snapshot, 0.1, Some(cue)).unwrap();
+        assert!(later.iter().all(|(_, command)| matches!(
+            command,
+            Command::Pose {
+                at_ms: Some(1234),
+                ..
+            }
+        )));
         assert_eq!(later.len(), 2);
     }
 
@@ -446,7 +468,9 @@ mod tests {
         let mut stage = Stage::default();
         stage.devices[0].binding = Binding::HubSim;
         let compiled = stage.compile().unwrap();
-        let commands = SimFeed::default().step(&compiled, &fresh(), 0.0).unwrap();
+        let commands = SimFeed::default()
+            .step(&compiled, &fresh(), 0.0, None)
+            .unwrap();
         assert!(matches!(
             commands[0],
             (target, Command::UnitUsb { plugged: true }) if target.unit == Some(UNIT_UUID)

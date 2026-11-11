@@ -214,6 +214,11 @@ pub enum Command {
         position_m: [f64; 3],
         /// Unit quaternion rotating camera vectors into world space, x,y,z,w.
         orientation_xyzw: [f64; 4],
+        /// The simulator time ([`Snapshot::time_ms`]) the unit is there; it
+        /// moves there steadily from the pose before. A pose drops the poses
+        /// given for its time or later. Absent means now.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
     },
     /// Stand two meters squarely in front of this point of the first screen,
     /// normalized to [0, 1].

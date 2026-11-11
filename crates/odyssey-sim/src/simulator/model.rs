@@ -270,12 +270,13 @@ impl Model {
             Command::Pose {
                 position_m,
                 orientation_xyzw,
+                at_ms,
             } => {
                 let pose = ScenePose {
                     position_m,
                     orientation_xyzw,
                 };
-                self.on_unit(target, |unit, io| unit.set_pose(pose, io.now_ms))??;
+                self.on_unit(target, |unit, io| unit.set_pose(pose, at_ms, io.now_ms))??;
             }
             Command::Aim { x, y } => self.on_unit(target, |unit, io| unit.aim(x, y, io))??,
             Command::Motion { accel, gyro } => {
@@ -407,6 +408,7 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use odyssey_protocol::accessory::{self, Error, Profile, Request};
+    use odyssey_protocol::{PacketType, StreamUpdate, StreamUpdateAction};
 
     use super::super::{dongle_uuid, unit_uuid};
     use super::*;
@@ -533,42 +535,93 @@ mod tests {
     }
 
     #[test]
-    fn motion_readings_follow_the_poses_and_stop_when_they_do() {
+    fn units_follow_timed_poses_and_their_gyro_adds_up_to_the_turn() {
         let mut model = model();
-        let pose = |yaw: f64| Command::Pose {
+        let (sender, mut packets) = mpsc::channel(256);
+        run(
+            &mut model,
+            Target::default(),
+            Command::UnitUsb { plugged: true },
+        );
+        model.units.get_mut(&UNIT_UUID).unwrap().usb = Some(sender);
+        model.unit_packet(
+            UNIT_UUID,
+            Packet {
+                id: 1,
+                data: PacketData::StreamUpdate(StreamUpdate {
+                    packet_id: PacketType::AccelReport(),
+                    action: StreamUpdateAction::Enable,
+                }),
+            },
+        );
+        let pose = |yaw: f64, at_ms| Command::Pose {
             position_m: [0.6, 0.3, -2.0],
             orientation_xyzw: [0.0, (yaw / 2.0).sin(), 0.0, (yaw / 2.0).cos()],
+            at_ms,
         };
         let state = |model: &Model| {
             let mut snapshot = Snapshot::default();
             model.publish(&mut snapshot);
             snapshot.units[0].clone()
         };
-        run(&mut model, Target::default(), pose(0.0));
-        assert_eq!(state(&model).gyro, [0.0; 3]);
+        let yaw = |model: &Model| {
+            let unit = state(model);
+            2.0 * unit.orientation_xyzw[1].atan2(unit.orientation_xyzw[3])
+        };
+        let advance = |model: &mut Model, millis| {
+            run(model, Target::default(), Command::Advance { millis });
+        };
+        // The turn about device Z the reports add up to, integrated the way the hub does.
+        let mut previous = None;
+        let mut reported = || {
+            let mut sum = 0.0;
+            while let Ok(packet) = packets.try_recv() {
+                if let PacketData::AccelReport(report) = packet.data {
+                    if let Some(at) = previous {
+                        sum += f64::from(report.gyro.z) * f64::from(report.timestamp - at) / 1e6;
+                    }
+                    previous = Some(report.timestamp);
+                }
+            }
+            sum
+        };
+        run(&mut model, Target::default(), pose(0.0, None));
         assert_eq!(state(&model).aim, None);
+        advance(&mut model, 200);
+        reported();
 
-        run(
-            &mut model,
-            Target::default(),
-            Command::Advance { millis: 10 },
-        );
-        run(&mut model, Target::default(), pose(0.01));
+        let start = model.time_ms;
+        run(&mut model, Target::default(), pose(0.1, Some(start + 100)));
+        advance(&mut model, 50);
+        assert!((yaw(&model) - 0.05).abs() < 1e-9, "{}", yaw(&model));
         // One radian per second about the camera's Y axis is device axis Z, negated.
         let turning = state(&model);
         assert!((turning.gyro[2] + 1.0).abs() < 1e-4, "{:?}", turning.gyro);
         assert!(turning.gyro[0].abs() < 1e-6 && turning.gyro[1].abs() < 1e-6);
         assert!((turning.accel[2] - 9.80665).abs() < 1e-4);
+        advance(&mut model, 100);
+        assert!((yaw(&model) - 0.1).abs() < 1e-9);
+        assert_eq!(state(&model).gyro, [0.0; 3]);
+        assert!((reported() + 0.1).abs() < 1e-6);
 
-        run(
-            &mut model,
-            Target::default(),
-            Command::Advance { millis: 200 },
-        );
-        let stopped = state(&model);
-        assert_eq!(stopped.gyro, [0.0; 3]);
-        // It kept turning at that rate until the pose stream went quiet.
-        let yaw = 2.0 * stopped.orientation_xyzw[1].atan2(stopped.orientation_xyzw[3]);
-        assert!((0.1..0.12).contains(&yaw), "{yaw}");
+        // Faster than a hand: the unit waits, then jumps, and the gyro reads nothing.
+        let soon = Some(model.time_ms + 10);
+        run(&mut model, Target::default(), pose(1.5, soon));
+        advance(&mut model, 50);
+        assert!((yaw(&model) - 1.5).abs() < 1e-9);
+        assert!(reported().abs() < 1e-9);
+
+        // An untimed pose is due now, reached over the time since the last one.
+        run(&mut model, Target::default(), pose(1.55, None));
+        advance(&mut model, 20);
+        assert!((yaw(&model) - 1.55).abs() < 1e-9);
+        assert!((reported() + 0.05).abs() < 1e-6);
+
+        // After a pause it is a jump.
+        advance(&mut model, 200);
+        run(&mut model, Target::default(), pose(1.6, None));
+        assert!((yaw(&model) - 1.6).abs() < 1e-9);
+        advance(&mut model, 20);
+        assert!(reported().abs() < 1e-9);
     }
 }

@@ -69,6 +69,9 @@ pub(crate) async fn run(
     let mut ticker = tokio::time::interval(Duration::from_millis(10));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ticker.tick().await;
+    // A late tick advances by the time that passed, so simulator time keeps
+    // pace with the wall clock that clients schedule poses against.
+    let mut last_tick = tokio::time::Instant::now();
     loop {
         tokio::select! {
             // A newly opened endpoint is installed before requests queued on it.
@@ -122,7 +125,10 @@ pub(crate) async fn run(
                 }
             },
             _ = ticker.tick(), if clock == ClockMode::Realtime => {
-                model.tick(model.time_ms.saturating_add(10));
+                let now = tokio::time::Instant::now();
+                let elapsed_ms = now.duration_since(last_tick).as_millis() as u64;
+                last_tick += Duration::from_millis(elapsed_ms);
+                model.tick(model.time_ms.saturating_add(elapsed_ms));
             },
         }
         units.retain(|uuid, _| model.units.get(uuid).is_some_and(|unit| unit.usb.is_some()));

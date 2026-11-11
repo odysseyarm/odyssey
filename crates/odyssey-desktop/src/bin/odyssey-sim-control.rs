@@ -22,7 +22,9 @@ use gpui::{
     px, rgb, size,
 };
 use odyssey_hub_server::sim::Control;
-use odyssey_sim::{Command, ScenarioStep, Snapshot, Target, Uuid, uuid_text};
+use odyssey_sim::{
+    Command, ScenarioStep, Snapshot, Target, Uuid, dongle_uuid, unit_uuid, uuid_text,
+};
 
 const USAGE: &str = r#"Odyssey simulator controls (requires a running simulator-enabled hub)
 
@@ -55,7 +57,7 @@ Commands: add_unit {uuid}, remove_unit {uuid}, add_dongle {uuid},
 remove_dongle {uuid} (addresses are twelve hex digits starting 53494d),
 unit_usb {plugged}, dongle_usb {plugged}, ble_range {in_range},
 pair {timeout_ms}, cancel_pairing, clear_bonds, screens {screens},
-pose {position_m:[x,y,z],orientation_xyzw:[x,y,z,w]}, aim {x,y} (normalized
+pose {position_m:[x,y,z],orientation_xyzw:[x,y,z,w],at_ms?} (at_ms: simulator time to be there; default now), aim {x,y} (normalized
 0..1), motion {accel:[x,y,z],gyro:[x,y,z]}, shot, battery {percent,charging},
 advance {millis}. All command objects include their snake_case "type".
 "#;
@@ -295,6 +297,17 @@ fn named(text: &str, name: &str) -> eros::Result<Uuid> {
     address(text, name)?.ok_or_else(|| eros::error!("Enter the {name} address first"))
 }
 
+/// The typed address, or else the first simulated address not in `taken`.
+fn new_address(text: &str, name: &str, taken: &[Uuid], at: fn(u8) -> Uuid) -> eros::Result<Uuid> {
+    if let Some(uuid) = address(text, name)? {
+        return Ok(uuid);
+    }
+    (0..=u8::MAX)
+        .map(at)
+        .find(|uuid| !taken.contains(uuid))
+        .ok_or_else(|| eros::error!("Every {name} address is taken"))
+}
+
 const CANVAS: u32 = 0xfaf8f7;
 const SURFACE: u32 = 0xffffff;
 const SURFACE_ALT: u32 = 0xf1eeed;
@@ -532,7 +545,7 @@ impl Render for Controls {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child("Addresses are twelve hex digits starting 53494d. Blank means the first unit or dongle.")
+                            .child("Addresses are twelve hex digits starting 53494d. Blank means the first unit or dongle; Add picks the next free address.")
                             .child(
                                 row()
                                     .child(number_field("Unit address", &self.unit))
@@ -564,7 +577,8 @@ impl Render for Controls {
                                     ))
                                     .child(button("add-unit", "Add unit").on_click(cx.listener(
                                         |this, _, _, cx| {
-                                            let command = named(&text(&this.unit, cx), "unit")
+                                            let taken: Vec<Uuid> = this.snapshot.iter().flat_map(|state| &state.units).map(|unit| unit.uuid).collect();
+                                            let command = new_address(&text(&this.unit, cx), "unit", &taken, unit_uuid)
                                                 .map(|uuid| Command::AddUnit { uuid });
                                             this.submit(command, cx);
                                         },
@@ -578,7 +592,8 @@ impl Render for Controls {
                                     ))
                                     .child(button("add-dongle", "Add dongle").on_click(
                                         cx.listener(|this, _, _, cx| {
-                                            let command = named(&text(&this.dongle, cx), "dongle")
+                                            let taken: Vec<Uuid> = this.snapshot.iter().flat_map(|state| &state.dongles).map(|dongle| dongle.uuid).collect();
+                                            let command = new_address(&text(&this.dongle, cx), "dongle", &taken, dongle_uuid)
                                                 .map(|uuid| Command::AddDongle { uuid });
                                             this.submit(command, cx);
                                         }),

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use odyssey_hub_server::sim::{Control, ControlError};
 use odyssey_sim::dataset::SceneScreen;
 use odyssey_sim::{Command, Snapshot, Target, Uuid};
-use odyssey_stage::{Compiled, SimFeed};
+use odyssey_stage::{Compiled, Cue, SimFeed};
+
+use crate::app::SIM_LEAD;
 
 #[derive(Default)]
 pub(crate) struct SimLink {
@@ -62,15 +64,23 @@ impl SimLink {
         self.close(control, result)
     }
 
-    /// Bring the hub's simulator to the stage at `t_s`. A stage that binds
-    /// nothing to the hub leaves the simulator alone.
-    pub(crate) async fn drive(&mut self, compiled: &Arc<Compiled>, t_s: f64) -> Result<(), String> {
+    /// Bring the hub's simulator to the stage at `t_s`, and have it show the
+    /// stage at `cue_t_s` once its own clock is [`SIM_LEAD`] further on. A
+    /// stage that binds nothing to the hub leaves the simulator alone.
+    pub(crate) async fn drive(
+        &mut self,
+        compiled: &Arc<Compiled>,
+        t_s: f64,
+        cue_t_s: f64,
+    ) -> Result<(), String> {
         let bound = compiled.stage().hub_devices().next().is_some();
         if !bound && self.set_up_for.is_none() {
             return Ok(());
         }
         let mut control = self.open().await.map_err(|error| error.to_string())?;
-        let result = self.run(&mut control, compiled, bound, t_s).await;
+        let result = self
+            .run(&mut control, compiled, bound, (t_s, cue_t_s))
+            .await;
         self.close(control, result)
     }
 
@@ -79,7 +89,7 @@ impl SimLink {
         control: &mut Control,
         compiled: &Arc<Compiled>,
         bound: bool,
-        t_s: f64,
+        (t_s, cue_t_s): (f64, f64),
     ) -> Result<(), ControlError> {
         if !bound {
             self.set_up_for = None;
@@ -126,9 +136,13 @@ impl SimLink {
             self.set_up_for = Some(Arc::clone(compiled));
         }
         let snapshot = control.snapshot().await?;
+        let cue = Cue {
+            t_s: cue_t_s,
+            at_ms: snapshot.time_ms + SIM_LEAD.as_millis() as u64,
+        };
         let commands = self
             .feed
-            .step(compiled, &snapshot, t_s)
+            .step(compiled, &snapshot, t_s, Some(cue))
             .map_err(|error| ControlError::Model(error.to_string()))?;
         for (target, command) in commands {
             control.execute(target, command).await?;

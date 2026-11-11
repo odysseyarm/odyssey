@@ -20,7 +20,7 @@ pub mod radio;
 
 pub use compiled::{Compiled, LinkReport, Pose};
 pub use error::StageError;
-pub use live::{SimFeed, scenario};
+pub use live::{Cue, SimFeed, scenario};
 pub use stage::{
     Binding, DISPLAY_PRESET_NAMES, Device, DeviceKind, SCHEMA, Stage, Tracker, display_preset,
 };

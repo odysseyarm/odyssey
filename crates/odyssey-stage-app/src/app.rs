@@ -16,6 +16,9 @@ use crate::sim::SimLink;
 
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const SIM_INTERVAL: Duration = Duration::from_millis(50);
+/// How far ahead of its clock the simulator is cued, so a pose arrives before
+/// the unit has to be there.
+pub(crate) const SIM_LEAD: Duration = Duration::from_millis(100);
 const CURVE_POINTS: usize = 60;
 const CURVE_MAX_M: f64 = 40.0;
 /// A hub reading older than this no longer counts as the device's position.
@@ -84,6 +87,21 @@ impl Clock {
         }
         if let Some(t_s) = t_s {
             self.t_s = t_s.max(0.0);
+        }
+    }
+
+    /// The stage time `lead` from now if the run carries on as it is.
+    fn ahead(&self, lead: Duration, duration_s: f64) -> f64 {
+        if !self.playing {
+            return self.t_s;
+        }
+        let t_s = self.t_s + lead.as_secs_f64() * self.speed;
+        if t_s < duration_s {
+            t_s
+        } else if self.looping {
+            t_s.rem_euclid(duration_s)
+        } else {
+            duration_s
         }
     }
 }
@@ -297,6 +315,9 @@ impl App {
                                     .and_then(|(uuid, _)| {
                                         fresh(&uuid_hex(uuid)).map(|tracking| tracking.aim_uv)
                                     });
+                                if frame.hub_aim_uv.is_none() {
+                                    frame.problem = Some("no tracking from the hub".to_owned());
+                                }
                             }
                         }
                         Err(error) => frame.problem = Some(error.to_string()),
@@ -369,10 +390,16 @@ impl App {
     /// Feed the hub's simulator from the stage devices bound to it.
     pub(crate) async fn drive_sim(&self) {
         let compiled = self.compiled();
-        let t_s = self.clock().t_s;
+        let (t_s, cue_t_s) = {
+            let clock = self.clock();
+            (
+                clock.t_s,
+                clock.ahead(SIM_LEAD, compiled.stage().duration_s),
+            )
+        };
         let status = {
             let mut link = self.sim.lock().await;
-            let outcome = link.drive(&compiled, t_s).await;
+            let outcome = link.drive(&compiled, t_s, cue_t_s).await;
             SimStatus {
                 sim_error: outcome.err(),
                 sim_note: link.note.clone(),

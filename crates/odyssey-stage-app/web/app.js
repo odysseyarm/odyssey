@@ -567,7 +567,7 @@ async function runEval() {
   if (E.ab) jobs.push([false, 'Tracker ignores the display shape']);
   try {
     for (let i = 0; i < jobs.length; i++) {
-      E.msg = `Running ${i + 1} of ${jobs.length}… this takes 5–15 seconds each.`; E.ver++;
+      E.msg = `Running ${i + 1} of ${jobs.length}…`; E.ver++;
       const res = await api('POST', '/api/evaluate', { device: E.device, fps: 30, tracker_knows_surface: jobs[i][0] });
       if (token !== E.token) return;
       E.runs.push({ label: jobs[i][1], res });
@@ -579,7 +579,7 @@ const runColor = (i) => (i ? 'var(--warn)' : 'var(--accent)');
 zone($('#z-eval'), () => `${S.eval.ver}|${trackers().map((t) => t.id + t.name)}`, (root) => {
   const E = S.eval;
   if (!trackers().some((t) => t.id === E.device)) E.device = trackers()[0]?.id ?? null;
-  const run = btn('Run through the real tracker', runEval, { off: E.busy || !E.device, title: 'Replays the whole run through the production tracking code. Takes 5–15 seconds.', cls: E.busy ? 'busy' : '' });
+  const run = btn('Run through the real tracker', runEval, { off: E.busy || !E.device, title: 'Replays the whole run through the production tracking code.', cls: E.busy ? 'busy' : '' });
   const ab = mk('input', { type: 'checkbox', checked: E.ab, onchange: () => { E.ab = ab.checked; } });
   root.append(
     mk('div', { class: 'note' }, 'Checks how well the real tracker follows the simulated aim, with this display, light and hand handling.'),

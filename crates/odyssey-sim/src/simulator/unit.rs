@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use odyssey_protocol::control::BondEntry;
@@ -21,9 +21,12 @@ use crate::dataset::ScenePose;
 type Registers = BTreeMap<(u8, u8), u8>;
 
 const GRAVITY_M_S2: f64 = 9.80665;
-/// How long a unit keeps moving on its last pose change. A pose stream slower
-/// than this reads as a series of stops.
-const COAST_MS: u64 = 100;
+/// Untimed poses further apart than this are a series of stops: the unit
+/// jumps to each.
+const MAX_POSE_INTERVAL_MS: u64 = 100;
+/// The simulator's clock step; no move takes less.
+const STEP_MS: u64 = 10;
+const MAX_POSES_AHEAD: usize = 256;
 /// Pose changes faster than a hand moves are jumps, not motion.
 const MAX_SPIN_RAD_S: f64 = 20.0;
 const MAX_SPEED_M_S: f64 = 10.0;
@@ -88,16 +91,35 @@ fn resting_accel(pose: &ScenePose) -> [f32; 3] {
     device_axes(rotation(pose).inverse_transform_vector(&Vector3::new(0.0, -GRAVITY_M_S2, 0.0)))
 }
 
-/// Angular velocity in camera axes and linear velocity in world axes that
-/// carry `from` to `to` in `dt_s`. `None` when the change is a jump.
-fn motion_between(
-    from: &ScenePose,
-    to: &ScenePose,
-    dt_s: f64,
-) -> Option<(Vector3<f64>, Vector3<f64>)> {
-    let spin = (rotation(from).inverse() * rotation(to)).scaled_axis() / dt_s;
-    let velocity = (Vector3::from(to.position_m) - Vector3::from(from.position_m)) / dt_s;
-    (spin.norm() <= MAX_SPIN_RAD_S && velocity.norm() <= MAX_SPEED_M_S).then_some((spin, velocity))
+/// The turn from `from` to `to` as a rotation vector in camera axes.
+fn turn(from: &ScenePose, to: &ScenePose) -> Vector3<f64> {
+    (rotation(from).inverse() * rotation(to)).scaled_axis()
+}
+
+/// Whether a hand can carry the unit from one timed pose to the next; if not,
+/// the unit holds still and jumps when the second is due.
+fn travels(from: &(u64, ScenePose), to: &(u64, ScenePose)) -> bool {
+    let dt_s = to.0.saturating_sub(from.0).max(STEP_MS) as f64 / 1000.0;
+    let distance = (Vector3::from(to.1.position_m) - Vector3::from(from.1.position_m)).norm();
+    turn(&from.1, &to.1).norm() <= MAX_SPIN_RAD_S * dt_s && distance <= MAX_SPEED_M_S * dt_s
+}
+
+/// The pose `fraction` of the way from `from` to `to`.
+fn between(from: &ScenePose, to: &ScenePose, fraction: f64) -> ScenePose {
+    let turned = rotation(from) * UnitQuaternion::from_scaled_axis(turn(from, to) * fraction);
+    ScenePose {
+        position_m: std::array::from_fn(|i| {
+            from.position_m[i] + (to.position_m[i] - from.position_m[i]) * fraction
+        }),
+        orientation_xyzw: [turned.i, turned.j, turned.k, turned.w],
+    }
+}
+
+/// Where a posed unit goes: the pose it last reached and the poses ahead,
+/// each with the simulator time the unit is there.
+struct Course {
+    reached: (u64, ScenePose),
+    ahead: VecDeque<(u64, ScenePose)>,
 }
 
 /// What a unit needs from the rest of the model while it handles one event.
@@ -125,10 +147,11 @@ pub(crate) struct Unit {
     pub(crate) ble_resume: u64,
     aim: Option<[f32; 2]>,
     pose: ScenePose,
-    /// The last `Pose` and when it arrived; motion readings are its difference
-    /// to the next one.
-    posed: Option<(u64, ScenePose)>,
-    velocity_m_s: Vector3<f64>,
+    /// Set while the unit is driven by `Pose`.
+    course: Option<Course>,
+    /// The turn since the last motion report, as a rotation vector in camera
+    /// axes.
+    turned: Vector3<f64>,
     accel: [f32; 3],
     gyro: [f32; 3],
     battery_percent: u8,
@@ -183,8 +206,8 @@ impl Unit {
                 position_m: [0.0; 3],
                 orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
             },
-            posed: None,
-            velocity_m_s: Vector3::zeros(),
+            course: None,
+            turned: Vector3::zeros(),
             accel: [0.0; 3],
             gyro: [0.0; 3],
             battery_percent: 100,
@@ -291,14 +314,19 @@ impl Unit {
         self.aim = Some([x, y]);
         self.accel = resting_accel(&pose);
         self.pose = pose;
-        self.posed = None;
-        self.velocity_m_s = Vector3::zeros();
+        self.course = None;
         self.emit_markers(io);
         Ok(())
     }
 
-    /// Reports keep their cadence: the next one shows the new pose.
-    pub(crate) fn set_pose(&mut self, pose: ScenePose, now_ms: u64) -> Result<(), SimError> {
+    /// Queue `pose` for `at_ms`, or for now. The unit moves there over the
+    /// clock steps between, so its markers always agree with its gyro.
+    pub(crate) fn set_pose(
+        &mut self,
+        pose: ScenePose,
+        at_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Result<(), SimError> {
         let [x, y, z, w] = pose.orientation_xyzw;
         if !pose.position_m.iter().all(|value| value.is_finite())
             || !((x * x + y * y + z * z + w * w).sqrt() - 1.0)
@@ -309,27 +337,33 @@ impl Unit {
                 "a pose needs a finite position and a unit quaternion",
             ));
         }
-        let elapsed_ms = self
-            .posed
-            .as_ref()
-            .map(|(at, _)| now_ms.saturating_sub(*at));
-        // Poses within one clock step replace each other; the motion measured
-        // into that step stands.
-        if elapsed_ms != Some(0) {
-            let (spin, velocity) = match (&self.posed, elapsed_ms) {
-                (Some((_, last)), Some(ms)) if ms <= COAST_MS => {
-                    motion_between(last, &pose, ms as f64 / 1000.0)
-                }
-                _ => None,
-            }
-            .unwrap_or_default();
-            self.gyro = device_axes(spin);
-            self.velocity_m_s = velocity;
-        }
-        self.accel = resting_accel(&pose);
-        self.posed = Some((now_ms, pose.clone()));
-        self.pose = pose;
         self.aim = None;
+        let here = (now_ms, self.pose.clone());
+        let course = self.course.get_or_insert_with(|| Course {
+            reached: here.clone(),
+            ahead: VecDeque::new(),
+        });
+        if course.ahead.is_empty() {
+            let paused = now_ms.saturating_sub(course.reached.0) > MAX_POSE_INTERVAL_MS;
+            if at_ms.is_none() && paused {
+                course.reached = (now_ms, pose.clone());
+                self.accel = resting_accel(&pose);
+                self.pose = pose;
+                return Ok(());
+            }
+            // A unit at rest sets off now, not when it stopped.
+            if at_ms.is_some() {
+                course.reached = here;
+            }
+        }
+        let at_ms = at_ms.unwrap_or(now_ms).max(now_ms);
+        while course.ahead.back().is_some_and(|(at, _)| *at >= at_ms) {
+            course.ahead.pop_back();
+        }
+        if course.ahead.len() >= MAX_POSES_AHEAD {
+            return Err(SimError::InvalidInput("too many poses ahead of the clock"));
+        }
+        course.ahead.push_back((at_ms, pose));
         Ok(())
     }
 
@@ -344,8 +378,7 @@ impl Unit {
         }
         self.accel = accel;
         self.gyro = gyro;
-        self.posed = None;
-        self.velocity_m_s = Vector3::zeros();
+        self.course = None;
         self.emit_imu(io);
         Ok(())
     }
@@ -478,23 +511,13 @@ impl Unit {
                 match update.action {
                     StreamUpdateAction::DisableAll => self.streams.fill(None),
                     StreamUpdateAction::Disable => self.streams[index] = None,
-                    StreamUpdateAction::Enable
-                        if matches!(
-                            update.packet_id,
-                            PacketType::MarkersReport()
-                                | PacketType::AccelReport()
-                                | PacketType::ImpactReport()
-                                | PacketType::BatteryReport()
-                        ) =>
-                    {
+                    // Like the firmware, a stream the unit never sends is
+                    // acknowledged and stays silent.
+                    StreamUpdateAction::Enable => {
                         self.streams[index] = Some(id);
                         if matches!(update.packet_id, PacketType::BatteryReport()) {
                             self.last_battery = None;
                         }
-                    }
-                    StreamUpdateAction::Enable => {
-                        io.errors.unsupported(update);
-                        return;
                     }
                 }
                 Some(PacketData::Ack())
@@ -662,21 +685,34 @@ impl Unit {
 
     /// Move the unit and its timers forward to `now_ms`.
     pub(crate) fn advance(&mut self, dt_s: f64, now_ms: u64, errors: &mut Errors) {
-        if self
-            .posed
-            .as_ref()
-            .is_some_and(|(at, _)| now_ms.saturating_sub(*at) > COAST_MS)
-        {
-            self.gyro = [0.0; 3];
-            self.velocity_m_s = Vector3::zeros();
-        }
-        if self.gyro != [0.0; 3] || self.velocity_m_s != Vector3::zeros() {
+        if let Some(course) = &mut self.course {
+            let mut from = self.pose.clone();
+            while course.ahead.front().is_some_and(|(at, _)| *at <= now_ms) {
+                let Some(next) = course.ahead.pop_front() else {
+                    break;
+                };
+                if travels(&course.reached, &next) {
+                    self.turned += turn(&from, &next.1);
+                }
+                from = next.1.clone();
+                course.reached = next;
+            }
+            let pose = match course.ahead.front() {
+                Some(next) if travels(&course.reached, next) => {
+                    let span = (next.0 - course.reached.0) as f64;
+                    let gone = now_ms.saturating_sub(course.reached.0) as f64;
+                    between(&course.reached.1, &next.1, gone / span)
+                }
+                _ => course.reached.1.clone(),
+            };
+            self.turned += turn(&from, &pose);
+            self.accel = resting_accel(&pose);
+            self.pose = pose;
+        } else if self.gyro != [0.0; 3] {
             let [x, y, z] = self.gyro.map(f64::from);
             let turned = rotation(&self.pose)
                 * UnitQuaternion::from_scaled_axis(Vector3::new(-x, -z, -y) * dt_s);
             self.pose.orientation_xyzw = [turned.i, turned.j, turned.k, turned.w];
-            self.pose.position_m =
-                (Vector3::from(self.pose.position_m) + self.velocity_m_s * dt_s).into();
         }
         if self
             .pairing_deadline
@@ -763,15 +799,27 @@ impl Unit {
     }
 
     fn emit_imu(&mut self, io: &mut Io<'_>) {
+        let elapsed_s = io.now_ms.saturating_sub(self.last_imu) as f64 / 1000.0;
+        let turned = std::mem::take(&mut self.turned);
         self.last_imu = io.now_ms;
         if self.image_mode_generation.is_some() {
             return;
         }
+        // A posed unit reports the turn it made since its last report, so the
+        // reports add up to the pose its markers show.
+        if self.course.is_some() {
+            self.gyro = if elapsed_s > 0.0 {
+                device_axes(turned / elapsed_s)
+            } else {
+                [0.0; 3]
+            };
+        }
+        let gyro = self.gyro;
         self.report(
             PacketData::AccelReport(AccelReport {
                 timestamp: timestamp(io.now_ms),
                 accel: self.accel.into(),
-                gyro: self.gyro.into(),
+                gyro: gyro.into(),
             }),
             io,
         );
