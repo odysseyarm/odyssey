@@ -33,13 +33,13 @@ pub(crate) enum Cmd {
     ///
     /// Without names, every changed component except bootloaders. A bootloader is
     /// raised only by name: releasing one reflashes every unit's bootloader.
-    /// Semver components get a patch bump; raise a minor or major by hand.
+    /// Cargo versions are raised by cargo-release; review minor or major changes separately.
     Bump { components: Vec<String> },
     /// Publish each component whose source is ahead of its tag: net cores and
     /// bootloaders first, then the applications that deliver them, then the rest.
     ///
-    /// Needs a clean tree on a commit already on origin/master. Firmware entries
-    /// are added to the alpha manifest in the working tree; commit and push it.
+    /// Needs a clean tree on a commit merged into master. Firmware entries
+    /// are added to the alpha manifest in the working tree; merge them through a PR.
     Publish {
         components: Vec<String>,
         /// Print what would be published and stop.
@@ -292,9 +292,8 @@ fn newest_tag(tags: &[(String, String)], name: &str) -> Option<Tag> {
 }
 
 struct Closure {
-    /// The package name, as the lock file spells it.
+    /// The Cargo package selected for version preparation.
     package: String,
-    lock: String,
     /// Everything whose change alters the build, relative to the repository root.
     paths: Vec<String>,
 }
@@ -377,11 +376,9 @@ fn local_closure(metadata: &Value, root: &Path, dir: &str) -> eros::Result<Closu
     let workspace = metadata["workspace_root"]
         .as_str()
         .context("cargo metadata has no workspace root")?;
-    let lock = relative(&Path::new(workspace).join("Cargo.lock"))?;
-    paths.push(lock.clone());
+    paths.push(relative(&Path::new(workspace).join("Cargo.lock"))?);
     Ok(Closure {
         package: start["name"].as_str().unwrap_or_default().to_owned(),
-        lock,
         paths,
     })
 }
@@ -632,6 +629,13 @@ fn bump(names: &[String]) -> eros::Result<()> {
         println!("Nothing to bump");
         return Ok(());
     }
+    if targets
+        .iter()
+        .any(|row| !matches!(row.component.role, Role::Part { .. }))
+    {
+        cmd::output(cmd::at(".", "cargo").args(["release", "--version"]))
+            .context("cargo-release is required; enter the default Nix development shell")?;
+    }
     for row in targets {
         let next = raise(row)?;
         println!(
@@ -641,11 +645,32 @@ fn bump(names: &[String]) -> eros::Result<()> {
             dotted(&next)
         );
     }
-    println!("Commit, push to master, then run `cargo xtask release publish`.");
+    println!(
+        "Review the patch in a pull request and squash merge it, then publish from the merged master commit."
+    );
     Ok(())
 }
 
 fn raise(row: &Row) -> eros::Result<Vec<u64>> {
+    let dir = cmd::root().join(row.component.dir);
+    if !matches!(row.component.role, Role::Part { .. }) {
+        cmd::run(cmd::at(".", "cargo").args([
+            "release",
+            "version",
+            "patch",
+            "--manifest-path",
+            &dir.join("Cargo.toml").to_string_lossy(),
+            "--package",
+            &row.closure.package,
+            "--config",
+            &cmd::root().join("release.toml").to_string_lossy(),
+            "--isolated",
+            "--execute",
+            "--no-confirm",
+        ]))?;
+        return Ok(parse_version(&cmd::package_version(row.component.dir)?)
+            .context("cargo-release produced an unsupported package version")?);
+    }
     let mut next = row.source.clone();
     let maximum = match row.component.role {
         Role::Part {
@@ -667,27 +692,8 @@ fn raise(row: &Row) -> eros::Result<Vec<u64>> {
             dotted(&row.source)
         )
     })?;
-    let (old, new) = (dotted(&row.source), dotted(&next));
-    let dir = cmd::root().join(row.component.dir);
-    if matches!(row.component.role, Role::Part { .. }) {
-        edit(&dir.join("src/main.rs"), |text| raise_counter(text, &new))?;
-    } else {
-        edit(&dir.join("Cargo.toml"), |text| {
-            replace_once(
-                text,
-                &format!("version = \"{old}\""),
-                &format!("version = \"{new}\""),
-            )
-        })?;
-        let package = &row.closure.package;
-        edit(&cmd::root().join(&row.closure.lock), |text| {
-            replace_once(
-                text,
-                &format!("name = \"{package}\"\nversion = \"{old}\"\n"),
-                &format!("name = \"{package}\"\nversion = \"{new}\"\n"),
-            )
-        })?;
-    }
+    let new = dotted(&next);
+    edit(&dir.join("src/main.rs"), |text| raise_counter(text, &new))?;
     Ok(next)
 }
 
@@ -698,10 +704,6 @@ fn edit(path: &Path, change: impl FnOnce(&str) -> Option<String>) -> eros::Resul
         .with_context(|| format!("{} does not hold the version to raise", path.display()))?;
     fs::write(path, changed).with_context(|| format!("could not write {}", path.display()))?;
     Ok(())
-}
-
-fn replace_once(text: &str, from: &str, to: &str) -> Option<String> {
-    text.contains(from).then(|| text.replacen(from, to, 1))
 }
 
 /// `source` with its release counter set to `release`. Only the layout rustfmt
@@ -724,10 +726,7 @@ fn raise_counter(source: &str, release: &str) -> Option<String> {
 fn publish(names: &[String], dry_run: bool) -> eros::Result<()> {
     cmd::require_clean_tree(".")?;
     let head = cmd::output(cmd::at(".", "git").args(["rev-parse", "HEAD"]))?;
-    let branches = cmd::output(cmd::at(".", "git").args(["branch", "-r", "--contains", &head]))?;
-    if !branches.contains("origin/master") {
-        eros::bail!("{head} is not on origin/master. Push it first.");
-    }
+    cmd::require_merged_master(&head)?;
     let plan = plan()?;
     let named = Plan::named(names)?;
     let order = match pure_release::publish_order(&plan.links, &plan.states(), named.as_ref()) {
@@ -993,7 +992,6 @@ mod tests {
         });
         let closure = local_closure(&metadata, Path::new("/repo"), "firmware/app").unwrap();
         assert_eq!(closure.package, "app");
-        assert_eq!(closure.lock, "firmware/app/Cargo.lock");
         assert_eq!(
             closure.paths,
             [

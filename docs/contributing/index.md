@@ -31,6 +31,15 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
+The default shell includes `cargo-release` for package-version and dependency
+updates. Release patches and generated firmware manifests go through pull
+requests: review, passing `host`, `rustfmt` and `tracking` checks, then squash
+merge. `master` refuses direct pushes, force pushes and deletion, with no
+bypass actors. Zero required approvals lets maintainers merge their own PRs
+after reviewing the patch. Checks must be current with the base branch.
+Publish only from the merged `master` commit; a pre-squash PR head is not a
+release commit. See [firmware releases](../../firmware/manifests/README.md).
+
 Vision-tool simulation attaches to `odyssey_sim::UNIT_UUID`; USB presence and
 reconnect generation come from that unit's snapshot, not global simulator state.
 Check Host CI's optional simulator features, including simulator-control test targets:

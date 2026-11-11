@@ -20,30 +20,40 @@ steps they run.
 
 ```
 cargo xtask release plan      # what changed since each tag; reads only
-cargo xtask release bump      # raise versions and counters; commit and push to master
-cargo xtask release publish   # tag and publish whatever is ahead of its tag
+cargo xtask release bump      # prepare patch versions; counters remain separate
+cargo xtask release publish   # tag merged master commits and publish
 ```
 
 - **Changed** means a file differs between the component's newest tag and HEAD
   in its crate, a path dependency it builds with, its lock file or its memory
   map. That errs toward bumping: a comment in a shared crate counts.
-- `bump` raises a patch version or a release counter. A raised net core also
-  raises the application that delivers it. Bootloaders are raised only by name
-  (`cargo xtask release bump atslite1-bootloader`): a bootloader release
-  reflashes every unit's bootloader. Name components to bump only those.
-- `publish` needs a clean tree on a commit that is on `origin/master`. It tags
-  net cores and bootloaders and waits for their workflows, then builds each ATS
-  Lite application, adds its alpha entry and publishes it, then tags the rest
-  for their workflows. Name components to publish only those; `--dry-run`
-  prints the tags.
+- `bump` prepares non-counter patch-version changes with `cargo-release`;
+  release/push/tag actions are disabled in root `release.toml`. Counter changes
+  remain separate until firmware version conversion. Commit changes on a release
+  branch and open a pull request; review, pass required checks, and squash-merge
+  before publishing.
+  A raised net core also raises the application that delivers it. Bootloaders
+  are raised only by name (`cargo xtask release bump atslite1-bootloader`): a
+  bootloader release reflashes every unit's bootloader. Name components to bump
+  only those.
+- `publish` needs a clean tree and validates its commit against remote `master`
+  through GitHub. After PR squash-merge, fetch master and publish from its merged
+  SHA; final release tags point to merged `master` SHAs, not pre-squash branch
+  SHAs. It tags net cores and bootloaders and waits for their workflows, then
+  builds and publishes ATS Lite application assets and tags the remaining
+  selected components.
+  It generates ATS Lite and dongle alpha entries locally from published assets;
+  commit each manifest change on a branch and submit a separate PR. Name
+  components to publish only those; `--dry-run` prints tags.
 - `min_desktop` is the oldest Desktop release from which every later one
   speaks the firmware's wire version (`DEVICE_PROTOCOL`, or `MUX_PROTOCOL` for
   the dongle), and never below the device's previous entry.
   `requires_bootloader` and `requires_netcore` carry over from the previous
   entry; raise one with `gen-release` by hand.
-- ATS Lite and dongle entries land in the working tree's
-  `releases.alpha.json`: commit and push it, or no unit is offered the release.
-  The marker board's workflow commits its own entry.
+- Generated ATS Lite, dongle, and marker alpha entries require separate PRs
+  after asset publication. Review, pass required checks, and squash-merge each
+  before units are offered its release. Marker workflow opens its PR and
+  explicitly dispatches required checks.
 
 The bump and publish decisions come from the
 [`pure-release`](https://github.com/Abrahamh08/pure-release) dependency. Component
@@ -205,7 +215,8 @@ then the later application once N+1 is reported as running.
 
 ## Releasing application firmware
 
-From the repository root:
+Build the application, publish its immutable assets, then generate the alpha
+entry from those published bytes:
 
 ```
 cargo xtask firmware <board> build
@@ -237,8 +248,10 @@ a higher counter, a counter reused for a different image, and an image
 published under two counters. Entries that predate a counter have no `release`
 and count as 0.
 
-Then tag and publish the application release, and promote it once it has run on
-alpha units:
+After publishing application assets, generate the alpha entry from those
+immutable bytes and submit a separate manifest PR. Require review, required
+checks, and squash merge before units are offered the release. Promote it once
+it has run on alpha units:
 
 ```
 cargo xtask firmware promote <device> <version>
@@ -265,18 +278,21 @@ artifacts. `flash`, `flash-chiperase`, `flash-recover`, and `flash-app` use
 `firmware/memory/memory-marker-control-board.kdl`, never nRF5340 state addresses.
 Probe commands write hardware; invoke only with device owner's approval.
 
-Set `[package.metadata.firmware] min-desktop` in application Cargo.toml to oldest
-tested Desktop version; marker DFU-only discovery and single-image updates
-require **0.7.3+**. Desktop lists markers without tracker controls and verifies
-application version from USB `bcdDevice` after updating. Merge application
-version and compatibility floor to master, then push
-`marker-control-board-v<semver>` matching Cargo version.
-*Marker Control Board Release* builds application plus factory images, publishes
-immutable GitHub assets, downloads published `app.bin`, computes SHA256 and size,
-then commits newest-first alpha entry onto latest master. Existing releases are
-not overwritten; reruns accept identical manifest entries, reject changed hashes,
-and refuse older versions. Concurrent master changes make non-fast-forward push
-fail safely; rerun workflow to merge against fresh master.
+Set `[package.metadata.firmware] min-desktop` in application Cargo.toml to the
+oldest tested Desktop version; marker DFU-only discovery and single-image
+updates require **0.7.3+**. Desktop lists markers without tracker controls and
+verifies application version from USB `bcdDevice` after updating. Submit the
+application version and compatibility floor for review and squash-merge before
+publishing; final release tag must point to merged `master` SHA, not pre-squash
+branch SHA. *Marker Control Board Release* builds application plus factory
+images, publishes immutable GitHub assets, downloads published `app.bin`,
+computes SHA256 and size, then opens a PR adding newest-first alpha entry onto
+latest master. Generated entry describes immutable published bytes. Existing
+releases are not overwritten; reruns accept identical manifest entries, reject
+changed hashes, and reuse an open matching PR without replacing branch contents.
+A branch without an open PR causes refusal. The PR receives explicit host-ci,
+fmt, and tracking-regression workflow dispatches because token-created PRs do
+not trigger `pull_request` checks.
 
 Manual *Marker Control Board Release* dispatch builds/uploads artifacts only.
 Factory bootloader release uses existing *Bootloader Release* workflow with

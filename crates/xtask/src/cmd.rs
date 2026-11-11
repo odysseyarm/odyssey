@@ -83,6 +83,19 @@ pub(crate) fn require_clean_tree(dir: impl AsRef<Path>) -> eros::Result<()> {
     Ok(())
 }
 
+pub(crate) fn require_merged_master(commit: &str) -> eros::Result<()> {
+    let status = output(at(".", "gh").args([
+        "api",
+        &format!("repos/{{owner}}/{{repo}}/compare/{commit}...master"),
+        "--jq",
+        ".status",
+    ]))?;
+    if !matches!(status.as_str(), "ahead" | "identical") {
+        eros::bail!("{commit} is not merged into master. Squash merge its pull request first.");
+    }
+    Ok(())
+}
+
 /// The `[package]` version of the manifest in `dir` (relative to the repository
 /// root): the first `version = "..."` line, which every manifest here puts in
 /// its `[package]` table.
