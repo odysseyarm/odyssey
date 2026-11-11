@@ -82,7 +82,7 @@ pub fn run(simulate: bool, legacy_sim: bool) -> Result<()> {
     #[cfg(feature = "sim")]
     let simulated_device = simulator
         .as_ref()
-        .map(|simulator| simulator.connect_unit_usb());
+        .map(|simulator| simulator.connect_unit_usb(odyssey_sim::UNIT_UUID));
     #[cfg(not(feature = "sim"))]
     let simulated_device: Option<odyssey_usb::device::VmDevice> = None;
 
@@ -289,7 +289,11 @@ impl VisionTool {
             runtime,
             #[cfg(feature = "sim")]
             simulator_generation: simulator.as_ref().map_or(0, |simulator| {
-                simulator.handle().snapshot().unit_usb_generation
+                simulator
+                    .handle()
+                    .snapshot()
+                    .unit(odyssey_sim::UNIT_UUID)
+                    .map_or(0, |unit| unit.usb_generation)
             }),
             #[cfg(feature = "sim")]
             simulator,
@@ -688,12 +692,14 @@ impl eframe::App for VisionTool {
         #[cfg(feature = "sim")]
         if let Some(simulator) = &self.simulator {
             let snapshot = simulator.handle().snapshot();
-            if snapshot.unit_usb
-                && snapshot.unit_usb_generation != self.simulator_generation
+            if let Some(unit) = snapshot.unit(odyssey_sim::UNIT_UUID)
+                && unit.usb
+                && unit.usb_generation != self.simulator_generation
                 && !self.config.busy()
             {
-                self.simulator_generation = snapshot.unit_usb_generation;
-                self.config.connect_simulated(simulator.connect_unit_usb());
+                self.simulator_generation = unit.usb_generation;
+                self.config
+                    .connect_simulated(simulator.connect_unit_usb(odyssey_sim::UNIT_UUID));
             }
             ctx.request_repaint_after(BACKGROUND_POLL_INTERVAL);
         }

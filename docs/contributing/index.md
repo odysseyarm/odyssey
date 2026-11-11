@@ -31,6 +31,14 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
+Vision-tool simulation attaches to `odyssey_sim::UNIT_UUID`; USB presence and
+reconnect generation come from that unit's snapshot, not global simulator state.
+Check the optional feature used by Host CI:
+
+```sh
+cargo check --locked --offline -p odyssey-vision-tool --features sim --all-targets
+```
+
 ### Binary cache
 
 `https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary
