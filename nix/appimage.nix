@@ -2,9 +2,9 @@
 let
   inherit (pkgs) lib;
 
-  # Packaging metadata stays where cargo-packager read it: the desktop crate.
   manifest = builtins.fromTOML (builtins.readFile (common.source + "/crates/odyssey-desktop/Cargo.toml"));
-  inherit (manifest.package) version;
+  version = let buildVersion = builtins.getEnv "ODYSSEY_BUILD_VERSION"; in
+    if buildVersion == "" then manifest.package.version else buildVersion;
   packager = manifest.package.metadata.packager;
   mainBinary = (lib.findFirst (b: b.main or false) (throw "odyssey-desktop packager metadata has no main binary") packager.binaries).path;
   iconPath = lib.findFirst (lib.hasSuffix ".png") (throw "odyssey-desktop packager metadata has no png icon") packager.icons;
@@ -22,6 +22,7 @@ let
     cargoExtraArgs = "--package odyssey-desktop";
   } // nativeEnvironment // {
     inherit version;
+    ODYSSEY_BUILD_VERSION = version;
     nativeBuildInputs = nativeInputs ++ backend.tools;
     buildInputs = libs;
     preBuild = backend.prelude + ''

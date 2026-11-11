@@ -1,21 +1,17 @@
 name: Desktop Release
 
-# Build and publish the Windows installer when an odyssey-desktop-vX.Y.Z tag is
-# pushed. The tag version must match crates/odyssey-desktop/Cargo.toml.
-#
 # odyssey-hub-server reaches odyssey-cv over an SSH git URL that this runner
 # has no key for, so job-scoped Git config rewrites that URL to an authenticated HTTPS
 # one. ODYSSEY_CV_TOKEN is a fine-grained PAT scoped to odysseyarm/odyssey-cv,
 # Contents: read.
 #
-# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
-# without a tag: a run from a branch builds and uploads the artifacts but
-# publishes nothing.
 
 on:
   push:
     tags:
       - 'odyssey-desktop-v*.*.*'
+  schedule:
+    - cron: '0 2,14 * * *'
   workflow_dispatch:
 
 permissions:
@@ -23,31 +19,56 @@ permissions:
 
 jobs:
   check-version:
-    name: Check tag matches crate version
+    name: Choose stable or nightly version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      release_type: ${{ steps.check.outputs.release_type }}
+      release_tag: ${{ steps.check.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v5
-      - name: Verify tag version
+      - name: Choose release version
         id: check
         run: |
           crate_version=$(grep -m1 '^version' crates/odyssey-desktop/Cargo.toml | cut -d'"' -f2)
-          # A manual run is from a branch, so there is no tag to compare.
           if [ "$GITHUB_REF_TYPE" = tag ]; then
-            tag_version="${GITHUB_REF_NAME#odyssey-desktop-v}"
-            if [ "$tag_version" != "$crate_version" ]; then
-              echo "Tag version ($tag_version) does not match crates/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
+            version="${GITHUB_REF_NAME#odyssey-desktop-v}"
+            if [ "$version" != "$crate_version" ]; then
+              echo "Tag version ($version) does not match crates/odyssey-desktop/Cargo.toml version ($crate_version)" >&2
               exit 1
             fi
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Stable desktop tags require clean X.Y.Z, got $version" >&2
+              exit 1
+            fi
+            release_type=stable
+            release_tag="$GITHUB_REF_NAME"
+          else
+            IFS=. read -r major minor patch extra <<< "$crate_version"
+            if [ -n "$extra" ] || ! [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]; then
+              echo "Cargo.toml version must be clean X.Y.Z, got $crate_version" >&2
+              exit 1
+            fi
+            next_patch=$((patch + 1))
+            stamp=$(date -u +%Y%m%d.t%H%M%S)
+            sha=$(git rev-parse --short=12 "$GITHUB_SHA")
+            version="$major.$minor.$next_patch-nightly.$stamp.g$sha"
+            release_type=nightly
+            release_tag="odyssey-desktop-v$version"
           fi
-          echo "version=$crate_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "release_type=$release_type"
+            echo "release_tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
 
   windows-build:
     name: Cross-build Windows executables
     needs: check-version
     runs-on: ubuntu-latest
     env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
@@ -56,7 +77,7 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Build both variants and packaging tools
         run: |
-          out=$(nix build -L --no-link --print-out-paths .#desktop-windows)
+          out=$(nix build --impure -L --no-link --print-out-paths .#desktop-windows)
           mkdir prebuilt-windows
           cp -rL "$out"/. prebuilt-windows/
       - uses: actions/upload-artifact@v6
@@ -70,6 +91,7 @@ jobs:
     runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
       ODYSSEY_REPO: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v5
@@ -105,6 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
@@ -113,7 +136,7 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Build and verify AppImage
         run: |
-          nix build -L .#desktop-appimage .#checks.x86_64-linux.desktop-appimage-contract
+          ODYSSEY_BUILD_VERSION="$VERSION" nix build --impure -L .#desktop-appimage .#checks.x86_64-linux.desktop-appimage-contract
           mkdir -p dist
           cp "result/Odyssey-$VERSION-x86_64.AppImage" dist/
       - uses: actions/upload-artifact@v6
@@ -127,6 +150,8 @@ jobs:
     needs: check-version
     runs-on: ubuntu-latest
     env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.ODYSSEY_CV_TOKEN }}@github.com/odysseyarm/odyssey-cv.git.insteadOf
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
@@ -139,8 +164,8 @@ jobs:
         run: |
           set -eu
           test -n "$NIX_SIGNING_KEY" || { echo "NIX_SIGNING_KEY secret is required to publish the NixOS output" >&2; exit 1; }
-          out=$(nix build -L --no-link --print-out-paths .#desktop-nixos)
-          nix build -L --no-link .#checks.x86_64-linux.desktop-nixos-glibc
+          out=$(nix build --impure -L --no-link --print-out-paths .#desktop-nixos)
+          nix build --impure -L --no-link .#checks.x86_64-linux.desktop-nixos-glibc
           printf '%s\n' "$out" > odyssey-desktop-nixos-store-path.txt
           echo "out=$out" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/push-cache
@@ -159,11 +184,13 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [check-version, bundle, appimage, nixos-prebuilt]
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
+      RELEASE_TYPE: ${{ needs.check-version.outputs.release_type }}
+      RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
     steps:
       - uses: actions/download-artifact@v6
         with:
@@ -181,13 +208,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "Odyssey Desktop v$VERSION" \
-              --notes "Odyssey $VERSION — Windows installers, Linux AppImage, and a NixOS prebuilt package. Full Windows installer includes Orbbec camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$RELEASE_TYPE" = nightly ]; then
+              gh release create "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --title "Odyssey Desktop Nightly $VERSION" \
+                --prerelease \
+                --notes "Nightly build $VERSION — Windows installers, Linux AppImage, and a NixOS prebuilt package. Full Windows installer includes Orbbec camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
+            else
+              gh release create "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --title "Odyssey Desktop v$VERSION" \
+                --notes "Odyssey $VERSION — Windows installers, Linux AppImage, and a NixOS prebuilt package. Full Windows installer includes Orbbec camera software, so installing and calibrating need no internet connection. For computers that must never connect to the internet, install with OFFLINE_MODE=1 (see crates/odyssey-desktop/OFFLINE.md)."
+            fi
           fi
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" --clobber \
             "Odyssey-$VERSION-win-x64.msi" \
             "Odyssey-$VERSION-win-x64-full.msi" \

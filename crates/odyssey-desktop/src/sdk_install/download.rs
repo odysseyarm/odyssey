@@ -79,7 +79,7 @@ async fn fetch(
     progress: &mut impl FnMut(Phase),
 ) -> Result<Vec<u8>> {
     let client = reqwest::Client::builder()
-        .user_agent(concat!("odyssey-desktop/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("odyssey-desktop/", env!("ODYSSEY_BUILD_VERSION")))
         .timeout(DOWNLOAD_TIMEOUT)
         .build()?;
     let response = client

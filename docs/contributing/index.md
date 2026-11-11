@@ -78,6 +78,20 @@ real sources are never uploaded. Pull requests never push. Uploads need
 Run `.github/actions/push-cache/test.sh` to check build-only closure coverage
 and private-source rejection locally.
 
+### Desktop release types
+
+Desktop publishes Stable from `odyssey-desktop-vX.Y.Z` tags. Scheduled runs
+publish Nightly twice daily; `workflow_dispatch` publishes one on demand. Nightly
+versions use the next patch and include UTC timestamp plus source commit, such as
+`0.7.6-nightly.20260619.t020000.gabcdef`. GitHub marks these releases as
+prereleases. Desktop has no self-updater; users choose releases and install them
+manually.
+
+The app reports full SemVer. Windows Installer accepts only three numeric
+version fields, so MSI upgrade checks use the numeric `X.Y.Z` core; firmware
+compatibility checks compare full SemVer, keeping a Nightly below matching
+Stable floor.
+
 ### NixOS package
 
 Desktop releases attach the pushed store path as

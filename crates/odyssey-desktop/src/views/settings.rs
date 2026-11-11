@@ -94,10 +94,10 @@ impl Render for SettingsView {
         }
 
         let about = card(p).gap_1().child(card_title(p, "About")).child(
-            div()
-                .text_sm()
-                .text_color(p.fg_muted)
-                .child(format!("Odyssey Desktop v{}", env!("CARGO_PKG_VERSION"))),
+            div().text_sm().text_color(p.fg_muted).child(format!(
+                "Odyssey Desktop v{}",
+                env!("ODYSSEY_BUILD_VERSION")
+            )),
         );
 
         page(

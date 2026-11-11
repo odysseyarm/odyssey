@@ -120,6 +120,7 @@ let
   # ---- the app -------------------------------------------------------------------
   appCommon = common.mkArgs {
     pname = "odyssey-desktop-windows";
+    ODYSSEY_BUILD_VERSION = desktopVersion;
     vendorOverrides.overrideVendorCargoPackage = gpuiCrossBuild;
   };
   appBase = appCommon // {
@@ -220,13 +221,21 @@ let
 
   # ---- the bundle the Windows job downloads ---------------------------------------------
   desktopManifest = builtins.fromTOML (builtins.readFile (common.source + "/crates/odyssey-desktop/Cargo.toml"));
-  desktopVersion = desktopManifest.package.version;
-  # What cargo-packager would read from the workspace itself, with the two fields
-  # it takes from `[package]`. It is given this instead of running `cargo metadata`.
+  desktopVersion = let buildVersion = builtins.getEnv "ODYSSEY_BUILD_VERSION"; in
+    if buildVersion == "" then desktopManifest.package.version else buildVersion;
+  msiVersionParts = builtins.match "([0-9]+\\.[0-9]+\\.[0-9]+)(-.*|\\+.*)?" desktopVersion;
+  msiCore = if msiVersionParts == null then
+    throw "desktop version ${desktopVersion} has no numeric MSI version"
+  else builtins.elemAt msiVersionParts 0;
+  msiFields = map builtins.fromJSON (lib.splitString "." msiCore);
+  msiVersion = if builtins.elemAt msiFields 0 > 255 || builtins.elemAt msiFields 1 > 255
+    || builtins.elemAt msiFields 2 > 65535 then
+    throw "desktop version ${desktopVersion} exceeds Windows Installer version limits"
+  else msiCore;
   packagerConfig = pkgs.writeText "packager.json" (builtins.toJSON (
     desktopManifest.package.metadata.packager // {
       name = desktopManifest.package.name;
-      version = desktopVersion;
+      version = msiVersion;
     }
   ));
 
