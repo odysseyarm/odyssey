@@ -25,6 +25,11 @@ embassy-usb = { version = "0.5.1", default-features = false }
 embedded-storage = "0.3.1"
 esp32c3-hal = { version = "0.13.0", optional = true, default-features = false }
 
+[dev-dependencies]
+# Named here so Cargo.lock carries the `std` time driver the tests link; a
+# vendored build cannot fetch what only a command-line feature asks for.
+embassy-time = { version = "0.5.0", features = ["std"] }
+
 [features]
 dfu = []
 application = []
