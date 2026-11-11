@@ -151,7 +151,7 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
     }
 }
 
-// The POC stores this same layout on flash.
+// lite1 stores this same layout on flash.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]

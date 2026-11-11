@@ -47,7 +47,7 @@ pub(crate) async fn evaluate(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let mut series = Vec::new();
     for (sample, output) in trace.samples.iter().zip(&report.capture.outputs) {
-        let (Input::Poc { .. }, Some(truth)) = (&sample.input, &sample.truth) else {
+        let (Input::Markers { .. }, Some(truth)) = (&sample.input, &sample.truth) else {
             continue;
         };
         let tracked_uv = output.tracking.as_ref().map(|tracked| tracked.aimpoint);

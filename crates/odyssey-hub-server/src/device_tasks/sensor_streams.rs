@@ -3,9 +3,8 @@ use std::time::Duration;
 use futures::stream::{BoxStream, SelectAll, Stream, StreamExt as _};
 use odyssey_usb::Result;
 use odyssey_usb::device::VmDevice;
-use odyssey_usb::packets::vm::{
-    AccelReport, BatteryReport, CombinedMarkersReport, ImpactReport, PocMarkersReport,
-};
+use odyssey_usb::packets::vm::legacy::CombinedMarkersReport;
+use odyssey_usb::packets::vm::{AccelReport, BatteryReport, ImpactReport, MarkersReport};
 use tokio::time::{Instant, Sleep, sleep};
 use tracing::{debug, info, warn};
 
@@ -22,8 +21,8 @@ const STREAMS_RESUME_DEBOUNCE: Duration = Duration::from_millis(100);
 const DISARMED_TIMER: Duration = Duration::from_secs(3600);
 
 pub(super) enum DeviceStreamEvent {
-    CombinedMarkers(CombinedMarkersReport),
-    PocMarkers(PocMarkersReport),
+    LegacyCombinedMarkers(CombinedMarkersReport),
+    Markers(MarkersReport),
     Accel(AccelReport),
     Impact(ImpactReport),
     Battery(BatteryReport),
@@ -35,8 +34,8 @@ impl DeviceStreamEvent {
             Self::Accel(_) => "Accel",
             Self::Impact(_) => "Impact",
             Self::Battery(_) => "Battery",
-            Self::CombinedMarkers(_) => "CombinedMarkers",
-            Self::PocMarkers(_) => "PocMarkers",
+            Self::LegacyCombinedMarkers(_) => "LegacyCombinedMarkers",
+            Self::Markers(_) => "Markers",
         }
     }
 }
@@ -72,16 +71,16 @@ impl SensorStreams {
         push_stream(
             &mut streams,
             uuid,
-            "combined markers",
-            events_device.clone().stream_combined_markers().await,
-            DeviceStreamEvent::CombinedMarkers,
+            "legacy combined markers",
+            events_device.clone().stream_legacy_combined_markers().await,
+            DeviceStreamEvent::LegacyCombinedMarkers,
         );
         push_stream(
             &mut streams,
             uuid,
-            "PoC markers",
-            events_device.clone().stream_poc_markers().await,
-            DeviceStreamEvent::PocMarkers,
+            "markers",
+            events_device.clone().stream_markers().await,
+            DeviceStreamEvent::Markers,
         );
         push_stream(
             &mut streams,

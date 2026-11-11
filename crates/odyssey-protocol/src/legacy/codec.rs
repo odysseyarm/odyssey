@@ -1,10 +1,34 @@
+//! The packed binary packet format that preceded postcard and CBOR.
+
 use core::mem::MaybeUninit;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
 use nalgebra::Point2;
 
-use crate::{CombinedMarkersReport, Error, MotData, ObjectReport, PacketType};
+use super::{CombinedMarkersReport, MotData, ObjectReport};
+use crate::{Error, Packet, PacketType};
+
+impl Packet {
+    /// Writes the packet header followed by `data` and returns the bytes
+    /// written.
+    ///
+    /// The header is a little-endian length in 16-bit words (header
+    /// included), the packet type and the request id.
+    pub fn serialize_parts<D: Serialize>(
+        id: u8,
+        ty: PacketType,
+        data: &D,
+        mut buf: &mut [MaybeUninit<u8>],
+    ) -> usize {
+        const HEADER_SIZE: usize = 4;
+        let orig_buf_len = buf.len();
+        let [words_low, words_high] = u16::to_le_bytes(((D::SIZE + HEADER_SIZE) / 2) as u16);
+        push(&mut buf, &[words_low, words_high, ty.into(), id]);
+        data.serialize(&mut buf);
+        orig_buf_len - buf.len()
+    }
+}
 
 /// Bytes of one [`MotData`] on the wire.
 const MOT_DATA_SIZE: usize = 16;
@@ -148,7 +172,7 @@ impl Parse for ObjectReport {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
         if bytes.len() < Self::SIZE {
             return Err(Error::UnexpectedEof {
-                packet_type: Some(PacketType::ObjectReport()),
+                packet_type: Some(PacketType::LegacyObjectReport()),
             });
         }
         let (report, rest) = bytes.split_at(Self::SIZE);
@@ -182,7 +206,7 @@ impl Parse for CombinedMarkersReport {
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
         if bytes.len() < Self::SIZE {
             return Err(Error::UnexpectedEof {
-                packet_type: Some(PacketType::CombinedMarkersReport()),
+                packet_type: Some(PacketType::LegacyCombinedMarkersReport()),
             });
         }
         let (report, rest) = bytes.split_at(Self::SIZE);

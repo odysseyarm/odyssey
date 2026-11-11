@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use nalgebra::{Isometry3, Matrix3, Matrix3x1, Point2, Rotation3};
 use odyssey_cv::foveated::FoveatedAimpointState;
-use odyssey_usb::packets::vm::MotData;
+use odyssey_usb::packets::vm::legacy::MotData;
 
 #[derive(Debug)]
 pub struct MotState {
@@ -21,10 +21,10 @@ pub struct MotState {
     pub nf_markers2: ArrayVec<Marker, 16>,
     pub wf_markers2: ArrayVec<Marker, 16>,
 
-    /// Set when the markers came from a `PocMarkersReport` (PAG7665QN, 320x240
-    /// with 6 fractional bits, so at most 20416x15296) rather than a
-    /// `CombinedMarkersReport` (4095x4095).
-    pub is_poc_markers: bool,
+    /// Set when the markers came from a legacy `CombinedMarkersReport`
+    /// (4095x4095) rather than a `MarkersReport` (PAG7665QN, 320x240 with 6
+    /// fractional bits, so at most 20416x15296).
+    pub legacy_markers: bool,
 
     pub screen_id: u8,
     pub orientation: Rotation3<f32>,
@@ -47,7 +47,7 @@ impl Default for MotState {
             distance: 0.0,
             nf_data: None,
             wf_data: None,
-            is_poc_markers: false,
+            legacy_markers: true,
             screen_id: 0,
             orientation: Rotation3::identity(),
             madgwick: ahrs::Madgwick::new(1. / 100., 0.04),

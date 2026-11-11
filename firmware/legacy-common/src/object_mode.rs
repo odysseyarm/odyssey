@@ -356,15 +356,15 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     data: PacketData::Ack(),
                 })
             }
-            PacketData::WriteMode(odyssey_protocol::Mode::Object) => {
-                settings.transient.mode = odyssey_protocol::Mode::Object;
+            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Object) => {
+                settings.transient.mode = odyssey_protocol::legacy::Mode::Object;
                 settings.transient_write();
                 Some(Packet {
                     id: pkt.id,
                     data: PacketData::Ack(),
                 })
             }
-            PacketData::WriteMode(odyssey_protocol::Mode::Image) => Some(Packet {
+            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Image) => Some(Packet {
                 id: pkt.id,
                 data: PacketData::ImageStatus(ImageStatus {
                     generation: 0,
@@ -410,13 +410,13 @@ async fn usb_rcv_loop<L: L2capChannels>(
                 id: pkt.id,
                 data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(version)),
             }),
-            PacketData::ObjectReportRequest() => None,
+            PacketData::LegacyObjectReportRequest() => None,
             PacketData::Ack() => None,
             PacketData::ReadConfigResponse(_) => None,
             PacketData::ReadPropResponse(_) => None,
-            PacketData::ObjectReport(_) => None,
-            PacketData::CombinedMarkersReport(_) => None,
-            PacketData::PocMarkersReport(_) => None,
+            PacketData::LegacyObjectReport(_) => None,
+            PacketData::LegacyCombinedMarkersReport(_) => None,
+            PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
             PacketData::Vendor(_, _) => None,
@@ -669,22 +669,24 @@ async fn obj_loop<
             let id = stream_infos.marker.req_id();
             let pkt = Packet {
                 id,
-                data: PacketData::CombinedMarkersReport(odyssey_protocol::CombinedMarkersReport {
-                    nf_points: objs[0].map(|o| {
-                        if o.cx().value() == 4095 && o.cy().value() == 4095 {
-                            nalgebra::Point2::origin()
-                        } else {
-                            nalgebra::Point2::new(o.cx().value(), o.cy().value())
-                        }
-                    }),
-                    wf_points: objs[1].map(|o| {
-                        if o.cx().value() == 4095 && o.cy().value() == 4095 {
-                            nalgebra::Point2::origin()
-                        } else {
-                            nalgebra::Point2::new(4095 - o.cx().value(), 4095 - o.cy().value())
-                        }
-                    }),
-                }),
+                data: PacketData::LegacyCombinedMarkersReport(
+                    odyssey_protocol::legacy::CombinedMarkersReport {
+                        nf_points: objs[0].map(|o| {
+                            if o.cx().value() == 4095 && o.cy().value() == 4095 {
+                                nalgebra::Point2::origin()
+                            } else {
+                                nalgebra::Point2::new(o.cx().value(), o.cy().value())
+                            }
+                        }),
+                        wf_points: objs[1].map(|o| {
+                            if o.cx().value() == 4095 && o.cy().value() == 4095 {
+                                nalgebra::Point2::origin()
+                            } else {
+                                nalgebra::Point2::new(4095 - o.cx().value(), 4095 - o.cy().value())
+                            }
+                        }),
+                    },
+                ),
             };
             let r = pkt_snd.try_send(pkt);
             if r.is_err() {
@@ -770,7 +772,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::CombinedMarkersReport() => &self.marker,
+            PacketType::LegacyCombinedMarkersReport() => &self.marker,
             PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
@@ -782,7 +784,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::CombinedMarkersReport() => &self.marker,
+            PacketType::LegacyCombinedMarkersReport() => &self.marker,
             PacketType::BatteryReport() => &self.battery,
             _ => return,
         };

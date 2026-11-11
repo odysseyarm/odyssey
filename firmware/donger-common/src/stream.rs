@@ -71,7 +71,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::MarkersReport() => &self.marker,
             _ => return,
         };
         si.set_req_id(req_id);
@@ -83,7 +83,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::MarkersReport() => &self.marker,
             _ => return,
         };
         si.set_enable(false);

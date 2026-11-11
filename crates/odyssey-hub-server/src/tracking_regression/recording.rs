@@ -57,10 +57,10 @@ pub fn import_recording(path: &Path, template: RecordingTemplate) -> Result<Trac
                 accel: report.accel.into(),
                 gyro: report.gyro.into(),
             },
-            PacketData::PocMarkersReport(report) => Input::Poc {
+            PacketData::MarkersReport(report) => Input::Markers {
                 points: report.points.map(|point| [point.x, point.y]),
             },
-            PacketData::CombinedMarkersReport(report) => Input::Combined {
+            PacketData::LegacyCombinedMarkersReport(report) => Input::Combined {
                 nf_points: report.nf_points.map(|point| [point.x, point.y]),
                 wf_points: report.wf_points.map(|point| [point.x, point.y]),
             },
@@ -123,11 +123,9 @@ mod tests {
             bytes.extend(
                 postcard::to_stdvec(&Packet {
                     id: 0,
-                    data: PacketData::PocMarkersReport(
-                        odyssey_usb::packets::vm::PocMarkersReport {
-                            points: [nalgebra::Point2::origin(); 16],
-                        },
-                    ),
+                    data: PacketData::MarkersReport(odyssey_usb::packets::vm::MarkersReport {
+                        points: [nalgebra::Point2::origin(); 16],
+                    }),
                 })
                 .expect("packet encodes"),
             );

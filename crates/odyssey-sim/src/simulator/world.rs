@@ -1,6 +1,6 @@
 use nalgebra::{Matrix3, Point2, Point3, UnitQuaternion};
 use odyssey_common::ScreenCalibration;
-use odyssey_protocol::{GeneralConfig, PocMarkersReport};
+use odyssey_protocol::{GeneralConfig, MarkersReport};
 
 use super::SimError;
 use crate::dataset::{ScenePose, SceneScreen, project_world};
@@ -83,10 +83,10 @@ impl World {
 
     /// What the unit's near-field sensor reports from `pose`: the visible
     /// markers, in no particular order, as the sensor reports its blobs.
-    pub(crate) fn markers(&self, pose: &ScenePose, config: &GeneralConfig) -> PocMarkersReport {
+    pub(crate) fn markers(&self, pose: &ScenePose, config: &GeneralConfig) -> MarkersReport {
         let mut points = [Point2::origin(); 16];
         let GeneralConfig::CameraModelNf(camera) = config else {
-            return PocMarkersReport { points };
+            return MarkersReport { points };
         };
         // The stored matrix is column-major.
         let k = camera.k.map(f64::from);
@@ -101,7 +101,7 @@ impl World {
         for (slot, point) in points.iter_mut().zip(visible) {
             *slot = point;
         }
-        PocMarkersReport { points }
+        MarkersReport { points }
     }
 }
 

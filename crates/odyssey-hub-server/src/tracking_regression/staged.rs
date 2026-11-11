@@ -116,7 +116,7 @@ pub fn trace_from_scene(
         samples.push(Sample {
             elapsed_us: frame.elapsed_us,
             source_id: camera.source_id.clone(),
-            input: Input::Poc { points },
+            input: Input::Markers { points },
             truth: Some(truth),
             expectation: None,
             score,

@@ -306,7 +306,7 @@ async fn failed_stream_subscription_does_not_block_the_next_attempt() {
 
     for _ in 0..2 {
         let err = device
-            .stream(crate::packets::vm::PacketType::ObjectReport())
+            .stream(crate::packets::vm::PacketType::LegacyObjectReport())
             .await
             .err()
             .expect("subscription fails without a transport");
@@ -382,7 +382,7 @@ async fn cancelling_blocked_stream_enable_releases_its_reservation_in_order() {
             .await
             .unwrap();
     }
-    let mut subscription = Box::pin(device.stream(PacketType::ObjectReport()));
+    let mut subscription = Box::pin(device.stream(PacketType::LegacyObjectReport()));
     assert!(
         std::future::poll_fn(|cx| Poll::Ready(subscription.as_mut().poll(cx)))
             .await
@@ -390,7 +390,12 @@ async fn cancelling_blocked_stream_enable_releases_its_reservation_in_order() {
     );
     drop(subscription);
     // While Disable is also blocked, no replacement may overtake it.
-    assert!(device.stream(PacketType::ObjectReport()).await.is_err());
+    assert!(
+        device
+            .stream(PacketType::LegacyObjectReport())
+            .await
+            .is_err()
+    );
     for _ in 0..64 {
         assert!(matches!(sent.recv().await.unwrap().data, PacketData::Ack()));
     }
@@ -402,7 +407,10 @@ async fn cancelling_blocked_stream_enable_releases_its_reservation_in_order() {
         disable.data,
         PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Disable)
     ));
-    let replacement = device.stream(PacketType::ObjectReport()).await.unwrap();
+    let replacement = device
+        .stream(PacketType::LegacyObjectReport())
+        .await
+        .unwrap();
     assert!(matches!(
         sent.recv().await.unwrap().data,
         PacketData::StreamUpdate(update) if matches!(update.action, StreamUpdateAction::Enable)
@@ -425,13 +433,19 @@ async fn clear_streams_propagates_transport_failure() {
 async fn clearing_streams_closes_old_handle_without_disabling_replacement() {
     use tokio_stream::StreamExt as _;
 
-    use crate::packets::vm::{ObjectReport, PacketType, StreamUpdateAction};
+    use crate::packets::vm::legacy::ObjectReport;
+    use crate::packets::vm::{PacketType, StreamUpdateAction};
     let Harness {
         device,
         mut sent,
         incoming_tx,
     } = harness();
-    let mut old = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    let mut old = Box::pin(
+        device
+            .stream(PacketType::LegacyObjectReport())
+            .await
+            .unwrap(),
+    );
     sent.recv().await.unwrap();
     let resetting = tokio::spawn({
         let device = device.clone();
@@ -457,14 +471,19 @@ async fn clearing_streams_closes_old_handle_without_disabling_replacement() {
             .is_none()
     );
 
-    let mut replacement = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    let mut replacement = Box::pin(
+        device
+            .stream(PacketType::LegacyObjectReport())
+            .await
+            .unwrap(),
+    );
     let enable = sent.recv().await.unwrap();
     drop(old);
     assert!(sent.try_recv().is_err(), "stale handle queued a Disable");
     incoming_tx
         .send(Packet {
             id: enable.id,
-            data: PacketData::ObjectReport(ObjectReport {
+            data: PacketData::LegacyObjectReport(ObjectReport {
                 timestamp: 123,
                 ..ObjectReport::default()
             }),
@@ -473,7 +492,7 @@ async fn clearing_streams_closes_old_handle_without_disabling_replacement() {
         .unwrap();
     assert!(matches!(
         replacement.next().await,
-        Some(PacketData::ObjectReport(report)) if report.timestamp == 123
+        Some(PacketData::LegacyObjectReport(report)) if report.timestamp == 123
     ));
 }
 
@@ -506,7 +525,12 @@ async fn report_with_an_id_from_another_link_reaches_the_stream_of_its_type() {
         mut sent,
         incoming_tx,
     } = harness();
-    let mut objects = Box::pin(device.stream(PacketType::ObjectReport()).await.unwrap());
+    let mut objects = Box::pin(
+        device
+            .stream(PacketType::LegacyObjectReport())
+            .await
+            .unwrap(),
+    );
     let objects_id = sent.recv().await.unwrap().id;
     let mut impacts = Box::pin(device.stream(PacketType::ImpactReport()).await.unwrap());
     sent.recv().await.unwrap();

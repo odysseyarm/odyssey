@@ -157,7 +157,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::MarkersReport() => &self.marker,
             PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
@@ -169,7 +169,7 @@ impl StreamInfos {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,
             PacketType::ImpactReport() => &self.impact,
-            PacketType::PocMarkersReport() => &self.marker,
+            PacketType::MarkersReport() => &self.marker,
             PacketType::BatteryReport() => &self.battery,
             _ => return,
         };
@@ -619,7 +619,9 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 })
             }
 
-            PacketData::WriteMode(_) => Some(image_status(pkt.id, 0, ImageStatusCode::Unsupported)),
+            PacketData::LegacyWriteMode(_) => {
+                Some(image_status(pkt.id, 0, ImageStatusCode::Unsupported))
+            }
 
             // Renew is never answered: a reply on the stream id would end the host session.
             PacketData::ImageCommand(command @ ImageCommand::Renew { .. }) => {
@@ -694,13 +696,13 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             }
 
             // Responses and streaming reports are not commands.
-            PacketData::ObjectReportRequest() => None,
+            PacketData::LegacyObjectReportRequest() => None,
             PacketData::Ack() => None,
             PacketData::ReadConfigResponse(_) => None,
             PacketData::ReadPropResponse(_) => None,
-            PacketData::ObjectReport(_) => None,
-            PacketData::CombinedMarkersReport(_) => None,
-            PacketData::PocMarkersReport(_) => None,
+            PacketData::LegacyObjectReport(_) => None,
+            PacketData::LegacyCombinedMarkersReport(_) => None,
+            PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
             PacketData::Vendor(_, _) => None,
@@ -910,7 +912,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         let gyr = imu_data.gyro;
         let ts_micros = imu_data.timestamp_micros;
 
-        // The ICM on lite1 (POC2) is rotated 90° CW relative to legacy atslite (POC1). Legacy maps
+        // The ICM on lite1 is rotated 90° CW relative to legacy atslite. Legacy maps
         // raw axes as [raw[0], -raw[1], -raw[2]]; with legacy_x = new_y and legacy_y = -new_x
         // that becomes [raw[1], raw[0], -raw[2]].
         let (ax, ay, az) = (acc[1], acc[0], -acc[2]);
@@ -1168,7 +1170,7 @@ fn send_markers<const N: usize>(
     if streams.marker.enabled() {
         let _ = reports.try_send(Packet {
             id: streams.marker.req_id(),
-            data: PacketData::PocMarkersReport(odyssey_protocol::PocMarkersReport {
+            data: PacketData::MarkersReport(odyssey_protocol::MarkersReport {
                 points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
             }),
         });

@@ -6,9 +6,10 @@ use arrayvec::ArrayVec;
 use eros::{Context as _, Result, bail};
 use nalgebra::{Isometry3, Matrix3, Point2, Rotation3, Translation3, UnitVector3, Vector3};
 use odyssey_cv::{calculate_rotational_offset, to_normalized_image_coordinates};
-use odyssey_protocol::PocMarkersReport;
+use odyssey_protocol::MarkersReport;
 use odyssey_usb::device::{GeneralSettings, VmDevice};
-use odyssey_usb::packets::vm::{CombinedMarkersReport, MotData, PacketData};
+use odyssey_usb::packets::vm::PacketData;
+use odyssey_usb::packets::vm::legacy::{CombinedMarkersReport, MotData};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use parking_lot::Mutex;
 use tokio_stream::StreamExt as _;
@@ -74,7 +75,7 @@ pub async fn run(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
 pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
     let device = runner.lock().device.clone().context("no device selected")?;
     let mut mot_data_stream = device
-        .stream_mot_data()
+        .stream_legacy_objects()
         .await
         .context("failed to start object report stream")?;
     while let Some(mot_data) = mot_data_stream.next().await {
@@ -87,7 +88,7 @@ pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
         state.wf_data = Some(wf_data);
 
         if runner.record_packets {
-            runner.push_recorded_packet(PacketData::ObjectReport(mot_data))?;
+            runner.push_recorded_packet(PacketData::LegacyObjectReport(mot_data))?;
         }
     }
     bail!("object report stream ended")
@@ -113,9 +114,9 @@ fn update_raycast(runner: &mut MotRunner) {
     }
 }
 
-enum MarkersReport {
-    Combined(CombinedMarkersReport),
-    Poc(PocMarkersReport),
+enum AnyMarkers {
+    Legacy(CombinedMarkersReport),
+    Current(MarkersReport),
 }
 
 /// One camera's detected points, after dropping empty slots, undistorting
@@ -188,34 +189,34 @@ fn realign_stereo_rotation(
 }
 
 async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()> {
-    let mut combined_markers_stream = device
-        .stream_combined_markers()
+    let mut legacy_markers_stream = device
+        .stream_legacy_combined_markers()
         .await
-        .context("failed to start combined markers stream")?;
-    let mut poc_markers_stream = device
-        .stream_poc_markers()
+        .context("failed to start legacy combined markers stream")?;
+    let mut markers_stream = device
+        .stream_markers()
         .await
-        .context("failed to start POC markers stream")?;
+        .context("failed to start markers stream")?;
 
     loop {
         // Either subscription ending is a session failure, even while the
         // other remains alive. Merging streams would hide that partial loss.
         let report = tokio::select! {
-            report = combined_markers_stream.next() => {
-                MarkersReport::Combined(report.context("combined markers stream ended")?)
+            report = legacy_markers_stream.next() => {
+                AnyMarkers::Legacy(report.context("legacy combined markers stream ended")?)
             },
-            report = poc_markers_stream.next() => {
-                MarkersReport::Poc(report.context("POC markers stream ended")?)
+            report = markers_stream.next() => {
+                AnyMarkers::Current(report.context("markers stream ended")?)
             },
         };
-        let (is_poc, nf_points, wf_points) = match report {
-            MarkersReport::Poc(poc) => (true, poc.points, Default::default()),
-            MarkersReport::Combined(combined) => (false, combined.nf_points, combined.wf_points),
+        let (legacy, nf_points, wf_points) = match report {
+            AnyMarkers::Current(report) => (false, report.points, Default::default()),
+            AnyMarkers::Legacy(report) => (true, report.nf_points, report.wf_points),
         };
 
         let mut runner = runner.lock();
 
-        runner.state.is_poc_markers = is_poc;
+        runner.state.legacy_markers = legacy;
 
         let nf = process_points(&nf_points, &runner.general_config.camera_model_nf, None);
         let wf = process_points(
@@ -274,13 +275,13 @@ async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
         runner.state.push_aimpoint(gravity_angle);
 
         if runner.record_packets {
-            let packet_data = if is_poc {
-                PacketData::PocMarkersReport(PocMarkersReport { points: nf_points })
-            } else {
-                PacketData::CombinedMarkersReport(CombinedMarkersReport {
+            let packet_data = if legacy {
+                PacketData::LegacyCombinedMarkersReport(CombinedMarkersReport {
                     nf_points,
                     wf_points,
                 })
+            } else {
+                PacketData::MarkersReport(MarkersReport { points: nf_points })
             };
             runner.push_recorded_packet(packet_data)?;
         }

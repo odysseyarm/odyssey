@@ -754,13 +754,13 @@ impl GeneralSettings {
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct TransientSettings {
     #[n(0)]
-    pub mode: odyssey_protocol::Mode,
+    pub mode: odyssey_protocol::legacy::Mode,
 }
 
 impl Default for TransientSettings {
     fn default() -> Self {
         Self {
-            mode: odyssey_protocol::Mode::Object,
+            mode: odyssey_protocol::legacy::Mode::Object,
         }
     }
 }

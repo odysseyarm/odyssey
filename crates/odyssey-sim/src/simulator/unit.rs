@@ -464,13 +464,15 @@ impl Unit {
             PacketData::ImageCommand(command) => self
                 .image_command(id, command, ble, io.now_ms)
                 .map(PacketData::ImageStatus),
-            PacketData::WriteMode(odyssey_protocol::Mode::Image) => {
+            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Image) => {
                 Some(PacketData::ImageStatus(ImageStatus {
                     generation: 0,
                     status: ImageStatusCode::Unsupported,
                 }))
             }
-            PacketData::WriteMode(odyssey_protocol::Mode::Object) => Some(PacketData::Ack()),
+            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Object) => {
+                Some(PacketData::Ack())
+            }
             PacketData::StreamUpdate(update) => {
                 let index = u8::from(update.packet_id) as usize;
                 match update.action {
@@ -479,7 +481,7 @@ impl Unit {
                     StreamUpdateAction::Enable
                         if matches!(
                             update.packet_id,
-                            PacketType::PocMarkersReport()
+                            PacketType::MarkersReport()
                                 | PacketType::AccelReport()
                                 | PacketType::ImpactReport()
                                 | PacketType::BatteryReport()
@@ -784,7 +786,7 @@ impl Unit {
             &self.pose,
             &self.configs[ConfigKind::CameraModelNf as usize],
         );
-        self.report(PacketData::PocMarkersReport(report), io);
+        self.report(PacketData::MarkersReport(report), io);
     }
 
     fn emit_battery(&mut self, io: &mut Io<'_>) {

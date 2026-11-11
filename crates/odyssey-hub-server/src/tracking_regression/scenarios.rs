@@ -275,7 +275,7 @@ fn generate(name: &str, trajectory: Trajectory) -> Trace {
         samples.push(Sample {
             elapsed_us,
             source_id: SOURCE_ID.into(),
-            input: Input::Poc { points },
+            input: Input::Markers { points },
             truth: (!unavailable).then_some(truth),
             expectation: Some(!unavailable),
             score,
@@ -497,8 +497,12 @@ mod tests {
             .expect("loss scenario");
         let scene = loss.scene.as_ref().expect("renderer labels");
         assert_eq!(scene.frames[60].visible_marker_ids.len(), 6);
-        assert!(matches!(loss.samples[121].input, Input::Poc { points } if points == [[0; 2]; 16]));
-        assert!(matches!(loss.samples[161].input, Input::Poc { points } if points != [[0; 2]; 16]));
+        assert!(
+            matches!(loss.samples[121].input, Input::Markers { points } if points == [[0; 2]; 16])
+        );
+        assert!(
+            matches!(loss.samples[161].input, Input::Markers { points } if points != [[0; 2]; 16])
+        );
         let noisy = traces
             .iter()
             .find(|trace| trace.name == "irregular-timing-noise")

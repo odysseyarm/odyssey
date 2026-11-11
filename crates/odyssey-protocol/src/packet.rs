@@ -1,12 +1,10 @@
-use core::mem::MaybeUninit;
-
 use odyssey_protocol_macros::protocol_type;
 
-use crate::codec::{Serialize, push};
+use crate::legacy::{CombinedMarkersReport, Mode, ObjectReport};
 use crate::{
-    AccelReport, BatteryReport, CombinedMarkersReport, ConfigKind, DeviceName, Error,
-    GeneralConfig, ImpactReport, Mode, ObjectReport, PocMarkersReport, PropKind, Props,
-    ReadRegisterResponse, Register, SetDeviceNameResult, StreamUpdate, Version, WriteRegister,
+    AccelReport, BatteryReport, ConfigKind, DeviceName, Error, GeneralConfig, ImpactReport,
+    MarkersReport, PropKind, Props, ReadRegisterResponse, Register, SetDeviceNameResult,
+    StreamUpdate, Version, WriteRegister,
 };
 
 /// First id of the vendor range. Ids strictly between this and
@@ -64,13 +62,13 @@ pub enum PacketData {
     #[cfg_attr(feature = "minicbor", n(7))]
     ReadPropResponse(#[cfg_attr(feature = "minicbor", n(0))] Props),
     #[cfg_attr(feature = "minicbor", n(8))]
-    ObjectReportRequest(),
+    LegacyObjectReportRequest(),
     #[cfg_attr(feature = "minicbor", n(9))]
-    ObjectReport(#[cfg_attr(feature = "minicbor", n(0))] ObjectReport),
+    LegacyObjectReport(#[cfg_attr(feature = "minicbor", n(0))] ObjectReport),
     #[cfg_attr(feature = "minicbor", n(10))]
-    CombinedMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] CombinedMarkersReport),
+    LegacyCombinedMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] CombinedMarkersReport),
     #[cfg_attr(feature = "minicbor", n(11))]
-    PocMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] PocMarkersReport),
+    MarkersReport(#[cfg_attr(feature = "minicbor", n(0))] MarkersReport),
     #[cfg_attr(feature = "minicbor", n(12))]
     AccelReport(#[cfg_attr(feature = "minicbor", n(0))] AccelReport),
     #[cfg_attr(feature = "minicbor", n(13))]
@@ -82,7 +80,7 @@ pub enum PacketData {
     #[cfg_attr(feature = "minicbor", n(16))]
     Ack(),
     #[cfg_attr(feature = "minicbor", n(17))]
-    WriteMode(#[cfg_attr(feature = "minicbor", n(0))] Mode),
+    LegacyWriteMode(#[cfg_attr(feature = "minicbor", n(0))] Mode),
     #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
     #[cfg_attr(feature = "minicbor", n(19))]
@@ -188,11 +186,11 @@ pub enum PacketType {
     #[cfg_attr(feature = "minicbor", n(7))]
     ReadPropResponse(),
     #[cfg_attr(feature = "minicbor", n(8))]
-    ObjectReportRequest(),
+    LegacyObjectReportRequest(),
     #[cfg_attr(feature = "minicbor", n(9))]
-    ObjectReport(),
+    LegacyObjectReport(),
     #[cfg_attr(feature = "minicbor", n(10))]
-    CombinedMarkersReport(),
+    LegacyCombinedMarkersReport(),
     #[cfg_attr(feature = "minicbor", n(11))]
     AccelReport(),
     #[cfg_attr(feature = "minicbor", n(12))]
@@ -204,9 +202,9 @@ pub enum PacketType {
     #[cfg_attr(feature = "minicbor", n(15))]
     Ack(),
     #[cfg_attr(feature = "minicbor", n(16))]
-    PocMarkersReport(),
+    MarkersReport(),
     #[cfg_attr(feature = "minicbor", n(17))]
-    WriteMode(),
+    LegacyWriteMode(),
     #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
     #[cfg_attr(feature = "minicbor", n(19))]
@@ -247,16 +245,16 @@ impl TryFrom<u8> for PacketType {
             0x05 => Ok(Self::ReadConfigResponse()),
             0x06 => Ok(Self::ReadProp()),
             0x07 => Ok(Self::ReadPropResponse()),
-            0x08 => Ok(Self::ObjectReportRequest()),
-            0x09 => Ok(Self::ObjectReport()),
-            0x0a => Ok(Self::CombinedMarkersReport()),
+            0x08 => Ok(Self::LegacyObjectReportRequest()),
+            0x09 => Ok(Self::LegacyObjectReport()),
+            0x0a => Ok(Self::LegacyCombinedMarkersReport()),
             0x0b => Ok(Self::AccelReport()),
             0x0c => Ok(Self::ImpactReport()),
             0x0d => Ok(Self::StreamUpdate()),
             0x0e => Ok(Self::FlashSettings()),
             0x0f => Ok(Self::Ack()),
-            0x10 => Ok(Self::PocMarkersReport()),
-            0x11 => Ok(Self::WriteMode()),
+            0x10 => Ok(Self::MarkersReport()),
+            0x11 => Ok(Self::LegacyWriteMode()),
             0x12 => Ok(Self::ReadVersion()),
             0x13 => Ok(Self::ReadVersionResponse()),
             0x14 => Ok(Self::End()),
@@ -286,16 +284,16 @@ impl From<PacketType> for u8 {
             PacketType::ReadConfigResponse() => 0x05,
             PacketType::ReadProp() => 0x06,
             PacketType::ReadPropResponse() => 0x07,
-            PacketType::ObjectReportRequest() => 0x08,
-            PacketType::ObjectReport() => 0x09,
-            PacketType::CombinedMarkersReport() => 0x0a,
+            PacketType::LegacyObjectReportRequest() => 0x08,
+            PacketType::LegacyObjectReport() => 0x09,
+            PacketType::LegacyCombinedMarkersReport() => 0x0a,
             PacketType::AccelReport() => 0x0b,
             PacketType::ImpactReport() => 0x0c,
             PacketType::StreamUpdate() => 0x0d,
             PacketType::FlashSettings() => 0x0e,
             PacketType::Ack() => 0x0f,
-            PacketType::PocMarkersReport() => 0x10,
-            PacketType::WriteMode() => 0x11,
+            PacketType::MarkersReport() => 0x10,
+            PacketType::LegacyWriteMode() => 0x11,
             PacketType::ReadVersion() => 0x12,
             PacketType::ReadVersionResponse() => 0x13,
             PacketType::End() => 0x14,
@@ -324,16 +322,16 @@ impl Packet {
             PacketData::ReadConfigResponse(_) => PacketType::ReadConfigResponse(),
             PacketData::ReadProp(_) => PacketType::ReadProp(),
             PacketData::ReadPropResponse(_) => PacketType::ReadPropResponse(),
-            PacketData::ObjectReportRequest() => PacketType::ObjectReportRequest(),
-            PacketData::ObjectReport(_) => PacketType::ObjectReport(),
-            PacketData::CombinedMarkersReport(_) => PacketType::CombinedMarkersReport(),
-            PacketData::PocMarkersReport(_) => PacketType::PocMarkersReport(),
+            PacketData::LegacyObjectReportRequest() => PacketType::LegacyObjectReportRequest(),
+            PacketData::LegacyObjectReport(_) => PacketType::LegacyObjectReport(),
+            PacketData::LegacyCombinedMarkersReport(_) => PacketType::LegacyCombinedMarkersReport(),
+            PacketData::MarkersReport(_) => PacketType::MarkersReport(),
             PacketData::AccelReport(_) => PacketType::AccelReport(),
             PacketData::ImpactReport(_) => PacketType::ImpactReport(),
             PacketData::StreamUpdate(_) => PacketType::StreamUpdate(),
             PacketData::FlashSettings() => PacketType::FlashSettings(),
             PacketData::Ack() => PacketType::Ack(),
-            PacketData::WriteMode(_) => PacketType::WriteMode(),
+            PacketData::LegacyWriteMode(_) => PacketType::LegacyWriteMode(),
             PacketData::ReadVersion() => PacketType::ReadVersion(),
             PacketData::ReadVersionResponse(_) => PacketType::ReadVersionResponse(),
             PacketData::Vendor(n, _) => PacketType::Vendor(n),
@@ -355,7 +353,7 @@ impl Packet {
     pub fn is_control(&self) -> bool {
         match self.data {
             PacketData::StreamUpdate(_)
-            | PacketData::WriteMode(_)
+            | PacketData::LegacyWriteMode(_)
             | PacketData::ImageCommand(_)
             | PacketData::ImageStatus(_)
             | PacketData::ReadVersion()
@@ -368,40 +366,21 @@ impl Packet {
             | PacketData::WriteRegister(_)
             | PacketData::ReadRegister(_)
             | PacketData::ReadRegisterResponse(_)
-            | PacketData::ObjectReportRequest()
+            | PacketData::LegacyObjectReportRequest()
             | PacketData::Ack()
             | PacketData::FlashSettings()
             | PacketData::Vendor(_, _)
             | PacketData::SetDeviceName(_)
             | PacketData::SetDeviceNameResponse(_) => true,
-            PacketData::ObjectReport(_)
-            | PacketData::CombinedMarkersReport(_)
-            | PacketData::PocMarkersReport(_)
+            PacketData::LegacyObjectReport(_)
+            | PacketData::LegacyCombinedMarkersReport(_)
+            | PacketData::MarkersReport(_)
             | PacketData::AccelReport(_)
             | PacketData::ImpactReport(_)
             | PacketData::ImageChunk(_)
             | PacketData::ImageObject(_)
             | PacketData::BatteryReport(_) => false,
         }
-    }
-
-    /// Writes the packet header followed by `data` and returns the bytes
-    /// written.
-    ///
-    /// The header is a little-endian length in 16-bit words (header
-    /// included), the packet type and the request id.
-    pub fn serialize_parts<D: Serialize>(
-        id: u8,
-        ty: PacketType,
-        data: &D,
-        mut buf: &mut [MaybeUninit<u8>],
-    ) -> usize {
-        const HEADER_SIZE: usize = 4;
-        let orig_buf_len = buf.len();
-        let [words_low, words_high] = u16::to_le_bytes(((D::SIZE + HEADER_SIZE) / 2) as u16);
-        push(&mut buf, &[words_low, words_high, ty.into(), id]);
-        data.serialize(&mut buf);
-        orig_buf_len - buf.len()
     }
 }
 
@@ -427,23 +406,23 @@ impl PacketData {
         }
     }
 
-    pub fn object_report(self) -> Option<ObjectReport> {
+    pub fn legacy_object_report(self) -> Option<ObjectReport> {
         match self {
-            Self::ObjectReport(x) => Some(x),
+            Self::LegacyObjectReport(x) => Some(x),
             _ => None,
         }
     }
 
-    pub fn combined_markers_report(self) -> Option<CombinedMarkersReport> {
+    pub fn legacy_combined_markers_report(self) -> Option<CombinedMarkersReport> {
         match self {
-            Self::CombinedMarkersReport(x) => Some(x),
+            Self::LegacyCombinedMarkersReport(x) => Some(x),
             _ => None,
         }
     }
 
-    pub fn poc_markers_report(self) -> Option<PocMarkersReport> {
+    pub fn markers_report(self) -> Option<MarkersReport> {
         match self {
-            Self::PocMarkersReport(x) => Some(x),
+            Self::MarkersReport(x) => Some(x),
             _ => None,
         }
     }

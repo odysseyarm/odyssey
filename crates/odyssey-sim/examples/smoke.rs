@@ -67,7 +67,7 @@ async fn main() -> eros::Result<()> {
         .await?
         .context("USB accelerometer stream closed")?;
     assert_eq!(report.accel.z, 9.80665);
-    let mut markers = usb.stream_poc_markers().await?;
+    let mut markers = usb.stream_markers().await?;
     let before = tokio::time::timeout(Duration::from_secs(2), markers.next())
         .await?
         .context("marker stream closed")?;
@@ -394,7 +394,7 @@ async fn legacy_images() -> eros::Result<()> {
         .await??;
     }
     let usb = sim.connect_unit_usb(UNIT_UUID);
-    let mut markers = usb.stream_poc_markers().await?;
+    let mut markers = usb.stream_markers().await?;
     let before = tokio::time::timeout(Duration::from_secs(2), markers.next())
         .await?
         .context("legacy tracking did not resume after reboot")?;

@@ -85,7 +85,7 @@ pub(crate) fn draw_square(painter: &Painter, transform: Transform2<f64>, stroke:
 }
 
 /// Outlines a rectangle with the given half extents centered at the origin, mapped through
-/// `transform`. For a 4:3 aspect ratio POC box: `half_width = 0.5`, `half_height = 0.375`.
+/// `transform`. For the 4:3 box of a `MarkersReport`: `half_width = 0.5`, `half_height = 0.375`.
 pub(crate) fn draw_rect(
     painter: &Painter,
     half_width: f64,

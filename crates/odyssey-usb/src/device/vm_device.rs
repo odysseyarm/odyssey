@@ -5,7 +5,8 @@ use std::time::Duration;
 use backon::Retryable as _;
 use nusb::{DeviceInfo, Interface};
 use odyssey_protocol::control::device::TransportMode;
-use odyssey_protocol::{PocMarkersReport, VendorData};
+use odyssey_protocol::legacy::{CombinedMarkersReport, MotData, ObjectReport};
+use odyssey_protocol::{MarkersReport, VendorData};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt as _};
@@ -22,9 +23,8 @@ use super::response_slots::{Delivery, NO_REPLY_ID, ResponseSlot, State};
 use super::retry::{STREAM_CONTROL_ATTEMPT_TIMEOUT, STREAM_CONTROL_ATTEMPTS, resend_schedule};
 use super::usb_bulk_io::{find_vendor_interface, open_bulk_endpoints};
 use crate::packets::vm::{
-    AccelReport, BatteryReport, CombinedMarkersReport, ConfigKind, GeneralConfig, ImpactReport,
-    MotData, ObjectReport, Packet, PacketData, PacketType, Port, PropKind, Props, Register,
-    StreamUpdate, StreamUpdateAction, WriteRegister,
+    AccelReport, BatteryReport, ConfigKind, GeneralConfig, ImpactReport, Packet, PacketData,
+    PacketType, Port, PropKind, Props, Register, StreamUpdate, StreamUpdateAction, WriteRegister,
 };
 use crate::{Error, Result};
 
@@ -392,9 +392,11 @@ impl VmDevice {
         GeneralSettings::read_with(|kind| self.read_config(kind)).await
     }
 
-    pub async fn get_frame(&self) -> Result<([MotData; 16], [MotData; 16])> {
-        let reply = self.request(PacketData::ObjectReportRequest()).await?;
-        let PacketData::ObjectReport(r) = reply else {
+    pub async fn get_legacy_frame(&self) -> Result<([MotData; 16], [MotData; 16])> {
+        let reply = self
+            .request(PacketData::LegacyObjectReportRequest())
+            .await?;
+        let PacketData::LegacyObjectReport(r) = reply else {
             return Err(Error::unexpected(&reply));
         };
         Ok((r.mot_data_nf, r.mot_data_wf))
@@ -494,31 +496,31 @@ impl VmDevice {
         Ok(self.stream(stream_type).await?.filter_map(extract))
     }
 
-    pub async fn stream_mot_data(
+    pub async fn stream_legacy_objects(
         &self,
     ) -> Result<impl Stream<Item = ObjectReport> + Send + Sync + use<>> {
-        self.stream_of(PacketType::ObjectReport(), PacketData::object_report)
-            .await
+        self.stream_of(
+            PacketType::LegacyObjectReport(),
+            PacketData::legacy_object_report,
+        )
+        .await
     }
 
-    pub async fn stream_combined_markers(
+    pub async fn stream_legacy_combined_markers(
         &self,
     ) -> Result<impl Stream<Item = CombinedMarkersReport> + Send + Sync + use<>> {
         self.stream_of(
-            PacketType::CombinedMarkersReport(),
-            PacketData::combined_markers_report,
+            PacketType::LegacyCombinedMarkersReport(),
+            PacketData::legacy_combined_markers_report,
         )
         .await
     }
 
-    pub async fn stream_poc_markers(
+    pub async fn stream_markers(
         &self,
-    ) -> Result<impl Stream<Item = PocMarkersReport> + Send + Sync + use<>> {
-        self.stream_of(
-            PacketType::PocMarkersReport(),
-            PacketData::poc_markers_report,
-        )
-        .await
+    ) -> Result<impl Stream<Item = MarkersReport> + Send + Sync + use<>> {
+        self.stream_of(PacketType::MarkersReport(), PacketData::markers_report)
+            .await
     }
 
     pub async fn stream_accel(

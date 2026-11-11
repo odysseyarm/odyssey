@@ -35,9 +35,9 @@ pub(crate) enum Source {
 struct CanvasState {
     gravity_angle: f64,
     screen_id: u8,
-    is_poc_markers: bool,
-    nf_data: Option<ArrayVec<odyssey_usb::packets::vm::MotData, 16>>,
-    wf_data: Option<ArrayVec<odyssey_usb::packets::vm::MotData, 16>>,
+    legacy_markers: bool,
+    nf_data: Option<ArrayVec<odyssey_usb::packets::vm::legacy::MotData, 16>>,
+    wf_data: Option<ArrayVec<odyssey_usb::packets::vm::legacy::MotData, 16>>,
     nf_markers2: ArrayVec<Marker, 16>,
     wf_markers2: ArrayVec<Marker, 16>,
     wf_reproj: ArrayVec<Point2<f32>, 16>,
@@ -55,7 +55,7 @@ impl CanvasState {
         Self {
             gravity_angle: f64::atan2(f64::from(-gravity.z), f64::from(-gravity.x)) + PI / 2.,
             screen_id: state.fv_state.screen_id,
-            is_poc_markers: state.is_poc_markers,
+            legacy_markers: state.legacy_markers,
             nf_data: if raw { state.nf_data.clone() } else { None },
             wf_data: if raw { state.wf_data.clone() } else { None },
             nf_markers2: if processed {
@@ -116,18 +116,18 @@ fn draw(painter: &Painter, rect: Rect, runner: &Arc<Mutex<MotRunner>>, source: S
 
     let center_tf = Translation2::new(f64::from(center.x), f64::from(center.y)).to_homogeneous();
 
-    // POC reports come from the 320x240 PAG7665QN, so their border is 4:3
-    // instead of square.
+    // Current reports come from the 320x240 PAG7665QN, so their border is 4:3
+    // instead of the legacy square.
     {
         let border_transform = Transform2::from_matrix_unchecked(
             center_tf
                 * Rotation2::new(-gravity_angle).to_homogeneous()
                 * Scale2::new(draw_size, draw_size).to_homogeneous(),
         );
-        if state.is_poc_markers {
-            draw_rect(painter, 0.5, 0.375, border_transform, stroke1);
-        } else {
+        if state.legacy_markers {
             draw_square(painter, border_transform, stroke1);
+        } else {
+            draw_rect(painter, 0.5, 0.375, border_transform, stroke1);
         }
     }
 
@@ -236,7 +236,7 @@ fn draw_raw(
 }
 
 /// Bounding box of a blob as `[left, down, right, up]` in unit sensor coordinates.
-fn boundary_bounds(mot_data: &odyssey_usb::packets::vm::MotData) -> [f64; 4] {
+fn boundary_bounds(mot_data: &odyssey_usb::packets::vm::legacy::MotData) -> [f64; 4] {
     [
         f64::from(mot_data.boundary_left) / 98.,
         f64::from(mot_data.boundary_down) / 98.,
@@ -265,12 +265,12 @@ fn draw_not_raw(
     gravity_rot: Rotation2<f64>,
 ) {
     // WF rays have already been rotated into the NF camera's coordinates, so
-    // both use the NF focal length. POC's 4:3 box keeps the same scale on each
-    // axis: 15359 / 20479 is its displayed 0.75 height-to-width ratio.
-    let sensor_width = if state.is_poc_markers {
-        20479.0
-    } else {
+    // both use the NF focal length. The current 4:3 box keeps the same scale on
+    // each axis: 15359 / 20479 is its displayed 0.75 height-to-width ratio.
+    let sensor_width = if state.legacy_markers {
         4095.0
+    } else {
+        20479.0
     };
     let normalized_scale = Scale2::new(state.focal.x / sensor_width, state.focal.y / sensor_width);
 

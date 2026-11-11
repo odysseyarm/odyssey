@@ -13,7 +13,8 @@ use odyssey_hub_common::events::{
     AccelerometerEvent, BatteryEvent, DeviceEventKind, ImpactEvent, Pose, TrackingEvent,
 };
 use odyssey_usb::device::GeneralSettings;
-use odyssey_usb::packets::vm::{AccelReport, CombinedMarkersReport, PocMarkersReport};
+use odyssey_usb::packets::vm::legacy::CombinedMarkersReport;
+use odyssey_usb::packets::vm::{AccelReport, MarkersReport};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 use tracing::{info, trace};
 
@@ -128,11 +129,12 @@ impl DeviceTracker {
                     }),
                 );
             }
-            DeviceStreamEvent::CombinedMarkers(report) => {
-                self.on_combined_markers(device, &report, context).await;
+            DeviceStreamEvent::LegacyCombinedMarkers(report) => {
+                self.on_legacy_combined_markers(device, &report, context)
+                    .await;
             }
-            DeviceStreamEvent::PocMarkers(report) => {
-                self.on_poc_markers(device, &report, context).await;
+            DeviceStreamEvent::Markers(report) => {
+                self.on_markers(device, &report, context).await;
             }
         }
     }
@@ -195,7 +197,7 @@ impl DeviceTracker {
         );
     }
 
-    async fn on_combined_markers(
+    async fn on_legacy_combined_markers(
         &mut self,
         device: &Device,
         report: &CombinedMarkersReport,
@@ -221,10 +223,10 @@ impl DeviceTracker {
         self.publish_marker_solution(device, solution, context);
     }
 
-    async fn on_poc_markers(
+    async fn on_markers(
         &mut self,
         device: &Device,
-        report: &PocMarkersReport,
+        report: &MarkersReport,
         context: &DeviceTaskContext,
     ) {
         let near_markers = build_markers_from_points(

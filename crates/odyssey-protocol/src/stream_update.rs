@@ -62,7 +62,7 @@ mod tests {
         }
         let mut cursor = &[0x09, 0, 0xaa][..];
         let update = StreamUpdate::parse(&mut cursor).unwrap();
-        assert!(matches!(update.packet_id, PacketType::ObjectReport()));
+        assert!(matches!(update.packet_id, PacketType::LegacyObjectReport()));
         assert_eq!(update.action, StreamUpdateAction::Enable);
         assert_eq!(cursor, &[0xaa]);
     }

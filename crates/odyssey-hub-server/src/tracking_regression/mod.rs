@@ -12,7 +12,8 @@ use odyssey_hub_common::events::{DeviceEvent, DeviceEventKind, Event, TrackingEv
 use odyssey_sim::dataset::SceneDescription;
 pub use odyssey_sim::dataset::SceneTruth as Truth;
 use odyssey_usb::device::GeneralSettings;
-use odyssey_usb::packets::vm::{AccelReport, CombinedMarkersReport, PocMarkersReport};
+use odyssey_usb::packets::vm::legacy::CombinedMarkersReport;
+use odyssey_usb::packets::vm::{AccelReport, MarkersReport};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -106,7 +107,9 @@ pub enum Input {
         accel: [f32; 3],
         gyro: [f32; 3],
     },
-    Poc {
+    // Stored traces, and the captures hashed against them, carry this tag.
+    #[serde(rename = "poc")]
+    Markers {
         points: [[u16; 2]; 16],
     },
     Combined {
@@ -576,16 +579,18 @@ pub async fn replay(trace: &Trace) -> Result<Report, Error> {
                 accel: Vector3::from(*accel),
                 gyro: Vector3::from(*gyro),
             })),
-            Input::Poc { points } => Some(DeviceStreamEvent::PocMarkers(PocMarkersReport {
+            Input::Markers { points } => Some(DeviceStreamEvent::Markers(MarkersReport {
                 points: points.map(Point2::from),
             })),
             Input::Combined {
                 nf_points,
                 wf_points,
-            } => Some(DeviceStreamEvent::CombinedMarkers(CombinedMarkersReport {
-                nf_points: nf_points.map(Point2::from),
-                wf_points: wf_points.map(Point2::from),
-            })),
+            } => Some(DeviceStreamEvent::LegacyCombinedMarkers(
+                CombinedMarkersReport {
+                    nf_points: nf_points.map(Point2::from),
+                    wf_points: wf_points.map(Point2::from),
+                },
+            )),
             Input::Reset => {
                 *tracker = DeviceTracker::new(Some(&source.settings));
                 None

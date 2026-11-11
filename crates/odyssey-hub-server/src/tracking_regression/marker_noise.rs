@@ -57,7 +57,7 @@ fn channels(trace: &Trace) -> Vec<MarkerReports> {
     let mut channels: Vec<(String, &'static str, MarkerReports)> = Vec::new();
     for sample in &trace.samples {
         let reports: &[(&'static str, &[[u16; 2]; 16])] = match &sample.input {
-            Input::Poc { points } => &[("nf", points)],
+            Input::Markers { points } => &[("nf", points)],
             Input::Combined {
                 nf_points,
                 wf_points,
@@ -169,7 +169,7 @@ pub fn apply(trace: &Trace, noise: MarkerNoise, seed: u64) -> Result<Trace, Erro
     let mut noisy = trace.clone();
     for sample in &mut noisy.samples {
         let reports: Vec<&mut [[u16; 2]; 16]> = match &mut sample.input {
-            Input::Poc { points } => vec![points],
+            Input::Markers { points } => vec![points],
             Input::Combined {
                 nf_points,
                 wf_points,

@@ -23,7 +23,7 @@ fn trace() -> Trace {
             .map(|index| Sample {
                 elapsed_us: index * 10_000,
                 source_id: "unit".into(),
-                input: Input::Poc {
+                input: Input::Markers {
                     points: [[0; 2]; 16],
                 },
                 truth: Some(Truth {
@@ -264,7 +264,7 @@ fn malformed_trace_and_nested_unknown_settings_are_rejected() {
             .to_string()
             .contains("non-finite IMU")
     );
-    trace.samples[0].input = Input::Poc {
+    trace.samples[0].input = Input::Markers {
         points: [[0; 2]; 16],
     };
     let mut json = serde_json::to_value(&trace).unwrap();
@@ -374,7 +374,7 @@ async fn mixed_sources_fuse_by_device_and_distinct_devices_stay_isolated() {
             .outputs
             .iter()
             .zip(&mixed.samples)
-            .any(|(o, s)| matches!(s.input, Input::Poc { .. }) && o.tracking.is_some())
+            .any(|(o, s)| matches!(s.input, Input::Markers { .. }) && o.tracking.is_some())
     );
 }
 

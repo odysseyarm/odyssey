@@ -92,17 +92,17 @@ async fn record_packets(
         .await
         .context("failed to start accel stream")?;
     let mot_stream = device
-        .stream(PacketType::ObjectReport())
+        .stream(PacketType::LegacyObjectReport())
         .await
-        .context("failed to start object report stream")?;
+        .context("failed to start legacy object report stream")?;
     let comb_stream = device
-        .stream(PacketType::CombinedMarkersReport())
+        .stream(PacketType::LegacyCombinedMarkersReport())
         .await
-        .context("failed to start combined markers stream")?;
-    let poc_stream = device
-        .stream(PacketType::PocMarkersReport())
+        .context("failed to start legacy combined markers stream")?;
+    let markers_stream = device
+        .stream(PacketType::MarkersReport())
         .await
-        .context("failed to start POC markers stream")?;
+        .context("failed to start markers stream")?;
     let impact_stream = device
         .stream(PacketType::ImpactReport())
         .await
@@ -110,7 +110,7 @@ async fn record_packets(
     let mut merged_stream = accel_stream
         .merge(mot_stream)
         .merge(comb_stream)
-        .merge(poc_stream)
+        .merge(markers_stream)
         .merge(impact_stream);
 
     let mut packets = vec![];
