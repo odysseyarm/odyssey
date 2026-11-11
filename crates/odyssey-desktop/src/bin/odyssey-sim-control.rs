@@ -799,10 +799,7 @@ mod tests {
         assert!(advance_command("1000").is_ok());
         assert!(motion_command(["0", "0", "9.81", "0", "0", "x"]).is_err());
         assert_eq!(address("  ", "Unit").unwrap(), None);
-        assert_eq!(
-            address("53494D000101", "Unit").unwrap(),
-            Some(unit_uuid(1))
-        );
+        assert_eq!(address("53494D000101", "Unit").unwrap(), Some(unit_uuid(1)));
         assert!(address("53494d0001", "Unit").is_err());
         assert!(named("", "unit").is_err());
     }
