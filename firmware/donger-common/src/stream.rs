@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use odyssey_protocol::PacketType;
 
 /// Manages enabled/disabled state and request ID for a single data stream.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Default)]
 pub struct StreamInfo {
     req_id: AtomicU8,
@@ -12,6 +14,7 @@ pub struct StreamInfo {
 }
 
 impl StreamInfo {
+    /// Since: Odyssey Desktop 0.7.0.
     pub const fn new() -> Self {
         Self {
             req_id: AtomicU8::new(0),
@@ -19,33 +22,44 @@ impl StreamInfo {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn enabled(&self) -> bool {
         self.enable.load(Ordering::Relaxed)
     }
 
     /// ID of the request that enabled the stream.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn req_id(&self) -> u8 {
         self.req_id.load(Ordering::Relaxed)
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_req_id(&self, req_id: u8) {
         self.req_id.store(req_id, Ordering::Relaxed);
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_enable(&self, enable: bool) {
         self.enable.store(enable, Ordering::Relaxed);
     }
 }
 
 /// Enable state for each streamed packet type.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Default)]
 pub struct StreamInfos {
+    /// Since: Odyssey Desktop 0.7.0.
     pub imu: StreamInfo,
+    /// Since: Odyssey Desktop 0.7.0.
     pub impact: StreamInfo,
+    /// Since: Odyssey Desktop 0.7.0.
     pub marker: StreamInfo,
 }
 
 impl StreamInfos {
+    /// Since: Odyssey Desktop 0.7.0.
     pub const fn new() -> Self {
         Self {
             imu: StreamInfo::new(),
@@ -54,6 +68,7 @@ impl StreamInfos {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn disable_all(&self) {
         self.imu.enable.store(false, Ordering::Relaxed);
         self.impact.enable.store(false, Ordering::Relaxed);
@@ -62,6 +77,8 @@ impl StreamInfos {
 
     /// Enables the stream for `ty` and records `req_id`. Packet types without a
     /// stream are ignored.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn enable(&self, req_id: u8, ty: PacketType) {
         defmt::info!(
             "Enable stream {:?}, id = {=u8}",
@@ -79,6 +96,8 @@ impl StreamInfos {
     }
 
     /// Disables the stream for `ty`. Packet types without a stream are ignored.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn disable(&self, ty: PacketType) {
         let si = match ty {
             PacketType::AccelReport() => &self.imu,

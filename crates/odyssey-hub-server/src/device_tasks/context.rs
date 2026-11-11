@@ -68,7 +68,7 @@ impl Drop for RunningDevice {
     }
 }
 
-/// Handler tasks by device UUID; shared between the USB scan loop and every hub manager.
+/// Handler tasks by device UUID, shared between the USB scan loop and every hub manager.
 pub(super) type DeviceHandles = Arc<Mutex<HashMap<DeviceAddress, RunningDevice>>>;
 
 impl DeviceTaskContext {

@@ -25,51 +25,87 @@ const PLANE_THRESHOLD_BASE_M: f64 = 0.008;
 const PLANE_THRESHOLD_PER_METER: f64 = 0.004;
 
 /// Detection statistics over the frames that found the board (medians).
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionStats {
+    /// Since: Odyssey Desktop 0.6.7.
     pub dots_matched: usize,
+    /// Since: Odyssey Desktop 0.6.7.
     pub dots_expected: usize,
+    /// Since: Odyssey Desktop 0.6.7.
     pub median_dot_diameter_px: f64,
     /// Width and height of the printed board's image, pixels.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub footprint_extent_px: [f64; 2],
+    /// Since: Odyssey Desktop 0.6.7.
     pub rms_px: f64,
+    /// Since: Odyssey Desktop 0.6.7.
     pub target_size: TargetSize,
 }
 
 /// The board's distance from its apparent size next to the depth sensor's
 /// distance to the same surface.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone)]
 pub struct BoardScale {
     /// Pitch the board distance was computed with, millimeters.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub pitch_mm: f64,
     /// Median distance to the grid center from the board's apparent size,
     /// meters. Assumes the pitch is exact and the color intrinsics are right.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub board_distance_m: f64,
     /// Distance to the same point from the depth plane, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub depth_distance_m: f64,
     /// `depth_distance_m / board_distance_m`. 1.0 means the depth sensor
-    /// agrees; 1.03 means it reads 3% too far.
+    /// agrees. 1.03 means it reads 3% too far.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub ratio: f64,
     /// Frames in which the board was found, and frames supplied.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub frames_used: usize,
+    /// Since: Odyssey Desktop 0.6.7.
     pub frames_total: usize,
     /// Board distance of every frame that found the board, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub frame_distances_m: Vec<f64>,
     /// Depth points in the board region, and those on the fitted plane.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub depth_points: usize,
+    /// Since: Odyssey Desktop 0.6.7.
     pub depth_inliers: usize,
     /// RMS distance of the plane's inliers from it, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub depth_plane_rms_m: f64,
     /// Angle between the depth plane's normal and the board's, degrees. Large
     /// values mean the two measurements are not looking at the same surface.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub plane_disagreement_deg: f64,
     /// Angle between the board normal and the line of sight, degrees.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub view_angle_deg: f64,
+    /// Since: Odyssey Desktop 0.6.7.
     pub detection: DetectionStats,
 }
 
 impl BoardScale {
     /// Sample standard deviation of the per-frame board distance, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub fn distance_spread_m(&self) -> f64 {
         let n = self.frame_distances_m.len();
         if n < 2 {
@@ -86,8 +122,8 @@ impl BoardScale {
     }
 }
 
-/// Detects the board in every frame; the frames that find it, with the pose
-/// for `pitch_mm`. The first error if none does.
+/// Detects the board in every frame and returns the frames that find it, with
+/// the pose for `pitch_mm`. The first error if none does.
 fn detect_in_frames(
     geometry: &CameraGeometry,
     frames: &[Frames],
@@ -222,27 +258,30 @@ fn board_depth_points(
 
 /// Compares the board's apparent distance with the depth sensor's.
 ///
-/// The board is detected in each frame's color image; the median distance
+/// The board is detected in each frame's color image. The median distance
 /// over the frames that find it is `board_distance_m`. The depth points that
 /// fall on the dot grid's region (mapped from depth to color with
 /// `geometry.color_to_depth`) are medianed over the frames and fitted with a
 /// RANSAC plane, which rejects outliers and depth dropouts. `depth_distance_m`
 /// is the distance from the color camera's center to where that plane meets
 /// the ray through the grid center, the same point `board_distance_m` refers
-/// to; the parent `board` module documentation defines it exactly.
+/// to. The parent `board` module documentation defines it exactly.
 ///
 /// `pitch_mm` is the dot pitch of the print as measured, in millimeters
 /// ([`BoardSpec::nominal_pitch_mm`] for an unmeasured standard print).
 /// `board_distance_m` assumes it is exact and that the color intrinsics in
-/// `geometry` are right; the board must not move between the frames.
+/// `geometry` are right. The board must not move between the frames.
 ///
 /// # Errors
 ///
 /// [`BoardError::DegeneratePose`] for a non-finite or non-positive `pitch_mm`
-/// or rotations that do not average; the first detection error when no frame
-/// finds the board; [`BoardError::NoDepth`] when too few depth points fall on
-/// the board or too few fit one plane; [`BoardError::BadFit`] for invalid camera
+/// or rotations that do not average. The first detection error when no frame
+/// finds the board. [`BoardError::NoDepth`] when too few depth points fall on
+/// the board or too few fit one plane. [`BoardError::BadFit`] for invalid camera
 /// data or when the depth plane is parallel to the line of sight.
+///
+/// # Since
+/// Odyssey Desktop 0.6.7.
 pub fn board_scale(
     geometry: &CameraGeometry,
     frames: &[Frames],

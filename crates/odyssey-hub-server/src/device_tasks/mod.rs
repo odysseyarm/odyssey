@@ -8,6 +8,7 @@ mod netcore_probe;
 mod semver;
 mod sensor_streams;
 mod tracking;
+/// Since: Odyssey Desktop 0.7.0.
 #[cfg(feature = "tracking-regression")]
 #[path = "../tracking_regression/mod.rs"]
 pub mod tracking_regression;

@@ -5,10 +5,15 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct SpiPins {
+    /// Since: Odyssey Desktop 0.7.0.
     pub sck: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub miso: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub mosi: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub cs: Peri<'static, AnyPin>,
 }
 
@@ -34,6 +39,7 @@ macro_rules! static_byte_buffer {
 
 pub(crate) use static_byte_buffer;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn make_spi_dev<SPI, IRQ>(
     spi: Peri<'static, SPI>,
     irqs: IRQ,

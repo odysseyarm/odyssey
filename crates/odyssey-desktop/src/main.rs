@@ -60,7 +60,7 @@ fn main() {
         Ok(cli::Command::Run) => {}
         Ok(cli::Command::Calibrate(args)) => cli::set_pending_calibrate(args),
         Ok(cli::Command::Help) => {
-            // The Windows build has no console; ignore a closed stdout.
+            // The Windows build has no console, so ignore a closed stdout.
             let _ = writeln!(std::io::stdout(), "{}", cli::USAGE);
             return;
         }

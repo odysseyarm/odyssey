@@ -9,6 +9,8 @@ pub(super) const BULK_MAX_PACKET_SIZE: u16 = 64;
 /// Use with the endpoints created by `usb_device`. A short packet (including a
 /// ZLP) terminates the transfer. Oversized transfers are drained to that boundary
 /// before reporting overflow, so their tail cannot become the next request.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub struct TransferReader<const N: usize> {
     data: [u8; N],
     len: usize,
@@ -16,6 +18,7 @@ pub struct TransferReader<const N: usize> {
 }
 
 impl<const N: usize> TransferReader<N> {
+    /// Since: Odyssey Desktop 0.7.0.
     pub const fn new() -> Self {
         Self {
             data: [0; N],
@@ -25,6 +28,8 @@ impl<const N: usize> TransferReader<N> {
     }
 
     /// The endpoint's single-packet read must be cancellation-safe, as nRF USB is.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn read<'a>(
         &'a mut self,
         ep: &mut impl EndpointOut,

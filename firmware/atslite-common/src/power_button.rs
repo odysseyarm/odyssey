@@ -10,7 +10,9 @@ const DEBOUNCE_MS: u64 = 30;
 const POLL_MS: u64 = 20;
 
 /// Watches the power button forever. A press held for [`LONG_PRESS`] shows the turning-off
-/// animation and powers off once the button is released; shorter presses are ignored.
+/// animation and powers off once the button is released. Shorter presses are ignored.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn power_button_loop<I2c, Delay>(
     mut btn: Input<'_>,
     pmic: &embassy_sync::mutex::Mutex<
@@ -56,7 +58,9 @@ where
     }
 }
 
-/// Returns once the button has been held for `hold_time`; shorter presses are ignored.
+/// Returns once the button has been held for `hold_time`. Shorter presses are ignored.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn wait_for_power_button_full_press(btn: &mut Input<'_>, hold_time: Duration) {
     loop {
         defmt::trace!("Waiting for power button down...");

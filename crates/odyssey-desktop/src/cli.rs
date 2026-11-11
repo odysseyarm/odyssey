@@ -2,8 +2,8 @@
 //! always, and `calibrate` opens the automatic calibration wizard with the
 //! given choices filled in.
 //!
-//! The parser is hand-written because the whole grammar is one subcommand with
-//! a small set of flags; a parsing crate would cost more to build than this costs to read.
+//! The parser is hand-written. The whole grammar is one subcommand with a small
+//! set of flags, and a parsing crate would cost more to build than this costs to read.
 
 use std::fmt;
 
@@ -218,13 +218,13 @@ pub(crate) fn has_pending_calibrate() -> bool {
     PENDING_CALIBRATE.lock().is_some()
 }
 
-/// Takes the command-line request. The first wizard to open gets it; later
+/// Takes the command-line request. The first wizard to open gets it. Later
 /// openings start from a blank setup.
 pub(crate) fn take_pending_calibrate() -> Option<CalibrateArgs> {
     PENDING_CALIBRATE.lock().take()
 }
 
-/// How the hub inside this app finds its devices; the default unless the
+/// How the hub inside this app finds its devices. The default unless the
 /// command line said otherwise.
 static SERVER_OPTIONS: std::sync::OnceLock<odyssey_hub_server::ServerOptions> =
     std::sync::OnceLock::new();

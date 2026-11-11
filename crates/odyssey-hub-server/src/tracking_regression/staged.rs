@@ -26,7 +26,13 @@ fn orientation(pose: &ScenePose) -> UnitQuaternion<f64> {
 /// With `tracker_knows_surface` false the tracker's calibration is the planar
 /// fit alone while the scene keeps the measured surface, which shows what a
 /// real display's waviness costs an uncalibrated tracker. IMU gyro is zero, as
-/// in the built-in cases; acceleration comes from the frames' positions.
+/// in the built-in cases, and acceleration comes from the frames' positions.
+///
+/// # Errors
+/// Returns an error unless scene has exactly one valid screen and camera, or
+/// when scene geometry lacks required markers.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub fn trace_from_scene(
     name: &str,
     scene: SceneDescription,
@@ -79,7 +85,7 @@ pub fn trace_from_scene(
                 Vector3::zeros()
             }
         };
-        // Wire axes are the negated x, z, y of camera coordinates; the sensor reads
+        // Wire axes are the negated x, z, y of camera coordinates. The sensor reads
         // proper acceleration, so gravity is subtracted before rotating in.
         let proper = orientation(&frame.camera_to_world)
             .inverse_transform_vector(&(acceleration - Vector3::new(0.0, GRAVITY_M_S2, 0.0)));

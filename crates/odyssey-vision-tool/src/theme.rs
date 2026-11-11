@@ -19,6 +19,8 @@ const YELLOW: Color32 = Color32::from_rgb(0xf9, 0xe2, 0xaf);
 const ROUNDING: u8 = 6;
 
 /// Installs the dark theme on `ctx`.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     ctx.set_visuals_of(egui::Theme::Dark, visuals());
@@ -31,6 +33,8 @@ pub fn apply(ctx: &egui::Context) {
 }
 
 /// Background of the error banner: the error color at low strength over the panel.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn error_fill(visuals: &egui::Visuals) -> Color32 {
     visuals.panel_fill.lerp_to_gamma(RED, 0.15)
 }

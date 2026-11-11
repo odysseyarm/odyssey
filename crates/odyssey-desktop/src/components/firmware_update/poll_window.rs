@@ -3,7 +3,7 @@
 use std::iter;
 use std::time::{Duration, Instant};
 
-/// The device is not in the wanted state yet; the poll tries again until its
+/// The device is not in the wanted state yet. The poll tries again until its
 /// window closes.
 pub(super) struct NotYet;
 

@@ -9,7 +9,7 @@ const NRF5340: &str = "nRF5340_xxAA";
 const NRF52840: &str = "nRF52840_xxAA";
 
 /// One firmware crate. cargo reads its `.cargo/config.toml` (runner, rustflags,
-/// DEFMT_LOG) from the current directory, so every cargo call runs in `dir`.
+/// `DEFMT_LOG`) from the current directory, so every cargo call runs in `dir`.
 #[derive(Clone, Copy)]
 pub(super) struct Crate {
     /// Relative to the repository root.
@@ -38,7 +38,7 @@ impl Crate {
             .join(self.bin)
     }
 
-    /// The `main.rs` that declares the release counter.
+    /// The net-core `main.rs` that declares its release counter.
     pub(super) fn main_rs(&self) -> String {
         format!("{}/src/main.rs", self.dir)
     }
@@ -46,7 +46,7 @@ impl Crate {
 
 pub(super) struct Board {
     pub(super) name: &'static str,
-    /// Relative to the repository root; `build/`, `dist-bootloader/` and
+    /// Relative to the repository root. `build/`, `dist-bootloader/` and
     /// `dist-netcore/` are created inside it.
     pub(super) dir: &'static str,
     pub(super) chip: &'static str,
@@ -56,7 +56,7 @@ pub(super) struct Board {
     pub(super) flash: Flash,
     /// Crates `clean` empties, the board itself included.
     pub(super) clean: &'static [&'static Crate],
-    /// Crates `check` type-checks; empty for a board without `check`.
+    /// Crates `check` type-checks. Empty for a board without `check`.
     pub(super) check: &'static [&'static Crate],
 }
 
@@ -184,7 +184,7 @@ pub(super) const LITE1: Board = Board {
     ],
 };
 
-/// The standard library rebuilt for size (see firmware/README.md); the bank
+/// The standard library rebuilt for size (see firmware/README.md). The bank
 /// boundaries are fixed.
 const LEGACY_APP_RELEASE: &[&str] = &[
     "-Z",

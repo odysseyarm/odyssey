@@ -52,7 +52,7 @@ pub(crate) async fn bind_local_socket(
 
     // No hub answered, so the name is free. On Unix bind() still fails with AddrInUse
     // when a hub that crashed or was killed left its socket file behind, and nothing
-    // else unlinks it. try_overwrite reclaims such a stale name (unlink and rebind);
+    // else unlinks it. try_overwrite reclaims such a stale name (unlink and rebind).
     // max_spin_time bounds that retry loop under real contention.
     let listener_opts = ListenerOptions::new()
         .name(name.clone())
@@ -65,7 +65,7 @@ pub(crate) async fn bind_local_socket(
     )]
     let listener_opts = {
         let mut sd = SecurityDescriptor::new().map_err(|error| report_error(error, app_sender))?;
-        // SAFETY: set_dacl's contract applies only to a non-null ACL pointer; a null
+        // SAFETY: set_dacl's contract applies only to a non-null ACL pointer. A null
         // pointer installs a null DACL, which grants every user access to the pipe.
         unsafe {
             sd.set_dacl(std::ptr::null_mut(), false)

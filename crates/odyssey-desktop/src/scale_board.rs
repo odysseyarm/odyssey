@@ -4,7 +4,7 @@
 //! network, so it works the same in offline mode.
 //!
 //! The PDFs are generated from `crates/odyssey-autocalib/board.json` by
-//! `cargo xtask autocalib artwork --all`; see `tools/BOARD.md` there.
+//! `cargo xtask autocalib artwork --all`. See `tools/BOARD.md` there.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -125,7 +125,7 @@ fn open(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    /// The page size in PDF points, read from the file's own MediaBox.
+    /// The page size in PDF points, read from the file's own `MediaBox`.
     fn media_box(pdf: &[u8]) -> [f64; 2] {
         let text = String::from_utf8_lossy(pdf);
         let start = text.find("/MediaBox [").expect("a MediaBox") + "/MediaBox [".len();

@@ -18,6 +18,7 @@ type Bmi2Type<const N: usize> = Bmi2<
     N,
 >;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct VmImu<const N: usize> {
     inner: Bmi2Type<N>,
     // BMI270 timestamp tracking state
@@ -25,6 +26,7 @@ pub struct VmImu<const N: usize> {
     ts_micros: u32,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct VmImuInterrupt {
     irq: Input<'static>,
 }
@@ -111,10 +113,12 @@ fn round_odr_bmi270(hz: u16) -> bmi2::types::Odr {
     VALID_ODRS_BMI270.into_iter().nth(idx).unwrap().1
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn round_accel_odr_hz(hz: u16) -> u16 {
     VALID_ODRS_BMI270[nearest_odr_index(hz)].0
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init<SPI, IRQ, const N: usize, const MAX: u16>(
     spi: Peri<'static, SPI>,
     irqs: IRQ,

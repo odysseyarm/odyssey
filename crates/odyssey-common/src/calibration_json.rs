@@ -7,7 +7,12 @@ use nalgebra::{Isometry3, RealField};
 use opencv_ros_camera::RosOpenCvIntrinsics;
 
 use crate::ocv_types;
-
+/// Read camera intrinsics from OpenCV calibration JSON.
+///
+/// Since: Odyssey Desktop 0.6.0.
+///
+/// # Errors
+/// Returns an error when JSON cannot be read or parsed.
 pub fn get_intrinsics_from_opencv_camera_calibration_json<
     R: RealField + serde::de::DeserializeOwned + Copy,
 >(
@@ -17,6 +22,12 @@ pub fn get_intrinsics_from_opencv_camera_calibration_json<
     Ok(parsed.into())
 }
 
+/// Read stereo isometry from OpenCV calibration JSON.
+///
+/// Since: Odyssey Desktop 0.6.0.
+///
+/// # Errors
+/// Returns an error when JSON cannot be read or parsed.
 pub fn get_isometry_from_opencv_stereo_calibration_json<
     R: RealField + serde::de::DeserializeOwned + Copy,
 >(
@@ -26,6 +37,12 @@ pub fn get_isometry_from_opencv_stereo_calibration_json<
     Ok(parsed.into())
 }
 
+/// Write minimal camera calibration JSON.
+///
+/// Since: Odyssey Desktop 0.6.0.
+///
+/// # Errors
+/// Returns an error when JSON cannot be serialized or written.
 pub fn write_opencv_minimal_camera_calibration_json<R: RealField + serde::Serialize>(
     intrinsics: &RosOpenCvIntrinsics<R>,
     writer: impl Write,
@@ -36,6 +53,12 @@ pub fn write_opencv_minimal_camera_calibration_json<R: RealField + serde::Serial
     )
 }
 
+/// Write minimal stereo calibration JSON.
+///
+/// Since: Odyssey Desktop 0.6.0.
+///
+/// # Errors
+/// Returns an error when JSON cannot be serialized or written.
 pub fn write_opencv_minimal_stereo_calibration_json<R: RealField + serde::Serialize>(
     stereo_iso: &Isometry3<R>,
     writer: impl Write,

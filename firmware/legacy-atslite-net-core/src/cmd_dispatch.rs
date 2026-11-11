@@ -28,7 +28,7 @@ macro_rules! dispatch_cmd {
         }
     }};
 
-    // async -> ignore sender; return None
+    // async -> ignore sender, return None
     (@arm $ctrl:expr, $payload:expr, {async}, $ty:path, $_sender:expr) => {{
         let params =
             <<$ty as bt_hci::cmd::Cmd>::Params as bt_hci::FromHciBytes>
@@ -38,7 +38,7 @@ macro_rules! dispatch_cmd {
         bt_hci::cmd::AsyncCmd::exec(&cmd_val, $ctrl).await
     }};
 
-    // sync -> build CommandComplete event and send it via $sender; return None
+    // sync -> build CommandComplete event and send it via $sender, return None
     (@arm $ctrl:expr, $payload:expr, {}, $ty:path, $sender:expr) => {{
         let params =
             <<$ty as bt_hci::cmd::Cmd>::Params as bt_hci::FromHciBytes>

@@ -2,6 +2,8 @@ use embassy_nrf::Peripherals;
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 
 /// Configures nRF5340 regulators and clocks and returns the peripherals.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn init() -> Peripherals {
     let mut config = Config::default();
 

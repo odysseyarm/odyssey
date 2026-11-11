@@ -8,20 +8,27 @@ use npm1300_rs::mainreg::Vbusin1EventMask;
 use npm1300_rs::sysreg::VbusInCurrentLimit;
 
 /// Raised when VBUS goes away.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub static VBUS_REMOVED_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// GPREGRET value that marks a ship-mode entry pending across a reset.
 const GPREGRET_PENDING_SHIP: u8 = 0x42;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const CHARGE_CURRENT_MA: u16 = 310;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const DISCHARGE_CURRENT: DischargeCurrentLimit = DischargeCurrentLimit::Low;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn notify_vbus_removed() {
     VBUS_REMOVED_SIG.signal(());
 }
 
 /// Marks ship mode as pending in GPREGRET, which survives a reset.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn set_pending_ship_flag() {
     let p = pac::POWER;
     p.gpregret(0)
@@ -29,6 +36,8 @@ pub fn set_pending_ship_flag() {
 }
 
 /// Reads and clears the pending ship-mode flag.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn take_pending_ship_flag() -> bool {
     let p = pac::POWER;
     let v = p.gpregret(0).read().gpregret();
@@ -38,6 +47,8 @@ pub fn take_pending_ship_flag() -> bool {
 
 /// Powers off after a long press. Without VBUS the PMIC enters ship mode. With VBUS present
 /// this sets the pending ship flag and resets into faux-off instead.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn handle_long_press_power_off<I2c, Delay>(
     pmic: &embassy_sync::mutex::Mutex<
         embassy_sync::blocking_mutex::raw::NoopRawMutex,
@@ -70,6 +81,7 @@ where
     SCB::sys_reset();
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn pmic_setup<I2c, Delay>(
     pmic: &mut npm1300_rs::NPM1300<I2c, Delay>,
 ) -> Result<(), npm1300_rs::NPM1300Error<I2c::Error>>
@@ -99,6 +111,8 @@ where
 }
 
 /// Configure and start battery charging
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn configure_and_start_charging<I2c, Delay>(
     pmic: &mut npm1300_rs::NPM1300<I2c, Delay>,
     vbus_limit: VbusInCurrentLimit,

@@ -7,7 +7,7 @@ use gpui::RenderImage;
 use image::imageops::FilterType;
 use image::{Frame, GrayImage, RgbImage, RgbaImage};
 
-/// Widest picture sent to the UI while previewing; the preview is painted at
+/// Widest picture sent to the UI while previewing. The preview is painted at
 /// roughly this size, and smaller frames upload faster at ~15 frames a second.
 pub(super) const PREVIEW_MAX_WIDTH: u32 = 800;
 

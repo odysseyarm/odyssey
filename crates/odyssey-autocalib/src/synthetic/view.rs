@@ -234,7 +234,7 @@ impl View {
     /// image.
     fn paint_pattern(&self, img: &mut RgbImage, to_camera: &Extrinsics) {
         // The displayed image is the panel scaled about its center by the
-        // overscan; only what lands on the panel reaches the camera.
+        // overscan. Only what lands on the panel reaches the camera.
         let [image_w, image_h] = self.scene.image_extent_m();
         let origin = self.scene.image_origin_m();
         let pattern = self.scene.pattern();
@@ -360,7 +360,7 @@ impl View {
     }
 
     /// Pixels of the six markers followed by the clutter spots in the
-    /// infrared image; markers behind the camera are missing.
+    /// infrared image. Markers behind the camera are missing.
     pub(super) fn project_markers(&self) -> Vec<Point2<f64>> {
         let [sw, sh] = self.scene.screen_size_m;
         let to_camera = self.pose.screen_from_camera.inverse();

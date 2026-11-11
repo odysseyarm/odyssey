@@ -33,10 +33,10 @@ pub(super) const ABANDONED_ID_QUARANTINE: Duration = Duration::from_secs(30);
 pub(super) enum ResponseChannel {
     #[default]
     None,
-    /// (generation, sender); see `ResponseSlot::generation`.
+    /// (generation, sender). See `ResponseSlot::generation`.
     Oneshot(u64, oneshot::Sender<PacketData>),
     Stream(u64, PacketType, mpsc::Sender<PacketData>),
-    /// A request that timed out after being sent; its id stays reserved until a
+    /// A request that timed out after being sent. Its id stays reserved until a
     /// late reply is consumed or [`ABANDONED_ID_QUARANTINE`] passes.
     Abandoned(tokio::time::Instant),
 }
@@ -61,7 +61,7 @@ pub(super) enum Delivery {
     Unregistered,
     /// A late reply to a request that already timed out.
     LateReplyDropped,
-    /// The reply was discarded; see [`Undeliverable`].
+    /// The reply was discarded. See [`Undeliverable`].
     Undeliverable(Undeliverable),
 }
 
@@ -77,7 +77,7 @@ pub(super) enum Undeliverable {
 }
 
 pub(super) struct State {
-    // Indexed by request id; id 255 is NO_REPLY_ID and has no slot.
+    // Indexed by request id. Id 255 is NO_REPLY_ID and has no slot.
     pub(super) response_channels: parking_lot::Mutex<[ResponseChannel; SLOT_COUNT]>,
     pub(super) streams_active: StreamsActive,
     pub(super) stream_control: tokio::sync::Mutex<()>,
@@ -145,7 +145,7 @@ impl State {
         Ok((ResponseSlot::new(self, id, generation), receiver))
     }
 
-    /// Close subscriptions after DisableAll was acknowledged. Old guards keep
+    /// Close subscriptions after `DisableAll` was acknowledged. Old guards keep
     /// their generation, so dropping them cannot stop replacement subscriptions.
     pub(super) fn clear_streams(&self) {
         let mut channels = self.response_channels.lock();
@@ -264,7 +264,7 @@ pub(super) struct ResponseSlot {
     /// Whether the request packet was handed to the transport.
     pub(super) sent: bool,
     /// Identifies the reservation, so an old guard cannot clear a newer request
-    /// or a stream that reused the id after clear_all_streams.
+    /// or a stream that reused the id after `clear_all_streams`.
     generation: u64,
 }
 

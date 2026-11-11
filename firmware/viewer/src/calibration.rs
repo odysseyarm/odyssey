@@ -1,5 +1,5 @@
 //! Native-pixel calibration shared by the integrated tool and file utilities.
-//! Mono intrinsics are fitted in image pixels; only exported camera matrices
+//! Mono intrinsics are fitted in image pixels. Only exported camera matrices
 //! are scaled into the selected sensor's tracking coordinate system. Stereo
 //! translation is in metres, from wide-field camera to near-field camera.
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,14 +17,20 @@ use serde_json::{Value, json};
 use crate::aprilgrid::{AprilGrid, AprilGridConfig};
 use crate::{Port, ViewerError, chessboard, circles};
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pattern {
+    /// Since: Odyssey Desktop 0.7.0.
     AprilGrid,
+    /// Since: Odyssey Desktop 0.7.0.
     Chessboard,
+    /// Since: Odyssey Desktop 0.7.0.
     SymmetricCircles,
+    /// Since: Odyssey Desktop 0.7.0.
     AsymmetricCircles,
 }
 impl Pattern {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn label(self) -> &'static str {
         match self {
             Self::AprilGrid => "AprilGrid",
@@ -35,14 +41,22 @@ impl Pattern {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
+    /// Since: Odyssey Desktop 0.7.0.
     pub pattern: Pattern,
+    /// Since: Odyssey Desktop 0.7.0.
     pub rows: u16,
+    /// Since: Odyssey Desktop 0.7.0.
     pub cols: u16,
     /// Square/centre spacing, or AprilGrid tag pitch, in millimetres.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub pitch_mm: f64,
     /// Circle diameter or AprilGrid tag side, in millimetres.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub feature_mm: f64,
 }
 impl Default for Target {
@@ -57,6 +71,7 @@ impl Default for Target {
     }
 }
 impl Target {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn validate(&self) -> Result<(), ViewerError> {
         if self.rows < 2
             || self.cols < 2
@@ -79,14 +94,19 @@ impl Target {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone)]
 pub struct Observation {
+    /// Since: Odyssey Desktop 0.7.0.
     pub image: Vec<[f32; 2]>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub object: Vec<[f32; 3]>,
 }
 
 /// Detect at native resolution, reusing the original viewer detectors. No GUI,
 /// device access, or file writes occur here.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn detect(
     pixels: &[u8],
     resolution: (u16, u16),
@@ -173,17 +193,26 @@ pub fn detect(
     }))
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone)]
 pub struct MonoCalibration {
     /// Row-major camera matrix in native image pixels.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub matrix: [f64; 9],
+    /// Since: Odyssey Desktop 0.7.0.
     pub distortion: [f64; 5],
+    /// Since: Odyssey Desktop 0.7.0.
     pub rms: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub view_errors: Vec<f64>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub resolution: (u16, u16),
 }
 impl MonoCalibration {
     /// Compatible with odyssey-common's calibration JSON importer and OpenCV.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn json(&self, scale: (f64, f64), target: &Target) -> Result<String, ViewerError> {
         let mut matrix = self.matrix;
         for x in &mut matrix[..3] {
@@ -201,14 +230,20 @@ impl MonoCalibration {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone)]
 pub struct StereoCalibration {
+    /// Since: Odyssey Desktop 0.7.0.
     pub rotation: [f64; 9],
+    /// Since: Odyssey Desktop 0.7.0.
     pub translation: [f64; 3],
+    /// Since: Odyssey Desktop 0.7.0.
     pub rms: f64,
+    /// Since: Odyssey Desktop 0.7.0.
     pub captures: usize,
 }
 impl StereoCalibration {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn json(&self, target: &Target) -> Result<String, ViewerError> {
         Ok(serde_json::to_string_pretty(
             &json!({"r": matrix_json(3,3,&self.rotation), "t": matrix_json(3,1,&self.translation), "rms_error": self.rms, "error_units": "native image pixels", "translation_units": "metres", "num_captures": self.captures, "method": target.pattern.label(), "version": 1}),
@@ -285,7 +320,9 @@ fn validate_views(views: &[Observation]) -> Result<(), ViewerError> {
 
 /// Reuses the original OpenCV chessboard/AprilGrid fitting and the ccalib
 /// perspective-correct circle-centre solver. Cancellation is checked around
-/// each bounded solver call; callers retain and join the worker on cancellation.
+/// each bounded solver call. Callers retain and join the worker on cancellation.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn solve_mono(
     views: &[Observation],
     resolution: (u16, u16),
@@ -417,9 +454,11 @@ pub fn solve_mono(
     })
 }
 
-/// Each pair is explicitly captured with the board and device stationary while
-/// switching cameras. AprilGrid pairs intersect tag-corner identities, never zip
-/// unrelated partial detections. Both monocular intrinsics remain fixed.
+/// Each pair is captured with the board and device stationary while switching
+/// cameras. AprilGrid pairs intersect tag-corner identities instead of zipping
+/// unrelated partial detections. Both monocular intrinsics stay fixed.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn solve_stereo(
     pairs: &[(Observation, Observation)],
     wf: &MonoCalibration,
@@ -496,6 +535,8 @@ pub fn solve_stereo(
 }
 
 /// Read an image file for offline calibration without a second capture UI.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn load_image(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), ViewerError> {
     let image = image::ImageReader::open(path)?.decode()?.into_luma8();
     let width = u16::try_from(image.width()).map_err(|_| ViewerError::InvalidImageBuffer)?;
@@ -507,6 +548,8 @@ pub fn load_image(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), ViewerE
 }
 
 /// Preserve captured grayscale images for reproducible calibration datasets.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn save_image(
     path: &std::path::Path,
     width: u16,

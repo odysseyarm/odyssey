@@ -9,6 +9,8 @@ use opencv::imgproc::{INTER_CUBIC, corner_sub_pix, resize};
 use crate::{Port, ViewerError};
 
 /// Read intrinsics, preserving OpenCV failures and rejecting unopened files.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn read_camera_params(path: &str) -> Result<(Mat, Mat), ViewerError> {
     let fs = FileStorage::new_def(path, FileStorage_READ)?;
     if !fs.is_opened()? {
@@ -20,6 +22,8 @@ pub fn read_camera_params(path: &str) -> Result<(Mat, Mat), ViewerError> {
 }
 
 /// Returns `Ok(None)` when no corners are found, or the OpenCV failure.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn get_chessboard_corners(
     image: &[u8],
     port: Port,
@@ -33,6 +37,7 @@ pub fn get_chessboard_corners(
     get_chessboard_corners_cv(&im, port, object_resolution, board_rows, board_cols, show)
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn get_chessboard_corners_cv(
     image: &impl ToInputArray,
     _port: Port,
@@ -91,7 +96,7 @@ pub fn get_chessboard_corners_cv(
             )?;
         }
     }
-    // Back to input-image pixels; the ±0.5 shifts between pixel-centre and pixel-corner origins.
+    // Back to input-image pixels. The ±0.5 shifts between pixel-centre and pixel-corner origins.
     corners.as_mut_slice().iter_mut().for_each(|x| {
         x.x = (x.x + 0.5) / ss as f32 - 0.5;
         x.y = (x.y + 0.5) / ss as f32 - 0.5;

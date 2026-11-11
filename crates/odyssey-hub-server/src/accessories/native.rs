@@ -145,7 +145,7 @@ fn advertised_pairing_window(service_data: &HashMap<Uuid, Vec<u8>>) -> Option<u8
         .and_then(|data| marker_control::parse_pairing_state(data))
 }
 
-/// Linux needs an explicit BlueZ Pair request; btleplug exposes no bonding API.
+/// Linux needs an explicit `BlueZ` `Pair` request, btleplug exposes no bonding API.
 #[cfg(target_os = "linux")]
 pub(super) async fn pair(peripheral: &Peripheral) -> Result<(), String> {
     let (_, session) = bluez_async::BluetoothSession::new()

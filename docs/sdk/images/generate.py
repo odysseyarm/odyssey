@@ -189,7 +189,7 @@ def emblem(s, x, y, size=24):
 
 # --------------------------------------------------- oblique 3D projection
 # Odyssey's frame: +X right, +Y up, +Z toward the viewer (the shooter).
-# Cabinet projection: the screen plane (z = 0) is drawn face-on; +Z runs
+# Cabinet projection: the screen plane (z = 0) is drawn face-on. +Z runs
 # down and to the left at half scale.
 ANGLE = math.radians(32)
 DEPTH = 0.5

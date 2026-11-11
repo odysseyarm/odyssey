@@ -4,10 +4,10 @@
 use std::ops::RangeInclusive;
 
 /// Physical screen diagonals the wizard accepts. The solver would take any
-/// positive number; the range rejects a typo such as 550 for 55.
+/// positive number. The range rejects a typo such as 550 for 55.
 pub(crate) const DIAGONAL_RANGE_IN: RangeInclusive<f64> = 10.0..=200.0;
 
-/// Color exposure in microseconds. The camera clamps to what it supports; the
+/// Color exposure in microseconds. The camera clamps to what it supports. The
 /// range covers the useful span from a bright screen in a dark room to a dim
 /// one in daylight.
 pub(crate) const COLOR_EXPOSURE_RANGE_US: RangeInclusive<u32> = 200..=10_000;

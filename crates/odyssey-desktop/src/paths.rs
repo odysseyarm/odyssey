@@ -4,7 +4,7 @@ use std::path::PathBuf;
 const APP_DIR_NAME: &str = "Odyssey.Desktop";
 
 /// Root for desktop-owned files. Hub-domain data such as device offsets and
-/// calibrations lives under odyssey_hub_common's app_dirs2 identity instead, so
+/// calibrations lives under `odyssey_hub_common`'s `app_dirs2` identity instead, so
 /// uninstalling the app leaves it in place.
 fn app_root() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join(APP_DIR_NAME))

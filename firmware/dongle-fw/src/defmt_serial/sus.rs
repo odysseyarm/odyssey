@@ -45,12 +45,21 @@ macro_rules! declare_static_future {
                         fut: UnsafeCell::new(MaybeUninit::uninit()),
                     }
                 }
+                /// Writes future into static storage.
+                ///
+                /// # Safety
+                /// Caller must call once, with future matching task function used by this declaration.
+                /// Future must remain exclusively polled after initialization.
                 pub unsafe fn init<Fut>(&self, f: Fut) {
                     unsafe {
                         self.fut.get().cast::<Fut>().write(f);
                         self.is_init.store(true, Ordering::Release);
                     }
                 }
+                /// Returns pinned static future after initialization.
+                ///
+                /// # Safety
+                /// Caller must ensure returned future is not polled concurrently or moved.
                 pub unsafe fn get(&self) -> Option<Pin<
                     &'static mut impl Future<Output = embassy_executor::_export::Never>
                 >> {

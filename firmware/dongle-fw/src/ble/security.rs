@@ -15,7 +15,7 @@ pub enum BondCommand {
 pub static BOND_COMMANDS: Channel<CriticalSectionRawMutex, BondCommand, MAX_DEVICES> =
     Channel::new();
 
-// trouble-host's built-in security manager handles pairing; there is no
+// trouble-host's built-in security manager handles pairing. There is no
 // handler of our own.
 
 /// Converts a trouble-host bond into the form persisted in flash.
