@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use board::{Board, Cores, Crate, Flash, LEGACY_ATSLITE, LEGACY_VM, LITE1, MARKER_CONTROL_BOARD};
 use eros::Context as _;
-pub(crate) use manifest::alpha_head;
+pub(crate) use manifest::nightly_head;
 use release::Part;
 pub(crate) use release::{counter, gen_asset_release};
 use sha2::{Digest as _, Sha256};
@@ -70,7 +70,7 @@ pub(crate) enum Cmd {
     /// crates/odyssey-hub-server/src/firmware/pack.rs), and this runs the same
     /// completeness check before it finishes.
     BuildPack(manifest::PackArgs),
-    /// Copy one release entry from the alpha manifest to the stable one.
+    /// Copy one release entry from the nightly manifest to the stable one.
     ///
     /// Stable only ever contains entries someone promoted here, so this is the one
     /// place customers' firmware changes. Entries are prepended, keeping the
@@ -153,7 +153,7 @@ pub(crate) enum Task {
     Reset,
     /// Check all components.
     Check,
-    /// Generate a release entry in firmware/manifests/releases.alpha.json from the current build.
+    /// Generate a release entry in firmware/manifests/releases.nightly.json from the current build.
     ///
     /// None of the arguments has a default: leaving one out would silently mean "any".
     GenRelease {

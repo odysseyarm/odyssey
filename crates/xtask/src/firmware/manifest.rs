@@ -11,7 +11,7 @@ use crate::cmd;
 
 /// Relative to the repository root.
 pub(super) const MANIFESTS: &str = "firmware/manifests";
-pub(super) const ALPHA: &str = "releases.alpha.json";
+pub(super) const NIGHTLY: &str = "releases.nightly.json";
 const STABLE: &str = "releases.stable.json";
 const PACK_README: &str = "Odyssey offline firmware pack.\n\n\
 Put this folder where the 'firmware_pack_dir' policy points (by default\n\
@@ -68,36 +68,36 @@ fn entries<'a>(manifest: &'a Value, device: &str) -> &'a [Value] {
     entries_of(&manifest["devices"][device])
 }
 
-/// The newest alpha entry of `device`, if it has one.
-pub(crate) fn alpha_head(device: &str) -> eros::Result<Option<Value>> {
-    let manifest = read(&cmd::root().join(MANIFESTS).join(ALPHA))?;
+/// The newest nightly entry of `device`, if it has one.
+pub(crate) fn nightly_head(device: &str) -> eros::Result<Option<Value>> {
+    let manifest = read(&cmd::root().join(MANIFESTS).join(NIGHTLY))?;
     Ok(entries(&manifest, device).first().cloned())
 }
 
 pub(super) fn promote(device: &str, version: &str) -> eros::Result<()> {
     let dir = cmd::root().join(MANIFESTS);
-    let alpha = read(&dir.join(ALPHA))?;
+    let nightly = read(&dir.join(NIGHTLY))?;
     let stable_path = dir.join(STABLE);
     let mut stable = read(&stable_path)?;
-    promote_entry(&alpha, &mut stable, device, version)?;
+    promote_entry(&nightly, &mut stable, device, version)?;
     write(&stable_path, &stable)?;
     println!("Promoted {device} {version} to stable");
     Ok(())
 }
 
-/// Copy `device` `version` from `alpha` to the head of `stable`. Every refusal
+/// Copy `device` `version` from `nightly` to the head of `stable`. Every refusal
 /// comes before `stable` changes.
 fn promote_entry(
-    alpha: &Value,
+    nightly: &Value,
     stable: &mut Value,
     device: &str,
     version: &str,
 ) -> eros::Result<()> {
-    let Some(entry) = entries(alpha, device)
+    let Some(entry) = entries(nightly, device)
         .iter()
         .find(|entry| entry["version"] == version)
     else {
-        eros::bail!("{device} {version} is not in {ALPHA}");
+        eros::bail!("{device} {version} is not in {NIGHTLY}");
     };
     let promoted = entries(stable, device);
     if promoted.iter().any(|entry| entry["version"] == version) {
@@ -170,14 +170,15 @@ fn run_cmp(a: &str, b: &str) -> Ordering {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Channel {
     Stable,
-    Alpha,
+    #[value(alias = "alpha")]
+    Nightly,
 }
 
 impl Channel {
     fn name(self) -> &'static str {
         match self {
             Self::Stable => "stable",
-            Self::Alpha => "alpha",
+            Self::Nightly => "nightly",
         }
     }
 }
@@ -420,7 +421,7 @@ mod tests {
 
     use super::*;
 
-    /// An alpha entry: `carried` is the net-core release it ships, if any.
+    /// A nightly entry: `carried` is the net-core release it ships, if any.
     fn entry(version: &str, requires_netcore: u64, carried: Option<u64>) -> Value {
         let mut files = json!({ "app-a": { "sha256": "00", "size": 1 } });
         if let Some(release) = carried {
@@ -439,8 +440,8 @@ mod tests {
         json!({ "version": 1, "devices": { "atslite1": { "firmwares": entries } } })
     }
 
-    /// Alpha holds the bridge chain: 0.2.1 carries net core 2, 0.3.0 requires it.
-    fn alpha() -> Value {
+    /// Nightly holds the bridge chain: 0.2.1 carries net core 2, 0.3.0 requires it.
+    fn nightly() -> Value {
         manifest(vec![
             entry("0.3.0", 2, Some(2)),
             entry("0.2.1", 0, Some(2)),
@@ -452,7 +453,7 @@ mod tests {
     fn refused(stable: Vec<Value>, version: &str) -> String {
         let mut stable = manifest(stable);
         let before = stable.clone();
-        let error = promote_entry(&alpha(), &mut stable, "atslite1", version)
+        let error = promote_entry(&nightly(), &mut stable, "atslite1", version)
             .expect_err("expected a refusal");
         assert_eq!(stable, before, "stable changed despite the refusal");
         error.to_string()
@@ -474,19 +475,19 @@ mod tests {
     #[test]
     fn the_bridge_then_the_entry_requiring_it_promote_in_order() {
         let mut stable = manifest(vec![entry("0.1.0", 0, None)]);
-        promote_entry(&alpha(), &mut stable, "atslite1", "0.2.1").expect("the bridge promotes");
-        promote_entry(&alpha(), &mut stable, "atslite1", "0.3.0")
+        promote_entry(&nightly(), &mut stable, "atslite1", "0.2.1").expect("the bridge promotes");
+        promote_entry(&nightly(), &mut stable, "atslite1", "0.3.0")
             .expect("the entry requiring the bridge's release promotes");
         assert_eq!(versions(&stable), ["0.3.0", "0.2.1", "0.1.0"]);
         assert_eq!(
             entries(&stable, "atslite1")[0],
-            entries(&alpha(), "atslite1")[0]
+            entries(&nightly(), "atslite1")[0]
         );
     }
 
     #[test]
     fn a_floor_above_the_heads_net_core_is_refused() {
-        // Judged against stable's head, not against anything in alpha.
+        // Judged against stable's head, not against anything in nightly.
         let error = refused(
             vec![entry("0.2.0", 0, Some(1)), entry("0.1.0", 0, None)],
             "0.3.0",
@@ -507,7 +508,7 @@ mod tests {
     fn unknown_and_duplicate_versions_are_refused() {
         let error = refused(vec![], "9.9.9");
         assert!(
-            error.contains("atslite1 9.9.9 is not in releases.alpha.json"),
+            error.contains("atslite1 9.9.9 is not in releases.nightly.json"),
             "{error}"
         );
         let error = refused(vec![entry("0.1.0", 0, None)], "0.1.0");
@@ -517,7 +518,7 @@ mod tests {
     #[test]
     fn a_device_new_to_stable_gets_its_first_entry() {
         let mut stable = json!({ "version": 1, "devices": {} });
-        promote_entry(&alpha(), &mut stable, "atslite1", "0.1.0")
+        promote_entry(&nightly(), &mut stable, "atslite1", "0.1.0")
             .expect("empty stable takes any entry");
         assert_eq!(versions(&stable), ["0.1.0"]);
     }
@@ -582,7 +583,7 @@ mod tests {
 
     #[test]
     fn select_refuses_no_matching_device_and_a_missing_app_slot() {
-        assert!(select(&mut pack_source(), "alpha", &["vm".to_owned()], 2).is_err());
+        assert!(select(&mut pack_source(), "nightly", &["vm".to_owned()], 2).is_err());
 
         let mut source = pack_source();
         source["devices"]["atslite1"]["firmwares"][1]["files"]
@@ -617,12 +618,12 @@ mod tests {
         let mut source = json!({"version": 1, "devices": {"dongle": {"firmwares": [{
             "version": "0.1.13", "files": {"dfu-fanstel": {}, "dfu-laird": {}}
         }]}}});
-        select(&mut source, "alpha", &[], 1).unwrap();
+        select(&mut source, "nightly", &[], 1).unwrap();
         source["devices"]["dongle"]["firmwares"][0]["files"]
             .as_object_mut()
             .unwrap()
             .remove("dfu-laird");
-        assert!(select(&mut source, "alpha", &[], 1).is_err());
+        assert!(select(&mut source, "nightly", &[], 1).is_err());
     }
 
     #[test]
