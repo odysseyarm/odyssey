@@ -13,6 +13,11 @@ enum TrayCommand {
 
 type Commands = UnboundedSender<TrayCommand>;
 
+pub(crate) const LOGO_PNG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/images/tray-icon.png"
+));
+
 /// Decoded tray icon, in whatever form the platform backend wants.
 struct TrayImage {
     width: u32,
@@ -21,11 +26,7 @@ struct TrayImage {
 }
 
 fn tray_image() -> TrayImage {
-    let bytes: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/assets/images/tray-icon.png"
-    ));
-    let image = image::load_from_memory(bytes)
+    let image = image::load_from_memory(LOGO_PNG)
         .expect("the bundled tray icon is a valid image")
         .into_rgba8();
     let (width, height) = image.dimensions();

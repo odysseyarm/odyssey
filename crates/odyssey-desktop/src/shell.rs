@@ -1,11 +1,13 @@
 //! The main window: sidebar, current page, and the app-wide services that live
 //! as long as it does (hub server, hub connection, tray, UI-state writer).
 
+use std::sync::Arc;
+
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled, Subscription, Window,
-    WindowOptions, div, px, size,
+    AnyView, App, AppContext as _, Context, Entity, Image, ImageFormat, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled, Subscription,
+    Window, WindowOptions, div, img, px, size,
 };
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 use tokio::sync::{mpsc, watch};
@@ -43,6 +45,7 @@ impl Page {
 
 struct Shell {
     page: Page,
+    logo: Arc<Image>,
     view: AnyView,
     corruption: Entity<ConfigCorruptionModal>,
     wizard: Option<Entity<Wizard>>,
@@ -65,6 +68,7 @@ impl Shell {
         ];
         Self {
             page: Page::Home,
+            logo: Arc::new(Image::from_bytes(ImageFormat::Png, tray::LOGO_PNG.to_vec())),
             view: Self::build(Page::Home, window, cx),
             corruption: cx.new(|_| ConfigCorruptionModal::new()),
             wizard: None,
@@ -306,10 +310,7 @@ impl Render for Shell {
                         div()
                             .px_3()
                             .pb_4()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(palette.accent_ink)
-                            .child("Odyssey"),
+                            .child(img(Arc::clone(&self.logo)).size(px(40.0))),
                     )
                     .child(links),
             )
