@@ -1,0 +1,44 @@
+name: Select affected suites
+description: Report which CI suites a pull request or merge group can affect. Needs a full-history checkout.
+
+outputs:
+  host:
+    description: Host build, tests and lints
+    value: ${{ steps.select.outputs.host }}
+  xtask:
+    description: Repository tool tests
+    value: ${{ steps.select.outputs.xtask }}
+  proofs:
+    description: Kani release and wire proofs
+    value: ${{ steps.select.outputs.proofs }}
+  cache:
+    description: Public cache boundary self-test
+    value: ${{ steps.select.outputs.cache }}
+  host_ci:
+    description: Any of host, xtask, proofs or cache
+    value: ${{ steps.select.outputs.host_ci }}
+  tracking:
+    description: Tracking regression suites
+    value: ${{ steps.select.outputs.tracking }}
+  ffi:
+    description: C and C++ FFI library build
+    value: ${{ steps.select.outputs.ffi }}
+  uniffi:
+    description: Python and C# UniFFI builds
+    value: ${{ steps.select.outputs.uniffi }}
+  format:
+    description: rustfmt over every Rust file
+    value: ${{ steps.select.outputs.format }}
+
+runs:
+  using: composite
+  steps:
+    - id: select
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+        BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        REF_NAME: ${{ github.ref_name }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: python3 "$GITHUB_ACTION_PATH/impact.py" >> "$GITHUB_OUTPUT"

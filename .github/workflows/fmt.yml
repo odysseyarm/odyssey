@@ -11,6 +11,7 @@ on:
       - main
       - master
   pull_request:
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -22,6 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/impact
+        id: impact
       - uses: ./.github/actions/setup-nix
+        if: steps.impact.outputs.format == 'true'
       - name: Check formatting
+        if: steps.impact.outputs.format == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.format

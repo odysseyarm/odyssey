@@ -151,3 +151,5 @@ jobs:
           gh workflow run host-ci.yml --ref "$branch"
           gh workflow run fmt.yml --ref "$branch"
           gh workflow run tracking-regression.yml --ref "$branch"
+          gh workflow run ffi-ci.yml --ref "$branch"
+          gh workflow run uniffi-ci.yml --ref "$branch"
