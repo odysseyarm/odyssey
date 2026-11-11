@@ -19,8 +19,6 @@ serde_bytes = { version = "0.11.19", optional = true, default-features = false }
 heapless = { workspace = true }
 minicbor = { workspace = true, features = ["derive"], optional = true }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", optional = true }
-bitbybit = "1.3.3"
-arbitrary-int = "1.3.0"
 
 [features]
 default = ["std"]

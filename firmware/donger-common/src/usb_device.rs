@@ -170,7 +170,7 @@ where
     // enumeration alone, so a device whose control channel is unreachable can
     // still be offered the right firmware.
     config.device_release =
-        odyssey_protocol::UsbDeviceRelease::from_version(firmware_version).raw_value();
+        odyssey_version::UsbDeviceRelease::from_version(firmware_version).raw_value();
     config.max_power = 310;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;

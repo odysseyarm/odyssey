@@ -34,7 +34,7 @@ macro_rules! release {
         1
     };
 }
-const BOOTLOADER_BCD_DEVICE: u16 = odyssey_protocol::BootloaderRelease::bcd_device(release!());
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::BootloaderRelease::bcd_device(release!());
 
 embassy_nrf::bind_interrupts!(struct VbusIrqs {
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;

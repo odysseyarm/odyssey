@@ -21,6 +21,7 @@ unsafe_code = "deny"
 
 [dependencies]
 odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
+odyssey-version = { path = "../../crates/odyssey-version" }
 embedded-storage-async = "0.4.1"
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
