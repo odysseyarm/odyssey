@@ -18,7 +18,7 @@ use embassy_boot::{
 };
 use embassy_embedded_hal::flash::partition::Partition;
 use embassy_executor::Spawner;
-use embassy_nrf::config::HfclkSource;
+use embassy_nrf::config::{HfclkSource, LfclkSource};
 use embassy_nrf::interrupt::Priority;
 use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::nvmc::Nvmc;
@@ -78,6 +78,8 @@ async fn main(spawner: Spawner) {
     hardware::clear_reset_reason();
     let mut config = embassy_nrf::config::Config::default();
     config.hfclk_source = HfclkSource::ExternalXtal;
+    // The BC833M module carries a 20 ppm 32.768 kHz crystal and its load capacitors.
+    config.lfclk_source = LfclkSource::ExternalXtal;
     config.gpiote_interrupt_priority = Priority::P6;
     config.time_interrupt_priority = Priority::P6;
     let p = embassy_nrf::init(config);
@@ -161,10 +163,11 @@ async fn main(spawner: Spawner) {
         let mpsl_p =
             mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
         let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-            source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
-            rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-            rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-            accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+            source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+            rc_ctiv: 0,
+            rc_temp_ctiv: 0,
+            // Crystal's 20 ppm plus temperature and ageing margin; matches nRF Connect SDK's 50 ppm default.
+            accuracy_ppm: 50,
             skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
         };
         static MPSL: StaticCell<mpsl::MultiprotocolServiceLayer> = StaticCell::new();
