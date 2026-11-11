@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(address("  ", "Unit").unwrap(), None);
         assert_eq!(
             address("53494D000101", "Unit").unwrap(),
-            Some(odyssey_sim::unit_uuid(1))
+            Some(unit_uuid(1))
         );
         assert!(address("53494d0001", "Unit").is_err());
         assert!(named("", "unit").is_err());

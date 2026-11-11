@@ -33,10 +33,11 @@ still need their respective operating systems.
 
 Vision-tool simulation attaches to `odyssey_sim::UNIT_UUID`; USB presence and
 reconnect generation come from that unit's snapshot, not global simulator state.
-Check the optional feature used by Host CI:
+Check Host CI's optional simulator features, including simulator-control test targets:
 
 ```sh
 cargo check --locked --offline -p odyssey-vision-tool --features sim --all-targets
+cargo clippy --locked --offline -p odyssey-desktop --features sim --bin odyssey-sim-control --tests
 ```
 
 ### Binary cache
