@@ -121,6 +121,21 @@ in {
       release-proofs = releaseProofs;
       wire-proofs = wireProofs;
     };
+  # What a trusted builder may publish to the public binary cache; nothing
+  # else leaves the machine (.github/actions/push-cache/local.sh). `closures`
+  # are public workspaces and go up with their build dependencies. `outputs`
+  # compile private sources or are bare proof markers, so only the finished
+  # output and its runtime closure are published.
+  publicCache = {
+    closures = firmware.packages // firmware.checks // sdk.packages // sdk.checks // {
+      inherit (host.packages) xtask;
+      host-artifacts = host.artifacts;
+    };
+    outputs = desktopNixos.packages // lib.optionalAttrs (system == "x86_64-linux") {
+      release-proofs = releaseProofs;
+      wire-proofs = wireProofs;
+    };
+  };
   devShells = {
     default = shell;
     sdk = sdk.devShell;

@@ -9,4 +9,4 @@ runs:
           max-jobs = 2
           cores = 2
           extra-substituters = https://cache.odysseyarm.com
-          extra-trusted-public-keys = odysseyarm-1:pQObqsDwZYUoo1CsL/NGvRPF+aAfKtDyZALe7CVyuI0=
+          extra-trusted-public-keys = odysseyarm-1:pQObqsDwZYUoo1CsL/NGvRPF+aAfKtDyZALe7CVyuI0= odysseyarm-workstation-1:fqcXDRHowzPyoGwNRTfH5HcXOWvcRmF1Kl03zgOBojg=

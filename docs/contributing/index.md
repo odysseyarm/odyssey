@@ -62,12 +62,13 @@ cargo clippy --locked --offline -p odyssey-desktop --features sim --bin odyssey-
 ### Binary cache
 
 `https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary
-cache, signed with `odysseyarm-1`. Every CI job reads from it
-(`.github/actions/setup-nix`). Host CI pushes the host dependency layer
-(`.#host.cargoArtifacts`, built with the private-source stubs) and xtask on
-trusted master runs. Firmware release workflows push firmware derivations,
-checks and packaging closures; FFI and UniFFI workflows push SDK derivations
-and checks on trusted runs. Desktop releases push `desktop-nixos`.
+cache. CI trusts `odysseyarm-1` and the dedicated `odysseyarm-workstation-1`
+signer (`.github/actions/setup-nix`). Host CI pushes the host dependency layer
+(`.#host.cargoArtifacts`, built with the private-source stubs), xtask and
+successful proof results on trusted runs. Firmware release workflows push
+firmware derivations, checks and packaging closures; FFI and UniFFI workflows
+push SDK derivations and checks on trusted runs. Desktop releases push
+`desktop-nixos`.
 
 Public builds upload full Nix build closures, including build-time dependency
 outputs. The upload action rejects any closure containing the locked
@@ -75,8 +76,85 @@ outputs. The upload action rejects any closure containing the locked
 real sources are never uploaded. Pull requests never push. Uploads need
 `NIX_SIGNING_KEY`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
 
-Run `.github/actions/push-cache/test.sh` to check build-only closure coverage
-and private-source rejection locally.
+Check store selection, queue recovery, payload rejection and real local pushes:
+
+```sh
+nix shell --inputs-from . nixpkgs#python3 nixpkgs#zstd nixpkgs#jq nixpkgs#jujutsu --command bash .github/actions/push-cache/test.sh
+```
+
+Builds on a trusted workstation can populate the same cache. `publicCache` in
+`nix/default.nix` is the whole list of what may leave the machine: `closures`
+(firmware, SDK, xtask and the host dependency layer) are uploaded with their
+build dependencies; `outputs` (proof results and `desktop-nixos`) are uploaded
+alone, with their runtime closure. From the repository root:
+
+```sh
+bash .github/actions/push-cache/local.sh            # upload what is built
+bash .github/actions/push-cache/local.sh --dry-run  # list the store paths
+```
+
+Approvals persist in `${XDG_STATE_HOME:-$HOME/.local/state}/odyssey-cache`.
+Changing checkout does not replace earlier approvals. Completed builds are
+recorded separately by derivation and output path; records do not grant upload
+permission. Unknown builds stay local until an exact revision approves them.
+Only valid, already-built outputs enter the upload queue. Never-built outputs
+are skipped. A recorded completed output that was collected before queuing
+instead blocks upload and requires rebuilding; the uploader builds nothing.
+
+```sh
+bash .github/actions/push-cache/local.sh --register 'git+file:///path/to/odyssey?rev=COMMIT'
+bash .github/actions/push-cache/local.sh --flush
+bash .github/actions/push-cache/local.sh --push --bookmark BRANCH
+```
+
+The push entrypoint asks `jj git push --dry-run` what would move, registers
+every outgoing revision, flushes pending uploads, then pushes. Upload failure
+blocks the push. Configure the local `jj push` alias to use this entrypoint;
+plain `jj git push` bypasses it. A cache miss is not an instruction to build:
+commit first, build the relevant checks/packages, then push.
+
+The queue uses SQLite transactions and GC roots for pending output and
+approved build closures. Failed uploads keep those roots; successful uploads
+acknowledge the batch and release them. `--flush` needs no working-tree
+evaluation, so retry remains possible after changing checkout.
+
+It needs Nix, jj, Bash, Python 3.11+, jq and zstd,
+`NIX_SIGNING_KEY_FILE` naming a dedicated signing key whose public key is in
+CI's trusted keys, and bucket-scoped Cloudflare R2 credentials in the
+S3-compatible AWS form (`AWS_PROFILE` or
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`). Keep both secrets outside the
+repository with mode `600`.
+
+For automatic uploads, configure nix-daemon's `post-build-hook` to write
+`DRV_PATH` and `OUT_PATHS` as atomic records under a root-owned persistent
+`/var/lib/nix-post-build/events` directory. The hook must never upload, run
+checkout code, access credentials or fail the build. A user path unit watches
+that directory; a user service settles build bursts, runs the uploader, and
+repeats if more builds finished during upload. Start it at login as well, and
+retry failures with backoff (30 seconds up to 15 minutes on this workstation).
+Root permissions and credentials stay separate.
+
+Before signing, the guard checks revision-bound private sources, retained
+derivation provenance and payload contents, including nested archives. GC'd
+deriver metadata is not rebuilt. Matching private Rust source bytes are
+rejected even after copying/renaming or compression. Public build closures
+and empty proof markers need no private-source fetch; other outputs require
+available private-source fingerprints.
+Malformed archive fixtures inside declared public build graphs are scanned
+as raw data; private-consuming outputs fail closed on archive decode errors.
+This is not arbitrary-secret detection: edited source and unrelated secrets
+still require review before approving a new output family. Compiled private
+code in the approved stripped desktop binary is intentional.
+
+CI substitutes a result only when its derivation matches exactly: sources,
+lockfiles, toolchains and target system. Every derivation here takes the
+filtered source tree, so any tracked Rust change gives new cache keys, and
+firmware images also embed the Git revision, so they match CI only when built
+from a clean committed tree. Build after committing if CI should reuse the
+result.
+
+A trusted Nix signer can attest any store output, not just proofs. Protect its
+private key accordingly; mathematical purity does not authenticate a builder.
 
 ### Desktop release types
 

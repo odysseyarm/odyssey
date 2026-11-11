@@ -30,6 +30,7 @@
       devShells = forAllSystems (system: projects.${system}.devShells);
       packages = forAllSystems (system: projects.${system}.packages);
       checks = forAllSystems (system: projects.${system}.checks);
+      legacyPackages = forAllSystems (system: { inherit (projects.${system}) publicCache; });
       formatter = forAllSystems (system: projects.${system}.pkgs.nixfmt);
     };
 }

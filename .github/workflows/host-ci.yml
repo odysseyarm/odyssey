@@ -29,7 +29,7 @@ jobs:
         if: steps.impact.outputs.host_ci == 'true'
       - name: Check public cache boundaries
         if: steps.impact.outputs.cache == 'true'
-        run: bash .github/actions/push-cache/test.sh
+        run: nix shell --inputs-from . nixpkgs#python3 nixpkgs#zstd nixpkgs#jq nixpkgs#jujutsu --command bash .github/actions/push-cache/test.sh
       - name: Build host applications and repository tools
         id: deps
         if: steps.impact.outputs.host == 'true' || steps.impact.outputs.xtask == 'true'
@@ -56,5 +56,20 @@ jobs:
         if: steps.impact.outputs.host == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.host-lint .#checks.x86_64-linux.host-lint-bins
       - name: Prove release rules and wire layouts
+        id: proofs
         if: steps.impact.outputs.proofs == 'true'
-        run: nix build -L --no-link .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs
+        run: |
+          paths=$(nix build -L --no-link --print-out-paths .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs)
+          {
+            echo 'paths<<EOF'
+            echo "$paths"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Push proof results
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && steps.proofs.outcome == 'success'
+        uses: ./.github/actions/push-cache
+        with:
+          paths: ${{ steps.proofs.outputs.paths }}
+          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
