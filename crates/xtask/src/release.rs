@@ -772,16 +772,25 @@ fn publish(names: &[String], dry_run: bool) -> eros::Result<()> {
         Role::App(_) => 1,
         Role::Workflow | Role::Dongle => 2,
     });
+    // Every part is tagged before any is waited on, so their workflows overlap.
+    for row in &targets {
+        if matches!(row.component.role, Role::Part { .. }) && !dry_run {
+            push_tag(&tag_of(row), &head)?;
+        }
+    }
     for row in targets {
         release(row, &plan, &head, dry_run)?;
     }
     Ok(())
 }
 
+fn tag_of(row: &Row) -> String {
+    format!("{}-v{}", row.component.name, dotted(&row.source))
+}
+
 fn release(row: &Row, plan: &Plan, head: &str, dry_run: bool) -> eros::Result<()> {
-    let name = row.component.name;
     let version = dotted(&row.source);
-    let tag = format!("{name}-v{version}");
+    let tag = tag_of(row);
     let floor = min_desktop(row, plan)?;
     if dry_run {
         let floor = floor.map_or_else(String::new, |floor| format!(", min_desktop {floor}"));
@@ -793,10 +802,7 @@ fn release(row: &Row, plan: &Plan, head: &str, dry_run: bool) -> eros::Result<()
             push_tag(&tag, head)?;
             println!("Pushed {tag}; its workflow builds and publishes it.");
         }
-        Role::Part { .. } => {
-            push_tag(&tag, head)?;
-            wait_for_release(&tag)?;
-        }
+        Role::Part { .. } => wait_for_release(&tag)?,
         Role::Dongle => {
             push_tag(&tag, head)?;
             wait_for_release(&tag)?;
