@@ -53,6 +53,7 @@ let
     buildPhaseCargoCommand = ''
       cargo-kani kani -p odyssey-protocol --features minicbor --output-format terse
       cargo-kani kani -p odyssey-protocol --no-default-features --harness proofs:: --output-format terse
+      cargo-kani kani -p odyssey-version --output-format terse
     '';
     doCheck = false;
     installPhaseCommand = "touch $out";

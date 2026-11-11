@@ -36,6 +36,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 # Device-specific
 paj7025 = { path = "../paj7025", features = ["nrf"] }
 odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false, features = ["minicbor", "serde-no-std", "defmt"] }
+odyssey-version = { path = "../../crates/odyssey-version" }
 trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false }
 
 # Debug

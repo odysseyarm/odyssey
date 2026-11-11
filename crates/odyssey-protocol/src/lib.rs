@@ -20,7 +20,6 @@ mod py;
 mod register;
 mod reports;
 mod stream_update;
-mod usb_release;
 mod version;
 
 pub mod accessory;
@@ -41,5 +40,4 @@ pub use props::{PropKind, Props};
 pub use register::{Port, ReadRegisterResponse, Register, WriteRegister};
 pub use reports::{AccelReport, BatteryReport, ImpactReport, MarkersReport};
 pub use stream_update::{StreamUpdate, StreamUpdateAction};
-pub use usb_release::{BootloaderRelease, UsbDeviceRelease, UsbVersionReport};
 pub use version::{DEVICE_PROTOCOL, Version};

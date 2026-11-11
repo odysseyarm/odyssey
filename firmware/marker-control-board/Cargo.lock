@@ -1097,6 +1097,7 @@ dependencies = [
  "nrf-mpsl",
  "nrf-sdc",
  "odyssey-protocol",
+ "odyssey-version",
  "rand_chacha",
  "rand_core 0.6.4",
  "static_cell",
@@ -1357,8 +1358,6 @@ dependencies = [
 name = "odyssey-protocol"
 version = "0.0.0"
 dependencies = [
- "arbitrary-int",
- "bitbybit",
  "enumn",
  "heapless",
  "nalgebra",
@@ -1373,6 +1372,14 @@ version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
+]
+
+[[package]]
+name = "odyssey-version"
+version = "0.0.0"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
 ]
 
 [[package]]
