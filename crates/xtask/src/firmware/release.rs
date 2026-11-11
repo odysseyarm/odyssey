@@ -145,11 +145,7 @@ pub(super) fn publish(board: &Board, part: Part) -> eros::Result<()> {
     let release = read_counter(&main_rs)?;
     let tag = part.tag(device, release);
     let commit = cmd::output(cmd::at(board.dir, "git").args(["rev-parse", "HEAD"]))?;
-    let branches =
-        cmd::output(cmd::at(board.dir, "git").args(["branch", "-r", "--contains", &commit]))?;
-    if !branches.contains("origin/master") {
-        eros::bail!("{commit} is not on origin/master. Push it first.");
-    }
+    cmd::require_merged_master(&commit)?;
     if release_exists(board, &tag)? {
         eros::bail!("release {tag} already exists. Raise the counter in {main_rs}.");
     }

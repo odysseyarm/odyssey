@@ -1,0 +1,5 @@
+# Tags and artifact publication happen only after the version patch is reviewed and merged.
+publish = false
+tag = false
+push = false
+allow-branch = ["*"]

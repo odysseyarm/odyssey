@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: marker-control-board-release
@@ -67,7 +68,9 @@ jobs:
     if: github.ref_type == 'tag' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.build.outputs.version }}
@@ -88,14 +91,14 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" --draft=false
           fi
           test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = false
-      - name: Publish alpha manifest from published bytes
+      - name: Open or reuse manifest pull request
         run: |
           set -eu
-          # Desktop compatibility floor is versioned alongside firmware, never inferred from latest desktop.
+          # Desktop compatibility floor comes from tagged source, not latest master.
           min_desktop=$(python3 -c 'import tomllib; print(tomllib.load(open("firmware/marker-control-board/Cargo.toml", "rb"))["package"]["metadata"]["firmware"]["min-desktop"])')
           git fetch origin master
           git checkout -B manifest-update origin/master
-          # Read tagged package/source, but merge manifest onto latest master to preserve concurrent device releases.
+          # Merge published bytes onto latest master while preserving tagged package metadata.
           gh release download "$GITHUB_REF_NAME" --pattern app.bin --dir published
           VERSION="$VERSION" MIN_DESKTOP="$min_desktop" python3 - <<'PY'
           import datetime, hashlib, json, os, re
@@ -121,10 +124,30 @@ jobs:
               tmp.write_text(json.dumps(manifest, indent=2) + '\n')
               tmp.replace(path)
           PY
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add firmware/manifests/releases.alpha.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Publish marker-control-board $VERSION alpha manifest"
-            git push origin HEAD:master
+          if git diff --cached --quiet; then
+            echo "Manifest already records marker-control-board $VERSION; no PR needed."
+            exit 0
           fi
+          branch="marker-control-board-manifest-v$VERSION"
+          pr=$(gh pr list --base master --head "$branch" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$pr" ]; then
+            echo "Reusing existing manifest PR: $pr"
+          else
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              echo "::error::Branch $branch exists without an open PR; refusing to overwrite it."
+              exit 1
+            fi
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git checkout -b "$branch"
+            git commit -m "Publish marker-control-board $VERSION alpha manifest"
+            git push origin "$branch"
+            pr=$(gh pr create --base master --head "$branch" \
+              --title "Publish marker-control-board $VERSION alpha manifest" \
+              --body "Generated from immutable published app.bin; SHA256 and size checked. Review and squash-merge to master.")
+          fi
+          # GITHUB_TOKEN PRs do not trigger pull_request workflows; dispatch checks on branch HEAD.
+          gh workflow run host-ci.yml --ref "$branch"
+          gh workflow run fmt.yml --ref "$branch"
+          gh workflow run tracking-regression.yml --ref "$branch"

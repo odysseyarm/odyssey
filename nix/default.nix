@@ -100,7 +100,7 @@ let
     inherit pkgs craneLib common;
   } else { packages = {}; checks = {}; };
   shell = pkgs.mkShell ({
-    packages = [ toolchain pkgs.cargo-nextest pkgs.python3 pkgs.gh ]
+    packages = [ toolchain pkgs.cargo-release pkgs.cargo-nextest pkgs.python3 pkgs.gh ]
       ++ nativeInputs ++ nativeLibraries ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         (pkgs.dotnetCorePackages.combinePackages [ pkgs.dotnetCorePackages.sdk_10_0 pkgs.dotnetCorePackages.runtime_8_0 ])
       ];
@@ -112,6 +112,7 @@ let
 in {
   inherit pkgs;
   packages = host.packages // sdk.packages // firmware.packages // appimage.packages // desktopNixos.packages // windows.packages
+    // { cargo-release = pkgs.cargo-release; }
     // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; inherit kani; };
   checks = host.checks // sdk.checks // firmware.checks // appimage.checks // desktopNixos.checks // windows.checks
     // { private-source-boundary = common.privateBoundaryCheck; }
