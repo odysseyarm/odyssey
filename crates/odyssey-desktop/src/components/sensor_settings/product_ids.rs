@@ -4,7 +4,7 @@ const PID_ATS_VM: u16 = 0x520F;
 const PID_ATS_LITE: u16 = 0x5210;
 const PID_ATS_PRO: u16 = 0x5211;
 
-/// The sensor chip family on a device; it decides which tuning panels apply.
+/// The sensor chip family on a device. It decides which tuning panels apply.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SensorFamily {
     /// Two sensors: near field and wide field.

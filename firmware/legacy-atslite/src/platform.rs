@@ -1,6 +1,7 @@
 ﻿use crate::imu::{AtsliteImu, AtsliteImuInterrupt};
 use crate::l2cap::AtsliteL2capChannels;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct AtslitePlatform;
 
 impl legacy_common::platform::Platform for AtslitePlatform {

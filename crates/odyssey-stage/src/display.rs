@@ -10,6 +10,8 @@ use crate::StageError;
 
 /// Canonical marker layout as display fractions, in `object_points` order. Shared
 /// with `odyssey_sim::synthetic_screen_calibration`.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub const MARKER_UV: [[f64; 2]; 6] = [
     [0.2, 1.0],
     [0.2, 0.0],
@@ -28,17 +30,28 @@ const MAX_SIZE_M: f64 = 30.0;
 const MIN_SIZE_M: f64 = 0.1;
 
 /// Ripples in the screen, such as a pull-down projector screen or a loose wall
-/// covering. The screen stays flat along its top and bottom edges, where the
-/// markers sit: the tracker treats the marker pattern as a plane.
+/// covering.
+///
+/// The screen stays flat along its top and bottom edges, where the markers sit:
+/// the tracker treats the marker pattern as a plane.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Waviness {
     /// Peak displacement in meters.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub amplitude_m: f64,
     /// Number of ripple periods across the width.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub waves_u: f64,
     /// Ripple bumps down the height, rounded to a whole number of at least one.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub waves_v: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub phase_deg: f64,
 }
 
@@ -54,32 +67,48 @@ impl Default for Waviness {
 }
 
 /// Projector placement errors. Positive horizontal makes the top edge wider than
-/// the bottom; positive vertical makes the left edge taller than the right.
+/// the bottom. Positive vertical makes the left edge taller than the right.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Keystone {
+    /// Since: Odyssey Desktop 0.7.5.
     pub horizontal: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub vertical: f64,
 }
 
 /// A display adopted from elsewhere: a scene file, such as one edited in
 /// Blender, or the calibration of a running hub.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Imported {
     /// The display in stage coordinates: upright, its top-left at the origin.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub calibration: ScreenCalibration<f32>,
     /// Rotation from the source's world frame into the display's own, as x, y, z, w.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub rotation_xyzw: [f64; 4],
     /// The display's top-left corner in the source's display frame, in meters.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub origin_m: [f64; 2],
     /// The display is this screen of a running hub. The hub's simulated units
     /// then look at the hub's own copy of it.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub_screen: Option<u8>,
 }
 
 impl Imported {
     /// A stage pose in the world frame the display was adopted from.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn to_source(
         &self,
         position_m: [f64; 3],
@@ -102,18 +131,27 @@ impl Imported {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Display {
+    /// Since: Odyssey Desktop 0.7.5.
     pub width_m: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub height_m: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub waviness: Waviness,
+    /// Since: Odyssey Desktop 0.7.5.
     pub keystone: Keystone,
     /// Lens distortion of the projector: positive bulges the picture outward at
     /// the edges (barrel), negative pinches it (pincushion).
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub barrel: f64,
     /// While set it replaces the generated surface, and the fields above only
     /// record its size.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported: Option<Imported>,
 }
@@ -134,12 +172,19 @@ impl Default for Display {
 impl Display {
     /// A display with no distortion has no measured surface at all, matching a
     /// freshly calibrated planar screen.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn is_flat(&self) -> bool {
         self.waviness.amplitude_m == 0.0
             && self.keystone == Keystone::default()
             && self.barrel == 0.0
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if display dimensions or distortion parameters are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         if self.imported.is_some() {
             return Ok(());
@@ -219,6 +264,12 @@ impl Display {
     }
 
     /// The calibrated screen the tracker and the tools consume.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if display calibration or geometry is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn screen(&self) -> Result<SceneScreen, StageError> {
         self.validate()?;
         let (w, h) = (self.width_m, self.height_m);
@@ -256,6 +307,12 @@ impl Display {
     }
 
     /// Adopt the single display of a scene file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if scene does not contain exactly one usable screen.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn from_scene(scene: &SceneDescription) -> Result<Self, StageError> {
         let [screen] = scene.screens.as_slice() else {
             return Err(StageError::invalid(
@@ -268,6 +325,12 @@ impl Display {
     /// Adopt a calibrated screen. The origin moves to the display's top-left
     /// corner and the display stands upright, so devices keep their stage
     /// coordinates; `of_hub` marks it as a running hub's own screen.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if screen geometry or dimensions are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn from_screen(screen: &SceneScreen, of_hub: bool) -> Result<Self, StageError> {
         screen.geometry()?;
         let mut calibration = screen.calibration.clone();
@@ -313,7 +376,9 @@ impl Display {
     }
 
     /// The pose a hub's simulator is given for a stage pose. A display adopted
-    /// from the hub keeps the hub's frame there; any other is the stage's own.
+    /// from the hub keeps the hub's frame there. Any other is the stage's own.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn simulator_pose(
         &self,
         position_m: [f64; 3],
@@ -329,6 +394,8 @@ impl Display {
 
     /// Whether the hub's simulated units should look at the hub's own screens
     /// instead of this display.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn is_hub_screen(&self) -> bool {
         self.imported
             .as_ref()
@@ -362,7 +429,7 @@ impl Display {
             Point3::new(point.x as f32, point.y as f32, point.z as f32)
         });
         // The homography stays the planar fit of the outer markers, as for a
-        // calibrated real screen; the surface carries the rest.
+        // calibrated real screen. The surface carries the rest.
         let source = FIT_MARKERS.map(|index| {
             let point = object_points[index];
             [f64::from(point.x), f64::from(point.y)]
@@ -390,7 +457,7 @@ fn apply(homography: &Matrix3<f64>, [x, y]: [f64; 2]) -> [f64; 2] {
     [p.x / p.z, p.y / p.z]
 }
 
-/// Exact projective map taking four points to four points; `None` when the
+/// Exact projective map taking four points to four points. `None` when the
 /// points are degenerate.
 fn fit_homography(source: &[[f64; 2]; 4], target: &[[f64; 2]; 4]) -> Option<Matrix3<f64>> {
     let mut a = SMatrix::<f64, 8, 8>::zeros();

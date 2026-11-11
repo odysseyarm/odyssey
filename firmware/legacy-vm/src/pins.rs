@@ -2,10 +2,15 @@ use embassy_nrf::Peri;
 use embassy_nrf::gpio::AnyPin;
 use embassy_nrf::peripherals::*;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct Spi {
+    /// Since: Odyssey Desktop 0.7.0.
     pub sck: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub miso: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub mosi: Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub cs: Peri<'static, AnyPin>,
 }
 

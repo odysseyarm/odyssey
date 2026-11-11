@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::components::firmware_update::FirmwareChannelModel;
 use crate::runtime;
 
-/// The first wait after a failed manifest fetch; each retry doubles it.
+/// The first wait after a failed manifest fetch. Each retry doubles it.
 const MANIFEST_RETRY_START: Duration = Duration::from_secs(5);
 const MANIFEST_RETRY_MAX: Duration = Duration::from_secs(300);
 

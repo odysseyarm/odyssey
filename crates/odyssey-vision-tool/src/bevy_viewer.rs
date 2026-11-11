@@ -28,15 +28,19 @@ use parking_lot::Mutex;
 
 use crate::mot_runner::MotRunner;
 
-/// Internal entry point of this same executable; it never starts egui.
+/// Internal entry point of this same executable. It never starts egui.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub const VIEWER_ARGUMENT: &str = "--bevy-viewer";
 /// Sample fast enough for high-refresh displays without a busy polling loop.
 const POSE_INTERVAL: Duration = Duration::from_millis(4);
 /// A show-window flag, nine column-major rotation floats, and three translation floats.
 const POSE_FRAME_LEN: usize = 1 + 12 * size_of::<f32>();
 
-/// Lazily starts the viewer. Closing its window hides it; dropping this handle
+/// Lazily starts the viewer. Closing its window hides it. Dropping this handle
 /// terminates and reaps the owned process and joins its pipe writer.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct BevyViewer {
     runner: Arc<Mutex<MotRunner>>,
@@ -44,6 +48,7 @@ pub struct BevyViewer {
 }
 
 impl BevyViewer {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new(runner: Arc<Mutex<MotRunner>>) -> Self {
         Self {
             runner,
@@ -56,6 +61,8 @@ impl BevyViewer {
     }
 
     /// Reports an unexpected process exit, pipe failure or writer panic.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn poll(&mut self) -> Result<()> {
         let Some(process) = &mut self.process else {
             return Ok(());
@@ -75,6 +82,8 @@ impl BevyViewer {
     }
 
     /// Shows the viewer, starting it if necessary. Pending open requests coalesce.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn open(&mut self) -> Result<()> {
         self.poll()?;
         if self.process.is_none() {
@@ -243,6 +252,9 @@ fn read_poses(input: &Mutex<ViewerInput>) -> io::Result<()> {
 ///
 /// # Errors
 /// Returns reader startup, pose-pipe or renderer exit failures.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
 pub fn run_viewer() -> Result<()> {
     let input = Arc::new(Mutex::new(ViewerInput::default()));
     let reader_input = Arc::clone(&input);

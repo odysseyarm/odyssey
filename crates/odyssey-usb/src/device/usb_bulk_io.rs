@@ -25,11 +25,11 @@ const ENDPOINT_BUFFER_SIZE: usize = 4096;
 /// USB interface class of the vendor-specific interface that carries the
 /// protocol.
 const VENDOR_SPECIFIC_CLASS: u8 = 0xFF;
-/// Initial capacity of the encode buffer; most messages are far smaller.
+/// Initial capacity of the encode buffer. Most messages are far smaller.
 const WRITE_SCRATCH_CAPACITY: usize = 1024;
 /// Initial capacity of the receive buffer for one message.
 const READ_SCRATCH_CAPACITY: usize = 256;
-/// Packets and mux envelopes are bounded protocol types; even a worst-case
+/// Packets and mux envelopes are bounded protocol types, and even a worst-case
 /// object report is below 1 KiB. Refuse an unterminated transfer before it can
 /// grow the host's receive buffer without bound.
 const MAX_MESSAGE_SIZE: usize = 4096;
@@ -114,9 +114,9 @@ pub(super) fn spawn_writer<M>(
 /// What a failed read means for the reader loop.
 #[derive(Debug, PartialEq, Eq)]
 enum ReadErrorAction {
-    /// Nothing arrived in time; poll again.
+    /// Nothing arrived in time. Poll again.
     Idle,
-    /// A glitch within budget; log it and poll again.
+    /// A glitch within budget. Log it and poll again.
     Tolerate,
     /// The link is gone, or the glitches did not stop.
     GiveUp,

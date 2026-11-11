@@ -66,7 +66,7 @@ where
     }
 }
 
-/// Python sees the flat wire form; the enum's own payloads are foreign types.
+/// Python sees the flat wire form. The enum's own payloads are foreign types.
 impl<'py> IntoPyObject<'py> for GeneralConfig {
     type Target = PyAny;
     type Output = Bound<'py, PyAny>;

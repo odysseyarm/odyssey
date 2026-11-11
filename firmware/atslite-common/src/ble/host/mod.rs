@@ -17,7 +17,9 @@ mod icmsg_config {
         static __icmsg_rx_end: u32;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub const ALIGN: usize = 4;
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_icmsg_config() -> icmsg::MemoryConfig {
         // Linker symbols delimit a region, not one Rust allocation.
         let header_len = size_of::<icmsg::transport::SharedMemoryRegionHeader<ALIGN>>();
@@ -41,6 +43,10 @@ mod icmsg_config {
 ///
 /// # Safety
 /// Writes SPU_S registers and trusts the linker-provided ICMSG symbol layout.
+/// Any `extdomain_idx` must name an implemented EXTDOMAIN slot.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
 pub unsafe fn grant_spu(extdomain_idx: Option<usize>) {
     use embassy_nrf::pac::spu::vals;
 
@@ -92,10 +98,13 @@ pub unsafe fn grant_spu(extdomain_idx: Option<usize>) {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub type BleController =
     ExternalController<MyTransport<NoopRawMutex, IpcWait<'static>, IpcNotify<'static>>, 10>;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init(mut ipc: Ipc<'static>) -> BleController {
+    // SAFETY: valid linker symbols are supplied by the board linker script; slot 0 is the network core and has not started.
     unsafe {
         grant_spu(Some(0));
     }
@@ -108,6 +117,7 @@ pub async fn init(mut ipc: Ipc<'static>) -> BleController {
 
     let icmsg_config = icmsg_config::get_icmsg_config();
     defmt::info!("ICMSG cfg (app): {:?}", Debug2Format(&icmsg_config));
+    // SAFETY: the linker-defined shared regions are valid and the network core was started after SPU permissions were granted.
     let icmsg = unsafe {
         IcMsg::<_, _, { icmsg_config::ALIGN }>::init(
             icmsg_config::get_icmsg_config(),
@@ -136,10 +146,12 @@ pub async fn init(mut ipc: Ipc<'static>) -> BleController {
     ExternalController::new(driver)
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct IpcNotify<'d> {
     trigger: ipc::EventTrigger<'d>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct IpcWait<'d> {
     event: ipc::Event<'d>,
 }

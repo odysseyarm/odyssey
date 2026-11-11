@@ -6,17 +6,22 @@ use odyssey_protocol_macros::protocol_type;
 ///
 /// A newtype because pyo3 cannot convert `heapless::String`. Serializes
 /// transparently.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeviceName(pub heapless::String<32>);
 
 impl DeviceName {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
     /// Truncates on overflow, matching how names arrive off the wire.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn from_str_lossy(s: &str) -> Self {
         let mut out = heapless::String::new();
         for c in s.chars() {
@@ -52,24 +57,34 @@ impl From<DeviceName> for heapless::String<32> {
 ///
 /// `TooLong` is reachable only if the caller stops truncating: `DeviceName`
 /// holds 32 bytes, so a longer name has to be rejected before it reaches the
-/// device. `Failed` covers the device-side causes — a flash write that did not
+/// device. `Failed` covers the device-side causes: a flash write that did not
 /// stick, or a state that forbids renaming.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SetDeviceNameError {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(0))]
     TooLong,
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(1))]
     Failed,
 }
 
 /// The result of a rename request.
 ///
-/// A dedicated enum rather than `Result` because pyo3 converts `Result` only
-/// as a function return, where it raises; a status reported by the device is
+/// A dedicated enum instead of `Result`, because pyo3 converts `Result` only as
+/// a function return, where it raises. A status reported by the device is
 /// data.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type(no_cbor)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[cfg_attr(
@@ -81,7 +96,13 @@ pub enum SetDeviceNameError {
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetDeviceNameResult {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     Ok(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     Err(SetDeviceNameError),
 }
 

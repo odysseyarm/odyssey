@@ -12,7 +12,7 @@ use crate::views::calibrate::automatic::reference::{
 };
 
 /// The tape and card helper while it is open. The monitor shows its line or
-/// card; the controls are in Setup, unless the picture would cover them.
+/// card. The controls are in Setup, unless the picture would cover them.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Helper {
     /// The monitor showing the line or card.

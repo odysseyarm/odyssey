@@ -33,6 +33,7 @@ pub fn init(spawner: &mut Spawner, mut builder: Builder<'static, Driver>) {
     static USB_DEVICE: StaticCell<UsbDevice<'static, Driver>> = StaticCell::new();
     let usb = USB_DEVICE.init(usb);
 
+    // SAFETY: each future is initialized once and then owned by one executor task.
     unsafe {
         USB_FUT.init(usb.run());
         spawner.spawn(unwrap!(usb_task()));
@@ -73,11 +74,13 @@ async fn log_loop(mut class: CdcAcmClass<'static, Driver>) -> ! {
 
 #[task]
 fn log_task() -> impl Future<Output = embassy_executor::_export::Never> {
+    // SAFETY: executor task owns LOG_FUT polling after init.
     unsafe { LOG_FUT.get().unwrap() }
 }
 
 #[task]
 fn usb_task() -> impl Future<Output = embassy_executor::_export::Never> {
+    // SAFETY: executor task owns USB_FUT polling after init.
     unsafe { USB_FUT.get().unwrap() }
 }
 
@@ -98,14 +101,17 @@ impl LoggerState {
     }
 }
 
+// SAFETY: Logger callbacks serialize access with the critical section held by acquire.
 unsafe impl Sync for LoggerState {}
 
 static LOGGER_STATE: LoggerState = LoggerState::new();
 #[defmt::global_logger]
 struct SerialLogger;
 
+// SAFETY: defmt calls acquire/release around each frame and only calls write within it.
 unsafe impl Logger for SerialLogger {
     fn acquire() {
+        // SAFETY: acquire serializes callbacks and initializes restore state before encoder access.
         unsafe {
             LOGGER_STATE
                 .restore_state
@@ -118,6 +124,7 @@ unsafe impl Logger for SerialLogger {
     unsafe fn flush() {}
 
     unsafe fn release() {
+        // SAFETY: release matches acquire and closes frame before restoring interrupt state.
         unsafe {
             // Finish mutating the shared encoder before interrupts can log again.
             (*LOGGER_STATE.encoder.get()).end_frame(push_log_bytes);
@@ -126,6 +133,7 @@ unsafe impl Logger for SerialLogger {
     }
 
     unsafe fn write(bytes: &[u8]) {
+        // SAFETY: defmt calls write only while acquire's critical section is held.
         unsafe {
             (*LOGGER_STATE.encoder.get()).write(bytes, push_log_bytes);
         }
@@ -161,6 +169,7 @@ fn panic(info: &PanicInfo) -> ! {
         // still reaches the host.
         let mut cx = Context::from_waker(NOOP_WAKER);
         loop {
+            // SAFETY: panic handler is single-threaded with interrupts disabled; initialized futures remain pinned.
             unsafe {
                 match LOG_FUT.get() {
                     None => (),

@@ -88,8 +88,8 @@ impl Finding {
                 (Some(reported), Reliability::Suspect(reason)) => {
                     FindingKind::Doubtful { reason, reported }
                 }
-                // Dimensions that are neither reliable nor suspect cannot occur;
-                // treat them as no usable size rather than trusting them.
+                // Dimensions that are neither reliable nor suspect cannot occur.
+                // Treat them as no usable size instead of trusting them.
                 (Some(_), Reliability::NoDimensions) | (None, _) => FindingKind::NoSize,
             },
             None => FindingKind::Missing(lookup.note.clone().unwrap_or(LookupNote::NotFound)),

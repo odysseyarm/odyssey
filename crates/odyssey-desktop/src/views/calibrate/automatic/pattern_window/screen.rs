@@ -57,7 +57,7 @@ impl PatternView {
         self.mode = mode;
     }
 
-    /// Escape closes the window; Enter does too, but only on a helper picture,
+    /// Escape closes the window. Enter does too, but only on a helper picture,
     /// where it is the way back to the wizard. The arrow and page keys resize the card.
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, _: &mut Context<Self>) {
         let helper_picture = matches!(
@@ -70,7 +70,7 @@ impl PatternView {
         };
         match event.keystroke.key.as_str() {
             "escape" => window.remove_window(),
-            // Coming back from a helper picture; on the calibration pattern
+            // Coming back from a helper picture. On the calibration pattern
             // Enter must not end it.
             "enter" if helper_picture => window.remove_window(),
             "up" | "right" if card => nudge(1),

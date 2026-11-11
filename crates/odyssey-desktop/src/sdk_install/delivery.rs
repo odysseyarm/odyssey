@@ -5,7 +5,7 @@ use super::locations::managed_dir;
 pub(crate) enum Delivery {
     /// The app downloads it after the user accepts the licence.
     Download,
-    /// This build never downloads the camera SDK; the installer carries it as an option.
+    /// This build never downloads the camera SDK. The installer carries it as an option.
     Installer,
     /// Offline mode is on: nothing is downloaded and no web link is offered.
     Offline,

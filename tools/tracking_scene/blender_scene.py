@@ -296,7 +296,7 @@ def build_scene(scene):
         points = screen["calibration"]["object_points"]
         require(len(points) == len(screen["marker_ids"]) == 6, "requires six canonical markers")
         for marker_id, point in zip(screen["marker_ids"], points):
-            # Sphere center is canonical point; no surface snapping or fabricated tracker label.
+            # Sphere center is the canonical point. No surface snapping, no fabricated tracker label.
             bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=8, radius=0.0075,
                                                location=inverse_rotation @ Vector(point))
             marker = bpy.context.object
@@ -373,7 +373,7 @@ def apply_camera(camera, intrinsics, size, position, rotation):
     obj.data.sensor_fit = "HORIZONTAL"
     obj.data.sensor_width = 36
     obj.data.lens = fx * 36 / width
-    # OpenCV pixel centers at integer coordinates; Blender raster centers at i+0.5.
+    # OpenCV puts pixel centers at integer coordinates, Blender raster centers sit at i+0.5.
     obj.data.shift_x = (width / 2 - cx - 0.5) / width
     obj.data.shift_y = (cy + 0.5 - height / 2) * (fx / fy) / width
     obj.data.clip_start, obj.data.clip_end = 0.001, 1000
@@ -453,7 +453,7 @@ def apply_sensor(rgb, sensor, frame_index):
         rgb = gaussian_blur(rgb, sensor["blur_sigma_px"])
     generator = np.random.default_rng([sensor["seed"], frame_index])
     full_well = sensor["full_well_electrons"]
-    # Far past saturation the count no longer matters; the cap keeps Poisson in range.
+    # Far past saturation the count no longer matters, and the cap keeps Poisson in range.
     electrons = generator.poisson(np.clip(rgb, 0, 1e3) * full_well).astype(np.float64)
     electrons += generator.normal(0, sensor["read_noise_electrons"], electrons.shape)
     levels = 2 ** sensor["bit_depth"] - 1
@@ -669,7 +669,7 @@ def render_frames(scene, output, requested, validator):
     configure_render()
     with tempfile.TemporaryDirectory(prefix="odyssey-render-") as scratch:
         for index, frame in enumerate(frames):
-            # IDs never become paths; arbitrary scene IDs cannot escape output directory.
+            # IDs never become paths, so an arbitrary scene ID cannot escape the output directory.
             filename = f"frame-{index:06d}.png"
             rgb = render_frame(scene, frame, Path(scratch))
             camera = camera_of(scene, frame)

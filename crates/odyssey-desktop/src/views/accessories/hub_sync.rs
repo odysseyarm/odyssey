@@ -76,7 +76,7 @@ pub(super) fn follow(cx: &mut Context<'_, AccessoriesView>) -> Task<()> {
     })
 }
 
-/// Forwards accessory maps until the subscription fails or ends; dropping the
+/// Forwards accessory maps until the subscription fails or ends. Dropping the
 /// sender then tells the receiver.
 async fn follow_accessory_map(
     client: Client,

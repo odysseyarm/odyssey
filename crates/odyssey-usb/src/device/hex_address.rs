@@ -2,7 +2,7 @@ use std::fmt;
 
 /// A device address (the 6-byte UUID) as hex for logs and display names.
 ///
-/// `{}` prints `AA:BB:CC:DD:EE:FF`; the alternate form `{:#}` prints
+/// `{}` prints `AA:BB:CC:DD:EE:FF`. The alternate form `{:#}` prints
 /// `AABBCCDDEEFF`.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct HexAddress(pub(super) [u8; 6]);

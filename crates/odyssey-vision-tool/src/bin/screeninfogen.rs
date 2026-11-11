@@ -39,6 +39,10 @@ const METERS_PER_INCH: f32 = 0.0254;
 ///
 ///      1    5    2
 /// ```
+///
+/// # Panics
+///
+/// Panics when `F` cannot represent the marker constants, which holds for `f32` and `f64`.
 pub fn marker_pattern<F>(screen_dimensions_meters: [F; 2]) -> [Point3<F>; MARKER_PATTERN_LEN]
 where
     F: Scalar + std::ops::SubAssign + ComplexField + RealField + Copy,
@@ -70,6 +74,11 @@ fn save_to_config_dir(directory: &str, file_name: &str, value: &impl Serialize) 
     Ok(path)
 }
 
+/// Writes the marker pattern and the screen description for the configured screen.
+///
+/// # Errors
+///
+/// Returns an error when the user config directory is unavailable or a file cannot be written.
 pub fn main() -> Result<()> {
     // Other screens that have been used with this tool:
     //   3840x2160 (16:9) SVT:   [3.64631, 2.05105]

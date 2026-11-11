@@ -6,6 +6,7 @@ mod settings_region {
         static __settings_start: u32;
         static __settings_end: u32;
     }
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_settings_region() -> core::ops::Range<u32> {
         let s = core::ptr::addr_of!(__settings_start) as u32;
         let e = core::ptr::addr_of!(__settings_end) as u32;
@@ -28,8 +29,10 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, WithTimeout as _};
+/// Since: Odyssey Desktop 0.7.0.
 pub use settings_region::get_settings_region;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
@@ -47,6 +50,7 @@ static SETTINGS_SETTLED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static SETTINGS: Mutex<ThreadModeRawMutex, RefCell<Option<Settings>>> =
     Mutex::new(RefCell::new(None));
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn publish(settings: Settings) {
     SETTINGS.lock(|cell| {
         let mut slot = cell.borrow_mut();
@@ -55,6 +59,7 @@ pub fn publish(settings: Settings) {
     });
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn with_settings<R>(f: impl FnOnce(&mut Settings) -> R) -> R {
     SETTINGS.lock(|cell| {
         let mut slot = cell.borrow_mut();
@@ -62,6 +67,7 @@ pub fn with_settings<R>(f: impl FnOnce(&mut Settings) -> R) -> R {
     })
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn is_initialized() -> bool {
     SETTINGS.lock(|cell| cell.borrow().is_some())
 }
@@ -145,6 +151,7 @@ async fn settings_worker(
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[inline]
 pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
@@ -152,8 +159,10 @@ pub fn settings_flush_now() {
 
 /// Wait until the worker has completed a write pass, up to `timeout`.
 ///
-/// Callers that reset the chip must go through this, otherwise the reset can
+/// Callers that reset the chip must go through this. Otherwise the reset can
 /// land in the middle of a page erase.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn settings_wait_settled(timeout: Duration) {
     // A completion from an earlier pass says nothing about writes queued since then.
     SETTINGS_SETTLED.reset();
@@ -167,7 +176,9 @@ pub async fn settings_wait_settled(timeout: Duration) {
 }
 
 /// Spawns the settings I/O worker. Call before `init_nodes()` or any `attach_with_default` on
-/// `LIST`. Attaches no nodes; call `publish` after loading the board's nodes.
+/// `LIST`. Attaches no nodes. Call `publish` after loading the board's nodes.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init_core(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -186,6 +197,8 @@ pub async fn init_core(
 
 /// Loads the BLE bond node into owned settings. Call after `init_core()`, then load any
 /// board-specific nodes before publishing the settings for the application tasks.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init_nodes() -> Settings {
     let h_ble_bond = NODE_BLE_BOND
         .attach_with_default(&LIST, ble_bond_default)
@@ -201,6 +214,8 @@ pub async fn init_nodes() -> Settings {
 
 /// Attaches the general and PAG nodes and loads them into `settings`. For boards that use this
 /// crate's `GeneralSettings`/`PagSettings`, such as lite1. Call after `init_nodes()`.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init_board_nodes(settings: &mut Settings) {
     let h_general = NODE_GENERAL
         .attach_with_default(&LIST, GeneralSettings::default)
@@ -216,13 +231,18 @@ pub async fn init_board_nodes(settings: &mut Settings) {
     settings.pag = h_pag.load();
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct Settings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub ble_bond: BleBondSettings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub general: GeneralSettings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub pag: PagSettings,
 }
 
 impl Settings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn ble_bond_write(&self) {
         embassy_futures::block_on(async {
             let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
@@ -231,6 +251,7 @@ impl Settings {
         settings_flush_now();
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn ble_bond_clear(&mut self) {
         self.ble_bond = ble_bond_default();
         embassy_futures::block_on(async {
@@ -240,6 +261,7 @@ impl Settings {
         settings_flush_now();
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn general_write(&self) {
         embassy_futures::block_on(async {
             let mut hg = NODE_GENERAL.attach(&LIST).await.unwrap();
@@ -248,6 +270,7 @@ impl Settings {
         settings_flush_now();
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn pag_write(&self) {
         embassy_futures::block_on(async {
             let mut hp = NODE_PAG.attach(&LIST).await.unwrap();
@@ -262,6 +285,7 @@ mod heapless_str32_cbor {
     use cfg_noodle::minicbor::encode::{Error as EncodeError, Write};
     use cfg_noodle::minicbor::{Decoder, Encoder};
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn encode<Ctx, W: Write>(
         s: &heapless::String<32>,
         e: &mut Encoder<W>,
@@ -271,6 +295,7 @@ mod heapless_str32_cbor {
         Ok(())
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn decode<'b, Ctx>(
         d: &mut Decoder<'b>,
         _ctx: &mut Ctx,
@@ -285,6 +310,7 @@ mod heapless_str32_cbor {
         Ok(hs)
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn cbor_len<Ctx>(s: &heapless::String<32>, _ctx: &mut Ctx) -> usize {
         let n = s.as_bytes().len();
         // CBOR text string: 1-byte header for n ≤ 23, 2-byte header for n ≤ 255
@@ -293,26 +319,37 @@ mod heapless_str32_cbor {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
     /// Ignored: the device picks USB or BLE from the USB state at run time. The field stays so
     /// settings stored by earlier firmware keep decoding with the same CBOR indices.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub transport_mode: odyssey_protocol::control::device::TransportMode,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(1)]
     pub impact_threshold: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(2)]
     pub suppress_ms: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(3)]
     pub accel_config: odyssey_protocol::AccelConfig,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub gyro_config: odyssey_protocol::GyroConfig,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(5)]
     pub camera_model_nf: odyssey_protocol::wire::CameraCalibrationParams,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(6)]
     pub camera_model_wf: odyssey_protocol::wire::CameraCalibrationParams,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(7)]
     pub stereo_iso: odyssey_protocol::wire::StereoCalibrationParams,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(8)]
     #[cbor(with = "heapless_str32_cbor")]
     pub name: heapless::String<32>,
@@ -322,7 +359,7 @@ impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
             transport_mode: odyssey_protocol::control::device::TransportMode::Ble,
-            // m/s²; SI equivalent of the legacy 5 g setting.
+            // m/s². SI equivalent of the legacy 5 g setting.
             impact_threshold: 25,
             suppress_ms: 100,
             accel_config: Default::default(),
@@ -345,6 +382,7 @@ impl Default for GeneralSettings {
 }
 
 impl GeneralSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_general_config(&mut self, config: &odyssey_protocol::wire::GeneralConfig) {
         use odyssey_protocol::wire::GeneralConfig as GC;
         match config {
@@ -359,8 +397,10 @@ impl GeneralSettings {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub type BleBondSettings = odyssey_protocol::control::BondEntry;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_default() -> BleBondSettings {
     BleBondSettings {
         bd_addr: [0; 6],
@@ -371,6 +411,7 @@ pub fn ble_bond_default() -> BleBondSettings {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) -> BleBondSettings {
     let mut bd_addr = [0u8; 6];
     bd_addr.copy_from_slice(info.identity.bd_addr.raw());
@@ -387,6 +428,7 @@ pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) ->
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_to_bond_info(
     b: &BleBondSettings,
 ) -> Option<trouble_host::prelude::BondInformation> {
@@ -412,36 +454,58 @@ pub fn ble_bond_to_bond_info(
 }
 
 /// PAG7665QN register values kept across power cycles.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct PagSettings {
     /// Exposure register (0x67): bit[7]=LED_Always_ON, bits[6:0]=time (units of 100µs)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub exposure: u8,
     /// Analog gain register (0x68)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(1)]
     pub gain: u8,
     /// Light threshold register (0x6D)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(2)]
     pub light_threshold: u8,
     /// Area lower bound registers (0x6E-0x6F)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(3)]
     pub area_min: u16,
     /// Area upper bound registers (0x70-0x71)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub area_max: u16,
     /// Circle R lower bound register (0x23)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(5)]
     pub circle_r_min: u8,
     /// Circle R upper bound register (0x24)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(6)]
     pub circle_r_max: u8,
     /// Circle K lower bound register (0x77)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(7)]
     pub circle_k_min: u8,
     /// Circle K upper bound register (0x78)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(8)]
     pub circle_k_max: u8,
     /// Frame rate register (0x13)
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(9)]
     pub frame_rate: u8,
 }

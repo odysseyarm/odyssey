@@ -2,17 +2,22 @@ use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, 
 
 use crypto_bigint::{Encoding as _, U2048};
 
+/// Since: Odyssey Desktop 0.6.0.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct U2048x(pub U2048);
 
 impl U2048x {
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ZERO: Self = Self(U2048::ZERO);
+    /// Since: Odyssey Desktop 0.6.0.
     pub const ONE: Self = Self(U2048::ONE);
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn to_le_bytes(self) -> [u8; 256] {
         self.0.to_le_bytes()
     }
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn from_le_bytes(b: [u8; 256]) -> Self {
         Self(U2048::from_le_bytes(b))
     }

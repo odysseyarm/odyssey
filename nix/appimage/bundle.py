@@ -29,7 +29,7 @@ import sys
 # Nix store hashes use the base32 alphabet without e, o, t, u. Crane's own
 # reference stripping writes 32 'e', which therefore never matches this.
 LIVE_STORE_PATH = re.compile(rb"/nix/store/([0-9a-df-np-sv-z]{32})(?=-)")
-# OPENSSLDIR is compiled into libcrypto; the Nix one is meaningless elsewhere,
+# OPENSSLDIR is compiled into libcrypto. The Nix one is meaningless elsewhere,
 # so point it at the conventional location (openssl-probe still overrides it).
 OPENSSL_DIR = re.compile(rb"/nix/store/[0-9a-df-np-sv-z]{32}-openssl[^/\x00\"\s]*/etc/ssl")
 

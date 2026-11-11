@@ -22,15 +22,26 @@ const MAX_MARKERS: usize = 16;
 /// The tracking state shared between the UI and the device-stream tasks.
 ///
 /// Lock order is the runner first, then `packets` or `datapoints`.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct MotRunner {
+    /// Since: Odyssey Desktop 0.6.0.
     pub state: crate::MotState,
+    /// Since: Odyssey Desktop 0.6.0.
     pub device: Option<VmDevice>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub general_config: GeneralSettings,
+    /// Since: Odyssey Desktop 0.6.0.
     pub record_impact: bool,
+    /// Since: Odyssey Desktop 0.6.0.
     pub record_packets: bool,
+    /// Since: Odyssey Desktop 0.6.0.
     pub datapoints: Arc<Mutex<Vec<TestFrame>>>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub packets: Arc<Mutex<Vec<(u128, PacketData)>>>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub wfnf_realign: bool,
+    /// Since: Odyssey Desktop 0.6.0.
     pub screen_calibrations: ArrayVec<
         (u8, odyssey_common::ScreenCalibration<f32>),
         { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
@@ -63,6 +74,13 @@ impl MotRunner {
 ///
 /// Ending any stream ends the session and drops the other subscriptions. The
 /// caller owns cancellation and must await it before starting a replacement.
+///
+/// # Errors
+///
+/// Returns an error when no device is selected or any subscribed device stream
+/// fails.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub async fn run(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
     let device = runner.lock().device.clone().context("no device selected")?;
     tokio::select! {
@@ -72,6 +90,12 @@ pub async fn run(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
     }
 }
 
+/// # Errors
+///
+/// Returns an error when no device is selected, starting the object report
+/// stream fails, or the stream ends.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub async fn frame_loop(runner: Arc<Mutex<MotRunner>>) -> Result<()> {
     let device = runner.lock().device.clone().context("no device selected")?;
     let mut mot_data_stream = device
@@ -263,7 +287,7 @@ async fn markers_loop(runner: &Mutex<MotRunner>, device: &VmDevice) -> Result<()
         update_raycast(&mut runner);
 
         // Nothing matches WF markers into the `*_markers` / `wf_reproj` lists,
-        // so every point stays unmatched and those lists stay empty; the
+        // so every point stays unmatched and those lists stay empty. The
         // canvases still read them.
         runner.state.nf_points = nf.tuples;
         runner.state.wf_points = wf.tuples;

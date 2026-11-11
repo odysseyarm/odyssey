@@ -10,7 +10,7 @@ use super::central::{
 
 /// Runs an active scan whenever no device task is connecting. Name caching and
 /// pairing detection both happen in the HostEventHandler's `on_adv_reports`
-/// callback; this task only keeps the scan running.
+/// callback. This task only keeps the scan running.
 #[embassy_executor::task]
 pub async fn background_scanner_task(
     stack: &'static Stack<'static, crate::Controller, crate::Pool>,
@@ -61,7 +61,7 @@ pub async fn background_scanner_task(
 }
 
 /// Adds the device found during pairing to the scan targets and ends pairing.
-/// Scanning itself happens in [`background_scanner_task`]; `on_adv_reports`
+/// Scanning itself happens in [`background_scanner_task`]. `on_adv_reports`
 /// calls `report_scan_address`, which signals `PAIRING_FOUND_ADDR`.
 #[embassy_executor::task]
 pub async fn pairing_monitor_task(settings: &'static crate::storage::Settings) -> ! {

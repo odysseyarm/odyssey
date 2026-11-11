@@ -78,7 +78,7 @@ impl DeviceHandler {
             SensorStreams::start(&events_device, uuid, self.protocol_version).await
         };
 
-        // A unit that started in BLE mode has no config yet; this is where it gets one.
+        // A unit that started in BLE mode has no config yet, so this is where it gets one.
         info!("Reading device config from BLE mux device for {uuid:02x?}");
         if !self.image_reboot_required {
             match tokio::time::timeout(SLOW_CALL_TIMEOUT, events_device.read_all_config()).await {
@@ -100,7 +100,7 @@ impl DeviceHandler {
         self.send_device_update().await;
 
         // A unit with no cable has no USB control to read the net core
-        // through; ask over the packet stream instead.
+        // through, so ask over the packet stream instead.
         if self.connections.control_device.is_none() && self.device.netcore_release == 0 {
             spawn_packet_netcore_probe(&self.self_tx, &events_device, self.protocol_version);
         }
@@ -169,7 +169,7 @@ impl DeviceHandler {
                     self.apply_transport_mode(mode);
                     if mode == TransportMode::Usb {
                         // A reboot or DFU may have replaced the old wired endpoint, or this
-                        // handler may have started over BLE; the USB link probed last is
+                        // handler may have started over BLE. The USB link probed last is
                         // current.
                         self.sensors.stop();
                         self.protocol_version = events_protocol_version;
@@ -266,8 +266,8 @@ impl DeviceHandler {
     /// DFU the handler still holds the version from before the update.
     ///
     /// `protocol_version` is deliberately left alone: it gates events-protocol features (like
-    /// the battery stream) and was set from the events protocol's ReadVersionResponse at spawn
-    /// time. The control channel's protocol_semver is unrelated.
+    /// the battery stream) and is set from the events protocol's `ReadVersionResponse` at spawn
+    /// time. The control channel's `protocol_semver` is unrelated.
     async fn refresh_firmware_version(&mut self, control_device: &VmDevice) {
         let uuid = self.device.uuid;
         match tokio::time::timeout(CALL_TIMEOUT, control_device.read_version()).await {
@@ -348,7 +348,7 @@ impl DeviceHandler {
             && self.device.events_transport == EventsTransport::Bluetooth
             && self.device.events_connected;
         if !has_independent_ble_events {
-            // The wired events device is stale; ending makes the device leave the UI.
+            // The wired events device is stale, so ending makes the device leave the UI.
             self.connections.events_device = None;
             self.sensors.stop();
             info!("Device {uuid:02x?} has no independent events after USB disconnect, exiting");
@@ -365,7 +365,7 @@ impl DeviceHandler {
         if let Some(events) = &self.connections.events_device {
             spawn_packet_netcore_probe(&self.self_tx, events, self.protocol_version);
         }
-        // USB control is gone, so this is not a direct-USB handler any more; the next
+        // USB control is gone, so this is not a direct-USB handler any more. The next
         // USB re-plug must send AddControlDevice.
         self.context
             .direct_usb_handler_uuids
@@ -442,7 +442,7 @@ impl DeviceHandler {
 }
 
 /// Re-read the transport mode from a freshly attached control device so
-/// events_transport / events_connected match the firmware's current state.
+/// `events_transport` / `events_connected` match the firmware's current state.
 async fn read_control_transport_mode(
     control_device: &VmDevice,
     uuid: [u8; 6],

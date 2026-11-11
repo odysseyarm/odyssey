@@ -6,6 +6,7 @@ use crate::ble::l2cap_bridge::{
     L2capControlRxChannel, L2capControlTxChannel, L2capDataRxChannel, L2capDataTxChannel, channels,
 };
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteL2capChannels {
     control_rx: L2capRxWrapper,
     data_rx: L2capRxWrapper,
@@ -14,6 +15,7 @@ pub struct AtsliteL2capChannels {
 }
 
 impl AtsliteL2capChannels {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new() -> Self {
         let inner = channels();
         Self {
@@ -26,13 +28,19 @@ impl AtsliteL2capChannels {
 }
 
 // Keep the concrete channel type so control and data channels stay distinct.
+/// Since: Odyssey Desktop 0.7.0.
 pub enum L2capRxWrapper {
+    /// Since: Odyssey Desktop 0.7.0.
     Control(&'static L2capControlRxChannel),
+    /// Since: Odyssey Desktop 0.7.0.
     Data(&'static L2capDataRxChannel),
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub enum L2capTxWrapper {
+    /// Since: Odyssey Desktop 0.7.0.
     Control(&'static L2capControlTxChannel),
+    /// Since: Odyssey Desktop 0.7.0.
     Data(&'static L2capDataTxChannel),
 }
 

@@ -12,7 +12,7 @@ struct Harness {
     device: VmDevice,
     /// Packets the device wrote to the transport.
     sent: mpsc::Receiver<Packet>,
-    /// Feeds packets "from the device"; dropping it closes the transport.
+    /// Feeds packets "from the device". Dropping it closes the transport.
     incoming_tx: mpsc::Sender<Packet>,
 }
 
@@ -167,9 +167,9 @@ async fn stale_slot_does_not_clear_request_that_reused_its_id() {
     let (stale, stale_rx) = device.get_oneshot_slot().unwrap();
     let id = stale.id;
 
-    // The race: the dispatcher takes the sender to deliver the reply, which
-    // frees the id; a newer request reuses it; only then does the original
-    // request time out and drop its slot.
+    // The race: the dispatcher takes the sender to deliver the reply, which frees
+    // the id. A newer request reuses it. Only then does the original request time
+    // out and drop its slot.
     let state = device.thread_state.upgrade().unwrap();
     state.response_channels.lock()[usize::from(id)] = ResponseChannel::None;
     let (newer, _newer_rx) = device.get_oneshot_slot().unwrap();

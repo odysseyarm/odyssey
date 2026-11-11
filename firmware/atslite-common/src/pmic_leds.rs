@@ -14,41 +14,64 @@ use npm1300_rs::leds::LedMode;
 static CMD_CH: Channel<CriticalSectionRawMutex, LedCmd, 4> = Channel::new();
 static BLE_CONNECTED: AtomicBool = AtomicBool::new(false);
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Copy, Clone, Debug)]
 pub enum LedIdx {
+    /// Since: Odyssey Desktop 0.7.0.
     Ch0,
+    /// Since: Odyssey Desktop 0.7.0.
     Ch1,
+    /// Since: Odyssey Desktop 0.7.0.
     Ch2,
 }
 
 /// What the status LED shows.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum LedState {
     // Shown immediately.
+    /// Since: Odyssey Desktop 0.7.0.
     Off,
+    /// Since: Odyssey Desktop 0.7.0.
     TurningOff,
+    /// Since: Odyssey Desktop 0.7.0.
     TurningOn,
+    /// Since: Odyssey Desktop 0.7.0.
     ProgramError,
     // Fast blue blink.
+    /// Since: Odyssey Desktop 0.7.0.
     Pairing,
 
     // Battery level, BLE disconnected.
+    /// Since: Odyssey Desktop 0.7.0.
     BattCharging,
+    /// Since: Odyssey Desktop 0.7.0.
     BattShutoff,
+    /// Since: Odyssey Desktop 0.7.0.
     BattLow,
+    /// Since: Odyssey Desktop 0.7.0.
     BattMed,
+    /// Since: Odyssey Desktop 0.7.0.
     BattHigh,
 
     // Battery level, BLE connected.
+    /// Since: Odyssey Desktop 0.7.0.
     BleBattCharging,
+    /// Since: Odyssey Desktop 0.7.0.
     BleBattShutoff,
+    /// Since: Odyssey Desktop 0.7.0.
     BleBattLow,
+    /// Since: Odyssey Desktop 0.7.0.
     BleBattMed,
+    /// Since: Odyssey Desktop 0.7.0.
     BleBattHigh,
 }
 
 impl LedState {
-    /// `(on_ms, off_ms)` of one blink cycle; `off_ms == 0` means solid.
+    /// `(on_ms, off_ms)` of one blink cycle. `off_ms == 0` means solid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn frames(self) -> (u64, u64) {
         match self {
             LedState::TurningOff | LedState::TurningOn => (100, 150),
@@ -70,6 +93,8 @@ impl LedState {
     }
 
     /// Picks the battery state for `soc` in percent: charging wins, then 0 / ≤25 / ≤65 / above.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn from_battery(charging: bool, soc: f32, ble_connected: bool) -> Self {
         if charging {
             if ble_connected {
@@ -105,11 +130,17 @@ impl LedState {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_OFF: (bool, bool, bool) = (false, false, false);
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_RED: (bool, bool, bool) = (true, false, false);
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_GRN: (bool, bool, bool) = (false, true, false);
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_BLU: (bool, bool, bool) = (false, false, true);
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_YEL: (bool, bool, bool) = (true, true, false);
+/// Since: Odyssey Desktop 0.7.0.
 pub const RGB_WHT: (bool, bool, bool) = (true, true, true);
 
 #[derive(Clone, Copy, Debug)]
@@ -120,18 +151,22 @@ enum LedCmd {
 
 /// Sends commands to the LED animator. Once locked, the plain `set_state*` calls are ignored
 /// until `unlock_state`.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct PmicLedsHandle {
     locked: AtomicBool,
 }
 
 impl PmicLedsHandle {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new() -> Self {
         Self {
             locked: AtomicBool::new(false),
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn set_state(&self, s: LedState) {
         if self.locked.load(Ordering::Relaxed) {
             return;
@@ -139,6 +174,7 @@ impl PmicLedsHandle {
         CMD_CH.send(LedCmd::Set(s)).await;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn set_state_seamless(&self, s: LedState) {
         if self.locked.load(Ordering::Relaxed) {
             return;
@@ -146,16 +182,19 @@ impl PmicLedsHandle {
         CMD_CH.send(LedCmd::SetSeamless(s)).await;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn lock_and_set_state(&self, s: LedState) {
         self.locked.store(true, Ordering::Relaxed);
         CMD_CH.send(LedCmd::Set(s)).await;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn lock_and_set_state_seamless(&self, s: LedState) {
         self.locked.store(true, Ordering::Relaxed);
         CMD_CH.send(LedCmd::SetSeamless(s)).await;
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn unlock_state(&self) {
         self.locked.store(false, Ordering::Relaxed);
     }
@@ -168,19 +207,25 @@ impl Default for PmicLedsHandle {
 }
 
 /// Sets the LED state even if a handle holds the lock.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn set_state_global(s: LedState) {
     let _ = CMD_CH.send(LedCmd::Set(s)).await;
 }
 
 /// Like [`set_state_global`], but keeps the current blink phase instead of restarting it.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn set_state_seamless_global(s: LedState) {
     let _ = CMD_CH.send(LedCmd::SetSeamless(s)).await;
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn set_ble_connected(connected: bool) {
     BLE_CONNECTED.store(connected, Ordering::Relaxed);
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn is_ble_connected() -> bool {
     BLE_CONNECTED.load(Ordering::Relaxed)
 }
@@ -276,6 +321,8 @@ fn frames_in_state(state: LedState) -> u8 {
 }
 
 /// Drives the PMIC LED outputs according to the current [`LedState`].
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub struct PmicLedAnimator<'a, I2c, Del>
 where
     I2c: embedded_hal_async::i2c::I2c,
@@ -292,6 +339,7 @@ where
     I2c: embedded_hal_async::i2c::I2c,
     Del: embedded_hal_async::delay::DelayNs,
 {
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn new(
         pmic: &'a Mutex<NoopRawMutex, NPM1300<I2c, Del>>,
         red: LedIdx,
@@ -314,6 +362,7 @@ where
         Ok((me, PmicLedsHandle::new()))
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn run(&mut self) -> ! {
         let mut state = LedState::Off;
         let mut frame_idx = 0u8;

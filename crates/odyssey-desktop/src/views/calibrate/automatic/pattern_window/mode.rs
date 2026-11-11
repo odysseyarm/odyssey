@@ -16,7 +16,7 @@ pub(crate) enum PatternMode {
     Ruler { line_px: u32, covers_wizard: bool },
     /// A frame whose inside is a credit card `width_px` pixels wide, for
     /// holding a real card against. Drawn in screen pixels. `covers_wizard` as for
-    /// the ruler; it also says the arrow keys resize the frame.
+    /// the ruler, and it also says the arrow keys resize the frame.
     Card { width_px: f64, covers_wizard: bool },
 }
 

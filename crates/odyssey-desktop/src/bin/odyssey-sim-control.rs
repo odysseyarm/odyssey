@@ -217,7 +217,7 @@ fn advance_command(millis: &str) -> eros::Result<Command> {
     Ok(Command::Advance { millis })
 }
 
-/// Tokio drives the hub IPC futures; GPUI's executor has no reactor.
+/// Tokio drives the hub IPC futures. GPUI's executor has no reactor.
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

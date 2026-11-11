@@ -4,6 +4,7 @@ use core::mem::MaybeUninit;
 use embedded_io as eio;
 use embedded_io_async as eioa;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct UninitWriteBuf<'a> {
     raw: &'a mut [MaybeUninit<u8>],
@@ -11,14 +12,17 @@ pub struct UninitWriteBuf<'a> {
 }
 
 impl<'a> UninitWriteBuf<'a> {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new(raw: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { raw, pos: 0 }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn capacity(&self) -> usize {
         self.raw.len()
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn remaining(&self) -> usize {
         self.capacity().saturating_sub(self.pos)
     }
@@ -34,8 +38,10 @@ impl<'a> UninitWriteBuf<'a> {
         n
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn as_init(self) -> &'a mut [u8] {
         let ptr = self.raw.as_ptr() as *mut u8;
+        // SAFETY: consumed self retains exclusive access; only the first `pos` bytes were initialized.
         unsafe { core::slice::from_raw_parts_mut(ptr, self.pos) }
     }
 }

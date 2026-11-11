@@ -23,6 +23,8 @@ const MAX_SCREENS: usize = odyssey_common::MAX_SCREEN_ID as usize + 1;
 
 /// Screen ID 0 of a simulator nobody has given screens. No user calibration files
 /// should be overwritten. `Aim` views its physical XY plane from two meters away.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn synthetic_screen_calibration() -> ScreenCalibration<f32> {
     ScreenCalibration {
         surface: None,

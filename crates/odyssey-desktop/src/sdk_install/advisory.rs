@@ -8,11 +8,11 @@ use super::pin_file::pinned_version;
 
 /// What to tell the user about a working SDK that is not the version this build
 /// is tested with. A library the loader accepts (2.8 or newer) can still differ
-/// from the pin; it is only a warning.
+/// from the pin, but it is only a warning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Advisory {
     /// Older than the pin. `replaceable` is set when the running copy is one this
-    /// app downloaded, which a new download replaces; a copy found elsewhere is
+    /// app downloaded, which a new download replaces. A copy found elsewhere is
     /// the user's to update.
     Older {
         found: SdkVersion,

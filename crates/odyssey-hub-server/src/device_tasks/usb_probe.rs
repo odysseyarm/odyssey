@@ -27,8 +27,8 @@ pub(super) fn uuid_from_usb_serial(serial: Option<&str>) -> Option<[u8; 6]> {
 }
 
 /// Read a device UUID, retrying a few times.
-/// Uses the control plane (read_uuid) for AtsLite/AtsPro (have a control endpoint),
-/// or the packet protocol (read_prop) for AtsVm.
+/// Uses the control plane (`read_uuid`) for `AtsLite`/`AtsPro` (have a control endpoint),
+/// or the packet protocol (`read_prop`) for `AtsVm`.
 pub(super) async fn read_uuid_with_retry(
     vm_device: &VmDevice,
     product_id: odyssey_protocol::ProductId,
@@ -94,7 +94,7 @@ async fn read_uuid_over_packets(vm_device: &VmDevice) -> Option<[u8; 6]> {
 }
 
 /// Firmware (and control protocol) version over the control plane, which works in any
-/// transport mode. `None` when the unit does not answer; the caller carries on without it.
+/// transport mode. `None` when the unit does not answer. The caller carries on without it.
 pub(super) async fn read_firmware_version(
     vm_device: &VmDevice,
     uuid: [u8; 6],

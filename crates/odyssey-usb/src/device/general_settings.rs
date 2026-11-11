@@ -30,14 +30,23 @@ fn default_camera_intrinsics() -> RosOpenCvIntrinsics<f32> {
 
 /// Every configuration value of a device in one struct. The device protocol
 /// hands them out one [`ConfigKind`] at a time.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GeneralSettings {
+    /// Since: Odyssey Desktop 0.6.0.
     pub impact_threshold: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub suppress_ms: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub accel_config: AccelConfig,
+    /// Since: Odyssey Desktop 0.6.0.
     pub gyro_config: GyroConfig,
+    /// Since: Odyssey Desktop 0.6.0.
     pub camera_model_nf: RosOpenCvIntrinsics<f32>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub camera_model_wf: RosOpenCvIntrinsics<f32>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub stereo_iso: Isometry3<f32>,
 }
 

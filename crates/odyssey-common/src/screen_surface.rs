@@ -4,33 +4,47 @@
 //! display as measured: `columns * rows` vertices in physical-screen meters, row
 //! major, top row first. Vertex `(c, r)` shows normalized screen UV
 //! `(c / (columns - 1), r / (rows - 1))`. Each cell splits into the TL/TR/BR and
-//! TL/BR/BL triangles. Uneven XY spacing is a nonlinear projector mapping; Z is
+//! TL/BR/BL triangles. Uneven XY spacing is a nonlinear projector mapping. Z is
 //! surface waviness.
 
 use nalgebra::{Matrix3, Point2, Vector3};
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const MAX_GRID_DIMENSION: u32 = 256;
+/// Since: Odyssey Desktop 0.7.0.
 pub const MAX_GRID_VERTICES: usize = 65_536;
 const UV_EPSILON: f64 = 1e-10;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenSurface {
+    /// Since: Odyssey Desktop 0.7.0.
     pub columns: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub rows: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub positions_m: Vec<[f64; 3]>,
 }
 
 /// Why a surface grid is unusable. All are fatal for that calibration.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScreenSurfaceError {
     /// Dimensions outside `2..=256`, too many vertices, or a vertex count that
     /// does not match `columns * rows`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Dimensions,
     /// A vertex coordinate is NaN or infinite.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     NonFinite,
     /// A triangle is degenerate or flipped in XY, or the outline crosses itself.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Folded,
 }
 
@@ -47,15 +61,25 @@ impl core::fmt::Display for ScreenSurfaceError {
 impl core::error::Error for ScreenSurfaceError {}
 
 /// Nearest forward hit on a display, in physical-screen space.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceHit {
     /// Normalized screen coordinates, inside `[0, 1]^2`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub uv: Point2<f64>,
     /// Along the unit-length ray, in meters.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub distance_m: f64,
 }
 
 impl ScreenSurface {
+    /// Since: Odyssey Desktop 0.7.0.
+    /// # Errors
+    /// Returns an error when grid dimensions, positions, or triangles are invalid.
+    ///
     pub fn validate(&self) -> Result<(), ScreenSurfaceError> {
         let (columns, rows, positions) = (self.columns, self.rows, &self.positions_m);
         let count = columns
@@ -124,6 +148,8 @@ impl ScreenSurface {
     }
 
     /// Vertex index triples, in the fixed split every consumer must use.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn triangles(&self) -> impl Iterator<Item = [usize; 3]> + '_ {
         let columns = self.columns as usize;
         let rows = self.rows as usize;
@@ -140,6 +166,8 @@ impl ScreenSurface {
 
     /// Physical-screen point shown at `uv`. `None` outside `[0, 1]^2`.
     /// Assumes a validated surface.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn point_at_uv(&self, uv: Point2<f64>) -> Option<Vector3<f64>> {
         if !uv.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) {
             return None;
@@ -169,6 +197,8 @@ impl ScreenSurface {
 
     /// Nearest two-sided forward hit of a physical-screen-space ray.
     /// `direction` need not be unit length. Assumes a validated surface.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn raycast(&self, origin: Vector3<f64>, direction: Vector3<f64>) -> Option<SurfaceHit> {
         let direction = direction.try_normalize(0.0)?;
         let columns = self.columns as usize;
@@ -219,6 +249,8 @@ fn bounded_uv(uv: Point2<f64>) -> Option<Point2<f64>> {
 
 /// Möller–Trumbore. Returns distance along `direction` and barycentric weights
 /// of `a`, `b`, `c`. `direction` should be unit length for meters.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn triangle_hit(
     origin: Vector3<f64>,
     direction: Vector3<f64>,
