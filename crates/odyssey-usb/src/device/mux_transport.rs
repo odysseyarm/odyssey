@@ -160,7 +160,7 @@ impl MuxTransport {
         let routes = Arc::clone(&device_packets_tx);
         let cancel = CancellationToken::new();
         let accessories = AccessoryDispatcher::new(cancel.clone());
-        let reader_accessories = accessories.clone();
+        let reader_accessories = Arc::clone(&accessories);
         let (versions_tx, versions) = watch::channel(None);
         let lifetime = Arc::new(cancel.clone().drop_guard());
         tokio::spawn(async move {

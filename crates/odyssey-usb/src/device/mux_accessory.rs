@@ -150,5 +150,7 @@ impl Drop for Reservation {
     }
 }
 
-#[cfg(all(test, feature = "sim"))]
+// Two attributes: clippy only treats a plain `cfg(test)` module as test code.
+#[cfg(test)]
+#[cfg(feature = "sim")]
 mod tests;
