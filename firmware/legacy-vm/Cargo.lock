@@ -1336,6 +1336,7 @@ dependencies = [
  "legacy-common",
  "memory-spec",
  "nalgebra 0.35.0",
+ "odyssey-version",
  "paj7025",
  "panic-probe",
  "static_cell",

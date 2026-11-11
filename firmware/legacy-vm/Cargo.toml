@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 legacy-common = { path = "../legacy-common", features = ["nrf52840"] }
+odyssey-version = { path = "../../crates/odyssey-version" }
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-nrf = { version = "0.9.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "defmt", "unstable-pac"] }
 embassy-sync = "0.7.2"
