@@ -203,10 +203,11 @@ async fn main(spawner: Spawner) {
         p.RTC0, p.TIMER0, p.TIMER1, p.TEMP, p.PPI_CH0, p.PPI_CH1, p.PPI_CH2,
     );
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
-        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        // The BC40P module's 20 ppm crystal, started by the app core; 50 ppm leaves temperature and ageing margin.
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+        rc_ctiv: 0,
+        rc_temp_ctiv: 0,
+        accuracy_ppm: 50,
         skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();

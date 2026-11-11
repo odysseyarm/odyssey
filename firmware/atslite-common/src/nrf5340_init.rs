@@ -1,4 +1,4 @@
-use embassy_nrf::config::{Config, HfclkSource, LfclkSource, LfxoCapacitance};
+use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 use embassy_nrf::{Peripherals, pac};
 
 // Arms the Cortex-M33 stack limit (MSPLIM) at the end of .uninit before any Rust frame exists,
@@ -97,8 +97,9 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     config.hfclk_source = HfclkSource::ExternalXtal; // the radio needs HFXO
     config.lfclk_source = LfclkSource::ExternalXtal;
 
+    // The BC40P module carries both crystals' load capacitors; internal ones would add to them.
     config.internal_capacitors.hfxo = None;
-    config.internal_capacitors.lfxo = Some(LfxoCapacitance::_7pF);
+    config.internal_capacitors.lfxo = None;
 
     // SPU permissions must be in place before anything else touches the network core.
     unsafe {
