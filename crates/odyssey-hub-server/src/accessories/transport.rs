@@ -17,6 +17,8 @@ use uuid::Uuid;
 use super::{RadioEvent, io, native};
 use crate::dongle_list::DongleList;
 
+const CONNECT_ATTEMPTS: usize = 4;
+
 #[derive(Clone)]
 pub(super) enum RadioBackend {
     Native(Adapter),
@@ -102,7 +104,14 @@ impl Link {
                 characteristic,
                 notifications,
             } => {
-                io(peripheral.connect()).await?;
+                // Weak links miss a connection's first events (HCI 0x3E); BlueZ gives up without retrying.
+                let mut connected = io(peripheral.connect()).await;
+                for _ in 1..CONNECT_ATTEMPTS {
+                    let Err(error) = &connected else { break };
+                    tracing::info!(%error, "Retrying Bluetooth connect");
+                    connected = io(peripheral.connect()).await;
+                }
+                connected?;
                 #[cfg(any(target_os = "linux", target_os = "windows"))]
                 if enroll && info.ty == AccessoryType::MarkerControlBoard {
                     tokio::time::timeout(Duration::from_secs(28), native::pair(peripheral))
