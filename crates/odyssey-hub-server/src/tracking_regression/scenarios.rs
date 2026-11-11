@@ -29,7 +29,12 @@ enum Trajectory {
 }
 
 /// Fixed-seed raw observations projected from independent camera poses and scene geometry.
-/// Limits guard engineering regressions only; no physical performance is asserted.
+/// Limits guard engineering regressions only and assert no physical performance.
+///
+/// # Panics
+/// Panics if authored synthetic geometry cannot be constructed or projected.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn builtin_scenarios() -> Vec<Trace> {
     [
         ("stationary-center", Trajectory::Stationary([0.5, 0.5])),
@@ -56,9 +61,15 @@ const SURFACE_CASES: [&str; 4] = [
     "nonlinear-projector-grid",
 ];
 
-/// Authored display-mapping cases. Truth is mesh-derived and markers sit on the
-/// surface at their calibrated UVs; the measured surface travels in the
-/// tracker's own `ScreenCalibration`, so the tracker maps aim through it.
+/// Authored display-mapping cases.
+///
+/// Truth is mesh-derived and markers sit on the surface at calibrated UVs. The measured
+/// surface travels in the tracker's `ScreenCalibration`, so the tracker maps aim through it.
+///
+/// # Panics
+/// Panics if authored synthetic geometry cannot be constructed or projected.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn surface_cases() -> Vec<Trace> {
     SURFACE_CASES
         .into_iter()
@@ -77,6 +88,12 @@ pub fn surface_cases() -> Vec<Trace> {
         .collect()
 }
 
+/// Builds dataset scenes for the authored display-mapping cases.
+///
+/// # Panics
+/// Panics if authored geometry cannot be constructed, labeled, or relabeled.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn scene_cases() -> Vec<(String, SceneDescription)> {
     surface_cases()
         .into_iter()
@@ -92,7 +109,7 @@ pub fn scene_cases() -> Vec<(String, SceneDescription)> {
         .collect()
 }
 
-/// Shapes the display for the named surface case; any other name keeps the plane.
+/// Shapes the display for the named surface case. Any other name keeps the plane.
 fn apply_display(name: &str, screen: &mut SceneScreen) {
     if name == "projective-plane" {
         let unit_to_screen = nalgebra::Matrix3::new(
@@ -199,7 +216,7 @@ fn generate(name: &str, trajectory: Trajectory) -> Trace {
             .filter(|(_, pixel)| pixel.is_some())
             .map(|(id, _)| id.clone())
             .collect();
-        // Wire axes become negated xzy; rotate proper acceleration into camera coordinates first.
+        // Wire axes become negated xzy. Rotate proper acceleration into camera coordinates first.
         let proper_acceleration = orientation(&pose).inverse_transform_vector(
             &(Vector3::from(acceleration) - Vector3::new(0.0, 9.81, 0.0)),
         );
@@ -246,7 +263,7 @@ fn generate(name: &str, trajectory: Trajectory) -> Trace {
             }
         }
         let imu_valid =
-            !unavailable && !(is_loss && index == 20) && !(reset_recovery && index == 50);
+            !(unavailable || (is_loss && index == 20) || (reset_recovery && index == 50));
         samples.push(Sample {
             elapsed_us,
             source_id: SOURCE_ID.into(),
@@ -385,7 +402,7 @@ fn project(screen: &SceneScreen, camera: &SceneCamera, pose: &ScenePose) -> [Opt
     })
 }
 
-/// Fixed-seed LCG; output is uniform in [-1, 1].
+/// Fixed-seed LCG. Output is uniform in [-1, 1].
 pub(super) struct Perturbation(pub(super) u64);
 
 impl Perturbation {
@@ -733,6 +750,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "Keep synthetic occlusion geometry at its existing coordinates"
+    )]
     fn relabel_hides_marker_behind_another_display_not_coplanar_endpoints() {
         let mut scene = generate("occlusion-label-test", Trajectory::Stationary([0.32, 0.37]))
             .scene

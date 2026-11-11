@@ -3,9 +3,9 @@
 //! [`MotRunner`].
 //!
 //! The UI is immediate-mode. Nothing here keeps widget state in sync with the
-//! model; every frame reads the shared state and draws it. While anything live is
+//! model. Every frame reads the shared state and draws it. While anything live is
 //! on screen the app asks for a repaint each frame, so it redraws at the display's
-//! refresh rate rather than a fixed timer.
+//! refresh rate and needs no fixed timer.
 
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -51,6 +51,9 @@ const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// # Errors
 ///
 /// Fails if the async runtime or the window system cannot start.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
 pub fn run(simulate: bool, legacy_sim: bool) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -101,7 +104,7 @@ pub fn run(simulate: bool, legacy_sim: bool) -> Result<()> {
             Ok(Box::new(VisionTool::new(
                 &creation.egui_ctx,
                 runtime.handle().clone(),
-                simulated_device,
+                simulated_device.as_ref(),
                 #[cfg(feature = "sim")]
                 simulator.clone(),
             )))
@@ -111,7 +114,7 @@ pub fn run(simulate: bool, legacy_sim: bool) -> Result<()> {
 }
 
 /// What the user has switched on. Tracking, raw tracking and the aimpoint test
-/// are independent; each shows its own view.
+/// are independent, and each shows its own view.
 #[derive(Debug, Default)]
 struct Modes {
     tracking_raw: bool,
@@ -242,7 +245,7 @@ impl VisionTool {
     fn new(
         ctx: &egui::Context,
         runtime: Handle,
-        simulated_device: Option<odyssey_usb::device::VmDevice>,
+        simulated_device: Option<&odyssey_usb::device::VmDevice>,
         #[cfg(feature = "sim")] simulator: Option<Arc<odyssey_sim::Simulator>>,
     ) -> Self {
         let datapoints = Arc::new(Mutex::new(Vec::new()));
@@ -833,7 +836,7 @@ async fn write_recording(config: GeneralSettings, packets: Vec<(u128, PacketData
     .context("recording writer failed")?
 }
 
-/// The directory holding `screen_<id>.json` calibrations; `SCREEN_CALIBRATIONS_DIR` overrides it.
+/// The directory holding `screen_<id>.json` calibrations. `SCREEN_CALIBRATIONS_DIR` overrides it.
 fn screens_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("SCREEN_CALIBRATIONS_DIR") {
         return Some(dir.into());

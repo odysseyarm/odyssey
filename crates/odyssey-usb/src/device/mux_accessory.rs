@@ -48,12 +48,11 @@ impl AccessoryDispatcher {
     }
 
     pub(super) fn subscribe(&self) -> broadcast::Receiver<Event> {
-        match &self.state.lock().events {
-            Some(events) => events.subscribe(),
-            None => {
-                let (_, receiver) = broadcast::channel(1);
-                receiver
-            }
+        if let Some(events) = &self.state.lock().events {
+            events.subscribe()
+        } else {
+            let (_, receiver) = broadcast::channel(1);
+            receiver
         }
     }
 

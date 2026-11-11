@@ -1,6 +1,6 @@
 /// cbindgen:ignore
 mod _nalgebra_impls {
-    use super::*;
+    use super::{Matrix3f32, Matrix3x1f32, Vector2f32, Vector3f32};
 
     impl From<nalgebra::Matrix3<f32>> for Matrix3f32 {
         fn from(m: nalgebra::Matrix3<f32>) -> Self {
@@ -71,39 +71,64 @@ mod _nalgebra_impls {
     }
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy, Default)]
 pub struct Matrix3f32 {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m11: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m12: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m13: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m21: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m22: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m23: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m31: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m32: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub m33: f32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+#[derive(Debug)]
 pub struct Matrix3x1f32 {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub x: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub y: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub z: f32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+#[derive(Debug)]
 pub struct Vector3f32 {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub x: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub y: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub z: f32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+#[derive(Debug)]
 pub struct Vector2f32 {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub x: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub y: f32,
 }

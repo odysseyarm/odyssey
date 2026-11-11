@@ -24,7 +24,7 @@ const CHANNELS: [(FirmwareChannel, &str, &str); 2] = [
 
 pub(crate) struct SettingsView {
     channel: Entity<FirmwareChannelModel>,
-    // The choice applies at once; a failed save only means it is lost at the
+    // The choice applies at once. A failed save only means it is lost at the
     // next start, which the user has to be told.
     save_error: Option<String>,
 }
@@ -62,7 +62,7 @@ impl SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let current = self.channel.read(cx).channel().unwrap_or_default();
 
         let mut updates = card(p).gap_4().child(card_title(p, "Firmware updates"));

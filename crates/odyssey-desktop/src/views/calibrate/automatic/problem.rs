@@ -1,5 +1,5 @@
 //! A step failed. Says what happened in plain words and offers the one sensible
-//! retry; the raw error stays under Details for support.
+//! retry. The raw error stays under Details for support.
 
 use gpui::{AnyElement, App, Div, Entity, IntoElement as _, ParentElement as _, Styled as _, div};
 
@@ -12,7 +12,7 @@ use crate::components::wizard::status_banner;
 use crate::theme::Palette;
 
 pub(super) fn problem_step(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     state: &Wizard,
     details_open: &Entity<bool>,

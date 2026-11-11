@@ -14,18 +14,18 @@ const STRING_WRITE: &str = "formatting into a String cannot fail";
 const MM_PER_INCH: f64 = 25.4;
 const PT_PER_INCH: f64 = 72.0;
 /// Control-point distance that makes four cubic Beziers a close circle.
-const KAPPA: f64 = 0.5522847498307936;
+const KAPPA: f64 = 0.552_284_749_830_793_6;
 
 const BAR_THICKNESS_MM: f64 = 0.8;
 const BAR_TICK_MM: f64 = 6.0;
 /// Gap kept between the dots and the scale bar, mm.
 const BAR_CLEARANCE_MM: f64 = 3.0;
-/// Office printers cannot print to the paper's edge; most leave about 6 mm.
+/// Office printers cannot print to the paper's edge. Most leave about 6 mm.
 const PAPER_MARGIN_MM: f64 = 6.35;
 /// Where the scale bar sits, above the bottom edge, on a page the size of the board.
 const BOARD_BAR_FROM_BOTTOM_MM: f64 = 8.0;
 
-/// Board geometry; every length is millimeters in the board's own plane, x to the
+/// Board geometry. Every length is millimeters in the board's own plane, x to the
 /// right and y down, origin at the board's top-left corner.
 #[derive(Clone, Deserialize)]
 struct Spec {
@@ -68,7 +68,7 @@ pub(crate) enum Background {
     Paper,
 }
 
-/// The layouts `artwork` writes; each name is also the output file stem.
+/// The layouts `artwork` writes. Each name is also the output file stem.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub(crate) enum LayoutName {
     /// 12 x 8.5 in, for a print shop to print straight onto a rigid board (white
@@ -185,7 +185,7 @@ pub(crate) struct Args {
     bar_slack_mm: Option<f64>,
 }
 
-/// How one file places the board's dots on its page; lengths in millimeters.
+/// How one file places the board's dots on its page. Lengths are in millimeters.
 struct Layout {
     /// Page (w, h), or `None` for a page the size of the board.
     page: Option<[f64; 2]>,
@@ -256,7 +256,7 @@ fn place(spec: &Spec, layout: &Layout) -> Art {
     };
     let bar = Bar {
         x0: (page_w - length) / 2.0,
-        x1: (page_w + length) / 2.0,
+        x1: f64::midpoint(page_w, length),
         y,
     };
     Art {

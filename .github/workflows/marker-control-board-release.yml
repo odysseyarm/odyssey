@@ -40,7 +40,8 @@ jobs:
         run: |
           nix build -L --no-link \
             .#checks.x86_64-linux.marker-control-board-tests \
-            .#checks.x86_64-linux.better-dfu-tests
+            .#checks.x86_64-linux.better-dfu-tests \
+            .#checks.x86_64-linux.better-ota-tests
       - name: Build application and factory images
         run: |
           set -eu
@@ -50,7 +51,7 @@ jobs:
       - uses: ./.github/actions/push-cache
         if: github.event_name != 'pull_request'
         with:
-          public-builds: '.#firmware-marker-control-board-images .#checks.x86_64-linux.marker-control-board-tests .#checks.x86_64-linux.better-dfu-tests'
+          public-builds: '.#firmware-marker-control-board-images .#checks.x86_64-linux.marker-control-board-tests .#checks.x86_64-linux.better-dfu-tests .#checks.x86_64-linux.better-ota-tests'
           signing-key: ${{ secrets.NIX_SIGNING_KEY }}
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -107,10 +108,11 @@ jobs:
           assert re.fullmatch(r'\d+\.\d+\.\d+', floor), floor
           path = Path('firmware/manifests/releases.nightly.json')
           manifest = json.loads(path.read_text())
+          assert manifest['version'] == 2, 'unsupported firmware manifest schema'
           entries = manifest['devices'].setdefault('marker-control-board', {}).setdefault('firmwares', [])
           data = Path('published/app.bin').read_bytes()
           assert data, 'empty app.bin'
-          entry = dict(version=version, requires_bootloader=1, requires_netcore=0, min_desktop=floor,
+          entry = dict(version=version, requires_bootloader='0.0.1', requires_netcore=0, min_desktop=floor,
                        files={'app': dict(sha256=hashlib.sha256(data).hexdigest(), size=len(data))},
                        released=datetime.date.today().isoformat())
           old = next((e for e in entries if e['version'] == version), None)
@@ -147,7 +149,7 @@ jobs:
               --title "Publish marker-control-board $VERSION nightly manifest" \
               --body "Generated from immutable published app.bin; SHA256 and size checked. Review and squash-merge to master.")
           fi
-          # GITHUB_TOKEN PRs do not trigger pull_request workflows; dispatch checks on branch HEAD.
+          # GITHUB_TOKEN PRs do not trigger pull_request workflows, so dispatch checks on branch HEAD.
           gh workflow run host-ci.yml --ref "$branch"
           gh workflow run fmt.yml --ref "$branch"
           gh workflow run tracking-regression.yml --ref "$branch"

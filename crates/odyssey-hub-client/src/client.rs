@@ -10,13 +10,17 @@ use odyssey_hub_server_interface::service_client::ServiceClient;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub use crate::dongle::DongleInfo;
+/// Since: Odyssey Desktop 0.6.3.
 pub use crate::error::{ClientError, RpcError};
 
 /// Connection to the hub's local gRPC socket.
 ///
 /// Clones share one connection and may be used concurrently. Device-specific
 /// calls go through [`Client::device`].
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Clone, Debug)]
 pub struct Client {
     rpc: ServiceClient<Channel>,
@@ -25,6 +29,8 @@ pub struct Client {
 /// Calls addressed to one device, holding that device's wire form.
 ///
 /// Clones share the [`Client`]'s connection.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Debug)]
 pub struct DeviceClient {
     rpc: ServiceClient<Channel>,
@@ -52,13 +58,14 @@ fn event_stream(
     // Malformed events do not terminate the subscription.
     Box::pin(stream.filter_map(|item| async move {
         match item {
-            Ok(event) => match common::events::Event::try_from(event) {
-                Ok(event) => Some(Ok(event)),
-                Err(()) => {
+            Ok(event) => {
+                if let Ok(event) = common::events::Event::try_from(event) {
+                    Some(Ok(event))
+                } else {
                     tracing::warn!("Ignoring malformed or unsupported hub event");
                     None
                 }
-            },
+            }
             Err(status) => Some(Err(RpcError::from(status))),
         }
     }))
@@ -93,7 +100,7 @@ impl Client {
     /// Connects to the hub on this machine.
     ///
     /// The connection is driven by a task on the Tokio runtime that is current
-    /// when this is called; once that runtime shuts down, every call on this
+    /// when this is called. Once that runtime shuts down, every call on this
     /// client and its clones fails. Dropping a returned stream ends that
     /// subscription on the hub.
     ///
@@ -101,6 +108,9 @@ impl Client {
     ///
     /// [`ClientError::Io`] if the socket name is invalid on this platform,
     /// [`ClientError::Transport`] if no hub accepts the connection.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn connect() -> Result<Self, ClientError> {
         let name = if GenericNamespaced::is_supported() {
             "@odyhub.sock".to_ns_name::<GenericNamespaced>()?
@@ -125,6 +135,7 @@ impl Client {
         })
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn device(&self, device: common::device::Device) -> DeviceClient {
         DeviceClient {
             rpc: self.rpc.clone(),
@@ -132,6 +143,9 @@ impl Client {
         }
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn get_device_list(&self) -> Result<Vec<common::device::Device>, ClientError> {
         let reply = self
             .rpc
@@ -142,6 +156,9 @@ impl Client {
         Ok(devices_from_reply(reply)?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn bring_to_front(&self) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -150,6 +167,9 @@ impl Client {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn subscribe_device_list(
         &self,
     ) -> Result<
@@ -166,6 +186,9 @@ impl Client {
         Ok(stream.map(|item| item.map_err(RpcError::from).and_then(devices_from_reply)))
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or reply is malformed.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn get_accessory_map(&self) -> Result<common::accessory::AccessoryMap, ClientError> {
         let reply = self
             .rpc
@@ -176,6 +199,9 @@ impl Client {
         Ok(reply.try_into().map_err(invalid_reply)?)
     }
 
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn subscribe_accessory_map(
         &self,
     ) -> Result<
@@ -195,6 +221,9 @@ impl Client {
         }))
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or reply is malformed.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn get_accessory_radios(
         &self,
     ) -> Result<Vec<common::accessory::AccessoryRadioInfo>, ClientError> {
@@ -207,6 +236,9 @@ impl Client {
         Ok(reply.try_into().map_err(invalid_reply)?)
     }
 
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn subscribe_accessory_radios(
         &self,
     ) -> Result<
@@ -227,6 +259,10 @@ impl Client {
     }
 
     /// Securely enrolls on the selected radio, then saves this accessory without replacing others.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn enroll_accessory(
         &self,
         address: [u8; 6],
@@ -245,6 +281,10 @@ impl Client {
     }
 
     /// Briefly connects to a configured marker board and sets its mode back to Auto.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn reset_marker_mode(&self, address: [u8; 6]) -> Result<(), ClientError> {
         let mut bytes = [0; 8];
         bytes[..6].copy_from_slice(&address);
@@ -256,8 +296,34 @@ impl Client {
             .await?;
         Ok(())
     }
+    /// Updates configured marker over its selected Bluetooth radio.
+    ///
+    /// # Errors
+    /// Returns an error if update or reconnect verification fails.
+    pub async fn update_marker_ota(
+        &self,
+        address: [u8; 6],
+        desktop_version: &str,
+    ) -> Result<String, ClientError> {
+        let mut bytes = [0; 8];
+        bytes[..6].copy_from_slice(&address);
+        let reply = self
+            .rpc
+            .clone()
+            .update_marker_ota(proto::MarkerOtaRequest {
+                address: u64::from_le_bytes(bytes),
+                desktop_version: desktop_version.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(reply.version)
+    }
 
     /// Streams hub events and requests marker illumination until this stream is dropped.
+    ///
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn subscribe_events(
         &self,
     ) -> Result<
@@ -268,6 +334,10 @@ impl Client {
     }
 
     /// Monitors hub events without requesting marker illumination.
+    ///
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn subscribe_events_passive(
         &self,
     ) -> Result<
@@ -277,7 +347,11 @@ impl Client {
         self.subscribe_events_with_demand(true, None).await
     }
 
-    /// Requests marker illumination for one screen; event payloads remain unfiltered.
+    /// Requests marker illumination for one screen. Event payloads remain unfiltered.
+    ///
+    /// # Errors
+    /// Returns an error if the screen ID is out of range or the subscription request fails.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn subscribe_events_for_screen(
         &self,
         screen_id: u8,
@@ -313,6 +387,9 @@ impl Client {
         Ok(event_stream(stream))
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or reply is malformed.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn get_screen_info_by_id(&self, id: u8) -> Result<common::ScreenInfo, ClientError> {
         let reply = self
             .rpc
@@ -323,6 +400,9 @@ impl Client {
         Ok(reply.try_into().map_err(invalid_reply)?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn update_accessory_info_map(
         &self,
         map: common::accessory::AccessoryInfoMap,
@@ -334,6 +414,9 @@ impl Client {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the subscription request fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn subscribe_dongle_list(
         &self,
     ) -> Result<impl futures::Stream<Item = Result<Vec<DongleInfo>, RpcError>> + use<>, ClientError>
@@ -357,6 +440,9 @@ impl Client {
         }))
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn start_dongle_pairing(
         &self,
         dongle_id: String,
@@ -372,6 +458,9 @@ impl Client {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn cancel_dongle_pairing(&self, dongle_id: String) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -380,6 +469,9 @@ impl Client {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub async fn clear_dongle_bonds(&self, dongle_id: String) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -394,12 +486,19 @@ impl DeviceClient {
     ///
     /// Acquisition and backpressure can lower the requested FPS. Image-only firmware
     /// supplies no object samples and pauses optical tracking. Only one consumer may
-    /// own a physical unit; dropping this stream ends capture.
-    /// Polling the stream renews the device's capture lease; a consumer that stops
+    /// own a physical unit. Dropping this stream ends capture.
+    /// Polling the stream renews the device's capture lease. A consumer that stops
     /// polling for [`IMAGE_LEASE_TIMEOUT_MS`](odyssey_protocol::image::IMAGE_LEASE_TIMEOUT_MS)
-    /// loses the session. Modern devices then restore tracking on their own; legacy
+    /// loses the session. Modern devices then restore tracking on their own, while legacy
     /// devices require reboot/reconnect.
     /// Frames never enter the general event stream.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails to start the image stream.
+    ///
+    /// # Panics
+    /// Panics only if the newly created renewal channel cannot accept its first request.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn stream_images(
         &self,
         config: odyssey_protocol::image::ImageStreamConfig,
@@ -438,11 +537,18 @@ impl DeviceClient {
 
     /// Request reset over the current USB control endpoint. An acknowledgement
     /// does not confirm recovery: wait for a new connection and tracking reports.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn reboot_device(&self) -> Result<(), ClientError> {
         self.rpc.clone().reboot_device(self.device.clone()).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn write_vendor(&self, tag: u8, data: Vec<u8>) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -455,6 +561,31 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// Sends one acknowledged OTA frame through the device's selected packet link.
+    ///
+    /// # Errors
+    /// Returns an error if the device transport or OTA RPC fails.
+    /// Since: Odyssey Desktop (unreleased).
+    pub async fn exchange_ota(&self, frame: Vec<u8>) -> Result<[u8; 22], ClientError> {
+        let reply = self
+            .rpc
+            .clone()
+            .exchange_vendor(proto::ExchangeVendorRequest {
+                device: Some(self.device.clone()),
+                tag: u32::from(odyssey_protocol::ota::VENDOR_TAG),
+                data: frame,
+            })
+            .await?
+            .into_inner();
+        Ok(reply
+            .data
+            .try_into()
+            .map_err(|_| invalid_reply("OTA status has invalid length"))?)
+    }
+
+    /// # Errors
+    /// Returns an error if the hub RPC fails or register reply exceeds `u8`.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn read_register(&self, port: u8, bank: u8, address: u8) -> Result<u8, ClientError> {
         let reply = self
             .rpc
@@ -471,6 +602,9 @@ impl DeviceClient {
             .map_err(|_conversion_error| invalid_reply("register reply exceeds u8"))?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn write_register(
         &self,
         port: u8,
@@ -491,6 +625,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or config reply exceeds `u8`.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn read_config(&self, kind: u8) -> Result<u8, ClientError> {
         let reply = self
             .rpc
@@ -505,6 +642,9 @@ impl DeviceClient {
             .map_err(|_conversion_error| invalid_reply("config reply exceeds u8"))?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn write_config(&self, kind: u8, value: u8) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -517,6 +657,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -528,6 +671,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn cancel_pairing(&self) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -538,6 +684,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn clear_bond(&self) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -549,11 +698,15 @@ impl DeviceClient {
     }
 
     /// Ask a device without [`DeviceCapabilities::AUTO_TRANSPORT`] to stream over USB
-    /// (`usb_mode`) or Bluetooth. It stores the choice and reboots; the reply is the mode
+    /// (`usb_mode`) or Bluetooth. It stores the choice and reboots. The reply is the mode
     /// it confirmed. A device with `AUTO_TRANSPORT` picks its link itself, so the request
     /// is ignored and the reply says whether USB carries its events now.
     ///
     /// [`DeviceCapabilities::AUTO_TRANSPORT`]: common::device::DeviceCapabilities::AUTO_TRANSPORT
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn set_transport_mode(&self, usb_mode: bool) -> Result<bool, ClientError> {
         let reply = self
             .rpc
@@ -567,6 +720,9 @@ impl DeviceClient {
         Ok(reply.usb_mode)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn flash_settings(&self) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -577,11 +733,17 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn reset_zero(&self) -> Result<(), ClientError> {
         self.rpc.clone().reset_zero(self.device.clone()).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn zero(
         &self,
         translation: proto::Vector3,
@@ -600,16 +762,25 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn save_zero(&self) -> Result<(), ClientError> {
         self.rpc.clone().save_zero(self.device.clone()).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn clear_zero(&self) -> Result<(), ClientError> {
         self.rpc.clone().clear_zero(self.device.clone()).await?;
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or reply exceeds `u16`.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn reset_shot_delay(&self) -> Result<u16, ClientError> {
         let reply = self
             .rpc
@@ -621,6 +792,9 @@ impl DeviceClient {
             .map_err(|_conversion_error| invalid_reply("shot delay reply exceeds u16"))?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails or reply exceeds `u16`.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn get_shot_delay(&self) -> Result<u16, ClientError> {
         let reply = self
             .rpc
@@ -632,6 +806,9 @@ impl DeviceClient {
             .map_err(|_conversion_error| invalid_reply("shot delay reply exceeds u16"))?)
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn set_shot_delay(&self, delay_ms: u16) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -643,6 +820,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the subscription request fails. Stream items may contain RPC errors.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn subscribe_shot_delay(
         &self,
     ) -> Result<impl futures::Stream<Item = Result<u16, RpcError>> + use<>, ClientError> {
@@ -662,6 +842,9 @@ impl DeviceClient {
         }))
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn save_shot_delay(&self) -> Result<(), ClientError> {
         self.rpc
             .clone()
@@ -670,6 +853,9 @@ impl DeviceClient {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if the hub RPC fails.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn set_device_name(&self, name: String) -> Result<(), ClientError> {
         self.rpc
             .clone()

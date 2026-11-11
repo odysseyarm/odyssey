@@ -16,7 +16,7 @@ use crate::views::calibrate::automatic::wizard::Wizard;
 
 /// The camera and the declared size disagree: what that means and what to do.
 pub(super) fn disagreement_notice(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     check: &SizeCheck,
     size_origin: Option<SizeOrigin>,
@@ -96,7 +96,7 @@ pub(super) fn disagreement_notice(
                         "Settle it with a tape measure or credit card"
                     },
                     ButtonKind::Secondary,
-                    p,
+                p,
                 )
                 .disabled(saving)
                 .on_click(act(wizard, Wizard::check_by_hand)),
@@ -109,7 +109,7 @@ pub(super) fn disagreement_notice(
 }
 
 /// The camera sized a screen that hides the edge of its picture.
-pub(super) fn overscan_notice(p: Palette) -> AnyElement {
+pub(super) fn overscan_notice(p: &Palette) -> AnyElement {
     info_note(
         p,
         div().child("This screen hides the edge of its picture. The size above is the whole picture the computer draws, including the part you can't see, and the calibration is for that picture. Turning off overscan in the TV's picture settings ('Just Scan' or 'PC mode') makes all of it visible, which also lets the TV's own size be used."),
@@ -117,7 +117,7 @@ pub(super) fn overscan_notice(p: Palette) -> AnyElement {
 }
 
 /// The review is showing the camera's own size instead of the declared one.
-pub(super) fn using_measured_notice(p: Palette, wizard: &Entity<Wizard>, cx: &App) -> AnyElement {
+pub(super) fn using_measured_notice(p: &Palette, wizard: &Entity<Wizard>, cx: &App) -> AnyElement {
     let saving = wizard.read(cx).saving;
     alert(
         AlertKind::Info,
@@ -149,7 +149,7 @@ pub(super) fn using_measured_notice(p: Palette, wizard: &Entity<Wizard>, cx: &Ap
 
 /// Saving would overwrite a calibration that is already stored for the screen.
 pub(super) fn replace_confirmation(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     screen: &str,
     cx: &App,
@@ -195,7 +195,7 @@ pub(super) fn replace_confirmation(
     .into_any_element()
 }
 
-pub(super) fn save_error(p: Palette, error: &str) -> Div {
+pub(super) fn save_error(p: &Palette, error: &str) -> Div {
     div().child(alert(
         AlertKind::Danger,
         p,

@@ -25,7 +25,7 @@ use crate::runtime;
 use crate::theme::{self, Palette, RADIUS};
 
 /// The firmware version shown for a device until it reports its own.
-const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
+const UNKNOWN_FIRMWARE_VERSION: [u32; 3] = [0, 0, 0];
 
 fn transport_name(transport: Transport) -> &'static str {
     match transport {
@@ -63,7 +63,7 @@ pub(super) struct ConnectedDeviceRow {
     sensor_settings: Entity<SensorSettings>,
     transport_panel: Entity<TransportModePanel>,
     image_viewer: Entity<ImageViewer>,
-    /// The rename field; shown only while `editing`.
+    /// The rename field. Shown only while `editing`.
     name_input: Entity<InputState>,
     editing: bool,
     renamed: bool,
@@ -82,7 +82,7 @@ impl ConnectedDeviceRow {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let is_updating = manager.is_updating(&device.uuid);
+        let is_updating = manager.is_updating(device.uuid);
         let name_input = cx.new(|cx| InputState::new(window, cx));
         let sensor_settings = cx.new(|cx| SensorSettings::new(device.clone(), window, cx));
         let transport_panel = cx.new(|cx| TransportModePanel::new(device.clone(), cx));
@@ -132,7 +132,7 @@ impl ConnectedDeviceRow {
     }
 
     fn refresh_updating(&mut self, cx: &mut Context<'_, Self>) {
-        let is_updating = self.manager.is_updating(&self.device.uuid);
+        let is_updating = self.manager.is_updating(self.device.uuid);
         if is_updating != self.is_updating {
             self.is_updating = is_updating;
             let device = self.device.clone();
@@ -183,21 +183,20 @@ impl ConnectedDeviceRow {
             let outcome = rename
                 .await
                 .unwrap_or_else(|e| Err(format!("The rename task stopped unexpectedly: {e}")));
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 match outcome {
                     Ok(()) => this.renamed = true,
                     Err(error) => this.rename_error = Some(error),
                 }
                 this.rename_pending = false;
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
         cx.notify();
     }
 
-    fn status_dot(&self, p: Palette) -> AnyElement {
+    fn status_dot(&self, p: &Palette) -> AnyElement {
         let dot = || div().size_2().rounded_full();
         let id = SharedString::from(format!("dot-{:02x?}", self.device.uuid));
         let pulse = |color| {
@@ -219,7 +218,7 @@ impl ConnectedDeviceRow {
     }
 
     /// The device's label, which turns into a text field to rename it.
-    fn device_name(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn device_name(&self, p: &Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         if self.editing {
             return div()
                 .flex()
@@ -299,7 +298,7 @@ impl ConnectedDeviceRow {
 
 impl Render for ConnectedDeviceRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+        let p = &theme::palette(cx);
         let device = &self.device;
         let firmware_version = device.firmware_version;
         let battery = self.hub.read(cx).battery_states.get(&device.uuid).copied();
@@ -310,7 +309,12 @@ impl Render for ConnectedDeviceRow {
             .gap_2()
             .text_xs()
             .child(div().text_color(p.fg_muted).child("Firmware:"))
-            .child(if firmware_version != UNKNOWN_FIRMWARE_VERSION {
+            .child(if let Some(version) = device.firmware_identity.known() {
+                div()
+                    .font_family("monospace")
+                    .text_color(p.fg)
+                    .child(version.to_string())
+            } else if firmware_version != UNKNOWN_FIRMWARE_VERSION {
                 div()
                     .font_family("monospace")
                     .text_color(p.fg)
@@ -327,6 +331,7 @@ impl Render for ConnectedDeviceRow {
             device,
             manifest.as_ref(),
             &self.manager,
+            self.hub.read(cx).client(),
             p,
             self.details_open,
         );

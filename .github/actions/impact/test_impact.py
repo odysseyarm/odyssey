@@ -12,7 +12,13 @@ exclude = ["sdk/odyssey-hub-client-ffi", "sdk/odyssey-hub-client-uniffi", "crate
 [workspace.dependencies]
 odyssey-protocol = { path = "crates/odyssey-protocol" }
 """,
-    "crates/odyssey-protocol/Cargo.toml": "[package]\nname='p'\n",
+    "crates/odyssey-protocol/Cargo.toml": """
+[package]
+name='p'
+[dependencies]
+odyssey-protocol-macros = { path = "../odyssey-protocol-macros" }
+""",
+    "crates/odyssey-protocol-macros/Cargo.toml": "[package]\nname='m'\n",
     "crates/odyssey-version/Cargo.toml": "[package]\nname='v'\n",
     "crates/odyssey-sim/Cargo.toml": "[package]\nname='s'\n",
     "crates/odyssey-hub-server/Cargo.toml": """
@@ -49,8 +55,28 @@ class SelectionTests(unittest.TestCase):
 
     def test_a_shared_crate_reaches_the_sdk_that_depends_on_it(self):
         affected = select("crates/odyssey-protocol/src/lib.txt")
-        self.assertTrue({"host", "ffi", "proofs", "tracking"} <= affected)
+        self.assertTrue({"host", "ffi", "protocols", "proofs", "tracking"} <= affected)
         self.assertFalse({"uniffi", "xtask"} & affected)
+
+    def test_protocol_sources_dependencies_and_fixtures_run_compatibility(self):
+        for path in (
+            "crates/odyssey-protocol/src/packet.rs",
+            "crates/odyssey-protocol-macros/src/lib.rs",
+            "crates/odyssey-protocol/tests/fixtures/postcard-compatibility.json",
+            "Cargo.lock",
+            "nix/host.nix",
+            ".github/workflows/host-ci.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertIn("protocols", select(path))
+
+    def test_unrelated_host_sources_skip_protocol_compatibility(self):
+        affected = select("crates/odyssey-sim/src/model.rs")
+        self.assertIn("host", affected)
+        self.assertNotIn("protocols", affected)
+
+    def test_ota_receiver_changes_run_protocol_checks(self):
+        self.assertIn("protocols", select("firmware/better-ota/src/receiver.rs"))
 
     def test_an_sdk_change_stays_inside_that_sdk(self):
         self.assertEqual(select("sdk/odyssey-hub-client-uniffi/uniffi.toml"), {"uniffi"})
@@ -66,7 +92,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_the_sdk_ignores_the_root_lock_file(self):
         affected = select("Cargo.lock")
-        self.assertTrue({"host", "tracking", "proofs", "xtask"} <= affected)
+        self.assertTrue({"host", "tracking", "protocols", "proofs", "xtask"} <= affected)
         self.assertFalse({"ffi", "uniffi"} & affected)
 
     def test_rust_sources_are_always_formatted(self):
@@ -74,6 +100,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_the_toolchain_reaches_every_suite(self):
         self.assertEqual(select("rust-toolchain.toml"), set(impact.SUITES))
+
+    def test_clippy_config_reaches_linted_workspaces_without_tracking(self):
+        self.assertEqual(select("clippy.toml"), {"host", "xtask", "protocols", "ffi", "uniffi"})
 
     def test_a_workflow_runs_only_its_own_suite(self):
         self.assertEqual(select(".github/workflows/fmt.yml"), {"format"})

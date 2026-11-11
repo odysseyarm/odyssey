@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "bootloader accesses linker-defined flash/SRAM and hardware registers"
+)]
 #![no_std]
 #![no_main]
 
@@ -30,7 +34,7 @@ embassy_nrf::bind_interrupts!(struct Irqs {
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
 });
 
-// PCD is shared with the net core bootloader; every mutable field is atomic.
+// PCD is shared with the net core bootloader. Every mutable field is atomic.
 use legacy_atslite_pcd::{PcdRegion, PcdStatusCode};
 
 // App core DFU request flag in high RAM.
@@ -42,16 +46,8 @@ struct AppDfuFlag {
 
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
-/// This bootloader's release counter. Raise it whenever the image changes: the
-/// host replaces a bootloader only when the published counter is higher.
-macro_rules! release {
-    () => {
-        5
-    };
-}
-
-const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::BootloaderRelease::bcd_device(release!());
-
+const VERSION: [u32; 3] = odyssey_version::parse_cargo_version(env!("CARGO_PKG_VERSION"));
+const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(VERSION[0]);
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
 const APP_DFU_FLAG_MAGIC: u32 = 0xDF00B071;
@@ -70,6 +66,7 @@ fn get_pcd_region() -> &'static PcdRegion {
 }
 
 fn get_app_dfu_flag() -> &'static mut AppDfuFlag {
+    // SAFETY: linker-reserved high SRAM is aligned and remains exclusively owned by app DFU flag until reset.
     unsafe { &mut *(APP_DFU_FLAG_ADDR as *mut AppDfuFlag) }
 }
 
@@ -156,6 +153,7 @@ impl IpcForwarder {
         let wait = IpcWait { event: ipc.event0 };
 
         // `start_forward` is synchronous, so the async init is polled to completion here.
+        // SAFETY: linker region bounds and aligned SRAM are passed to icmsg. Both cores use opposite ownership roles.
         let init_future = unsafe { icmsg::IcMsg::init(config, notify, wait, Delay) };
         futures::pin_mut!(init_future);
 
@@ -189,6 +187,7 @@ impl DfuForwarder for IpcForwarder {
         use embassy_nrf::pac::reset::vals::Forceoff;
         use embassy_nrf::pac::spu::vals;
 
+        // SAFETY: bootloader owns SPU and RESET peripherals before starting network core; writes configure its access.
         unsafe {
             let spu = embassy_nrf::pac::SPU_S;
 
@@ -249,6 +248,7 @@ impl DfuForwarder for IpcForwarder {
         unsafe extern "C" {
             static __bootloader_dfu_region_start: u32;
         }
+        // SAFETY: linker symbol identifies start of DFU flash partition.
         let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
 
         pcd.cmd.set_update(dfu_addr, total_size as u32);
@@ -278,7 +278,7 @@ impl DfuForwarder for IpcForwarder {
     fn forward_chunk(&mut self, offset: usize, data: &[u8]) -> Result<(), ()> {
         defmt::debug!("Forwarding chunk at offset {}, len {}", offset, data.len());
 
-        // `start_forward` initializes IPC; without it no chunk can be sent.
+        // `start_forward` initializes IPC. Without it no chunk can be sent.
         if self.icmsg.is_none() {
             defmt::error!("IPC not initialized, cannot forward chunk");
             return Err(());
@@ -314,7 +314,7 @@ impl DfuForwarder for IpcForwarder {
             icmsg.send(&msg).map_err(|_| ())?;
         }
 
-        // The PCD command stays set; the net core bootloader clears it after
+        // The PCD command stays set. The net core bootloader clears it after
         // processing the update.
         defmt::info!("Network core DFU forwarding complete");
 
@@ -362,6 +362,7 @@ impl<'d> DualBankFlashWriter<'d> {
             static __bootloader_dfu_region_end: u32;
         }
 
+        // SAFETY: linker symbols mark valid flash bank and DFU region boundaries.
         unsafe {
             match target {
                 DfuTarget::AppBankA => (
@@ -489,6 +490,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 unsafe extern "C" {
                     static __bootloader_dfu_region_start: u32;
                 }
+                // SAFETY: linker symbol identifies start of DFU flash partition.
                 let dfu_addr = unsafe { &__bootloader_dfu_region_start as *const u32 as u32 };
 
                 // Set PCD command in RAM (for soft reset)
@@ -525,6 +527,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 unsafe extern "C" {
                     static __stage1_state_start: u32;
                 }
+                // SAFETY: linker symbol identifies writable stage-one state page.
                 let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as usize };
 
                 self.flash.lock(|flash_cell| {
@@ -573,6 +576,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
         unsafe extern "C" {
             static __bootloader_state_start: u32;
         }
+        // SAFETY: linker symbol identifies reserved boot state flash page.
         let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
         defmt::info!("Writing BOOT_MAGIC to state page at 0x{:08x}", state_addr);
 
@@ -594,6 +598,7 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
             }
 
             // Write boot state immediately after BOOT_MAGIC
+            // SAFETY: BootState is initialized and has no padding with uninitialized bytes.
             let state_bytes = unsafe {
                 core::slice::from_raw_parts(&state as *const BootState as *const u8, core::mem::size_of::<BootState>())
             };
@@ -602,7 +607,9 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
                 return Err(());
             }
 
+            // SAFETY: state page was written immediately above and remains mapped flash.
             let verify_magic = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
+            // SAFETY: state page was written immediately above and remains mapped flash.
             let verify_state = unsafe { core::ptr::read_volatile((state_addr + 4) as *const BootState) };
             defmt::info!(
                 "State page read-back after write: magic={:#010x}, active={}, pending={}, attempts={}",
@@ -617,142 +624,86 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
     }
 }
 
-/// Determine which bank to boot from based on validity and version
+/// Selects only banks with valid stack and reset vectors; rolls back failed pending slot.
 fn select_boot_bank(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
-) -> (usize, &'static str, BootState) {
+) -> (Option<usize>, &'static str, BootState) {
     unsafe extern "C" {
         static __bootloader_app_a_start: u32;
+        static __bootloader_app_a_end: u32;
         static __bootloader_app_b_start: u32;
+        static __bootloader_app_b_end: u32;
     }
 
-    unsafe {
-        let bank_a_start = &__bootloader_app_a_start as *const u32 as usize;
-        let bank_b_start = &__bootloader_app_b_start as *const u32 as usize;
+    let bank_a_start = &raw const __bootloader_app_a_start as usize;
+    let bank_a_end = &raw const __bootloader_app_a_end as usize;
+    let bank_b_start = &raw const __bootloader_app_b_start as usize;
+    let bank_b_end = &raw const __bootloader_app_b_end as usize;
+    // SAFETY: Linker symbols delimit readable, aligned application vector tables.
+    let bank_a_sp = unsafe { core::ptr::read_volatile(bank_a_start as *const u32) };
+    // SAFETY: Reset vector is second aligned word inside bank A.
+    let bank_a_reset = unsafe { core::ptr::read_volatile((bank_a_start + 4) as *const u32) };
+    // SAFETY: Linker symbols delimit readable, aligned application vector tables.
+    let bank_b_sp = unsafe { core::ptr::read_volatile(bank_b_start as *const u32) };
+    // SAFETY: Reset vector is second aligned word inside bank B.
+    let bank_b_reset = unsafe { core::ptr::read_volatile((bank_b_start + 4) as *const u32) };
+    let bank_a_valid =
+        better_boot::valid_vectors(bank_a_start..bank_a_end, bank_a_sp, bank_a_reset);
+    let bank_b_valid =
+        better_boot::valid_vectors(bank_b_start..bank_b_end, bank_b_sp, bank_b_reset);
 
-        // Read the stack pointer from each bank's vector table
-        let bank_a_sp = core::ptr::read_volatile(bank_a_start as *const u32);
-        let bank_b_sp = core::ptr::read_volatile(bank_b_start as *const u32);
+    defmt::info!(
+        "Bank A: addr={:#x}, sp={:#x}, reset={:#x}, valid={}",
+        bank_a_start,
+        bank_a_sp,
+        bank_a_reset,
+        bank_a_valid
+    );
+    defmt::info!(
+        "Bank B: addr={:#x}, sp={:#x}, reset={:#x}, valid={}",
+        bank_b_start,
+        bank_b_sp,
+        bank_b_reset,
+        bank_b_valid
+    );
 
-        // Check if stack pointer is valid (should be in RAM range 0x2000_0000 - 0x2008_0000)
-        let bank_a_valid = bank_a_sp >= 0x2000_0000 && bank_a_sp < 0x2008_0000;
-        let bank_b_valid = bank_b_sp >= 0x2000_0000 && bank_b_sp < 0x2008_0000;
-
-        defmt::info!(
-            "Bank A: addr={:#x}, sp={:#x}, valid={}",
-            bank_a_start,
-            bank_a_sp,
-            bank_a_valid
-        );
-        defmt::info!(
-            "Bank B: addr={:#x}, sp={:#x}, valid={}",
-            bank_b_start,
-            bank_b_sp,
-            bank_b_valid
-        );
-
-        // Read boot state to honor pending/active preference with simple rollback.
-        let mut state = read_boot_state(flash);
-        let active_slot = state.active_slot;
-        let pending_slot = state.pending_slot;
-
-        defmt::info!(
-            "Boot state: active_slot={}, pending_slot={}, attempts={}",
-            active_slot,
-            pending_slot,
-            state.boot_counter
-        );
-
-        let slot_a_valid = bank_a_valid;
-        let slot_b_valid = bank_b_valid;
-
-        let mut chosen_slot = active_slot;
-
-        // Once boot_counter reaches this, roll back to active_slot.
-        const MAX_BOOT_ATTEMPTS: u8 = 2;
-
-        // Try pending slot if it's different, valid, and attempts below limit
-        if pending_slot != active_slot {
-            let pending_valid = match pending_slot {
-                SLOT_A => slot_a_valid,
-                SLOT_B => slot_b_valid,
-                _ => false,
-            };
-
-            if state.boot_counter >= MAX_BOOT_ATTEMPTS {
-                // Rollback: too many failed boot attempts
-                defmt::warn!(
-                    "Boot counter {} >= {}, rolling back to active slot {}",
-                    state.boot_counter,
-                    MAX_BOOT_ATTEMPTS,
-                    active_slot
-                );
-                state.pending_slot = active_slot;
-                state.boot_counter = 0;
-                chosen_slot = active_slot;
-            } else if pending_valid {
-                // Try pending slot; increment boot_counter so rollback can occur on next boot if not confirmed.
-                chosen_slot = pending_slot;
-                state.boot_counter = state.boot_counter.saturating_add(1);
-                defmt::info!(
-                    "Booting pending slot {} (attempt {})",
-                    pending_slot,
-                    state.boot_counter
-                );
+    let mut state = read_boot_state(flash);
+    let active_slot = state.active_slot;
+    defmt::info!(
+        "Boot state: active_slot={}, pending_slot={}, attempts={}",
+        active_slot,
+        state.pending_slot,
+        state.boot_counter
+    );
+    let chosen_slot = better_boot::select_boot_slot(&mut state, [bank_a_valid, bank_b_valid]);
+    let (offset, name) = match chosen_slot {
+        Some(SLOT_A) => (Some(bank_a_start), "Bank A"),
+        Some(SLOT_B) => (Some(bank_b_start), "Bank B"),
+        None => {
+            defmt::warn!("No valid application banks; entering DFU recovery");
+            if active_slot == SLOT_B {
+                (None, "Bank B (DFU)")
             } else {
-                // Pending invalid; clear pending
-                state.pending_slot = active_slot;
-                state.boot_counter = 0;
-                defmt::warn!(
-                    "Pending slot invalid; sticking with active slot {}",
-                    active_slot
-                );
+                (None, "Bank A (DFU)")
             }
         }
+        Some(_) => unreachable!(),
+    };
 
-        // Write back updated boot state (e.g., incremented attempts or cleared pending)
-        defmt::info!(
-            "[PRE-WRITE] About to write boot state: active={}, pending={}, attempts={}",
-            state.active_slot,
-            state.pending_slot,
-            state.boot_counter
-        );
-        match write_boot_state(flash, &state) {
-            Ok(()) => {
-                defmt::info!("[POST-WRITE] Boot state written successfully");
-                let verify_state = read_boot_state(flash);
-                defmt::info!(
-                    "[VERIFY] Read back: active={}, pending={}, attempts={}",
-                    verify_state.active_slot,
-                    verify_state.pending_slot,
-                    verify_state.boot_counter
-                );
-            }
-            Err(_) => {
-                defmt::warn!("Failed to persist boot state");
-            }
+    match write_boot_state(flash, &state) {
+        Ok(()) => {
+            let verify_state = read_boot_state(flash);
+            defmt::info!(
+                "Boot state persisted: active={}, pending={}, attempts={}",
+                verify_state.active_slot,
+                verify_state.pending_slot,
+                verify_state.boot_counter
+            );
         }
-
-        let (offset, name) = match chosen_slot {
-            SLOT_A if slot_a_valid => (bank_a_start, "Bank A"),
-            SLOT_B if slot_b_valid => (bank_b_start, "Bank B"),
-            _ => {
-                // Fallback behavior if chosen slot invalid
-                if slot_a_valid {
-                    defmt::warn!("Chosen slot invalid, falling back to Bank A");
-                    (bank_a_start, "Bank A (fallback)")
-                } else if slot_b_valid {
-                    defmt::warn!("Chosen slot invalid, falling back to Bank B");
-                    (bank_b_start, "Bank B (fallback)")
-                } else {
-                    defmt::warn!("No valid banks found! Attempting to boot Bank A anyway");
-                    (bank_a_start, "Bank A (fallback)")
-                }
-            }
-        };
-
-        (offset, name, state)
+        Err(_) => defmt::warn!("Failed to persist boot state"),
     }
+
+    (offset, name, state)
 }
 
 /// Check if bootloader should enter DFU mode by reading the state partition
@@ -763,6 +714,7 @@ fn check_dfu_state(
         static __bootloader_state_start: u32;
     }
 
+    // SAFETY: linker symbol points to reserved boot-state flash page.
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
 
     // Read the state partition to check for DFU detach marker
@@ -772,7 +724,9 @@ fn check_dfu_state(
     // - 0xF0F0F0F0 = SWAP_MAGIC - enter DFU mode
     flash.lock(|flash_cell| {
         let _flash = flash_cell.borrow();
+        // SAFETY: linker-reserved state word is readable flash and remains mapped.
         let state_word = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
+        // SAFETY: boot state was written in fixed layout immediately after its marker word.
         let state_struct = unsafe {
             core::ptr::read_volatile((state_addr + core::mem::size_of::<u32>()) as *const BootState)
         };
@@ -794,6 +748,7 @@ fn get_boot_state_manager() -> BootStateManager {
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: linker symbol points to reserved boot-state flash page.
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
     BootStateManager::new(state_addr)
 }
@@ -835,6 +790,7 @@ fn rewrite_state_page_with_netcore(
         static __bootloader_state_start: u32;
     }
 
+    // SAFETY: linker symbol points to reserved writable boot-state flash page.
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
 
     flash.lock(|flash_cell| {
@@ -851,6 +807,7 @@ fn rewrite_state_page_with_netcore(
             .write(state_addr as u32, &flag_bytes)
             .map_err(|_| ())?;
 
+        // SAFETY: BootState is initialized and repr(C) layout has no uninitialized padding.
         let state_bytes = unsafe {
             core::slice::from_raw_parts(
                 &state as *const BootState as *const u8,
@@ -939,14 +896,16 @@ fn flag_dfu_requested(
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: linker symbol points to reserved boot-state flash page.
     let state_addr = unsafe { &__bootloader_state_start as *const u32 as usize };
 
     flash.lock(|flash_cell| {
         let mut flash = flash_cell.borrow_mut();
         // Preserve existing boot state while flipping the DFU flag word.
-        // Prefer the state we already selected for boot; fall back to reading from flash.
+        // Prefer the state we already selected for boot, fall back to reading from flash.
         let state_ptr = state_addr + core::mem::size_of::<u32>();
         let mut current_state = preserved_state;
+        // SAFETY: state bytes occupy reserved readable flash after marker word.
         let flash_state = unsafe { core::ptr::read_volatile(state_ptr as *const BootState) };
         if flash_state.magic == STATE_MAGIC {
             current_state = flash_state;
@@ -1164,7 +1123,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // A command nothing has answered yet is pending, whether or not the net core
-    // bootloader has written a status; terminal statuses were settled above.
+    // bootloader has written a status. Terminal statuses were settled above.
     let mut netcore_dfu_pending = pcd.copy_pending();
 
     if netcore_dfu_pending {
@@ -1297,7 +1256,7 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("Network core bootloader started");
 
         // Wait for the net core bootloader's result. Images up to 196 KB take a
-        // while, so there is no short timeout; after 2 minutes, reset and retry
+        // while, so there is no short timeout. After 2 minutes, reset and retry
         // on the next boot.
         let poll = async {
             let mut ticks: u32 = 0;
@@ -1383,7 +1342,10 @@ async fn main(spawner: Spawner) -> ! {
         netcore_dfu_pending
     );
 
-    let (boot_offset, boot_bank_name, _boot_state) = select_boot_bank(&flash);
+    let (boot_offset, boot_bank_name, boot_state) = select_boot_bank(&flash);
+    if boot_offset.is_none() {
+        should_enter_dfu = true;
+    }
 
     // Stage1 swaps a new bootloader in on trial and puts the old one back at the
     // next reset unless the new one confirms it booted. Without that, a bootloader
@@ -1463,7 +1425,7 @@ async fn main(spawner: Spawner) -> ! {
         config.serial_number = Some(serial);
         config.device_release = BOOTLOADER_BCD_DEVICE;
 
-        // The updater only satisfies Control's type; DualBankWriter does every
+        // The updater only satisfies Control's type. DualBankWriter does every
         // write. Its linker symbols point at bank_a/bank_b.
         let fw_config =
             embassy_boot::FirmwareUpdaterConfig::from_linkerfile_blocking(&flash, &flash);
@@ -1479,7 +1441,6 @@ async fn main(spawner: Spawner) -> ! {
 
         // The active bank decides which download alt is offered: the inactive
         // one (Bank B when A is active, and the reverse).
-        let (_, boot_bank_name, boot_state) = select_boot_bank(&flash);
         let active_bank_is_a = boot_bank_name.starts_with("Bank A");
         defmt::info!("Active bank for DFU: {}", boot_bank_name);
 
@@ -1504,8 +1465,9 @@ async fn main(spawner: Spawner) -> ! {
             dual_bank_writer,
             active_bank_is_a,
         );
+        state.set_firmware_version(env!("CARGO_PKG_VERSION"));
         state.set_state_flagger(&mut dfu_flagger);
-        state.set_bootloader_label(concat!("BOOTLOADER ", release!()));
+        state.set_bootloader_label(concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION")));
 
         let mut builder = Builder::new(
             driver,
@@ -1540,6 +1502,11 @@ async fn main(spawner: Spawner) -> ! {
         defmt::info!("USB device built, starting run loop");
         dev.run().await;
     }
+    let Some(boot_offset) = boot_offset else {
+        loop {
+            cortex_m::asm::wfi();
+        }
+    };
 
     // Never boot the app while a net core DFU is still updating.
     {

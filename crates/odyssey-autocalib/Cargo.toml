@@ -18,11 +18,11 @@ tracing = { workspace = true }
 rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
-# Loads the Orbbec SDK shared library at run time; nothing links against it.
+# Loads the Orbbec SDK shared library at run time. Nothing links against it.
 libloading = "0.8"
 parking_lot = { workspace = true }
 tempfile = "3"
 
-# Reads a monitor's EDID from the registry; nothing else here is Windows-specific.
+# Reads a monitor's EDID from the registry. Nothing else here is Windows-specific.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Registry"] }

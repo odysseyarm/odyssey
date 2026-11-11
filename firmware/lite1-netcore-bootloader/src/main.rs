@@ -1,5 +1,9 @@
 #![no_std]
 #![no_main]
+#![expect(
+    unsafe_code,
+    reason = "Network-core bootloader owns linker-defined flash and peripheral access"
+)]
 
 use core::cell::RefCell;
 #[cfg(feature = "defmt")]
@@ -25,6 +29,7 @@ fn pcd_region_addr() -> usize {
     unsafe extern "C" {
         static __pcd_region_start: u32;
     }
+    // SAFETY: Linker script defines this symbol at the shared ICMSG PCD region.
     unsafe { &__pcd_region_start as *const u32 as usize }
 }
 
@@ -32,8 +37,8 @@ fn pcd_region_addr() -> usize {
 async fn main(_spawner: embassy_executor::Spawner) {
     let p = embassy_nrf::init(Default::default());
 
-    // With a debugger or RTT attached, touching flash this soon after boot
-    // hard-faults; enable this delay when debugging.
+    // With a debugger or RTT attached, touching flash this soon after boot hard-faults.
+    // Enable this delay when debugging.
     // for _ in 0..10000000 {
     //     cortex_m::asm::nop();
     // }
@@ -43,6 +48,7 @@ async fn main(_spawner: embassy_executor::Spawner) {
 
     let flash: Mutex<NoopRawMutex, RefCell<Nvmc<'_>>> = Mutex::new(RefCell::new(Nvmc::new(p.NVMC)));
 
+    // SAFETY: PCD linker address names initialized, aligned shared SRAM. PCD access uses atomics only.
     let pcd = unsafe { PcdRegion::at(pcd_region_addr()) };
 
     if pcd.cmd.is_valid() {
@@ -101,6 +107,7 @@ fn boot_app() -> ! {
         static __bootloader_active_start: u32;
     }
 
+    // SAFETY: This bootloader runs before the application and owns core peripherals. The vector table points into validated active flash.
     unsafe {
         let mut p = cortex_m::Peripherals::steal();
 
@@ -122,7 +129,9 @@ fn clear_state_flag(flash: &Mutex<NoopRawMutex, RefCell<Nvmc<'_>>>) {
         static __bootloader_state_end: u32;
     }
 
+    // SAFETY: Linker script bounds the state partition in flash.
     let start = unsafe { &__bootloader_state_start as *const u32 as u32 };
+    // SAFETY: Linker script bounds the state partition in flash.
     let end = unsafe { &__bootloader_state_end as *const u32 as u32 };
 
     flash.lock(|_flash_cell| {
@@ -139,9 +148,13 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         static __bootloader_dfu_end: u32;
     }
 
+    // SAFETY: Linker symbols delimit the active flash partition.
     let dst_addr = unsafe { &__bootloader_active_start as *const u32 as u32 };
+    // SAFETY: Linker symbols delimit the active flash partition.
     let dst_end = unsafe { &__bootloader_active_end as *const u32 as u32 };
+    // SAFETY: Linker symbols delimit the DFU flash partition.
     let dfu_start = unsafe { &__bootloader_dfu_start as *const u32 as u32 };
+    // SAFETY: Linker symbols delimit the DFU flash partition.
     let dfu_end = unsafe { &__bootloader_dfu_end as *const u32 as u32 };
 
     let active_len = dst_end.saturating_sub(dst_addr);
@@ -190,6 +203,7 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         return Err(());
     }
 
+    // SAFETY: Range validation guarantees source lies wholly within mapped app-core flash.
     let src = unsafe { core::slice::from_raw_parts(src_addr as *const u8, size as usize) };
     if let Err(_e) = write_abs(dst_addr, src) {
         #[cfg(feature = "defmt")]
@@ -199,8 +213,9 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
     // Flash writes must complete before reading the copy back.
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
-    // Both complete ranges were validated above; do not confirm an image based on its vector
-    // table alone, which can match even when a later page was not copied correctly.
+    // Both complete ranges were validated above. Don't confirm an image from its vector
+    // table alone: it can match even when a later page was not copied correctly.
+    // SAFETY: Range validation guarantees destination lies wholly within mapped network-core flash.
     let dst = unsafe { core::slice::from_raw_parts(dst_addr as *const u8, size as usize) };
     if dst == src {
         #[cfg(feature = "defmt")]
@@ -242,6 +257,7 @@ fn erase_abs(start: u32, end: u32) -> Result<(), ()> {
     wait_ready();
 
     for page_addr in (start..end).step_by(PAGE_SIZE) {
+        // SAFETY: `check_bounds` validates page alignment and mapped flash range before erase.
         unsafe {
             (page_addr as *mut u32).write_volatile(0xFFFF_FFFF);
         }
@@ -270,6 +286,7 @@ fn write_abs(addr: u32, bytes: &[u8]) -> Result<(), ()> {
         .write(|w| w.set_wen(pac::nvmc::vals::Wen::WEN));
     wait_ready();
 
+    // SAFETY: Address and byte length are checked for flash bounds and word alignment. The input slice has `bytes.len()` readable bytes.
     unsafe {
         let p_src = bytes.as_ptr() as *const u32;
         let p_dst = addr as *mut u32;

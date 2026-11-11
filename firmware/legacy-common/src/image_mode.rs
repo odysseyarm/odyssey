@@ -14,30 +14,42 @@ use crate::odyssey_protocol::image::{
 };
 use crate::odyssey_protocol::{Packet, PacketData, Port};
 use crate::usb::UsbConfigHandle;
+use crate::platform::{L2capChannels, L2capReceiver, L2capSender};
 use crate::utils::SpiPins;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ImageStart {
+    /// Since: Odyssey Desktop 0.7.0.
     pub id: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     pub generation: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     pub config: ImageStreamConfig,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ImagePins {
+    /// Since: Odyssey Desktop 0.7.0.
     pub cs: embassy_nrf::Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub sck: embassy_nrf::Peri<'static, AnyPin>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub mosi: embassy_nrf::Peri<'static, AnyPin>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ImageReceiver {
     pins: ImagePins,
     init: fn(ImagePins) -> Spis<'static>,
 }
 impl ImageReceiver {
-    /// Reserve the image-side aliases; activate only after register SPI is released.
+    /// Reserve the image-side aliases. Activate only after register SPI is released.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn reserve(pins: &SpiPins, init: fn(ImagePins) -> Spis<'static>) -> Self {
         // These aliases remain dormant while SPIM owns the pins. The only
         // activation site follows release_for_image_mode and cancellation of
-        // every register task; the board callback reclaims the same peripheral.
+        // every register task. The board callback reclaims the same peripheral.
         // SAFETY: aliases are not activated until the original register driver is released.
         let clone_pin = |pin: &embassy_nrf::Peri<'static, AnyPin>| unsafe {
             AnyPin::steal(pin.port() as u8 * 32 + pin.pin())
@@ -52,12 +64,16 @@ impl ImageReceiver {
         }
     }
 }
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ImageReceivers {
+    /// Since: Odyssey Desktop 0.7.0.
     pub near: ImageReceiver,
+    /// Since: Odyssey Desktop 0.7.0.
     pub wide: ImageReceiver,
 }
 
-pub async fn run(
+/// Since: Odyssey Desktop 0.7.0.
+pub async fn run<L: L2capChannels>(
     near: &Mutex<NoopRawMutex, Paj>,
     wide: &Mutex<NoopRawMutex, Paj>,
     receivers: ImageReceivers,
@@ -65,6 +81,8 @@ pub async fn run(
     mut rcv: Endpoint<'static, Out>,
     usb: UsbConfigHandle,
     start: ImageStart,
+    l2cap: &L,
+    ota: atslite_common::ota::OtaHandle,
 ) -> ! {
     let mut writer = PacketWriter { snd: &mut snd };
     let mut reader = PacketReader::new(&mut rcv);
@@ -172,18 +190,28 @@ pub async fn run(
                 let mut capture = core::pin::pin!(capture);
                 loop {
                     match select3(
-                        reader.wait_for_packet(),
+                        select3(
+                            reader.wait_for_packet(),
+                            l2cap.control_rx().receive(),
+                            l2cap.data_rx().receive(),
+                        ),
                         usb.wait_until_inactive(),
                         capture.as_mut(),
                     )
                     .await
                     {
-                        Either3::First(Ok(packet)) => {
+                        Either3::First(Either3::First(Ok(packet))) => {
                             if command(&mut writer, packet, &start, usb).await {
                                 break 'capture;
                             }
                         }
-                        Either3::First(Err(_)) | Either3::Second(()) => break 'capture,
+                        Either3::First(Either3::First(Err(_))) | Either3::Second(()) => {
+                            break 'capture;
+                        }
+                        Either3::First(Either3::Second(packet))
+                        | Either3::First(Either3::Third(packet)) => {
+                            ota_busy_reply(l2cap, ota, packet).await;
+                        }
                         Either3::Third(Ok(Ok(len))) => break len,
                         Either3::Third(_) => {
                             status(
@@ -237,18 +265,28 @@ pub async fn run(
             frame_id = frame_id.wrapping_add(1);
             loop {
                 match select3(
-                    reader.wait_for_packet(),
+                    select3(
+                        reader.wait_for_packet(),
+                        l2cap.control_rx().receive(),
+                        l2cap.data_rx().receive(),
+                    ),
                     usb.wait_until_inactive(),
                     Timer::at(frame_start + period),
                 )
                 .await
                 {
-                    Either3::First(Ok(packet)) => {
+                    Either3::First(Either3::First(Ok(packet))) => {
                         if command(&mut writer, packet, &start, usb).await {
                             break 'capture;
                         }
                     }
-                    Either3::First(Err(_)) | Either3::Second(()) => break 'capture,
+                    Either3::First(Either3::First(Err(_))) | Either3::Second(()) => {
+                        break 'capture;
+                    },
+                    Either3::First(Either3::Second(packet))
+                    | Either3::First(Either3::Third(packet)) => {
+                        ota_busy_reply(l2cap, ota, packet).await;
+                    },
                     Either3::Third(()) => break,
                 }
             }
@@ -268,9 +306,14 @@ pub async fn run(
     // No return to object_mode and no register requests after image entry, even
     // if USB disconnects/reconnects or startup failed halfway through.
     loop {
-        usb.wait_until_active().await;
-        match reader.wait_for_packet().await {
-            Ok(packet) => {
+        match select3(
+            reader.wait_for_packet(),
+            l2cap.control_rx().receive(),
+            l2cap.data_rx().receive(),
+        )
+        .await
+        {
+            Either3::First(Ok(packet)) => {
                 let (generation, code) = match packet.data {
                     PacketData::ImageCommand(ImageCommand::Renew { .. }) => continue,
                     PacketData::ImageCommand(ImageCommand::Stop { generation })
@@ -285,8 +328,45 @@ pub async fn run(
                 };
                 status(&mut writer, packet.id, generation, code, usb).await;
             }
-            Err(_) => Timer::after_millis(20).await,
+
+            Either3::First(Err(_)) => Timer::after_millis(20).await,
+            Either3::Second(packet) | Either3::Third(packet) => {
+                ota_busy_reply(l2cap, ota, packet).await;
+            }
         }
+    }
+}
+async fn ota_busy_reply<L: L2capChannels>(
+    l2cap: &L,
+    ota: atslite_common::ota::OtaHandle,
+    packet: Packet,
+) {
+    let PacketData::Vendor(tag, _) = packet.data else {
+        return;
+    };
+    if tag != odyssey_protocol::ota::VENDOR_TAG {
+        return;
+    }
+    let Some(reply) = ota.request(&[0]).await else {
+        return;
+    };
+    let Ok(mut status) = odyssey_protocol::ota::Status::decode(&reply.status) else {
+        return;
+    };
+    status.error = odyssey_protocol::ota::Code::Busy;
+    let mut body = odyssey_protocol::VendorData {
+        len: odyssey_protocol::ota::STATUS_LEN as u8,
+        data: [0; odyssey_protocol::VendorData::CAPACITY],
+    };
+    body.data[..odyssey_protocol::ota::STATUS_LEN].copy_from_slice(&status.encode());
+    let response = Packet {
+        id: packet.id,
+        data: PacketData::Vendor(tag, body),
+    };
+    if response.is_control() {
+        l2cap.control_tx().send(response).await;
+    } else {
+        l2cap.data_tx().send(response).await;
     }
 }
 

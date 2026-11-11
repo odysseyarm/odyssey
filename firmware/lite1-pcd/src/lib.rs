@@ -1,4 +1,8 @@
 #![no_std]
+#![expect(
+    unsafe_code,
+    reason = "Shared SRAM register access requires fixed-address raw pointers"
+)]
 
 //! Peripheral CPU DFU (PCD): how the nRF5340 application core tells the
 //! network core bootloader to install a network core image, through shared
@@ -16,93 +20,141 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Marks a valid [`PcdCmd`].
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub const PCD_CMD_MAGIC: u32 = 0x50434431; // "PCD1"
 
 /// Marks a valid [`PcdStatus`].
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub const PCD_STATUS_MAGIC: u32 = 0x50434453; // "PCDS"
 
 /// How many times the application core starts the network core bootloader for
 /// one update before it gives up and lets the unit back into DFU. A copy takes
 /// seconds, so a command still unanswered after a few tries is not going to be.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub const MAX_COPY_ATTEMPTS: u32 = 3;
 
 /// The attempt count to persist for this start, given the count stored in
 /// flash (erased flash means none yet), or `None` once the attempts are spent.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn next_copy_attempt(stored: u32) -> Option<u32> {
     let used = if stored == u32::MAX { 0 } else { stored };
     (used < MAX_COPY_ATTEMPTS).then_some(used + 1)
 }
 
 /// Written by the application core.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[repr(C)]
 pub struct PcdCmd {
     /// [`PCD_CMD_MAGIC`] when the command is valid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub magic: AtomicU32,
 
     /// Image address in app core flash.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_addr: AtomicU32,
 
     /// Size of firmware image in bytes
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_size: AtomicU32,
 
-    /// SHA-256 of the image; optional.
+    /// Optional SHA-256 of the image.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_sha: [u8; 32],
 }
 
 /// Written by the network core.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[repr(C)]
 pub struct PcdStatus {
     /// [`PCD_STATUS_MAGIC`] when the status is valid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub magic: AtomicU32,
 
     /// A [`PcdStatusCode`].
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub status: AtomicU32,
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub reserved: [AtomicU32; 2],
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcdStatusCode {
     /// No update performed
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Idle = 0,
 
     /// Copy in progress.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Updating = 1,
 
     /// Copy finished and verified.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     Success = 2,
 
+    /// Since: Odyssey Desktop 0.7.0.
     FailedCopy = 3,
 
     /// The copied image did not match the source.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     FailedVerify = 4,
 
     /// The netcore application booted and confirmed itself.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     AppConfirmed = 5,
 }
 
 impl PcdCmd {
     /// # Safety
     ///
-    /// `addr` must point to a `PcdCmd` that stays mapped for `'static`.
+    /// `addr` must be aligned for `PcdCmd`, point to initialized shared SRAM
+    /// containing a valid `PcdCmd`, and remain mapped for `'static`. No caller
+    /// may create a mutable reference while either core can access the atomics.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub unsafe fn at(addr: usize) -> &'static Self {
+        // SAFETY: The caller guarantees alignment, initialization, mapping lifetime, and shared atomic access.
         unsafe { &*(addr as *const Self) }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn is_valid(&self) -> bool {
         self.magic.load(Ordering::Acquire) == PCD_CMD_MAGIC
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_image_addr(&self) -> u32 {
         self.image_addr.load(Ordering::Acquire)
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_image_size(&self) -> u32 {
         self.image_size.load(Ordering::Acquire)
     }
 
     /// Called by the app core.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_update(&self, addr: u32, size: u32) {
         self.image_addr.store(addr, Ordering::Release);
         self.image_size.store(size, Ordering::Release);
@@ -111,6 +163,8 @@ impl PcdCmd {
     }
 
     /// Called by the netcore once the command is handled.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
@@ -119,16 +173,25 @@ impl PcdCmd {
 impl PcdStatus {
     /// # Safety
     ///
-    /// `addr` must point to a `PcdStatus` that stays mapped for `'static`.
+    /// `addr` must be aligned for `PcdStatus`, point to initialized shared SRAM
+    /// containing a valid `PcdStatus`, and remain mapped for `'static`. No caller
+    /// may create a mutable reference while either core can access the atomics.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub unsafe fn at(addr: usize) -> &'static Self {
+        // SAFETY: The caller guarantees alignment, initialization, mapping lifetime, and shared atomic access.
         unsafe { &*(addr as *const Self) }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn is_valid(&self) -> bool {
         self.magic.load(Ordering::Acquire) == PCD_STATUS_MAGIC
     }
 
     /// `None` for a value outside [`PcdStatusCode`].
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_status(&self) -> Option<PcdStatusCode> {
         let val = self.status.load(Ordering::Acquire);
         match val {
@@ -143,29 +206,43 @@ impl PcdStatus {
     }
 
     /// Called by the netcore.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_status(&self, status: PcdStatusCode) {
         self.status.store(status as u32, Ordering::Release);
         // Magic goes last so the app core never sees a valid but half-written status.
         self.magic.store(PCD_STATUS_MAGIC, Ordering::Release);
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn clear(&self) {
         self.magic.store(0, Ordering::Release);
     }
 }
 
 /// Layout of the PCD region in shared SRAM.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[repr(C)]
 pub struct PcdRegion {
+    /// Since: Odyssey Desktop 0.7.0.
     pub cmd: PcdCmd,
+    /// Since: Odyssey Desktop 0.7.0.
     pub status: PcdStatus,
 }
 
 impl PcdRegion {
     /// # Safety
     ///
-    /// `addr` must point to a `PcdRegion` that stays mapped for `'static`.
+    /// `addr` must be aligned for `PcdRegion`, point to initialized shared SRAM
+    /// containing valid command and status atomics, and remain mapped for
+    /// `'static`. No caller may create a mutable reference while either core
+    /// can access the atomics.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub unsafe fn at(addr: usize) -> &'static Self {
+        // SAFETY: The caller guarantees alignment, initialization, mapping lifetime, and shared atomic access.
         unsafe { &*(addr as *const Self) }
     }
 
@@ -176,6 +253,8 @@ impl PcdRegion {
     /// when it writes the command), so a missing status counts as pending. Only
     /// the status the network core bootloader writes after it finishes, or
     /// fails, settles a command.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn copy_pending(&self) -> bool {
         if !self.cmd.is_valid() {
             return false;

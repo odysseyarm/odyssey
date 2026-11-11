@@ -34,7 +34,7 @@ pub(super) fn act_boxed(
 /// One step's page: a headline, one line of instruction, the content and a
 /// footer row of buttons.
 pub(super) fn step_page(
-    p: Palette,
+    p: &Palette,
     title: impl Into<SharedString>,
     subtitle: Option<SharedString>,
     content: Vec<AnyElement>,
@@ -75,7 +75,7 @@ pub(super) fn step_page(
 }
 
 /// A section heading inside a card.
-pub(super) fn heading(p: Palette, text: impl Into<SharedString>) -> Div {
+pub(super) fn heading(p: &Palette, text: impl Into<SharedString>) -> Div {
     div()
         .text_xl()
         .font_weight(FontWeight::SEMIBOLD)
@@ -83,7 +83,7 @@ pub(super) fn heading(p: Palette, text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// The open/closed state for one [`details`]; fetch it before borrowing the
+/// The open/closed state for one [`details`]. Fetch it before borrowing the
 /// model from `cx`. `id` must be unique among the details of one view.
 pub(super) fn open_state(id: &'static str, window: &mut Window, cx: &mut App) -> Entity<bool> {
     window.use_keyed_state(id, cx, |_, _| false)
@@ -92,7 +92,7 @@ pub(super) fn open_state(id: &'static str, window: &mut Window, cx: &mut App) ->
 /// Technical information, collapsed until asked for.
 pub(super) fn details(
     id: &'static str,
-    p: Palette,
+    p: &Palette,
     summary: &'static str,
     body: Vec<AnyElement>,
     open: &Entity<bool>,
@@ -143,7 +143,7 @@ pub(super) fn details(
 /// A lighter collapsible for hints under a card, without the box.
 pub(super) fn plain_details(
     id: &'static str,
-    p: Palette,
+    p: &Palette,
     summary: &'static str,
     body: Vec<AnyElement>,
     open: &Entity<bool>,
@@ -175,7 +175,7 @@ pub(super) fn plain_details(
 
 /// A label and value on one line inside [`details`].
 pub(super) fn fact(
-    p: Palette,
+    p: &Palette,
     label: impl Into<SharedString>,
     value: impl Into<SharedString>,
 ) -> AnyElement {
@@ -191,7 +191,7 @@ pub(super) fn fact(
 /// A text-only button that reads as a link.
 pub(super) fn link_button(
     id: impl Into<ElementId>,
-    p: Palette,
+    p: &Palette,
     label: impl Into<SharedString>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -208,12 +208,12 @@ pub(super) fn link_button(
 }
 
 /// A one-line warning box.
-pub(super) fn amber_alert(p: Palette, text: impl Into<SharedString>) -> AnyElement {
+pub(super) fn amber_alert(p: &Palette, text: impl Into<SharedString>) -> AnyElement {
     alert(AlertKind::Warning, p, div().text_base().child(text.into())).into_any_element()
 }
 
 /// A spinner beside what is being waited for.
-pub(super) fn working_row(p: Palette, text: impl Into<SharedString>) -> Div {
+pub(super) fn working_row(p: &Palette, text: impl Into<SharedString>) -> Div {
     div()
         .flex()
         .items_center()
@@ -225,7 +225,7 @@ pub(super) fn working_row(p: Palette, text: impl Into<SharedString>) -> Div {
 }
 
 /// A one-line hint box with an icon.
-pub(super) fn info_note(p: Palette, body: Div) -> AnyElement {
+pub(super) fn info_note(p: &Palette, body: Div) -> AnyElement {
     alert(
         AlertKind::Info,
         p,
@@ -246,7 +246,7 @@ pub(super) fn info_note(p: Palette, body: Div) -> AnyElement {
 }
 
 /// The empty stage where the live camera picture goes.
-pub(super) fn camera_placeholder(p: Palette, text: &'static str) -> Div {
+pub(super) fn camera_placeholder(p: &Palette, text: &'static str) -> Div {
     div()
         .flex()
         .items_center()
@@ -261,7 +261,7 @@ pub(super) fn camera_placeholder(p: Palette, text: &'static str) -> Div {
 
 /// A bordered group of mutually exclusive options.
 pub(super) fn segmented(
-    p: Palette,
+    p: &Palette,
     id: &'static str,
     items: Vec<(SharedString, bool, Handler)>,
     pad_x: f32,
@@ -279,6 +279,7 @@ pub(super) fn segmented(
         } else {
             (p.surface, p.fg)
         };
+        let surface_hover = p.surface_hover;
         row = row.child(
             div()
                 .id(ElementId::from((id, i)))
@@ -289,7 +290,7 @@ pub(super) fn segmented(
                 .cursor_pointer()
                 .bg(bg)
                 .text_color(fg)
-                .when(!selected, |s| s.hover(move |s| s.bg(p.surface_hover)))
+                .when(!selected, |s| s.hover(move |s| s.bg(surface_hover)))
                 .child(label)
                 .on_click(move |e, w, cx| on_click(e, w, cx)),
         );

@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "board entry owns linker SRAM, flash, and peripheral register access"
+)]
 #![no_main]
 #![no_std]
 
@@ -35,7 +39,7 @@ use static_cell::StaticCell;
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
 
-const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
+const FIRMWARE_VERSION: [u32; 3] = odyssey_version::cargo_version!();
 
 unsafe extern "C" {
     static __bootloader_state_start: u32;
@@ -51,6 +55,7 @@ struct BootStateRaw {
 }
 
 fn log_boot_state(label: &str) {
+    // SAFETY: linker places the state words in readable flash; each volatile read covers one initialized word.
     unsafe {
         let state_addr = &__bootloader_state_start as *const u32 as usize;
         defmt::info!("[bootlog {}] state_addr={:#010x}", label, state_addr);
@@ -100,6 +105,58 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
     }
 }
 
+fn ota_flash_slots(
+    flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
+) -> atslite_common::ota::FlashSlots {
+    unsafe extern "C" {
+        static __bootloader_app_a_start: u32;
+        static __bootloader_app_a_end: u32;
+        static __bootloader_app_b_start: u32;
+        static __bootloader_app_b_end: u32;
+        static __bootloader_dfu_start: u32;
+        static __bootloader_dfu_end: u32;
+        static __bootloader_state_start: u32;
+        static __netcore_primary_start: u32;
+        static __netcore_primary_end: u32;
+        static __ota_app_ram_start: u32;
+        static __ota_app_ram_end: u32;
+        static __ota_netcore_ram_start: u32;
+        static __ota_netcore_ram_end: u32;
+    }
+    let addr = |symbol: *const u32| symbol as u32;
+    let (app_a, app_b, stage, boot_state, netcore, app_ram, netcore_ram) = unsafe {
+        (
+            addr(&raw const __bootloader_app_a_start)
+                ..addr(&raw const __bootloader_app_a_end),
+            addr(&raw const __bootloader_app_b_start)
+                ..addr(&raw const __bootloader_app_b_end),
+            addr(&raw const __bootloader_dfu_start)..addr(&raw const __bootloader_dfu_end),
+            addr(&raw const __bootloader_state_start),
+            addr(&raw const __netcore_primary_start)..addr(&raw const __netcore_primary_end),
+            addr(&raw const __ota_app_ram_start)..addr(&raw const __ota_app_ram_end),
+            addr(&raw const __ota_netcore_ram_start)..addr(&raw const __ota_netcore_ram_end),
+        )
+    };
+    let current = ota_flash_slots as *const () as usize as u32;
+    let running_app = if app_a.contains(&current) {
+        0
+    } else if app_b.contains(&current) {
+        1
+    } else {
+        unreachable!("app code address must belong to one linked bank")
+    };
+    atslite_common::ota::FlashSlots::new(atslite_common::ota::Layout {
+        flash,
+        app_banks: [app_a, app_b],
+        running_app,
+        app_ram,
+        netcore_stage: stage,
+        netcore_active: netcore,
+        netcore_ram,
+        boot_state,
+    })
+}
+
 /// Copies the general settings from `common::Settings` into atslite-common and
 /// persists them through atslite-common's flash node. Registered as the
 /// GENERAL_WRITE_FN, so a bulk FlashSettings over BLE ends up here.
@@ -132,6 +189,15 @@ async fn main(spawner: Spawner) {
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     defmt::info!("NVMC initialized");
+    spawner
+        .spawn(
+            atslite_common::ota::task(
+                ota_flash_slots(nvmc),
+                FIRMWARE_VERSION,
+                legacy_atslite::ble::netcore::netcore_release,
+            )
+            .unwrap(),
+        );
 
     defmt::info!("Splitting board peripherals...");
     let board: Board = split_board!(p);
@@ -283,6 +349,7 @@ async fn main(spawner: Spawner) {
 
     // ICM42688 IMU.
     defmt::info!("Initializing IMU...");
+    // SAFETY: nRF5340 erratum workaround writes its specified register at fixed address.
     unsafe {
         // Erratum workaround
         (0x5000_ac04 as *mut u32).write_volatile(1);
@@ -334,6 +401,7 @@ async fn main(spawner: Spawner) {
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5210, // Atslite PID
         FIRMWARE_VERSION,
+        odyssey_version::cargo_semver!(),
         DEVICE_INTERFACE_GUID,
         p.USBD,
         Irqs,
@@ -366,6 +434,7 @@ async fn main(spawner: Spawner) {
     let nvmc_async = nvmc.lock(|_f| {
         // Stealing NVMC is sound here: nothing else writes flash in normal
         // operation, and a DFU detach resets the device.
+        // SAFETY: serialized flash owner is sole NVMC owner. DFU detaches by resetting.
         BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) })
     });
     // Settings come up in phases. First the shared settings worker owned by atslite-common.
@@ -490,6 +559,7 @@ async fn main(spawner: Spawner) {
         battery_soc: &legacy_atslite::power_state::SOC_PERCENT,
         battery_charging: &legacy_atslite::power_state::VBUS_PRESENT,
         image_receivers,
+        ota: atslite_common::ota::OtaHandle,
     };
 
     defmt::info!("Initialization complete; entering object mode");

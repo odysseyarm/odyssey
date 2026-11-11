@@ -18,7 +18,7 @@ pub(super) enum SessionEvent {
     Started,
     StartFailed(String),
     Frame(PresentedFrame),
-    /// The stream is over, with the reason to show; the RPC is already released.
+    /// The stream is over, with the reason to show. The RPC is already released.
     Ended(String),
 }
 
@@ -30,7 +30,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// The dialog owns the session; its lifetime is the stream's lifetime.
+/// The dialog owns the session, so its lifetime is the stream's lifetime.
 /// Dropping it aborts the task, including while Start is pending, and
 /// dropping the dedicated RPC stream tells the hub to stop pixels. Legacy
 /// tracking still requires reboot/reconnect.
@@ -110,9 +110,9 @@ async fn stream_images(
                 } else {
                     None
                 };
-                match PresentedFrame::new(frame, received_at, observed_fps) {
+                match PresentedFrame::new(&frame, received_at, observed_fps) {
                     Ok(frame) => {
-                        // The dialog is gone; nothing left to stream for.
+                        // The dialog is gone, so there is nothing left to stream for.
                         if events.unbounded_send(SessionEvent::Frame(frame)).is_err() {
                             return;
                         }

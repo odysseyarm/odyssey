@@ -65,7 +65,7 @@ async fn get_devices() -> Result<Vec<DeviceInfo>> {
 
 /// Sends one event per line read from stdin. Runs on its own thread because
 /// stdin reads block.
-fn stdin_thread(sender: Sender<()>) {
+fn stdin_thread(sender: &Sender<()>) {
     loop {
         match std::io::stdin().read_line(&mut String::new()) {
             Ok(0) => return,
@@ -153,7 +153,7 @@ async fn run(output_path: &std::path::Path) -> Result<()> {
     eprintln!("Successfully read config");
 
     let (snd, mut stdin_line) = mpsc::channel(STDIN_EVENT_CAPACITY);
-    std::thread::spawn(move || stdin_thread(snd));
+    std::thread::spawn(move || stdin_thread(&snd));
     eprintln!("Press enter to start recording");
 
     stdin_line

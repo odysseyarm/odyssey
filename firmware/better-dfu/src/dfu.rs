@@ -15,42 +15,88 @@ use crate::consts::{
 };
 
 /// Image a DFU download is written to, selected by the interface alternate setting.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DfuTarget {
     /// Application core bank A (direct XIP)
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     AppBankA,
     /// Application core bank B (direct XIP)
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     AppBankB,
     /// Network core (swap-based, forwarded via IPC)
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     NetCore,
     /// Stage2 bootloader (swap-based self-update)
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     Bootloader,
 }
 
 /// Forwards firmware chunks to a target this core cannot flash directly, such as the network core over IPC.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub trait DfuForwarder {
     /// Called at the start of a firmware download to the alternate target
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if forwarding cannot start.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn start_forward(&mut self, total_size: usize) -> Result<(), ()>;
 
     /// Called for each chunk of firmware data to be forwarded
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if the chunk cannot be forwarded.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn forward_chunk(&mut self, offset: usize, data: &[u8]) -> Result<(), ()>;
 
     /// Called when firmware download is complete
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if forwarding cannot finish.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn finish_forward(&mut self) -> Result<(), ()>;
 }
 
 /// Writes downloaded firmware to the flash region of a [`DfuTarget`].
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub trait DualBankWriter {
     /// Writes `data` at byte `offset` within `target`'s region.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if the write fails.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn write_for_target(&mut self, target: DfuTarget, offset: usize, data: &[u8])
     -> Result<(), ()>;
 
     /// Marks `target` as updated once the final block has been written.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if the target cannot be marked updated.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()>;
 }
 
 /// Forwarder for app-only DFU; every call fails.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct NullForwarder;
 
 impl DfuForwarder for NullForwarder {
@@ -68,6 +114,8 @@ impl DfuForwarder for NullForwarder {
 }
 
 /// Writer for systems without dual-bank support; every call fails.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct NullDualBankWriter;
 
 impl DualBankWriter for NullDualBankWriter {
@@ -85,6 +133,8 @@ impl DualBankWriter for NullDualBankWriter {
     }
 }
 /// DFU-mode state machine and USB control handler; [`usb_dfu`] registers it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Control<
     'd,
     DFU: NorFlash,
@@ -114,6 +164,8 @@ pub struct Control<
     app_label: &'static str,
     bootloader_label: &'static str,
     state_flagger: Option<&'d mut dyn FnMut()>,
+    firmware_version: Option<&'static str>,
+    firmware_version_string: Option<(StringIndex, &'static str)>,
     download_started_flag: Option<&'d Cell<bool>>,
     interface: Option<InterfaceNumber>,
 
@@ -132,6 +184,8 @@ impl<
 > Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
 {
     /// The default download target is the app bank that is not running, per `active_bank_is_a`.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(
         updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
         attrs: DfuAttributes,
@@ -164,6 +218,8 @@ impl<
             bootloader_string: None,
             app_label: "APP",
             bootloader_label: "BOOTLOADER",
+            firmware_version: None,
+            firmware_version_string: None,
             state_flagger: None,
             download_started_flag: None,
             interface: None,
@@ -175,6 +231,8 @@ impl<
 
     /// Sets the string descriptors for alt settings 0 (labelled `app_label`), 1 (NET) and 2 (bootloader).
     /// [`usb_dfu`] calls this.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn set_interface_strings(
         &mut self,
         app_string: StringIndex,
@@ -195,11 +253,22 @@ impl<
     /// the one in the firmware manifest. A bootloader that keeps the default
     /// label reports no version, and the host treats it as older than
     /// anything: bootloaders built without this call report the same label.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub fn set_bootloader_label(&mut self, label: &'static str) {
         self.bootloader_label = label;
     }
 
+    /// Exposes full software SemVer through a USB string descriptor.
+    ///
+    /// Since: Odyssey Desktop (unreleased).
+    pub fn set_firmware_version(&mut self, version: &'static str) {
+        self.firmware_version = Some(version);
+    }
+
     /// Callback run on DFU_DETACH before the reset, e.g. to write SWAP_MAGIC.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn set_state_flagger(&mut self, f: &'d mut dyn FnMut()) {
         self.state_flagger = Some(f);
     }
@@ -208,6 +277,8 @@ impl<
     /// before validating or writing its contents, including empty or rejected downloads.
     /// This handler never clears the flag, including on Abort, USB reset, errors or alt changes.
     /// Register before serving requests; registration leaves the flag's current value unchanged.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn set_download_started_flag(&mut self, flag: &'d Cell<bool>) {
         self.download_started_flag = Some(flag);
     }
@@ -304,6 +375,9 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize>
     /// # Panics
     ///
     /// Panics if the USB block size is zero or not flash-write aligned.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.4.
     pub fn new_single_bank(
         updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
         attrs: DfuAttributes,
@@ -384,6 +458,9 @@ impl<
     }
 
     fn get_string(&mut self, index: StringIndex, _lang_id: u16) -> Option<&str> {
+        if let Some(version) = firmware_version_string(index, self.firmware_version_string) {
+            return Some(version);
+        }
         if let Some(app_idx) = self.app_string {
             if index == app_idx {
                 return Some(self.app_label);
@@ -583,6 +660,8 @@ impl<
 ///
 /// `func_modifier` can add function-level descriptors such as MSOS headers, for when DFU is part of a
 /// composite USB device.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn usb_dfu<
     'd,
     D: Driver<'d>,
@@ -598,6 +677,9 @@ pub fn usb_dfu<
     func_modifier: impl Fn(&mut FunctionBuilder<'_, 'd, D>),
 ) {
     // Allocated before builder.function(), whose FunctionBuilder borrows builder mutably until dropped.
+    if let Some(version) = handler.firmware_version {
+        handler.firmware_version_string = Some((builder.string(), version));
+    }
     let inactive_str_idx = builder.string();
     let extra_strings = if handler.single_bank_capacity.is_some() {
         None
@@ -702,6 +784,16 @@ pub fn usb_dfu<
     drop(func);
 
     builder.handler(handler);
+}
+
+fn firmware_version_string(
+    index: StringIndex,
+    version: Option<(StringIndex, &'static str)>,
+) -> Option<&'static str> {
+    match version {
+        Some((version_index, version)) if index == version_index => Some(version),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -815,6 +907,20 @@ mod tests {
             control.set_alternate_setting(InterfaceNumber(0), 1);
             assert!(flag.get());
         }
+    }
+
+    #[test]
+    fn firmware_version_descriptor_matches_only_registered_index() {
+        let version_index = StringIndex::new(4);
+        let descriptor = Some((version_index, "1.2.3-nightly.20260619.gabcdef"));
+        assert_eq!(
+            firmware_version_string(version_index, descriptor),
+            Some("1.2.3-nightly.20260619.gabcdef")
+        );
+        assert_eq!(
+            firmware_version_string(StringIndex::new(5), descriptor),
+            None
+        );
     }
 }
 

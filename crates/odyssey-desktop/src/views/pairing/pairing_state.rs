@@ -1,5 +1,5 @@
 //! What a pairing row shows: the last thing that happened, and whether a
-//! pairing is running; plus what a row pairs, which decides the hub calls.
+//! pairing is running. Also what a row pairs, which decides the hub calls.
 
 use odyssey_hub_client::client::{Client, ClientError};
 use odyssey_hub_common::device::Device;
@@ -23,7 +23,7 @@ pub(super) struct PairingState {
 /// The status line for a finished pairing.
 pub(super) fn result_status(
     success: bool,
-    paired_address: &[u8; 6],
+    paired_address: [u8; 6],
     paired_name: &str,
     error: &str,
 ) -> String {
@@ -164,7 +164,7 @@ impl PairTarget {
                     error,
                 },
             ) if dongle_id == id => {
-                Some(result_status(*success, paired_address, paired_name, error))
+                Some(result_status(*success, *paired_address, paired_name, error))
             }
             (
                 Self::Device(target),
@@ -178,7 +178,7 @@ impl PairTarget {
                     },
                 )),
             ) if device.uuid == target.uuid => {
-                Some(result_status(*success, paired_address, paired_name, error))
+                Some(result_status(*success, *paired_address, paired_name, error))
             }
             _ => None,
         }
@@ -198,7 +198,7 @@ mod tests {
         assert!(!state.pairing);
         state.started();
         assert!(state.pairing);
-        state.finished(result_status(true, &[1; 6], "Tracker", ""));
+        state.finished(result_status(true, [1; 6], "Tracker", ""));
         assert!(!state.pairing);
     }
 }

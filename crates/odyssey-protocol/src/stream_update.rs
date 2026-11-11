@@ -2,15 +2,25 @@ use odyssey_protocol_macros::protocol_type;
 
 use crate::{Error, PacketType};
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, enumn::N, PartialEq)]
 pub enum StreamUpdateAction {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(0))]
     Enable,
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(1))]
     Disable,
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(2))]
     DisableAll,
 }
@@ -22,18 +32,26 @@ impl TryFrom<u8> for StreamUpdateAction {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Copy, Debug)]
 pub struct StreamUpdate {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub packet_id: PacketType,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     pub action: StreamUpdateAction,
 }
 
 impl StreamUpdate {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// # Errors
+    /// Returns an error if input is truncated or contains an unrecognized packet
+    /// type or action.
     pub fn parse(bytes: &mut &[u8]) -> Result<Self, Error> {
         let &[packet_id, action, ref rest @ ..] = *bytes else {
             return Err(Error::UnexpectedEof {
@@ -57,7 +75,7 @@ mod tests {
     fn malformed_update_does_not_consume_the_next_packet() {
         for bytes in [&[][..], &[0x09][..], &[0x7f, 0][..], &[0x09, 3][..]] {
             let mut cursor = bytes;
-            assert!(StreamUpdate::parse(&mut cursor).is_err());
+            let _ = StreamUpdate::parse(&mut cursor).unwrap_err();
             assert_eq!(cursor, bytes);
         }
         let mut cursor = &[0x09, 0, 0xaa][..];

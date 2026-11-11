@@ -70,7 +70,7 @@ impl SetupStep {
         }
     }
 
-    fn section(p: Palette, title: impl Into<gpui::SharedString>, gap: bool) -> gpui::Div {
+    fn section(p: &Palette, title: impl Into<gpui::SharedString>, gap: bool) -> gpui::Div {
         let section = card(p);
         let section = if gap {
             section.gap_4()
@@ -83,7 +83,7 @@ impl SetupStep {
 
 impl Render for SetupStep {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let wizard = self.wizard.clone();
         let state = wizard.read(cx);
         let can_continue = state.can_continue();

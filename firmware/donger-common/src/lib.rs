@@ -5,18 +5,29 @@
 //! (`usb_device`).
 
 #![no_std]
+#![expect(
+    unsafe_code,
+    reason = "USB serial descriptor conversion uses a checked ASCII-hex buffer"
+)]
 
+/// Since: Odyssey Desktop 0.7.0.
 pub mod packet;
+/// Since: Odyssey Desktop 0.7.0.
 pub mod stream;
+/// Since: Odyssey Desktop 0.7.0.
 pub mod usb;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[cfg(feature = "atslite")]
 pub mod usb_device;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub use odyssey_protocol;
 
 /// Expands to a zeroed `&'static mut [u8; $size]` backed by a `ConstStaticCell`.
 /// Each expansion site owns one buffer and panics if evaluated a second time.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[macro_export]
 macro_rules! static_byte_buffer {
     ($size:expr_2021) => {{

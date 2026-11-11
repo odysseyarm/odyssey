@@ -8,6 +8,7 @@ use odyssey_hub_common::device::{Device, EventsTransport};
 use odyssey_hub_common::events::DeviceEventKind;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
+use odyssey_protocol::{VendorData, ota};
 use odyssey_usb::packets::vm::{ConfigKind, GeneralConfig, PacketData};
 use tracing::{debug, info, warn};
 
@@ -36,9 +37,9 @@ fn config_kind_from_rpc(kind: u8) -> Option<ConfigKind> {
     }
 }
 
-fn config_value(config: GeneralConfig) -> u8 {
+fn config_value(config: &GeneralConfig) -> u8 {
     match config {
-        GeneralConfig::ImpactThreshold(value) | GeneralConfig::SuppressMs(value) => value,
+        GeneralConfig::ImpactThreshold(value) | GeneralConfig::SuppressMs(value) => *value,
         _ => 0,
     }
 }
@@ -66,6 +67,44 @@ impl DeviceHandler {
         if let Err(e) = result {
             warn!("Failed to send vendor packet: {}", e);
         }
+    }
+
+    pub(super) async fn on_ota_exchange(
+        &mut self,
+        frame: &[u8],
+    ) -> Result<[u8; ota::STATUS_LEN], String> {
+        if frame.len() > ota::MAX_FRAME {
+            return Err("OTA request exceeds vendor packet limit".into());
+        }
+        let mut data = VendorData {
+            len: u8::try_from(frame.len()).map_err(|error| error.to_string())?,
+            data: [0; VendorData::CAPACITY],
+        };
+        data.data[..frame.len()].copy_from_slice(frame);
+        let links = self.packet_links();
+        if links.is_empty() {
+            return Err("No connected device link for OTA; recover this unit over USB".into());
+        }
+        let response = call_over_links(
+            &links,
+            SLOW_CALL_TIMEOUT,
+            "ota_exchange",
+            |device: VmDevice| async move {
+                device
+                    .request(PacketData::Vendor(ota::VENDOR_TAG, data))
+                    .await
+            },
+        )
+        .await?;
+        let PacketData::Vendor(tag, response) = response else {
+            return Err("Device returned an unexpected OTA response".into());
+        };
+        if tag != ota::VENDOR_TAG || usize::from(response.len) != ota::STATUS_LEN {
+            return Err("Device returned a malformed OTA status".into());
+        }
+        let mut status = [0; ota::STATUS_LEN];
+        status.copy_from_slice(&response.data[..ota::STATUS_LEN]);
+        Ok(status)
     }
 
     /// The links register access can go over. Register access is a packet-protocol
@@ -145,7 +184,7 @@ impl DeviceHandler {
             let _ = reply.send(Err(format!("unknown config kind: {kind}")));
             return;
         };
-        // read_config is a packet-protocol call and works over BLE and USB alike; only
+        // read_config is a packet-protocol call and works over BLE and USB alike. Only
         // read_all_config (bulk camera data) needs USB transport mode.
         let links = self.packet_links();
         if !links.is_empty() {
@@ -157,7 +196,7 @@ impl DeviceHandler {
                 |device: VmDevice| async move { device.read_config(config_kind).await },
             )
             .await
-            .map(config_value);
+            .map(|config| config_value(&config));
             let _ = reply.send(result);
             self.stream_timers.arm_resume();
         } else if let Some(device) = self.connections.control_device.as_ref() {
@@ -167,7 +206,7 @@ impl DeviceHandler {
                 device.read_config_ctrl(config_kind),
             )
             .await
-            .map(config_value);
+            .map(|config| config_value(&config));
             let _ = reply.send(result);
         } else {
             let _ = reply.send(Err("no device available for read_config".into()));
@@ -305,7 +344,7 @@ impl DeviceHandler {
 
     /// With a manual transport, ends the handler whether or not the switch worked: the
     /// unit is rebooted, and reconnects through the USB scan. Firmware that picks its
-    /// transport itself is not asked at all; the reply is the link in use.
+    /// transport itself is not asked at all. The reply is the link in use.
     pub(super) async fn on_set_transport_mode(
         &mut self,
         usb_mode: bool,

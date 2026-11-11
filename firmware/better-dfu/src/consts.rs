@@ -4,10 +4,16 @@
 pub(crate) const USB_CLASS_APPN_SPEC: u8 = 0xFE;
 /// Device Firmware Upgrade subclass, App specific
 pub(crate) const APPN_SPEC_SUBCLASS_DFU: u8 = 0x01;
-#[allow(unused)]
+#[expect(
+    unused,
+    reason = "DFU protocol constants are retained across runtime and DFU interfaces."
+)]
 /// Interface protocol for DFU mode.
 pub(crate) const DFU_PROTOCOL_DFU: u8 = 0x02;
-#[allow(unused)]
+#[expect(
+    unused,
+    reason = "DFU protocol constants are retained across runtime and DFU interfaces."
+)]
 /// Interface protocol for runtime mode.
 pub(crate) const DFU_PROTOCOL_RT: u8 = 0x01;
 /// DFU functional descriptor
@@ -40,7 +46,10 @@ define_dfu_attributes!(bitflags::bitflags);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
-#[allow(unused)]
+#[expect(
+    unused,
+    reason = "DFU states mirror the protocol beyond states emitted by this handler."
+)]
 /// An indication of the state that the device is going to enter immediately following transmission of this response.
 pub(crate) enum State {
     /// Device is running its normal application.
@@ -69,7 +78,10 @@ pub(crate) enum State {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
-#[allow(unused)]
+#[expect(
+    unused,
+    reason = "DFU statuses mirror protocol values beyond failures emitted by this handler."
+)]
 /// An indication of the status resulting from the execution of the most recent request.
 pub(crate) enum Status {
     /// No error

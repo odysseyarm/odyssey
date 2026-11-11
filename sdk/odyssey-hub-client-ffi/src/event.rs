@@ -1,69 +1,109 @@
 use odyssey_hub_common as common;
 
-use crate::funny::*;
+use crate::funny::{Matrix3f32, Matrix3x1f32, Vector2f32, Vector3f32};
 use crate::packet::PacketEvent;
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone)]
 pub enum Event {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     DeviceEvent(DeviceEvent),
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone)]
 pub struct DeviceEvent {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub device: common::device::Device,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub kind: DeviceEventKind,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct AccelerometerEvent {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub timestamp: u32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub accel: Vector3f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub gyro: Vector3f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub euler_angles: Vector3f32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy, Default)]
 pub struct Pose {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub rotation: Matrix3f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub translation: Matrix3x1f32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct TrackingEvent {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub timestamp: u32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub aimpoint: Vector2f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub pose: Pose,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub distance: f32,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub screen_id: u32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct ImpactEvent {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub timestamp: u32,
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone, Copy)]
 pub struct ScreenInfo {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub id: u8,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub bounds: [Vector2f32; 4],
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
+#[derive(Debug)]
 #[derive(Clone)]
 pub enum DeviceEventKind {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     AccelerometerEvent(AccelerometerEvent),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     TrackingEvent(TrackingEvent),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     ImpactEvent(ImpactEvent),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     ZeroResult(bool),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     SaveZeroResult(bool),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     PacketEvent(PacketEvent),
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     CapabilitiesChanged,
 }
 
@@ -166,11 +206,12 @@ impl TryFrom<common::events::Event> for Event {
                     common::events::DeviceEventKind::CapabilitiesChanged => {
                         DeviceEventKind::CapabilitiesChanged
                     }
-                    _ => return Err(()),
+                    common::events::DeviceEventKind::PairingResult { .. }
+                    | common::events::DeviceEventKind::BatteryEvent(_) => return Err(()),
                 };
-                Ok(Event::DeviceEvent(DeviceEvent { device, kind }))
+                Ok(Self::DeviceEvent(DeviceEvent { device, kind }))
             }
-            _ => Err(()),
+            common::events::Event::DonglePairingResult { .. } => Err(()),
         }
     }
 }
@@ -188,6 +229,6 @@ mod tests {
             paired_name: "device".to_string(),
             error: String::new(),
         };
-        assert!(Event::try_from(event).is_err());
+        Event::try_from(event).expect_err("dongle pairing results have no native event");
     }
 }

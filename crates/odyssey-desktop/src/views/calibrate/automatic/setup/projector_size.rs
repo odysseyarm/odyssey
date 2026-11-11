@@ -9,7 +9,7 @@ use crate::views::calibrate::automatic::ui::{act_boxed, segmented};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 pub(super) fn projector_size(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     size_box: &Entity<SizeBox>,
     cx: &App,

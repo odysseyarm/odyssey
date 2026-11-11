@@ -57,23 +57,22 @@ async fn pick_mux(index: Option<usize>) -> eros::Result<(MuxDevice, [u8; 6])> {
     if muxes.is_empty() {
         eros::bail!("No dongle found (VID:0x1915 PID:0x5212)");
     }
-    let info = match index {
-        Some(i) => muxes
+    let info = if let Some(i) = index {
+        muxes
             .into_iter()
             .nth(i)
-            .ok_or_else(|| eros::error!("Dongle index {i} not found"))?,
-        None => {
-            if muxes.len() > 1 {
-                eros::bail!(
-                    "Multiple dongles found ({}). Specify one with --mux <index>.",
-                    muxes.len()
-                );
-            }
-            muxes
-                .into_iter()
-                .next()
-                .ok_or_else(|| eros::error!("No dongle found"))?
+            .ok_or_else(|| eros::error!("Dongle index {i} not found"))?
+    } else {
+        if muxes.len() > 1 {
+            eros::bail!(
+                "Multiple dongles found ({}). Specify one with --mux <index>.",
+                muxes.len()
+            );
         }
+        muxes
+            .into_iter()
+            .next()
+            .ok_or_else(|| eros::error!("No dongle found"))?
     };
     let serial = info
         .serial_number()
@@ -96,22 +95,20 @@ async fn pick_device(index: Option<usize>) -> eros::Result<VmDevice> {
     if devs.is_empty() {
         eros::bail!("No device found.");
     }
-    let info = match index {
-        Some(i) => devs
-            .into_iter()
+    let info = if let Some(i) = index {
+        devs.into_iter()
             .nth(i)
-            .ok_or_else(|| eros::error!("Device index {i} not found"))?,
-        None => {
-            if devs.len() > 1 {
-                eros::bail!(
-                    "Multiple devices found ({}). Specify one with --device <index>.",
-                    devs.len()
-                );
-            }
-            devs.into_iter()
-                .next()
-                .ok_or_else(|| eros::error!("No device found"))?
+            .ok_or_else(|| eros::error!("Device index {i} not found"))?
+    } else {
+        if devs.len() > 1 {
+            eros::bail!(
+                "Multiple devices found ({}). Specify one with --device <index>.",
+                devs.len()
+            );
         }
+        devs.into_iter()
+            .next()
+            .ok_or_else(|| eros::error!("No device found"))?
     };
     Ok(VmDevice::connect_usb_any_mode(info)
         .await
@@ -144,8 +141,8 @@ pub(crate) async fn handle_bond(args: BondArgs) -> eros::Result<()> {
         .await
         .context("Failed to read device UUID")?;
 
-    println!("Dongle BD addr: {}", format_bd_addr(&dongle_bd_addr));
-    println!("Device BD addr: {}", format_bd_addr(&device_bd_addr));
+    println!("Dongle BD addr: {}", format_bd_addr(dongle_bd_addr));
+    println!("Device BD addr: {}", format_bd_addr(device_bd_addr));
 
     // Both sides of the bond hold the same LTK and IRK.
     let mut rng = rand::thread_rng();
@@ -175,8 +172,8 @@ pub(crate) async fn handle_bond(args: BondArgs) -> eros::Result<()> {
 
     println!(
         "Bond created successfully: dongle {} <-> device {}",
-        format_bd_addr(&dongle_bd_addr),
-        format_bd_addr(&device_bd_addr)
+        format_bd_addr(dongle_bd_addr),
+        format_bd_addr(device_bd_addr)
     );
     Ok(())
 }
@@ -187,8 +184,8 @@ mod tests {
 
     #[test]
     fn usb_serial_address_rejects_non_ascii_without_panicking() {
-        assert!(bd_addr_from_serial("0é00000000000").is_err());
-        assert!(bd_addr_from_serial("not-hex-serial").is_err());
+        bd_addr_from_serial("0é00000000000").unwrap_err();
+        bd_addr_from_serial("not-hex-serial").unwrap_err();
         assert_eq!(
             bd_addr_from_serial("0123456789ABCDEF").ok(),
             Some([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB])

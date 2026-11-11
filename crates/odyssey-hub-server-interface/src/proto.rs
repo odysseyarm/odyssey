@@ -1,16 +1,17 @@
 //! The tonic/prost output for `proto/service_interface.proto`.
 //!
-//! The lints below are listed because the generator's output trips them and
-//! cannot be edited; they are scoped to this module so hand-written code stays
+//! The lints below exist because the generator's output trips them and it
+//! cannot be edited. They are scoped to this module so hand-written code stays
 //! under the full workspace policy.
 //!
-//! `clippy::wildcard_imports` is `allow`ed rather than expected: an `expect`
+//! `clippy::wildcard_imports` is `allow`ed instead of expected: an `expect`
 //! here is reported unfulfilled even though the generated client and server
 //! both contain `use tonic::codegen::*`. `clippy::allow_attributes`, expected
 //! below, covers the `allow` itself.
 #![allow(
+    clippy::pedantic,
     clippy::wildcard_imports,
-    reason = "tonic-build emits `use tonic::codegen::*`"
+    reason = "tonic-build owns RPC documentation, default expressions, and wildcard imports"
 )]
 #![expect(
     clippy::allow_attributes,

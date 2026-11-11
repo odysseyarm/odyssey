@@ -1,6 +1,6 @@
-//! USB image viewer. A live session exclusively owns its stream; Stop, window
+//! USB image viewer. A live session exclusively owns its stream. Stop, window
 //! close, row removal, or a lost USB link drops it and cancels the RPC. Modern
-//! tracking resumes; legacy PAJ7025 requires reboot/reconnect.
+//! tracking resumes. Legacy PAJ7025 requires reboot/reconnect.
 //! Camera calibration deliberately remains in odyssey-vision-tool.
 
 mod dialog;
@@ -23,7 +23,7 @@ use crate::theme::palette;
 const DIALOG_WIDTH: f32 = 820.0;
 const DIALOG_HEIGHT: f32 = 760.0;
 
-/// The "Image / IR" button of one device row; the capture itself runs in a
+/// The "Image / IR" button of one device row. The capture itself runs in a
 /// window of its own.
 pub(crate) struct ImageViewer {
     device: Device,
@@ -38,7 +38,7 @@ impl ImageViewer {
     pub(crate) fn new(device: Device, is_updating: bool, cx: &mut Context<Self>) -> Self {
         let needs_reboot = cx.new(|_| false);
         cx.observe(&needs_reboot, |_, _, cx| cx.notify()).detach();
-        // The row is gone; capture must not keep running without it.
+        // The row is gone, so capture must not keep running without it.
         cx.on_release(|this, cx| {
             if let Some((window, _)) = this.dialog.take() {
                 let _ = window.update(cx, |_, window, _| window.remove_window());
@@ -112,7 +112,7 @@ impl Render for ImageViewer {
         if !known_sensor {
             return div();
         }
-        let palette = palette(cx);
+        let palette = &palette(cx);
         div()
             .flex()
             .items_center()

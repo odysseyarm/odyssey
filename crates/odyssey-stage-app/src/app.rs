@@ -110,7 +110,7 @@ impl Clock {
 struct DeviceFrame {
     id: String,
     position_m: [f64; 3],
-    /// Unit vector the tracker points along; absent for dongles.
+    /// Unit vector the tracker points along. Absent for dongles.
     forward: Option<[f64; 3]>,
     aim_uv: Option<[f64; 2]>,
     distance_m: Option<f64>,
@@ -181,7 +181,7 @@ pub(crate) struct App {
 
 impl App {
     pub(crate) fn new(
-        stage: Stage,
+        stage: &Stage,
         hub: watch::Receiver<HubView>,
         save_path: Option<PathBuf>,
         web_dir: Option<PathBuf>,
@@ -366,24 +366,20 @@ impl App {
         }) {
             Ok(json) => {
                 // `send` fails only when the last page closed since the check above.
-                self.messages
-                    .send(Message {
-                        event: "frame",
-                        data: json.into(),
-                    })
-                    .ok();
+                let _ = self.messages.send(Message {
+                    event: "frame",
+                    data: json.into(),
+                });
             }
             Err(error) => tracing::debug!("frame skipped: {error:?}"),
         }
         if count % 10 == 0
             && let Ok(json) = serde_json::to_string(&hub)
         {
-            self.messages
-                .send(Message {
-                    event: "hub",
-                    data: json.into(),
-                })
-                .ok();
+            let _ = self.messages.send(Message {
+                event: "hub",
+                data: json.into(),
+            });
         }
     }
 

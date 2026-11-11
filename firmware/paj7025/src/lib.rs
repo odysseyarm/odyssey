@@ -3,20 +3,21 @@
 //! Portable PAJ7025 register access and object/image configuration.
 //!
 //! Multi-register configuration is not cancellation safe. Cancellation or an SPI error can leave
-//! the sensor partially configured; releasing the SPI device does not reset the sensor.
+//! the sensor partially configured, and releasing the SPI device does not reset the sensor.
 //!
 //! Image-mode sequences come from the last pre-deletion Nordic driver:
 //! <https://github.com/odysseyarm/donger/blob/a99890d13d11702a6cd5f390a7b88aeb2be33882/paj7025-nrf/src/lib.rs>.
 //!
-//! The recovered sequence enters sensor-master image output, not a reversible
-//! register-selected capture mode. No image-master exit procedure is present in
-//! that source. The public PAJ7025R2 pin table lists no hardware reset pin:
+//! The recovered sequence switches the sensor to sensor-master image output, with no reversible
+//! register-selected capture mode behind it. That source contains no image-master exit
+//! procedure. The public PAJ7025R2 pin table lists no hardware reset pin:
 //! <https://www.alldatasheet.com/html-pdf/987645/PIXART/PAJ7025R2/1114/5/PAJ7025R2.html>.
 //! Its bank-0 software reset (0x64) still requires register access:
 //! <https://www.alldatasheet.com/html-pdf/987645/PIXART/PAJ7025R2/2234/10/PAJ7025R2.html>.
-//! Image capture is one-way until the board's reboot/power-cycle recovery workflow;
-//! stopping reception must never recreate a register SPI master on these pins.
+//! Image capture is one-way until the board's reboot/power-cycle recovery workflow.
+//! Stopping reception must never recreate a register SPI master on these pins.
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod types;
 mod u2048;
 
@@ -36,21 +37,30 @@ const IMAGE_EXPOSURE_STEP_NS: u32 = 800;
 const MIN_IMAGE_EXPOSURE_NS: u32 = 20_000;
 const MAX_IMAGE_EXPOSURE_NS: u32 = u16::MAX as u32 * IMAGE_EXPOSURE_STEP_NS;
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Paj7025Error<SpiError> {
+    /// Since: Odyssey Desktop 0.6.0.
     Spi(SpiError),
     /// Image exposure must be 20,000..=52,428,000 ns, in exact 800 ns steps.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     InvalidImageExposure {
+        /// Since: Odyssey Desktop 0.7.0.
         nanoseconds: u32,
     },
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub struct DeviceInterface<SpiDevice> {
     spi_device: Option<SpiDevice>,
 }
 
 impl<I> DeviceInterface<I> {
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Owns the SPI device used for PAJ7025 register access.
+    ///
     pub fn new(spi_device: I) -> Self {
         Self {
             spi_device: Some(spi_device),
@@ -141,11 +151,13 @@ where
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Paj7025<SpiDevice, E>
 where
     SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E>,
     E: core::fmt::Debug,
 {
+    /// Since: Odyssey Desktop 0.6.0.
     pub ll: low_level::Paj7025<DeviceInterface<SpiDevice>>,
     _marker: core::marker::PhantomData<E>,
 }
@@ -155,6 +167,12 @@ where
     SpiDevice: embedded_hal_async::spi::SpiDevice<Error = E>,
     E: core::fmt::Debug,
 {
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Wraps the SPI device without accessing sensor registers.
+    ///
+    /// # Errors
+    /// This constructor currently cannot fail and returns `Ok` with the driver.
+    ///
     pub async fn init(spi_device: SpiDevice) -> Result<Self, Paj7025Error<E>> {
         let driver = Self {
             ll: low_level::Paj7025::new(DeviceInterface::new(spi_device)),
@@ -164,6 +182,12 @@ where
         Ok(driver)
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Reads register bytes from the range selected by `bank` and `address`.
+    ///
+    /// # Errors
+    /// Returns the SPI error if bank selection or register read fails.
+    ///
     pub async fn read_register(
         &mut self,
         bank: u8,
@@ -174,6 +198,12 @@ where
         self.ll.interface().read_register(address, 0, data).await
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Writes `data` to the register range selected by `bank` and `address`.
+    ///
+    /// # Errors
+    /// Returns the SPI error if bank selection or register write fails.
+    ///
     pub async fn write_register(
         &mut self,
         bank: u8,
@@ -198,6 +228,9 @@ where
     ///
     /// # Errors
     /// Returns the SPI error if any configuration write fails.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub async fn init_image_settings(&mut self, v_flip: bool) -> Result<(), Paj7025Error<E>> {
         let writes = [
             (0xEF, 0x00),
@@ -238,15 +271,18 @@ where
 
     /// Set image-mode exposure in nanoseconds, independently of object-mode exposure units.
     ///
-    /// The legacy image path uses 800 ns per raw count (not the object path's 200 ns).
+    /// The legacy image path uses 800 ns per raw count, where the object path uses 200 ns.
     /// Values below 20,000 ns, above 52,428,000 ns, or not divisible by 800 are rejected
-    /// before any SPI access. This writes bank C registers 0x0F..=0x10; the caller remains
+    /// before any SPI access. This writes bank C registers 0x0F..=0x10. The caller stays
     /// responsible for the legacy bank-1 settings synchronization before entering image mode.
     /// SPI errors or cancellation can leave the exposure partially written.
     ///
     /// # Errors
     /// Returns [`Paj7025Error::InvalidImageExposure`] for an unrepresentable exposure,
     /// or the SPI error if writing a valid exposure fails.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub async fn set_image_exposure_ns(&mut self, nanoseconds: u32) -> Result<(), Paj7025Error<E>> {
         if !(MIN_IMAGE_EXPOSURE_NS..=MAX_IMAGE_EXPOSURE_NS).contains(&nanoseconds)
             || !nanoseconds.is_multiple_of(IMAGE_EXPOSURE_STEP_NS)
@@ -259,21 +295,24 @@ where
 
     /// Enter image streaming mode and release the owned SPI device and its pin borrows.
     ///
-    /// Consumes the driver on both success and SPI error so the caller can reassign the pins
-    /// to an image receiver. Dropping the pending future also releases the device. Neither
-    /// cancellation nor error rolls back the writes: the sensor may be partially transitioned,
-    /// and the caller must recover its hardware state before reuse.
+    /// Consumes the driver on success and on SPI error, so the caller can reassign the pins
+    /// to an image receiver. Dropping the pending future also releases the device.
+    /// Cancellation and errors both leave the writes in place. The sensor may be partially
+    /// transitioned, and the caller must recover its hardware state before reuse.
     ///
     /// Bank C registers 0x6D..=0x70 reassign G9..G12 (the register SPI pins) to
     /// sensor-master image output. Releasing the host SPI device does not undo that
     /// assignment. Do not recreate a host SPI master on those pins while the sensor
     /// remains in image mode: the sensor may still drive SCK/CS/data. The recovered
     /// driver provides no reverse sequence, and [`Self::init_settings`] is not one.
-    /// Recovery requires the board's reboot/power-cycle workflow; stopping image
-    /// reception is not a transition back to register mode.
+    /// Recovery requires the board's reboot/power-cycle workflow. Stopping image
+    /// reception does not return the sensor to register mode.
     ///
     /// # Errors
-    /// Returns the SPI error if any transition write fails; the device is still released.
+    /// Returns the SPI error if any transition write fails. The device is still released.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub async fn into_image_mode(mut self) -> Result<(), Paj7025Error<E>> {
         self.release_for_image_mode().await
     }
@@ -281,6 +320,12 @@ where
     /// Irreversibly enter image output and release register SPI, including on error.
     /// No register methods may be used afterwards. This lets a board retain the
     /// shared driver allocation while handing its peripheral to an image receiver.
+    ///
+    ///
+    /// # Errors
+    ///
+    /// Returns the SPI error if any transition write fails. The SPI device is released even on error.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn release_for_image_mode(&mut self) -> Result<(), Paj7025Error<E>> {
         let writes = [
             (0xEF, 0x00),
@@ -315,6 +360,14 @@ where
         result
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
+    /// Applies legacy object-mode and calibration settings.
+    ///
+    /// SPI errors or cancellation can leave the sensor partially configured.
+    ///
+    /// # Errors
+    /// Returns the SPI error if any register write fails.
+    ///
     pub async fn init_settings(
         &mut self,
         v_flip: bool,
@@ -353,7 +406,7 @@ where
             ll.interface().write_register(addr, 0, data).await
         }
 
-        // Every write selects its bank first; the writes are grouped by bank only for reading.
+        // Every write selects its bank first. The writes are grouped by bank only for reading.
         w(&mut self.ll, 0x00, 0x12, 0x01).await?; // operation mode
         w(&mut self.ll, 0x00, 0xDC, 0x00).await?; // internal_system_control_disable
         w(&mut self.ll, 0x00, 0xFB, 0x04).await?; // LEDDAC disable
@@ -406,8 +459,12 @@ where
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod low_level {
-    #[allow(non_camel_case_types)]
+    #[expect(
+        non_camel_case_types,
+        reason = "device_driver DSL requires its integer type alias to use this exact name"
+    )]
     type u2048 = crate::u2048::U2048x;
     device_driver::create_device!(
         device_name: Paj7025,
@@ -567,6 +624,10 @@ pub mod low_level {
     );
 }
 
+/// Since: Odyssey Desktop 0.6.0.
+/// Parses 16 object records from the bank-5 output buffer.
+///
+/// Each 16-byte record uses the sensor's little-endian object encoding.
 pub fn parse_bank5(bytes: [u8; 2048 / 8]) -> [ObjectFormat1; 16] {
     let mut out = [ObjectFormat1::DEFAULT; 16];
     for (i, c) in bytes.chunks_exact(16).enumerate() {

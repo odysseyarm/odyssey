@@ -74,8 +74,8 @@ impl DeviceHandler {
             .emit_device_event(&self.device, DeviceEventKind::ZeroResult(true));
     }
 
-    /// The client may supply the tracking event it was looking at when the user zeroed;
-    /// otherwise the pose comes from this unit's own tracker state.
+    /// The client may supply the tracking event it was looking at when the user zeroed.
+    /// Otherwise the pose comes from this unit's own tracker state.
     fn zero_rotation(
         &mut self,
         translation: Translation3<f32>,
@@ -113,13 +113,13 @@ impl DeviceHandler {
 fn persisted(
     offsets: &std::collections::HashMap<[u8; 6], Isometry3<f32>>,
 ) -> std::borrow::Cow<'_, std::collections::HashMap<[u8; 6], Isometry3<f32>>> {
-    if offsets.keys().all(crate::sim::persists) {
+    if offsets.keys().all(|uuid| crate::sim::persists(*uuid)) {
         return std::borrow::Cow::Borrowed(offsets);
     }
     std::borrow::Cow::Owned(
         offsets
             .iter()
-            .filter(|(uuid, _)| crate::sim::persists(uuid))
+            .filter(|(uuid, _)| crate::sim::persists(**uuid))
             .map(|(uuid, offset)| (*uuid, *offset))
             .collect(),
     )

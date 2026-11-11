@@ -59,6 +59,80 @@ cargo check --locked --offline -p odyssey-vision-tool --features sim --all-targe
 cargo clippy --locked --offline -p odyssey-desktop --features sim --bin odyssey-sim-control --tests
 ```
 
+### Rust lint and API policy
+
+Run the pinned toolchain's checks from the repository root:
+
+```sh
+cargo --offline lint
+cargo --offline lint-bins
+nix build .#checks.x86_64-linux.xtask-lint .#checks.x86_64-linux.xtask-lint-bins
+nix build .#checks.x86_64-linux.sdk-ffi-lint .#checks.x86_64-linux.sdk-uniffi-lint
+```
+
+`--offline` precedes `lint`: arguments after that alias reach Clippy's compiler
+flags, not Cargo. Host, xtask and native SDK Clippy checks fail on warnings in CI.
+Excluded SDK and firmware packages carry their own lint tables; root workspace
+inheritance does not cross those boundaries.
+
+The policy follows Microsoft's
+[static-verification recommendations](https://microsoft.github.io/rust-guidelines/guidelines/universal/#M-STATIC-VERIFICATION)
+and applicable [Google Rust guidance](https://google.github.io/styleguide/rustguide.html).
+Pedantic checks and selected restriction/nursery checks are enabled; entire
+restriction/nursery groups are not. Numeric casts, mathematical names, protocol
+flag structs, line counts, configurable hashers and blanket `must_use` suggestions
+have explicit exceptions. Crates.io metadata and duplicate transitive dependency
+versions do not gate these bundled applications and SDKs. Chrome/Fuchsia-specific
+layout, runtime and tooling rules do not apply.
+
+Cargo's `unused_dependencies` and `unused_workspace_dependencies` are errors,
+including during Clippy. They inspect selected packages and target configurations;
+`dev-dependencies` are not covered by Cargo's unused-dependency lint. Use the pinned
+toolchain rather than adding the obsolete `-Zcargo-lints` flag.
+
+API availability uses `Since` rustdoc metadata:
+published SDK APIs name their SDK release; internal Rust APIs name the first
+Desktop release containing them, never an unpublished `0.0.0` crate version.
+Items present in the earliest available tagged release identify that evidence
+limit; current-only items say `Unreleased`. Check symbol history across file
+moves rather than dating APIs from their current path.
+
+Protocol variants also record a `Wire baseline`: the protocol counter in their
+first tagged Desktop snapshot, not a minimum-support guarantee. Explicit minimum
+device, mux and dongle-control contracts remain documented where established.
+Rust API availability and peer wire compatibility are separate axes; comments
+never replace negotiation gates or change encoding. Old independent endpoint
+counters were reset during version unification and are not comparable.
+
+Postcard compatibility is checked with `postcard-schema-ng` against
+`crates/odyssey-protocol/tests/fixtures/postcard-compatibility.json`. This baseline
+records the established wire contract at gate introduction, not schemas recovered
+from every historical firmware image. Existing variant slots, field order, payload
+types and bounds stay fixed; enums may append variants, including nested enums.
+New variants still need peer-version or capability gates before transmission.
+CBOR and packed legacy codecs retain their separate frozen-wire tests and proofs.
+
+```sh
+nix build .#checks.x86_64-linux.postcard-compatibility
+cargo test --offline -p odyssey-protocol --features schema --test postcard_compatibility
+UPDATE_POSTCARD_COMPATIBILITY=1 cargo test --offline -p odyssey-protocol --features schema --test postcard_compatibility
+```
+
+The last command explicitly updates the baseline for a published contract; it is
+disabled in CI. Do not refresh it to hide an incompatible change. Schema derives
+follow Serde conversion types, transparent wrappers and byte-array encoding.
+Nalgebra field overrides describe its actual tuple encoding. Unsupported Serde
+layout overrides fail schema compilation rather than silently using Rust layout.
+Host CI checks host and firmware feature configurations. Firmware omits unused
+image-response decoders by rejecting payloads while retaining enum slots; never
+use `serde(skip)` or `skip_deserializing` to retire a published wire variant.
+The same Nix check runs schema-enabled host Clippy with warnings treated as errors.
+
+Pull requests and merge groups select this check from protocol crate dependencies,
+schema fixtures, and shared Cargo, Nix and check configuration. Unrelated host-only
+changes skip it. Main-branch pushes, events without a comparison base, and selector
+failures still run every suite.
+
 ### Binary cache
 
 `https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary

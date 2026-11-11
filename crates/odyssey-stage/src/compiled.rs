@@ -9,10 +9,12 @@ use crate::radio::{Link, distance};
 use crate::stage::{Device, DeviceKind, Stage, Tracker};
 
 /// Largest hand offset that is retried at half size until the ray lands on the
-/// display; handling never aims a tracker off the screen.
+/// display. Handling never aims a tracker off the screen.
 const OFFSET_HALVINGS: u32 = 8;
 
 /// A stage with its display validated and built once.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug)]
 pub struct Compiled {
     stage: Stage,
@@ -20,26 +22,46 @@ pub struct Compiled {
 }
 
 /// A tracker's pose at one instant.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Pose {
+    /// Since: Odyssey Desktop 0.7.5.
     pub position_m: [f64; 3],
     /// Camera-to-world rotation as x, y, z, w.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub orientation_xyzw: [f64; 4],
     /// Where the tracker actually points, in display fractions.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub aim_uv: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.5.
     pub distance_m: f64,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, Serialize)]
 pub struct LinkReport {
+    /// Since: Odyssey Desktop 0.7.5.
     pub dongle: String,
+    /// Since: Odyssey Desktop 0.7.5.
     pub endpoint: String,
+    /// Since: Odyssey Desktop 0.7.5.
     pub best: bool,
+    /// Since: Odyssey Desktop 0.7.5.
     #[serde(flatten)]
     pub link: Link,
 }
 
 impl Stage {
+    /// Compile stage into validated runtime data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if stage configuration or display calibration is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn compile(&self) -> Result<Compiled, StageError> {
         self.validate()?;
         Ok(Compiled {
@@ -50,19 +72,32 @@ impl Stage {
 }
 
 impl Compiled {
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn stage(&self) -> &Stage {
         &self.stage
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn screen(&self) -> &SceneScreen {
         &self.screen
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if screen calibration has invalid geometry.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn geometry(&self) -> Result<ScreenGeometry<'_>, StageError> {
         Ok(self.screen.geometry()?)
     }
 
     /// Marker positions in stage coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if screen has no usable marker positions.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn markers(&self) -> Result<[[f64; 3]; 6], StageError> {
         let geometry = self.geometry()?;
         let mut markers = [[0.0; 3]; 6];
@@ -75,6 +110,12 @@ impl Compiled {
     }
 
     /// The pose of a tracker at `t_s`, loop-free: callers wrap time themselves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if device is not a tracker.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn pose(
         &self,
         geometry: &ScreenGeometry<'_>,
@@ -88,6 +129,8 @@ impl Compiled {
     }
 
     /// Current position of any device, following a tracker's movement.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn position(&self, device: &Device, t_s: f64) -> [f64; 3] {
         match &device.kind {
             DeviceKind::Tracker(tracker) => tracker.movement.position(device.position_m, t_s),
@@ -95,14 +138,26 @@ impl Compiled {
         }
     }
 
-    /// Every dongle-to-endpoint link at `t_s`; endpoints are the trackers and
+    /// Every dongle-to-endpoint link at `t_s`. Endpoints are the trackers and
     /// the six display markers. The strongest dongle per endpoint is `best`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if display markers cannot be computed.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn links(&self, t_s: f64) -> Result<Vec<LinkReport>, StageError> {
         self.links_with(t_s, |_| None)
     }
 
     /// As [`Self::links`], with `measured` supplying the position of devices
     /// whose location comes from hardware instead of the staged movement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if display markers cannot be computed.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn links_with(
         &self,
         t_s: f64,
@@ -156,11 +211,11 @@ impl Compiled {
         Ok(reports)
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn trigger_times(&self, device: &Device) -> Vec<f64> {
         device
             .tracker()
-            .map(|tracker| trigger_times(&tracker.presses))
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |tracker| trigger_times(&tracker.presses))
     }
 
     pub(crate) fn description(&self) -> SceneDescription {

@@ -94,5 +94,14 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+    let netcore_ram = &regions["netcore_ram"];
+    for (name, address) in [
+        ("__ota_app_ram_start", low_ram.origin()),
+        ("__ota_app_ram_end", low_ram.origin() + low_ram.length()),
+        ("__ota_netcore_ram_start", netcore_ram.origin()),
+        ("__ota_netcore_ram_end", netcore_ram.origin() + netcore_ram.length()),
+    ] {
+        println!("cargo:rustc-link-arg-bins=--defsym={name}={address:#x}");
+    }
     println!("cargo:rustc-link-arg-bins=--print-memory-usage");
 }

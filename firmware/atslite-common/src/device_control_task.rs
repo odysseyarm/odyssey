@@ -13,10 +13,12 @@ use crate::ble::peripheral;
 use crate::{device_control, settings};
 
 /// Serves device control commands forever. `active_transport` names the transport currently
-/// carrying reports; `GetTransportMode` and `SetTransportMode` both answer with it.
+/// carrying reports. `GetTransportMode` and `SetTransportMode` both answer with it.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[embassy_executor::task]
 pub async fn device_control_task(
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
     product_id: u16,
     active_transport: fn() -> TransportMode,
 ) {
@@ -64,7 +66,7 @@ fn end_pairing(pairing_deadline: &mut Option<Instant>, outcome: PairingOutcome) 
 async fn handle_cmd(
     cmd: DeviceMsg,
     pairing_deadline: &mut Option<Instant>,
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
     product_id: u16,
     active_transport: fn() -> TransportMode,
 ) {
@@ -127,7 +129,7 @@ async fn handle_cmd(
             );
         }
 
-        // The transport follows the USB state and cannot be chosen; a set request only
+        // The transport follows the USB state and cannot be chosen. A set request only
         // learns the current one.
         DeviceMsg::GetTransportMode() | DeviceMsg::SetTransportMode(_) => {
             let mode = active_transport();

@@ -29,34 +29,50 @@ const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
 /// How often the simulator's screens are compared with the hub's calibrations.
 const SCREEN_POLL: Duration = Duration::from_millis(250);
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, thiserror::Error)]
 pub enum ControlError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("simulator local socket: {0}")]
     Io(#[from] io::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("simulator control JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("simulator: {0}")]
     Model(String),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid simulator response")]
     InvalidResponse,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("simulator configuration: {0}")]
     Config(#[from] odyssey_hub_common::config::ConfigError),
 }
 
 /// The simulator flags of a command line, the same in the hub and the desktop.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Flags {
     /// `--sim`, `--sim-legacy`, or a truthy `ODYSSEY_SIM`.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub simulator: Option<SensorModel>,
     /// `--no-discovery`: leave USB devices and the system Bluetooth radio alone.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub no_discovery: bool,
     /// `--temp-config`: keep every setting in a directory of this process.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub temp_config: bool,
 }
 
 impl Flags {
     /// Takes the simulator flags out of `arguments`. `environment` is the value
     /// of `ODYSSEY_SIM`.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn take(arguments: &mut Vec<String>, environment: Option<&str>) -> Self {
         let mut flags = Self::default();
         if environment.is_some_and(|value| {
@@ -82,6 +98,7 @@ impl Flags {
         flags
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn server_options(self) -> ServerOptions {
         ServerOptions {
             simulator: self.simulator,
@@ -94,14 +111,22 @@ static TEMP_CONFIG: AtomicBool = AtomicBool::new(false);
 
 /// Whether a device's settings may be written to the configuration. Simulated
 /// devices leave the user's own files alone.
-pub(crate) fn persists(uuid: &[u8; 6]) -> bool {
-    !is_simulated(uuid) || TEMP_CONFIG.load(Ordering::Relaxed)
+pub(crate) fn persists(uuid: [u8; 6]) -> bool {
+    !is_simulated(&uuid) || TEMP_CONFIG.load(Ordering::Relaxed)
 }
 
 /// Isolate all hub and desktop settings, and seed the synthetic tracker screen.
 ///
 /// Call before any desktop hooks load settings. Repeated calls in a process share
 /// the same root and preserve edits made by that process.
+///
+/// Since: Odyssey Desktop 0.7.5.
+///
+/// # Errors
+///
+/// Returns `ControlError::Io` for directory or file failures, `ControlError::Config` when
+/// setting or resolving the simulation config root fails, or `ControlError::Json` when
+/// writing the synthetic calibration fails.
 pub fn use_temp_config() -> Result<(), ControlError> {
     static ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
         let nonce = std::time::SystemTime::now()
@@ -205,6 +230,8 @@ enum Response {
 }
 
 /// A connection to the simulator owned by the running hub.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Debug)]
 pub struct Control {
     stream: BufReader<LocalSocketStream>,
@@ -212,6 +239,10 @@ pub struct Control {
 }
 
 impl Control {
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` when the local socket name or connection fails.
     pub async fn connect() -> Result<Self, ControlError> {
         Ok(Self {
             stream: BufReader::new(LocalSocketStream::connect(socket_name()?).await?),
@@ -248,16 +279,35 @@ impl Control {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when the simulator rejects the command, or
+    /// `ControlError::InvalidResponse` for a response other than `Done`.
     pub async fn execute(&mut self, target: Target, command: Command) -> Result<(), ControlError> {
         self.done(&Request::Execute(Addressed { target, command }))
             .await
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when the simulator rejects the request, or
+    /// `ControlError::InvalidResponse` for a response other than `Snapshot`.
     pub async fn snapshot(&mut self) -> Result<Snapshot, ControlError> {
         self.state(&Request::Snapshot).await
     }
 
     /// Execute ordered virtual-time scenario steps.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when a scenario step fails, or
+    /// `ControlError::InvalidResponse` for a response other than `Snapshot`.
     pub async fn run_scenario(
         &mut self,
         steps: Vec<ScenarioStep>,
@@ -266,6 +316,13 @@ impl Control {
     }
 
     /// The hub's screen calibrations: what its tracker believes the displays are.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when the simulator rejects the request, or
+    /// `ControlError::InvalidResponse` for a response other than `Screens`.
     pub async fn screens(&mut self) -> Result<Vec<SceneScreen>, ControlError> {
         match self.call(&Request::Screens).await? {
             Response::Screens(screens) => Ok(screens),
@@ -274,11 +331,25 @@ impl Control {
     }
 
     /// Make the simulated units look at the hub's calibrated screens again.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when the simulator rejects the request, or
+    /// `ControlError::InvalidResponse` for a response other than `Done`.
     pub async fn follow_screens(&mut self) -> Result<(), ControlError> {
         self.done(&Request::FollowScreens).await
     }
 
     /// Replace calibrations of a hub that runs on `--temp-config`.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
+    /// # Errors
+    ///
+    /// Returns `ControlError::Io` or `ControlError::Json` for local IPC failures,
+    /// `ControlError::Model` when calibration is refused or invalid, or
+    /// `ControlError::InvalidResponse` for a response other than `Done`.
     pub async fn calibrate(&mut self, screens: Vec<SceneScreen>) -> Result<(), ControlError> {
         self.done(&Request::Calibrate(screens)).await
     }
@@ -287,7 +358,7 @@ impl Control {
 struct Server {
     simulator: SimulatorHandle,
     calibrations: Arc<ArcSwap<Calibrations>>,
-    /// A client replaced the simulator's screens; the hub's no longer apply.
+    /// A client replaced the simulator's screens, so the hub's no longer apply.
     screens_replaced: AtomicBool,
 }
 
@@ -335,7 +406,7 @@ impl Server {
                 .await
                 .map_err(|error| error.to_string())?;
         }
-        // The file watcher would apply these within two polls; this is immediate.
+        // The file watcher would apply these within two polls. This is immediate.
         self.calibrations.rcu(|current| {
             let mut next: Vec<_> = current
                 .iter()

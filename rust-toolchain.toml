@@ -1,7 +1,7 @@
 # The one toolchain pin for the whole repo: apps, crates, sdk and firmware, and
 # CI. rustup reads this from here (and from every directory below), so nothing
 # else repeats the date. Anything that does not run rustup has to read this file
-# instead of copying it; Nix derivations and development shells read this pin.
+# instead of copying it. Nix derivations and development shells read this pin.
 #
 # It is a nightly because rustfmt.toml needs unstable options and the firmware
 # needs a nightly. Bump the date deliberately, and reformat in the same commit:

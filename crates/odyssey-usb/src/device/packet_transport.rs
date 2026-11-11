@@ -28,6 +28,8 @@ pub(super) enum LinkKind {
 
 /// A link that carries vision-module packets, either straight over USB or
 /// tunnelled through a dongle.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
 pub struct PacketTransport {
     pub(super) writer: mpsc::Sender<Packet>,
@@ -37,12 +39,19 @@ pub struct PacketTransport {
 }
 
 /// The sending half of a [`PacketTransport`].
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Debug)]
 pub struct PacketTransportTx {
     pub(super) writer: mpsc::Sender<Packet>,
 }
 
 impl PacketTransportTx {
+    /// Sends packet through bounded USB transport.
+    ///
+    /// # Errors
+    /// Returns the unsent packet when the transport receiver has closed.
+    /// Since: Odyssey Desktop 0.6.0.
     #[inline]
     #[expect(
         clippy::result_large_err,
@@ -54,6 +63,7 @@ impl PacketTransportTx {
 }
 
 impl PacketTransport {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn usb(in_ep: EndpointRead<Bulk>, out_ep: EndpointWrite<Bulk>) -> Self {
         let (writer, writer_rx) = mpsc::channel::<Packet>(OUTGOING_CAPACITY);
         let (incoming_tx, incoming_rx) = mpsc::channel::<Packet>(INCOMING_CAPACITY);
@@ -62,7 +72,7 @@ impl PacketTransport {
         spawn_writer(out_ep, writer_rx, "usb", cancel.clone());
 
         // Ends when the endpoint fails or every receiver of `incoming_rx` is
-        // gone; the dispatcher then sees the stream close and fails its requests.
+        // gone. The dispatcher then sees the stream close and fails its requests.
         let mut reader = MessageReader::new(in_ep, "usb");
         let reader_cancel = cancel.clone();
         tokio::spawn(async move {
@@ -96,6 +106,8 @@ impl PacketTransport {
     /// sends comes out of the receiver paired with `writer`, and what is put into
     /// the sender paired with `incoming_rx` arrives as if from the unit. Dropping
     /// that sender closes the link.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn from_channels(
         writer: mpsc::Sender<Packet>,
         incoming_rx: mpsc::Receiver<Packet>,
@@ -110,6 +122,8 @@ impl PacketTransport {
 
     /// A transport whose packets are tunnelled through `mux` to and from the
     /// device at `device_addr`.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
         use rand::Rng as _;
         let transport_id: u32 = rand::thread_rng().r#gen();
@@ -178,6 +192,11 @@ impl PacketTransport {
         }
     }
 
+    /// Sends packet through bounded USB transport.
+    ///
+    /// # Errors
+    /// Returns the unsent packet when the transport receiver has closed.
+    /// Since: Odyssey Desktop 0.6.0.
     #[expect(
         clippy::result_large_err,
         reason = "SendError<Packet> hands the unsent packet back and is part of the public API"
@@ -186,6 +205,7 @@ impl PacketTransport {
         self.writer.send(pkt).await
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn split(
         self,
     ) -> (
@@ -197,7 +217,7 @@ impl PacketTransport {
             writer,
             incoming_rx,
             cancel,
-            kind: _,
+            ..
         } = self;
         let tx_only = PacketTransportTx { writer };
         (tx_only, ReceiverStream::new(incoming_rx), cancel)

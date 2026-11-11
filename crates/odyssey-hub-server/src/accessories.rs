@@ -1,3 +1,4 @@
+mod ota;
 mod native;
 mod transport;
 
@@ -70,10 +71,14 @@ impl Drop for MarkerDemandGuard {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum OneShotAction {
     Enroll,
     ResetMarkerMode,
+    MarkerOta {
+        desktop_version: semver::Version,
+        result: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 /// Why a marker mode reset was refused before touching any radio.
@@ -138,6 +143,30 @@ impl AccessoryRadios {
             .map_err(ResetMarkerModeError::Failed)
     }
 
+    pub(crate) async fn update_marker_ota(
+        &self,
+        address: [u8; 6],
+        configured: &AccessoryInfoMap,
+        desktop_version: semver::Version,
+    ) -> Result<String, String> {
+        let info = configured
+            .get(&address)
+            .ok_or_else(|| "Marker is not configured".to_string())?;
+        if info.ty != AccessoryType::MarkerControlBoard {
+            return Err("Accessory is not a marker control board".into());
+        }
+        let (result, response) = oneshot::channel();
+        self.one_shot(
+            address,
+            info.clone(),
+            OneShotAction::MarkerOta {
+                desktop_version,
+                result,
+            },
+        )
+        .await?;
+        response.await.map_err(|error| error.to_string())?
+    }
     async fn one_shot(
         &self,
         address: [u8; 6],
@@ -208,8 +237,14 @@ struct Session {
     info: AccessoryInfo,
 }
 
+#[derive(Default)]
+struct AccessoryState {
+    session: Option<Session>,
+    status: Option<ConnectionStatus>,
+    pending_one_shot: Option<OneShotCommand>,
+}
+
 struct ConnectionStatus {
-    generation: u64,
     state: AccessoryConnectionState,
     error: Option<String>,
     physical: bool,
@@ -217,9 +252,7 @@ struct ConnectionStatus {
 
 struct AccessoryManager {
     radios: HashMap<AccessoryRadio, RadioWorker>,
-    sessions: HashMap<[u8; 6], Session>,
-    statuses: HashMap<[u8; 6], ConnectionStatus>,
-    pending_one_shot: HashMap<[u8; 6], OneShotCommand>,
+    states: HashMap<[u8; 6], AccessoryState>,
     generation: u64,
     info: watch::Receiver<AccessoryInfoMap>,
     demand: watch::Receiver<MarkerDemandCounts>,
@@ -299,9 +332,7 @@ pub(crate) async fn accessory_manager(
     });
     let mut manager = AccessoryManager {
         radios: HashMap::new(),
-        sessions: HashMap::new(),
-        statuses: HashMap::new(),
-        pending_one_shot: HashMap::new(),
+        states: HashMap::new(),
         generation: 0,
         info,
         demand,
@@ -320,16 +351,14 @@ pub(crate) async fn accessory_manager(
     };
     manager.run().await;
     enumerator.abort();
-    for (_, session) in manager.sessions.drain() {
-        session.stop.cancel();
-        let _ = session.task.await;
-    }
-    for (_, radio) in manager.radios.drain() {
-        radio.stop.cancel();
-        let _ = radio.task.await;
-    }
-    for (_, command) in manager.pending_one_shot.drain() {
-        let _ = command.reply.send(Err("Accessory manager stopped".into()));
+    for (_, state) in manager.states.drain() {
+        if let Some(session) = state.session {
+            session.stop.cancel();
+            let _ = session.task.await;
+        }
+        if let Some(command) = state.pending_one_shot {
+            let _ = command.reply.send(Err("Accessory manager stopped".into()));
+        }
     }
     for task in manager.retired {
         let _ = task.await;
@@ -346,11 +375,16 @@ impl AccessoryManager {
                 changed = self.info.changed() => if changed.is_err() { break; },
                 changed = self.demand.changed() => if changed.is_err() { break; },
                 command = self.commands.recv() => if let Some(command) = command {
-                    if self.pending_one_shot.contains_key(&command.address) || self.sessions.get(&command.address).is_some_and(|session| session.one_shot) {
+                    let state = self.states.entry(command.address).or_default();
+                    if state.pending_one_shot.is_some()
+                        || state.session.as_ref().is_some_and(|session| session.one_shot)
+                    {
                         let _ = command.reply.send(Err("Accessory operation already in progress".into()));
                     } else {
-                        if let Some(session) = self.sessions.get(&command.address) { session.stop.cancel(); }
-                        self.pending_one_shot.insert(command.address, command);
+                        if let Some(session) = &state.session {
+                            session.stop.cancel();
+                        }
+                        state.pending_one_shot = Some(command);
                     }
                 },
                 event = self.events.recv() => if let Some(event) = event { self.apply(event); },
@@ -481,24 +515,22 @@ impl AccessoryManager {
             RadioEvent::Connection {
                 address,
                 generation,
-                state,
+                state: connection_state,
                 error,
                 physical,
             } => {
-                if self
-                    .sessions
-                    .get(&address)
-                    .is_some_and(|session| session.generation == generation)
-                {
-                    self.statuses.insert(
-                        address,
-                        ConnectionStatus {
-                            generation,
-                            state,
+                if let Some(accessory) = self.states.get_mut(&address) {
+                    if accessory
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.generation == generation)
+                    {
+                        accessory.status = Some(ConnectionStatus {
+                            state: connection_state,
                             error,
                             physical,
-                        },
-                    );
+                        });
+                    }
                 }
             }
         }
@@ -518,40 +550,52 @@ impl AccessoryManager {
     fn reconcile(&mut self) {
         let info = self.info.borrow().clone();
         self.retired.retain(|task| !task.is_finished());
-        self.sessions.retain(|address, session| {
-            if session.task.is_finished() {
-                return false;
-            }
-            let same = session.one_shot
-                || info.get(address).is_some_and(|info| {
-                    info.ty == session.ty
-                        && match &info.radio {
-                            AccessoryRadio::System => self
-                                .radios
-                                .get(&session.radio)
-                                .is_some_and(|radio| radio.info.is_default),
-                            radio => radio == &session.radio,
-                        }
-                });
-            if !same
-                || !self
-                    .radios
-                    .get(&session.radio)
-                    .is_some_and(|radio| radio.info.available)
-                || self.pending_one_shot.contains_key(address)
+        self.states.retain(|address, state| {
+            if state
+                .session
+                .as_ref()
+                .is_some_and(|session| session.task.is_finished())
             {
-                session.stop.cancel();
+                state.session = None;
+                state.status = None;
             }
-            true
+            if let Some(session) = state.session.as_ref() {
+                let same = session.one_shot
+                    || info.get(address).is_some_and(|info| {
+                        info.ty == session.ty
+                            && match &info.radio {
+                                AccessoryRadio::System => self
+                                    .radios
+                                    .get(&session.radio)
+                                    .is_some_and(|radio| radio.info.is_default),
+                                radio => radio == &session.radio,
+                            }
+                    });
+                if !same
+                    || !self
+                        .radios
+                        .get(&session.radio)
+                        .is_some_and(|radio| radio.info.available)
+                    || state.pending_one_shot.is_some()
+                {
+                    session.stop.cancel();
+                }
+            }
+            state.session.is_some() || state.pending_one_shot.is_some()
         });
         let ready: Vec<_> = self
-            .pending_one_shot
-            .keys()
-            .filter(|address| !self.sessions.contains_key(*address))
-            .copied()
+            .states
+            .iter()
+            .filter_map(|(&address, state)| {
+                (state.session.is_none() && state.pending_one_shot.is_some()).then_some(address)
+            })
             .collect();
         for address in ready {
-            let Some(command) = self.pending_one_shot.remove(&address) else {
+            let Some(command) = self
+                .states
+                .get_mut(&address)
+                .and_then(|state| state.pending_one_shot.take())
+            else {
                 continue;
             };
             self.spawn(
@@ -561,9 +605,11 @@ impl AccessoryManager {
             );
         }
         for (address, info) in info {
-            if !self.sessions.contains_key(&address)
-                && !self.pending_one_shot.contains_key(&address)
-            {
+            let active = self
+                .states
+                .get(&address)
+                .is_some_and(|state| state.session.is_some() || state.pending_one_shot.is_some());
+            if !active {
                 self.spawn(address, info, None);
             }
         }
@@ -595,6 +641,7 @@ impl AccessoryManager {
                     });
                 let _ = reply.send(Err(error));
             }
+            self.states.remove(&address);
             return;
         };
         self.generation += 1;
@@ -620,33 +667,42 @@ impl AccessoryManager {
                 let result = match action {
                     OneShotAction::Enroll => context.enroll().await,
                     OneShotAction::ResetMarkerMode => context.reset_marker_mode().await,
+                    OneShotAction::MarkerOta {
+                        desktop_version,
+                        result,
+                    } => {
+                        let update = context.marker_ota_update(&desktop_version).await;
+                        let outer = update.as_ref().map(|_| ()).map_err(Clone::clone);
+                        let _ = result.send(update);
+                        outer
+                    }
                 };
-                tracing::info!(?address, ?action, ?result, "Accessory one-shot finished");
+                tracing::info!(?address, ?result, "Accessory one-shot finished");
                 let _ = reply.send(result.map(|()| enrolled_radio));
             } else {
                 context.run().await;
             }
         });
-        self.statuses.remove(&address);
-        self.sessions.insert(
-            address,
-            Session {
-                radio: worker.info.radio.clone(),
-                ty: info.ty,
-                generation,
-                stop,
-                task,
-                one_shot: one_shot_active,
-                info,
-            },
-        );
+        let state = self.states.entry(address).or_default();
+        state.status = None;
+        state.session = Some(Session {
+            radio: worker.info.radio.clone(),
+            ty: info.ty,
+            generation,
+            stop,
+            task,
+            one_shot: one_shot_active,
+            info,
+        });
     }
 
     fn publish(&self) {
         let mut configured = self.info.borrow().clone();
-        for (&address, session) in &self.sessions {
-            if session.one_shot {
-                configured.insert(address, session.info.clone());
+        for (&address, state) in &self.states {
+            if let Some(session) = &state.session {
+                if session.one_shot {
+                    configured.insert(address, session.info.clone());
+                }
             }
         }
         let mut radios: Vec<_> = self
@@ -696,10 +752,13 @@ impl AccessoryManager {
             if !radio.available && !matches!(route, AccessoryRadio::Dongle { .. }) {
                 radio.error.clone_from(&self.native_error);
             }
-            let status = self.statuses.get(&address).filter(|status| {
-                self.sessions.get(&address).is_some_and(|session| {
-                    session.generation == status.generation && session.radio == route
-                })
+            let status = self.states.get(&address).and_then(|accessory| {
+                accessory
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.radio == route)
+                    .then_some(accessory.status.as_ref())
+                    .flatten()
             });
             let (state, error, physical) = if !radio.available || !radio.accessory_supported {
                 (AccessoryConnectionState::RadioUnavailable, radio.error.clone().or_else(|| Some("Selected accessory radio unavailable or accessory capability not supported".into())), false)
@@ -744,7 +803,7 @@ impl AccessoryManager {
         });
         let mut previous = self.shared_map.lock();
         if *previous != map {
-            *previous = map.clone();
+            previous.clone_from(&map);
             let _ = self.map_tx.send(map);
         }
     }
@@ -796,6 +855,32 @@ impl SessionContext {
             .await;
     }
 
+    async fn marker_ota_update(
+        mut self,
+        desktop_version: &semver::Version,
+    ) -> Result<String, String> {
+        let mut link = tokio::select! {
+            () = self.stop.cancelled() => return Err("Marker OTA canceled".into()),
+            link = self.backend.link(self.address, &mut self.nearby) => link?,
+        };
+        self.state(AccessoryConnectionState::Connecting, None, true)
+            .await;
+        if let Err(error) = link.connect(&self.info, false).await {
+            let _ = link.disconnect(false).await;
+            return Err(format!(
+                "Could not connect to marker over selected Bluetooth radio: {error}"
+            ));
+        }
+        let result = ota::update(&mut link, &self.info, desktop_version).await;
+        let disconnected = link.disconnect(false).await;
+        match (result, disconnected) {
+            (Ok(message), Ok(())) => Ok(message),
+            (Err(error), _) => Err(error),
+            (_, Err(error)) => Err(format!(
+                "Marker update finished but disconnect failed: {error}"
+            )),
+        }
+    }
     async fn enroll(mut self) -> Result<(), String> {
         let mut link = tokio::select! {
             () = self.stop.cancelled() => return Err("Accessory enrollment canceled".into()),
@@ -1036,6 +1121,7 @@ impl ShotForwarder {
 #[cfg(test)]
 mod tests {
     use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
+    use odyssey_hub_common::firmware_version::FirmwareVersion;
 
     use super::*;
     fn manager_for_state_test(
@@ -1052,9 +1138,7 @@ mod tests {
         (
             AccessoryManager {
                 radios: HashMap::new(),
-                sessions: HashMap::new(),
-                statuses: HashMap::new(),
-                pending_one_shot: HashMap::new(),
+                states: HashMap::new(),
                 generation: 0,
                 info,
                 demand: demand.subscribe(),
@@ -1064,9 +1148,9 @@ mod tests {
                 updates,
                 event_tx: broadcast::channel(4).0,
                 map_tx: broadcast::channel(4).0,
-                shared_map: Default::default(),
-                device_list: Default::default(),
-                dongle_list: Default::default(),
+                shared_map: Arc::default(),
+                device_list: DeviceList::default(),
+                dongle_list: DongleList::default(),
                 stop: CancellationToken::new(),
                 retired: Vec::new(),
                 native_error: None,
@@ -1091,7 +1175,7 @@ mod tests {
             radio.clone(),
             RadioWorker {
                 info,
-                backend: RadioBackend::Dongle(Default::default(), id.into()),
+                backend: RadioBackend::Dongle(DongleList::default(), id.into()),
                 nearby: watch::channel(HashMap::new()).1,
                 task: tokio::spawn(stop.clone().cancelled_owned()),
                 stop,
@@ -1110,18 +1194,15 @@ mod tests {
         manager.generation += 1;
         let generation = manager.generation;
         let stop = manager.stop.child_token();
-        manager.sessions.insert(
-            address,
-            Session {
-                radio,
-                ty: info.ty,
-                generation,
-                task: tokio::spawn(stop.clone().cancelled_owned()),
-                stop,
-                one_shot: false,
-                info,
-            },
-        );
+        manager.states.entry(address).or_default().session = Some(Session {
+            radio,
+            ty: info.ty,
+            generation,
+            task: tokio::spawn(stop.clone().cancelled_owned()),
+            stop,
+            one_shot: false,
+            info,
+        });
         manager.apply(RadioEvent::Connection {
             address,
             generation,
@@ -1203,32 +1284,31 @@ mod tests {
             AccessoryConnectionState::Connected,
         );
         manager.publish();
-        {
-            let snapshots = manager.handle.snapshots.borrow();
-            assert_eq!(
-                snapshots
-                    .iter()
-                    .find(|info| info.radio == first)
-                    .unwrap()
-                    .connected_accessories,
-                0
-            );
-            assert_eq!(
-                snapshots
-                    .iter()
-                    .find(|info| info.radio == assigned)
-                    .unwrap()
-                    .connected_accessories,
-                1
-            );
-            assert_eq!(
-                snapshots
-                    .iter()
-                    .filter(|radio| radio.nearby.iter().any(|item| item.address == [9; 6]))
-                    .count(),
-                2
-            );
-        }
+        let snapshots = manager.handle.snapshots.borrow();
+        assert_eq!(
+            snapshots
+                .iter()
+                .find(|info| info.radio == first)
+                .unwrap()
+                .connected_accessories,
+            0
+        );
+        assert_eq!(
+            snapshots
+                .iter()
+                .find(|info| info.radio == assigned)
+                .unwrap()
+                .connected_accessories,
+            1
+        );
+        assert_eq!(
+            snapshots
+                .iter()
+                .filter(|radio| radio.nearby.iter().any(|item| item.address == [9; 6]))
+                .count(),
+            2
+        );
+        drop(snapshots);
         manager.radios.remove(&assigned).unwrap().stop.cancel();
         manager.reconcile();
         manager.publish();
@@ -1243,8 +1323,9 @@ mod tests {
             AccessoryConnectionState::RadioUnavailable
         );
         assert_eq!(manager.shared_map.lock().get(&[9; 6]), Some(&(info, false)));
-        assert!(manager.sessions[&[9; 6]].stop.is_cancelled());
-        assert_eq!(manager.sessions[&[9; 6]].radio, assigned);
+        let session = manager.states[&[9; 6]].session.as_ref().unwrap();
+        assert!(session.stop.is_cancelled());
+        assert_eq!(session.radio, assigned);
         manager.stop.cancel();
     }
 
@@ -1281,7 +1362,7 @@ mod tests {
             demand: demand.subscribe(),
             updates,
             event_tx: broadcast::channel(4).0,
-            device_list: Default::default(),
+            device_list: DeviceList::default(),
             stop: stop.clone(),
         };
         let task = tokio::spawn(context.run());
@@ -1386,7 +1467,7 @@ mod tests {
             demand: MarkerDemand::default().subscribe(),
             updates: mpsc::channel(16).0,
             event_tx: broadcast::channel(4).0,
-            device_list: Default::default(),
+            device_list: DeviceList::default(),
             stop: CancellationToken::new(),
         };
         let task = tokio::spawn(context.reset_marker_mode());
@@ -1530,6 +1611,7 @@ mod tests {
             uuid: [1, 2, 3, 4, 5, 6],
             transport: Transport::Usb,
             capabilities: DeviceCapabilities::empty(),
+            firmware_identity: FirmwareVersion::default(),
             firmware_version: [0; 3],
             events_transport: EventsTransport::Wired,
             events_connected: false,
@@ -1569,6 +1651,9 @@ mod tests {
         let forwarder = forwarder(AccessoryType::DryFireMag);
         let mut events = forwarder.event_tx.subscribe();
         forwarder.forward_impact();
-        assert!(events.try_recv().is_err());
+        assert!(matches!(
+            events.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
     }
 }

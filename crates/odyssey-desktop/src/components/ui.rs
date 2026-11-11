@@ -42,13 +42,13 @@ pub(crate) fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     kind: ButtonKind,
-    palette: Palette,
+    palette: &Palette,
 ) -> Button {
     Button {
         id: id.into(),
         label: label.into(),
         kind,
-        palette,
+        palette: *palette,
         disabled: false,
         small: false,
         on_click: None,
@@ -118,7 +118,7 @@ impl RenderOnce for Button {
 }
 
 /// `card`: rounded-xl border bg-surface p-5.
-pub(crate) fn card(p: Palette) -> Div {
+pub(crate) fn card(p: &Palette) -> Div {
     div()
         .flex()
         .flex_col()
@@ -130,7 +130,7 @@ pub(crate) fn card(p: Palette) -> Div {
 }
 
 /// `card-title`.
-pub(crate) fn card_title(p: Palette, text: impl Into<SharedString>) -> Div {
+pub(crate) fn card_title(p: &Palette, text: impl Into<SharedString>) -> Div {
     div()
         .text_lg()
         .font_weight(FontWeight::SEMIBOLD)
@@ -139,7 +139,7 @@ pub(crate) fn card_title(p: Palette, text: impl Into<SharedString>) -> Div {
 }
 
 /// A tinted, bordered message box.
-pub(crate) fn alert(kind: AlertKind, p: Palette, content: impl IntoElement) -> impl IntoElement {
+pub(crate) fn alert(kind: AlertKind, p: &Palette, content: impl IntoElement) -> impl IntoElement {
     let (bg, ink) = tint(kind, p);
     div()
         .rounded(px(RADIUS_XL))
@@ -153,7 +153,7 @@ pub(crate) fn alert(kind: AlertKind, p: Palette, content: impl IntoElement) -> i
         .child(content)
 }
 
-fn tint(kind: AlertKind, p: Palette) -> (gpui::Rgba, gpui::Rgba) {
+fn tint(kind: AlertKind, p: &Palette) -> (gpui::Rgba, gpui::Rgba) {
     match kind {
         AlertKind::Info => (p.info_soft, p.info_ink),
         AlertKind::Success => (p.success_soft, p.success_ink),
@@ -163,7 +163,7 @@ fn tint(kind: AlertKind, p: Palette) -> (gpui::Rgba, gpui::Rgba) {
 }
 
 /// A horizontal progress bar filled to `percent` (clamped to 100).
-pub(crate) fn progress_bar(p: Palette, percent: usize) -> impl IntoElement {
+pub(crate) fn progress_bar(p: &Palette, percent: usize) -> impl IntoElement {
     div()
         .h(px(8.0))
         .w_full()
@@ -182,11 +182,11 @@ pub(crate) fn progress_bar(p: Palette, percent: usize) -> impl IntoElement {
 /// The frame every sidebar page sits in: one width, one heading style, one
 /// background.
 pub(crate) fn page(
-    p: Palette,
+    p: &Palette,
     title: impl Into<SharedString>,
     description: Option<SharedString>,
     children: impl IntoIterator<Item = AnyElement>,
-) -> impl IntoElement {
+) -> Div {
     let mut header = div().flex().flex_col().gap_1().child(
         div()
             .text_2xl()

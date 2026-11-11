@@ -1,4 +1,4 @@
-//! Accessory links own separate slots; tracker queues and reconnect policy stay independent.
+//! Accessory links own separate slots. Tracker queues and reconnect policy stay independent.
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -186,7 +186,7 @@ fn event(value: Event) {
         .try_send(MuxMsg::AccessoryEvent(value))
         .is_err()
     {
-        // Discovery may be dropped; data loss is surfaced for notification sessions below.
+        // Discovery may be dropped. Data loss is surfaced for notification sessions below.
     }
 }
 
@@ -363,7 +363,10 @@ pub async fn dispatcher(
                     Err(e) => Err(e),
                 }
             }
-            Command::MarkerDemand { address, .. } | Command::MarkerMode { address, .. } => {
+            Command::MarkerDemand { address, .. }
+            | Command::MarkerMode { address, .. }
+            | Command::MarkerOta { address, .. }
+            | Command::MarkerOtaStatus { address } => {
                 let slot = SESSIONS.lock(|s| {
                     s.borrow()
                         .iter()
@@ -454,6 +457,8 @@ async fn accessory_session(
     let conn = RefCell::new(None::<Connection<'static, crate::Pool>>);
     let connected = Cell::new(false);
     let pending = Cell::new(None::<u32>);
+    let mut ota_characteristic: Option<Characteristic<u8>> = None;
+    let mut ota_characteristic_checked = false;
     let run = async {
         let mut central = stack.build().central;
         let config = ConnectConfig {
@@ -523,7 +528,8 @@ async fn accessory_session(
                 .await
                 .map_err(|_| Error::Timeout)??;
             let mut listener = if peer.profile == Profile::MarkerControlBoard {
-                // OFF write proves board accepted persisted owner, not merely SMP encryption.
+                // A successful OFF write means the board accepted the persisted owner.
+                // SMP encryption alone does not show that.
                 with_timeout(
                     Duration::from_secs(5),
                     client.write_characteristic(&characteristic, &[0]),
@@ -584,7 +590,6 @@ async fn accessory_session(
                 pending.set(Some(request.id));
                 let result = match request.command {
                     Command::MarkerDemand { active, .. } => {
-                        // Only fresh host commands renew board lease; never run a local renewal timer.
                         if queued.received.elapsed()
                             > Duration::from_millis(marker_control::RENEW_MILLIS)
                         {
@@ -596,11 +601,10 @@ async fn accessory_session(
                             )
                             .await
                             .map_err(|_| Error::Timeout)
-                            .and_then(|result| result.map_err(|_| Error::Gatt))
+                            .and_then(|result| result.map(|()| Reply::Done()).map_err(|_| Error::Gatt))
                         }
                     }
                     Command::MarkerMode { mode, .. } => {
-                        // Mode is looked up on demand so connect stays compatible with boards without it.
                         let write = async {
                             let mode_characteristic: Characteristic<u8> = client
                                 .characteristic_by_uuid(
@@ -612,6 +616,7 @@ async fn accessory_session(
                             client
                                 .write_characteristic(&mode_characteristic, &[mode as u8])
                                 .await
+                                .map(|()| Reply::Done())
                                 .map_err(|_| Error::Gatt)
                         };
                         with_timeout(Duration::from_secs(5), write)
@@ -619,9 +624,93 @@ async fn accessory_session(
                             .map_err(|_| Error::Timeout)
                             .and_then(|result| result)
                     }
-                    _ => unreachable!(),
+                    Command::MarkerOta { frame, .. } => {
+                        let frame_len = usize::from(frame.len);
+                        if frame_len == 0
+                            || frame_len > odyssey_protocol::ota::MAX_FRAME
+                            || frame_len > frame.data.len()
+                        {
+                            complete(request.id, Err(Error::Gatt), epoch).await;
+                            pending.set(None);
+                            continue;
+                        }
+                        if !ota_characteristic_checked {
+                            ota_characteristic_checked = true;
+                            ota_characteristic = match client
+                                .characteristic_by_uuid(
+                                    &service,
+                                    &Uuid::from(u128::from_be_bytes(marker_control::OTA_UUID)),
+                                )
+                                .await
+                            {
+                                Ok(characteristic) => Some(characteristic),
+                                Err(BleHostError::BleHost(trouble_host::Error::NotFound)) => None,
+                                Err(_) => return Err(Error::Gatt),
+                            };
+                        }
+                        let Some(characteristic) = ota_characteristic.as_ref() else {
+                            complete(request.id, Err(Error::Unsupported), epoch).await;
+                            pending.set(None);
+                            continue;
+                        };
+                        match with_timeout(
+                            Duration::from_secs(5),
+                            client.write_characteristic(characteristic, &frame.data[..frame_len]),
+                        )
+                        .await
+                        {
+                            Err(_) => Err(Error::Timeout),
+                            Ok(Err(BleHostError::BleHost(trouble_host::Error::Att(_)))) => {
+                                complete(request.id, Err(Error::Gatt), epoch).await;
+                                pending.set(None);
+                                continue;
+                            }
+                            Ok(Err(_)) => Err(Error::Gatt),
+                            Ok(Ok(())) => Ok(Reply::Done()),
+                        }
+                    }
+                    Command::MarkerOtaStatus { .. } => {
+                        let read = async {
+                            if !ota_characteristic_checked {
+                                ota_characteristic_checked = true;
+                                ota_characteristic = match client
+                                    .characteristic_by_uuid(
+                                        &service,
+                                        &Uuid::from(u128::from_be_bytes(marker_control::OTA_UUID)),
+                                    )
+                                    .await
+                                {
+                                    Ok(characteristic) => Some(characteristic),
+                                    Err(BleHostError::BleHost(trouble_host::Error::NotFound)) => None,
+                                    Err(_) => return Err(Error::Gatt),
+                                };
+                            }
+                            let Some(characteristic) = ota_characteristic.as_ref() else {
+                                return Err(Error::Unsupported);
+                            };
+                            let mut status = [0; odyssey_protocol::ota::STATUS_LEN];
+                            let len = client
+                                .read_characteristic(characteristic, &mut status)
+                                .await
+                                .map_err(|_| Error::Gatt)?;
+                            if len != status.len() {
+                                return Err(Error::Gatt);
+                            }
+                            Ok(Reply::MarkerOtaStatus(status))
+                        };
+                        with_timeout(Duration::from_secs(5), read)
+                            .await
+                            .map_err(|_| Error::Timeout)
+                            .and_then(|result| result)
+                    }
+                    _ => Err(Error::Unsupported),
                 };
-                complete(request.id, result.map(|()| Reply::Done()), epoch).await;
+                if matches!(result, Err(Error::Unsupported)) {
+                    complete(request.id, result, epoch).await;
+                    pending.set(None);
+                    continue;
+                }
+                complete(request.id, result, epoch).await;
                 pending.set(None);
                 if let Err(e) = result {
                     return Err(e);

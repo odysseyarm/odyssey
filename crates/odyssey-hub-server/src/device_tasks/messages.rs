@@ -25,7 +25,7 @@ impl std::fmt::Debug for ImageRenewals {
 pub(crate) enum DeviceTaskMessage {
     ResetZero,
     /// Capture on the unit's USB events endpoint, under its handler's ownership.
-    /// Each `renewals` item extends the device lease; its end stops capture.
+    /// Each `renewals` item extends the device lease. Its end stops capture.
     StartImages {
         config: odyssey_protocol::image::ImageStreamConfig,
         renewals: ImageRenewals,
@@ -35,9 +35,14 @@ pub(crate) enum DeviceTaskMessage {
         reply: Reply<()>,
     },
     SaveZero,
-    /// Send a vendor packet; the USB layer rejects invalid tags and payloads over
+    /// Send a vendor packet. The USB layer rejects invalid tags and payloads over
     /// `VendorData::CAPACITY` bytes.
     WriteVendor(u8, Vec<u8>),
+    /// Send one acknowledged OTA frame and return the device's raw OTA status.
+    OtaExchange {
+        frame: Vec<u8>,
+        reply: Reply<[u8; 22]>,
+    },
     /// Shot delay in milliseconds, applied live to the running handler.
     SetShotDelay(u16),
     Zero(Translation3<f32>, Point2<f32>, Option<TrackingEvent>),
@@ -72,8 +77,8 @@ pub(crate) enum DeviceTaskMessage {
     FlashSettings {
         reply: Reply<()>,
     },
-    /// Enter BLE pairing mode. The reply comes once pairing mode is entered; the
-    /// pairing outcome arrives later as a PairingResult event.
+    /// Enter BLE pairing mode. The reply comes once pairing mode is entered. The
+    /// pairing outcome arrives later as a `PairingResult` event.
     StartPairing {
         timeout_ms: u32,
         reply: Reply<()>,
@@ -92,7 +97,7 @@ pub(crate) enum DeviceTaskMessage {
         reply: Reply<()>,
     },
     /// Set the transport mode (USB or BLE). Firmware with a manual transport persists
-    /// it and applies it after a reboot; for automatic firmware the handler answers
+    /// it and applies it after a reboot. For automatic firmware the handler answers
     /// with the link in use and sends nothing to the unit.
     SetTransportMode {
         usb_mode: bool,
@@ -127,7 +132,7 @@ pub(crate) enum DeviceTaskMessage {
 
 /// The channels that reach a device's handler task.
 pub(crate) struct DeviceChannels {
-    /// `None` for a control-only device; a reconnect without one keeps the listed channel.
+    /// `None` for a control-only device. A reconnect without one keeps the listed channel.
     pub commands: Option<mpsc::Sender<DeviceTaskMessage>>,
 }
 
@@ -161,14 +166,14 @@ pub(crate) struct DongleInfo {
     pub protocol_version: [u16; 3],
     /// Control endpoint protocol version.
     pub control_protocol_version: [u16; 3],
-    pub firmware_version: [u16; 3],
+    pub firmware_version: [u32; 3],
     /// BLE addresses of the connected ATS units.
     pub connected_devices: Vec<[u8; 6]>,
     /// BLE addresses of the bonded ATS units.
     pub bonded_devices: Vec<[u8; 6]>,
 }
 
-/// Messages emitted by device_tasks to the rest of the system.
+/// Messages emitted by `device_tasks` to the rest of the system.
 pub(crate) enum Message {
     Connect(Device, DeviceChannels),
     Disconnect(Device),

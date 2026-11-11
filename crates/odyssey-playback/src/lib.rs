@@ -11,7 +11,7 @@ use postcard::take_from_bytes;
 /// Every packet is preceded by its timestamp as a little-endian `u128`.
 const TIMESTAMP_LEN: usize = size_of::<u128>();
 
-fn invalid_data(what: &str, error: postcard::Error) -> io::Error {
+fn invalid_data(what: &str, error: &postcard::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("{what}: {error:?}"))
 }
 
@@ -22,11 +22,14 @@ fn invalid_data(what: &str, error: postcard::Error) -> io::Error {
 /// Fails when the file cannot be read, when the configuration or a packet does
 /// not decode (`InvalidData`), or when the file ends inside a timestamp or a
 /// packet (`UnexpectedEof`).
+///
+/// # Since
+/// Odyssey Desktop 0.6.0.
 pub fn read_file(path: &Path) -> io::Result<(GeneralSettings, Vec<(u128, Packet)>)> {
     let data = fs::read(path)?;
 
     let (general_config, mut bytes) = take_from_bytes::<GeneralSettings>(&data)
-        .map_err(|error| invalid_data("GeneralSettings decode", error))?;
+        .map_err(|error| invalid_data("GeneralSettings decode", &error))?;
 
     let mut packets = Vec::new();
     while !bytes.is_empty() {
@@ -50,7 +53,7 @@ pub fn read_file(path: &Path) -> io::Result<(GeneralSettings, Vec<(u128, Packet)
                     "EOF in Packet",
                 ));
             }
-            Err(error) => return Err(invalid_data("Packet decode", error)),
+            Err(error) => return Err(invalid_data("Packet decode", &error)),
         }
     }
 

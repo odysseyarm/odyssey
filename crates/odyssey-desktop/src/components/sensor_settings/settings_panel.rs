@@ -54,7 +54,7 @@ pub(crate) struct SensorSettings {
 }
 
 fn target_for(device: Device) -> LoadTarget {
-    // General settings can use the control plane; register access needs a live
+    // General settings can use the control plane. Register access needs a live
     // events connection, whether it arrives over USB or Bluetooth.
     let can_tune_sensors =
         device.capabilities.contains(DeviceCapabilities::EVENTS) && device.events_connected;
@@ -224,7 +224,7 @@ impl SensorSettings {
         &self,
         issues: &[FieldIssue],
         show_issues: bool,
-        palette: Palette,
+        palette: &Palette,
     ) -> impl IntoElement {
         let issue = |field: &str| visible_issue(issues, field, show_issues);
         div()
@@ -280,7 +280,7 @@ impl SensorSettings {
         &self,
         sensors: Option<SensorFamily>,
         show_issues: bool,
-        palette: Palette,
+        palette: &Palette,
     ) -> gpui::AnyElement {
         match sensors {
             Some(SensorFamily::Paj) => div()
@@ -317,7 +317,7 @@ impl SensorSettings {
     }
 }
 
-fn heading(text: &'static str, palette: Palette) -> impl IntoElement {
+fn heading(text: &'static str, palette: &Palette) -> impl IntoElement {
     div()
         .text_sm()
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -327,7 +327,7 @@ fn heading(text: &'static str, palette: Palette) -> impl IntoElement {
 
 fn section(
     title: &'static str,
-    palette: Palette,
+    palette: &Palette,
     rows: impl IntoIterator<Item = gpui::AnyElement>,
 ) -> impl IntoElement {
     div()
@@ -347,12 +347,12 @@ impl Render for SensorSettings {
         if family.is_none() || !(has_control || has_events) {
             return div();
         }
-        let palette = palette(cx);
+        let palette = &palette(cx);
         let tunable_sensors = self.target.tunable_sensors();
         let general_issues = self.form.general_issues();
         let has_invalid = self.form.has_invalid_input(tunable_sensors);
         let busy = self.form.loading;
-        // Writes stay blocked on invalid input either way; only the inline
+        // Writes stay blocked on invalid input either way. Only the inline
         // markers wait for the first load.
         let show_issues = self.form.hydrated;
 

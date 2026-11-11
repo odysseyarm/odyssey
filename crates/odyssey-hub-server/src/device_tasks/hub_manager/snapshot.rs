@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_protocol::{PropKind, Props, Version};
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::PacketData;
@@ -27,7 +28,7 @@ const VERSION_READ_ATTEMPTS: usize = 3;
 /// What a unit reached over Bluetooth says about itself.
 struct BleDeviceIdentity {
     uuid: DeviceAddress,
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
     /// Events protocol version, read via the packet interface (works over BLE).
     events_protocol_version: [u16; 3],
     product_id: u16,
@@ -55,7 +56,7 @@ impl HubManager {
             .retain(|_, device| !device.commands.is_closed());
         self.failed_adds
             .retain(|address, _| new_set.contains(address));
-        // Managed devices are keyed by BLE address; device_handles is keyed by UUID.
+        // Managed devices are keyed by BLE address, device_handles by UUID.
         let existing_set: HashSet<DeviceAddress> = self.managed_devices.keys().copied().collect();
 
         let added: Vec<DeviceAddress> = new_set.difference(&existing_set).copied().collect();
@@ -122,6 +123,7 @@ impl HubManager {
             // AddEventsDevice sets EVENTS and events_connected once the streams are
             // established.
             capabilities,
+            firmware_identity: FirmwareVersion::default(),
             firmware_version: identity.firmware_version,
             events_transport: EventsTransport::Bluetooth,
             events_connected: false,
@@ -131,33 +133,30 @@ impl HubManager {
         };
 
         // A unit already connected over USB gets the BLE events merged into its handler.
-        let commands = match self.existing_handler_commands(uuid).await {
-            Some(commands) => {
-                tracing::info!(
-                    "Device {uuid:02x?} found in device_handles, merging by adding BLE mux for events"
-                );
-                let result = commands
-                    .send(DeviceTaskMessage::AddEventsDevice {
-                        device: vm_device,
-                        protocol_version: identity.events_protocol_version,
-                        hub: self.hub.clone(),
-                        address,
-                        owner: Arc::clone(&self.events_owner),
-                    })
-                    .await;
-                tracing::info!("AddEventsDevice message sent for {uuid:02x?}, result: {result:?}");
-                if result.is_err() {
-                    return;
-                }
-                commands
+        let commands = if let Some(commands) = self.existing_handler_commands(uuid).await {
+            tracing::info!(
+                "Device {uuid:02x?} found in device_handles, merging by adding BLE mux for events"
+            );
+            let result = commands
+                .send(DeviceTaskMessage::AddEventsDevice {
+                    device: vm_device,
+                    protocol_version: identity.events_protocol_version,
+                    hub: self.hub.clone(),
+                    address,
+                    owner: Arc::clone(&self.events_owner),
+                })
+                .await;
+            tracing::info!("AddEventsDevice message sent for {uuid:02x?}, result: {result:?}");
+            if result.is_err() {
+                return;
             }
-            None => {
-                tracing::info!(
-                    "Device {uuid:02x?} not found in device_handles, creating new BLE mux handler"
-                );
-                self.spawn_ble_handler(device, vm_device, identity.events_protocol_version, address)
-                    .await
-            }
+            commands
+        } else {
+            tracing::info!(
+                "Device {uuid:02x?} not found in device_handles, creating new BLE mux handler"
+            );
+            self.spawn_ble_handler(device, vm_device, identity.events_protocol_version, address)
+                .await
         };
         // Tracked by BLE address so it gets cleaned up when the hub disconnects.
         self.managed_devices
@@ -237,7 +236,7 @@ impl HubManager {
     }
 
     /// Read the name from the unit and push it to the dongle so its bond cache is always
-    /// fresh; fall back to the name remembered for the address.
+    /// fresh. Fall back to the name remembered for the address.
     async fn device_name(&self, vm_device: &VmDevice, address: DeviceAddress) -> [u8; 33] {
         if let Ok(Props::Name(name)) = vm_device.read_prop(PropKind::Name).await
             && !name.is_empty()
@@ -393,8 +392,8 @@ impl HubManager {
                 "DevicesSnapshot: BLE device {address:02x?} (UUID {uuid:02x?}) disconnected from hub"
             );
 
-            // Let the handler decide whether to continue (if it has USB control) or exit;
-            // it sends Disconnect itself if it has no remaining connections.
+            // Let the handler decide whether to continue (if it has USB control) or exit.
+            // It sends Disconnect itself if it has no remaining connections.
             tracing::info!(
                 "Sending RemoveEventsDevice to {uuid:02x?} (may still have USB control)"
             );

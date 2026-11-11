@@ -3,6 +3,9 @@ name = "odyssey-uniffi-bindgen"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 # Project-local uniffi-bindgen. Shares this workspace's Cargo.lock, so the
 # generated bindings always match the uniffi version ohc_uniffi is compiled
 # with, and there is no pip version pin to keep in sync.

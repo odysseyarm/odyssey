@@ -1,6 +1,7 @@
-//! Camera-independent description of what the calibration needs from a depth
-//! camera. Backends translate their SDK into these types; nothing else in the
-//! crate depends on an SDK.
+//! Camera-independent calibration inputs.
+//!
+//! Backends translate their SDK into these types. Nothing else in the crate
+//! depends on an SDK.
 //!
 //! Units: lengths are meters, pixel coordinates have the origin at the top left
 //! of the image with `x` right and `y` down, camera frames are right-handed
@@ -11,45 +12,67 @@ use std::time::Duration;
 use image::{GrayImage, ImageBuffer, Luma, RgbImage};
 use nalgebra::{Matrix3, Vector3};
 
-/// Raw depth, one `u16` per pixel in sensor units; zero marks an invalid
+/// Raw depth, one `u16` per pixel in sensor units. Zero marks an invalid
 /// pixel. See [`Frames::depth_unit_m`].
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub type DepthImage = ImageBuffer<Luma<u16>, Vec<u16>>;
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, thiserror::Error)]
 pub enum CameraError {
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("no depth camera found")]
     NoDevice,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("camera does not provide {0}")]
     Unsupported(&'static str),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("camera did not deliver a frame in time")]
     Timeout,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("camera SDK error: {0}")]
     Sdk(String),
-    /// The camera SDK is not usable on this machine; the text says why.
+    /// The camera SDK is not usable on this machine. The text says why.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("camera support is unavailable: {0}")]
     RuntimeUnavailable(String),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid camera data: {0}")]
     InvalidData(&'static str),
 }
 
 /// How a camera is attached, as the backend reports it. This is what the link
 /// negotiated, not what the camera could do on a better port or cable.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Link {
     /// USB 3 or faster.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     FastUsb,
     /// USB 2.x or older. Some combinations of color, depth and infrared streams do
     /// not fit on this link at full rate (see [`Link::warning`]).
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     SlowUsb,
     /// A connection the backend names that is not USB, e.g. "Ethernet".
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     Other(String),
     /// The backend did not say, or said USB without a version.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     Unknown,
 }
 
 impl Link {
-    /// Reads an OrbbecSDK connection type: "USB1.1", "USB2.1", "USB3.2", "Ethernet",
-    /// or plain "USB" when the version is not known.
+    /// Reads an `OrbbecSDK` connection type: `USB1.1`, `USB2.1`, `USB3.2`, `Ethernet`,
+    /// or plain `USB` when version is not known.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub fn parse(text: &str) -> Self {
         let text = text.trim();
         match text.strip_prefix("USB").map(str::trim) {
@@ -61,8 +84,10 @@ impl Link {
         }
     }
 
-    /// True when the link is USB 2 or older. That does not make capture impossible
-    /// (see [`Link::warning`]); it makes some stream combinations too large to fit.
+    /// True when the link is USB 2 or older. Capture is still possible (see
+    /// [`Link::warning`]), but some stream combinations are too large to fit.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub fn is_capped(&self) -> bool {
         matches!(self, Self::SlowUsb)
     }
@@ -70,7 +95,9 @@ impl Link {
     /// What to tell the user when the link is capped. Measured on one Gemini 336
     /// at USB 2: uncompressed color with infrared and depth at 640x480 and 30 fps
     /// delivered no frames, while the same streams with MJPG color did. The
-    /// wording says a slow link may limit capture, not that it prevents it.
+    /// wording only claims a slow link may limit capture.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub fn warning(&self) -> Option<&'static str> {
         self.is_capped().then_some(
             "This camera is connected at USB 2 speed or slower, which can limit what it \
@@ -93,21 +120,41 @@ impl std::fmt::Display for Link {
 }
 
 /// One camera attached to the machine, as listed before it is opened.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CameraInfo {
     /// Backend-specific identifier that [`CameraBackend::open`] accepts.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub id: String,
     /// Human-readable model name, e.g. "Gemini 335".
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub name: String,
+    /// Since: Odyssey Desktop 0.6.5.
     pub serial: String,
+    /// Since: Odyssey Desktop 0.6.7.
     pub link: Link,
 }
 
 /// Lists and opens cameras of one kind. Listing is cheap and holds no device
-/// open; a camera only streams while the [`CameraStream`] returned by `open`
+/// open. A camera only streams while the [`CameraStream`] returned by `open`
 /// is alive.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub trait CameraBackend {
+    /// # Errors
+    ///
+    /// Returns camera enumeration or device errors.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn list(&self) -> Result<Vec<CameraInfo>, CameraError>;
+    /// # Errors
+    ///
+    /// Returns errors opening camera or configuring its stream.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn open(
         &self,
         camera: &CameraInfo,
@@ -117,11 +164,16 @@ pub trait CameraBackend {
 
 /// Settings applied when a stream starts. The calibration UI exposes these as
 /// controls and a stream restarts to change them.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaptureSettings {
     /// Color exposure in microseconds. Fixed rather than automatic so the
     /// projected dots do not bloom when the screen is brighter than the room.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub color_exposure_us: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub color_gain: u32,
 }
 
@@ -141,43 +193,83 @@ impl Default for CaptureSettings {
 }
 
 /// A running camera. Dropping it stops streaming and releases the device.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub trait CameraStream: Send {
     /// Intrinsics and extrinsics. Stable for the life of the stream.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn geometry(&self) -> &CameraGeometry;
 
     /// Next time-synchronized color, depth and infrared frames, or
     /// `Err(CameraError::Timeout)` if none arrived within `timeout`.
+    ///
+    /// # Errors
+    ///
+    /// Returns camera I/O errors or [`CameraError::Timeout`] when no frame arrives in time.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn next_frames(&mut self, timeout: Duration) -> Result<Frames, CameraError>;
 
     /// Inertial samples received since the last call, oldest first. Empty if
     /// the camera has no IMU.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn drain_imu(&mut self) -> Vec<ImuSample>;
 
     /// Sets infrared exposure in microseconds, switching auto exposure off.
-    /// Marker detection runs with a short exposure so only the LEDs stay bright.
+    /// Marker detection runs with a short exposure so only LEDs stay bright.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if camera rejects exposure change.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn set_ir_exposure_us(&mut self, exposure_us: u32) -> Result<(), CameraError>;
 
     /// Restores infrared auto exposure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if camera rejects auto-exposure change.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn set_ir_auto_exposure(&mut self) -> Result<(), CameraError>;
 
-    /// Turns the depth projector on or off. Marker detection switches it off
-    /// when the camera allows, because its dot pattern shows up in the infrared
-    /// image. Returns `Ok(false)` if the camera has no switchable projector.
+    /// Turns depth projector on or off. Marker detection switches it off
+    /// when camera allows, because its dot pattern shows up in infrared.
+    /// Returns `Ok(false)` if camera has no switchable projector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if camera rejects projector change.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     fn set_projector_enabled(&mut self, enabled: bool) -> Result<bool, CameraError>;
 }
 
 /// Pinhole intrinsics with Brown-Conrady distortion, as OpenCV and the Orbbec
 /// SDK define it: `k1..k3` and `k4..k6` are the radial numerator and
 /// denominator terms, `p1` and `p2` the tangential terms.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Intrinsics {
+    /// Since: Odyssey Desktop 0.6.5.
     pub width: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub height: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub fx: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub fy: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub cx: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub cy: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub k: [f64; 6],
+    /// Since: Odyssey Desktop 0.6.5.
     pub p: [f64; 2],
 }
 
@@ -206,13 +298,18 @@ pub(crate) fn is_rotation(rotation: &Matrix3<f64>) -> bool {
 
 /// Rigid transform taking points from one camera's frame to another's:
 /// `p_to = rotation * p_from + translation`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Extrinsics {
+    /// Since: Odyssey Desktop 0.6.5.
     pub rotation: Matrix3<f64>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub translation: Vector3<f64>,
 }
 
 impl Extrinsics {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn identity() -> Self {
         Self {
             rotation: Matrix3::identity(),
@@ -220,6 +317,8 @@ impl Extrinsics {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
+    #[must_use]
     pub fn inverse(&self) -> Self {
         let rotation = self.rotation.transpose();
         Self {
@@ -228,29 +327,46 @@ impl Extrinsics {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn apply(&self, p: &Vector3<f64>) -> Vector3<f64> {
         self.rotation * p + self.translation
     }
 }
 
 /// Everything the solver needs to relate the three image streams.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraGeometry {
+    /// Since: Odyssey Desktop 0.6.5.
     pub color: Intrinsics,
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth: Intrinsics,
     /// Left infrared imager. Equals `depth` on cameras whose depth is computed
     /// in the left infrared frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir: Intrinsics,
     /// Takes points from the color camera's frame to the depth camera's frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub color_to_depth: Extrinsics,
     /// Takes points from the infrared camera's frame to the depth camera's
     /// frame. Identity when the two share a frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir_to_depth: Extrinsics,
 }
 
 impl CameraGeometry {
     /// Rejects unusable intrinsics and transforms that are not finite rigid motions.
     /// Image dimensions must describe the delivered frames, not a different SDK profile.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CameraError::InvalidData`] when intrinsics or transforms are invalid.
     pub fn validate(&self) -> Result<(), CameraError> {
         for (intrinsics, reason) in [
             (&self.color, "invalid color intrinsics"),
@@ -275,21 +391,34 @@ impl CameraGeometry {
     }
 }
 
-/// One synchronized capture. The streams are not pixel-aligned; the solver
+/// One synchronized capture. The streams are not pixel-aligned, so the solver
 /// maps between them with [`CameraGeometry`].
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Frames {
+    /// Since: Odyssey Desktop 0.6.5.
     pub color: RgbImage,
     /// Raw depth in sensor units; multiply by `depth_unit_m` for meters.
     /// Zero marks an invalid pixel.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth: DepthImage,
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_unit_m: f32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir: GrayImage,
 }
 
 impl Frames {
     /// Checks the fixed stream dimensions and the conversion from raw depth to meters.
     /// A resized image cannot use the original intrinsics unchanged.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CameraError::InvalidData`] when dimensions or depth units are invalid.
     pub fn validate(&self, geometry: &CameraGeometry) -> Result<(), CameraError> {
         for (actual, intrinsics, reason) in [
             (
@@ -322,6 +451,8 @@ impl Frames {
 
     /// Depth at a pixel in meters, or `None` outside the image or where the
     /// sensor reported no measurement or an invalid depth scale.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn depth_m(&self, x: u32, y: u32) -> Option<f64> {
         if x >= self.depth.width()
             || y >= self.depth.height()
@@ -338,16 +469,23 @@ impl Frames {
 }
 
 /// One inertial reading, in the camera's frame. Timestamps share an arbitrary
-/// epoch; only their differences matter.
+/// epoch, so only their differences matter.
 ///
-/// Backends express the vectors in the color camera's frame, not the IMU's
-/// own, so the solver never needs the IMU extrinsics.
+/// Backends express the vectors in the color camera's frame instead of the
+/// IMU's own, so the solver never needs the IMU extrinsics.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImuSample {
+    /// Since: Odyssey Desktop 0.6.5.
     pub timestamp: Duration,
     /// Angular rate in rad/s.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub gyro: Vector3<f64>,
-    /// Specific force in m/s^2; reads `-gravity` when the camera is at rest.
+    /// Specific force in m/s^2. Reads `-gravity` when the camera is at rest.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub accel: Vector3<f64>,
 }
 
@@ -397,7 +535,7 @@ mod tests {
     #[test]
     fn geometry_rejects_unusable_intrinsics_and_nonrigid_transforms() {
         let valid = crate::synthetic::SyntheticScene::default().geometry;
-        assert!(valid.validate().is_ok());
+        valid.validate().unwrap();
         for focal in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             let mut geometry = valid;
             geometry.color.fx = focal;
@@ -446,7 +584,7 @@ mod tests {
             depth_unit_m: 0.001,
             ir: GrayImage::new(geometry.ir.width, geometry.ir.height),
         };
-        assert!(frames.validate(&geometry).is_ok());
+        frames.validate(&geometry).unwrap();
         frames.color = RgbImage::new(1, 1);
         assert!(matches!(
             frames.validate(&geometry),

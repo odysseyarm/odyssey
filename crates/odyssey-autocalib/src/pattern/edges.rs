@@ -10,19 +10,27 @@ use crate::plane::{apply_homography, distort_pixel};
 
 /// A set of screen sides. The ring on a side is the pattern's
 /// outermost pixel row or column there.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SideSet {
+    /// Since: Odyssey Desktop 0.6.5.
     pub top: bool,
+    /// Since: Odyssey Desktop 0.6.5.
     pub right: bool,
+    /// Since: Odyssey Desktop 0.6.5.
     pub bottom: bool,
+    /// Since: Odyssey Desktop 0.6.5.
     pub left: bool,
 }
 
 impl SideSet {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn is_empty(&self) -> bool {
         !(self.top || self.right || self.bottom || self.left)
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn count(&self) -> usize {
         [self.top, self.right, self.bottom, self.left]
             .into_iter()
@@ -42,15 +50,26 @@ impl SideSet {
 
 /// Whether the pattern's border ring reaches the camera, i.e. whether the
 /// screen shows its whole image.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeCheck {
     /// The ring is visible on all four sides.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Visible,
     /// The ring is missing or broken on these sides: the display crops the
     /// image (overscan) or something covers its border.
-    Cropped { sides: SideSet },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    Cropped {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        sides: SideSet,
+    },
     /// The ring cannot be judged: too faint or small in the picture, or partly
     /// outside the camera's view. Never a reason to refuse a measurement.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Unknown,
 }
 
@@ -117,7 +136,7 @@ fn luma_at(image: &RgbImage, x: u32, y: u32) -> f64 {
     (r * f64::from(p[0]) + g * f64::from(p[1]) + b * f64::from(p[2])) / 256.0
 }
 
-/// Brightest pixel in the 3x3 block around `p`; absorbs a pixel of
+/// Brightest pixel in the 3x3 block around `p`, which absorbs a pixel of
 /// registration error. `None` unless the block lies inside the image.
 fn luma_peak(image: &RgbImage, p: Point2<f64>) -> Option<f64> {
     let (x, y) = (p.x.round(), p.y.round());
@@ -186,6 +205,10 @@ impl RingView<'_> {
 
     /// How much brighter the dots are than the black between them, or `None` if the pattern
     /// is not in view well enough to measure it.
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "Pattern coordinates are normalized; retain exact midpoint arithmetic."
+    )]
     fn dot_contrast(&self) -> Option<f64> {
         let pattern = self.pattern;
         let aspect = pattern.aspect;
@@ -272,6 +295,8 @@ enum SideVerdict {
 /// asks for a ridge. A ridge needs no assumption about what lies outside the
 /// screen: a cropped ring leaves the bezel or wall there, which is flat, and
 /// the test fails however bright the room is.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn check_edges(
     pattern: &Pattern,
     image: &RgbImage,

@@ -27,17 +27,21 @@ let
       extensions = [ "llvm-tools" "rustc-dev" "rust-src" "rustfmt" ];
     };
   };
+  verus = pkgs.callPackage ./pkgs/verus.nix {
+    toolchain = pkgs.rust-bin.stable."1.99.1".default;
+  };
   releaseProofs = craneLib.mkCargoDerivation ((common.mkArgs {
     workspace = "crates/xtask";
     pname = "release-proofs";
   }) // {
-    nativeBuildInputs = [ kani pkgs.jq ];
+    nativeBuildInputs = [ kani verus pkgs.jq ];
     cargoArtifacts = null;
     buildPhaseCargoCommand = ''
       manifest=$(cargo metadata --locked --offline --format-version 1 \
         | jq -er '.packages[] | select(.name == "pure-release") | .manifest_path')
       cp -rL "$(dirname "$manifest")" "$TMPDIR/pure-release"
       chmod -R u+w "$TMPDIR/pure-release"
+      (cd "$TMPDIR/pure-release" && sh tools/verify-verus.sh)
       cargo-kani kani --manifest-path "$TMPDIR/pure-release/Cargo.toml" \
         --lib --output-format terse
     '';
@@ -114,14 +118,14 @@ in {
   inherit pkgs;
   packages = host.packages // sdk.packages // firmware.packages // appimage.packages // desktopNixos.packages // windows.packages
     // { cargo-release = pkgs.cargo-release; }
-    // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; inherit kani; };
+    // lib.optionalAttrs (system == "x86_64-linux") { orbbec-sdk = orbbecSdk; inherit kani verus; };
   checks = host.checks // sdk.checks // firmware.checks // appimage.checks // desktopNixos.checks // windows.checks
     // { private-source-boundary = common.privateBoundaryCheck; }
     // lib.optionalAttrs (system == "x86_64-linux") {
       release-proofs = releaseProofs;
       wire-proofs = wireProofs;
     };
-  # What a trusted builder may publish to the public binary cache; nothing
+  # What a trusted builder may publish to the public binary cache. Nothing
   # else leaves the machine (.github/actions/push-cache/local.sh). `closures`
   # are public workspaces and go up with their build dependencies. `outputs`
   # compile private sources or are bare proof markers, so only the finished

@@ -8,23 +8,32 @@ use tokio::fs;
 use crate::accessory::AccessoryInfo;
 use crate::hexkeymap::HexKeyMapN;
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub const APP_INFO: AppInfo = AppInfo {
     name: "odyssey",
     author: "odysseyarm",
 };
 
 /// Why a settings file could not be located, written or encoded.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("the user config directory is unavailable")]
     ConfigDir(#[from] app_dirs2::AppDirsError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("reading or writing a settings file failed")]
     Io(#[from] std::io::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("encoding the settings failed")]
     Json5(#[from] json5::Error),
-    /// The UI-state writer thread panicked; the edit may not have been saved.
+    /// The UI-state writer thread panicked, so the edit may not have been saved.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("the settings writer stopped")]
     Writer(#[from] tokio::task::JoinError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "sim")]
     #[error("the simulation config directory was already initialized")]
     SimulationRootAlreadySet,
@@ -37,6 +46,9 @@ static SIMULATION_CONFIG_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLoc
 ///
 /// # Errors
 /// Fails if the directory cannot be created or a different root was already set.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
 #[cfg(feature = "sim")]
 pub fn set_simulation_config_root(path: PathBuf) -> Result<(), ConfigError> {
     std::fs::create_dir_all(&path)?;
@@ -59,45 +71,66 @@ fn config_root() -> Result<PathBuf, ConfigError> {
     Ok(get_app_root(AppDataType::UserConfig, &APP_INFO)?)
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Clone, Debug)]
 pub struct ConfigCorruptionEvent {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub file_type: ConfigFileType,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub file_path: String,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub error_message: String,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub using_default: bool,
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Clone, Copy, Debug)]
 pub enum ConfigFileType {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     DeviceShotDelays,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     DeviceOffsets,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     ScreenCalibration,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     AccessoryMap,
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Debug, Clone)]
 pub enum ConfigLoadResult<T> {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     Success(T),
-    CorruptedUsingDefault { path: PathBuf, error: String },
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+    CorruptedUsingDefault {
+        #[doc = "Since: Odyssey Desktop 0.5.0 (earliest tagged release)."]
+        path: PathBuf,
+        #[doc = "Since: Odyssey Desktop 0.5.0 (earliest tagged release)."]
+        error: String,
+    },
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     NotFoundUsingDefault,
 }
 
 impl<T> ConfigLoadResult<T> {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn into_value(self) -> T
     where
         T: Default,
     {
         match self {
             Self::Success(val) => val,
-            Self::CorruptedUsingDefault { .. } => T::default(),
-            Self::NotFoundUsingDefault => T::default(),
+            Self::CorruptedUsingDefault { .. } | Self::NotFoundUsingDefault => T::default(),
         }
     }
 
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn is_corrupted(&self) -> bool {
         matches!(self, Self::CorruptedUsingDefault { .. })
     }
 
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn corruption_info(&self) -> Option<(PathBuf, String)> {
         match self {
             Self::CorruptedUsingDefault { path, error } => Some((path.clone(), error.clone())),
@@ -108,81 +141,132 @@ impl<T> ConfigLoadResult<T> {
 
 /// The firmware channel the user chose, by name. `None` when they never chose
 /// one or the file cannot be read, which callers treat as the default.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub async fn firmware_channel_async() -> Option<String> {
     let path = config_root().ok()?.join("firmware_channel");
     let name = fs::read_to_string(&path).await.ok()?;
     Some(name.trim().to_string())
 }
 
+/// # Errors
+/// Returns an error if the config directory is unavailable or writing the file fails.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub async fn firmware_channel_save_async(name: &str) -> Result<(), ConfigError> {
     let config_dir = config_root()?;
     fs::write(config_dir.join("firmware_channel"), name).await?;
     Ok(())
 }
 
-/// Identifies a monitor across launches. Models repeat across a desk (two
-/// identical panels share a name), so the key also carries the monitor's position
-/// in the virtual desktop. Rearranging the monitors changes the key on purpose:
-/// after a rearrangement the remembered pick may name a different screen.
+/// Identifies a monitor across launches.
+///
+/// Models repeat across a desk (two identical panels share a name), so the key
+/// also carries the monitor's position in the virtual desktop. Rearranging the
+/// monitors changes the key on purpose, because a remembered pick could now
+/// point at a different screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MonitorKey {
+    /// Since: Odyssey Desktop 0.6.5.
     pub name: Option<String>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub x: i32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub y: i32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub width: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub height: u32,
+}
+
+/// An identity pair proven by the USB firmware update flow.
+///
+/// Stored as release strings so the proof retains nightly build identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RadioOtaBootloaderProof {
+    pub app_version: String,
+    pub bootloader_version: String,
 }
 
 /// Desktop app state that is not a setting but should survive a restart.
 ///
 /// Every field defaults when absent, so a file written before a field existed
 /// still loads.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct UiState {
     /// The monitor the user last picked in the screen picker.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub selected_monitor: Option<MonitorKey>,
     /// The screen (`screen_<id>.json`) the calibration wizard last saved for
     /// each monitor, so the next calibration of that monitor starts on the
     /// same screen number.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub calibration_screens: Vec<MonitorScreen>,
     /// What kind of display the calibration wizard last calibrated on each
     /// monitor, so a projector is not asked about again as a TV.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub display_kinds: Vec<MonitorDisplayKind>,
     /// Size a flat screen by the depth camera instead of by what the display
     /// reports about itself. Off by default: a display's own size is a better
     /// scale anchor when it is right. Applies to every monitor, and a size the
     /// user types still wins over both.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub prefer_camera_size: bool,
+    /// Bootloader and application identities confirmed by a successful USB update.
+    pub radio_ota_bootloader_proofs: HashMap<String, RadioOtaBootloaderProof>,
 }
 
 /// What a display is, as far as calibration cares: a flat panel has a known
 /// physical size, a projected picture does not.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DisplayKind {
     /// A TV or monitor.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     #[default]
     Flat,
     /// A projector, or any projected image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Projector,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MonitorDisplayKind {
+    /// Since: Odyssey Desktop 0.6.5.
     pub monitor: MonitorKey,
+    /// Since: Odyssey Desktop 0.6.5.
     pub kind: DisplayKind,
 }
 
 /// A monitor and the screen (`screen_<id>.json`) calibrated for it.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MonitorScreen {
+    /// Since: Odyssey Desktop 0.6.5.
     pub monitor: MonitorKey,
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_id: u8,
 }
 
 impl UiState {
     /// The screen id last calibrated for `monitor`, if any.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn calibration_screen(&self, monitor: &MonitorKey) -> Option<u8> {
         self.calibration_screens
             .iter()
@@ -193,6 +277,8 @@ impl UiState {
     /// Records that `screen_id` holds `monitor`'s calibration. A screen id
     /// holds one screen, so any other monitor that pointed at it loses the
     /// claim.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn remember_calibration_screen(&mut self, monitor: MonitorKey, screen_id: u8) {
         self.calibration_screens
             .retain(|s| s.monitor != monitor && s.screen_id != screen_id);
@@ -201,6 +287,8 @@ impl UiState {
     }
 
     /// The kind of display last calibrated on `monitor`, if any.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn display_kind(&self, monitor: &MonitorKey) -> Option<DisplayKind> {
         self.display_kinds
             .iter()
@@ -208,6 +296,7 @@ impl UiState {
             .map(|k| k.kind)
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn remember_display_kind(&mut self, monitor: MonitorKey, kind: DisplayKind) {
         self.display_kinds.retain(|k| k.monitor != monitor);
         self.display_kinds
@@ -219,6 +308,7 @@ fn ui_state_path() -> Result<PathBuf, ConfigError> {
     Ok(config_root()?.join("ui_state.json"))
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
     match ui_state_path() {
         Ok(path) => load_ui_state_from(path).await,
@@ -235,6 +325,12 @@ pub async fn ui_state_async() -> ConfigLoadResult<UiState> {
 /// future is cancelled. A corrupt or unreadable existing file is never overwritten.
 /// Callers that need user-intent ordering must enqueue edits before spawning work
 /// and await them serially (a future is not scheduled until it is polled).
+///
+/// # Errors
+/// Returns an error if resolving the state path, editing or writing the state fails,
+/// or the blocking writer task panics.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn ui_state_update_async(
     edit: impl FnOnce(&mut UiState) + Send + 'static,
 ) -> Result<UiState, ConfigError> {
@@ -320,6 +416,7 @@ fn save_ui_state_to(path: &Path, state: &UiState) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16>> {
     let config_dir = match config_root() {
         Ok(dir) => dir,
@@ -372,6 +469,11 @@ pub async fn device_shot_delays_async() -> ConfigLoadResult<HashMap<[u8; 6], u16
     }
 }
 
+/// # Errors
+/// Returns an error if the config directory is unavailable, encoding fails,
+/// or writing the file fails.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn device_shot_delays_save_async(
     device_shot_delays: &HashMap<[u8; 6], u16>,
 ) -> Result<(), ConfigError> {
@@ -384,12 +486,17 @@ pub async fn device_shot_delays_save_async(
     Ok(())
 }
 
+/// # Errors
+/// Returns an error if saving device shot delays fails.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn device_shot_delay_save_async(uuid: [u8; 6], delay: u16) -> Result<(), ConfigError> {
     let mut map = device_shot_delays_async().await.into_value();
     map.insert(uuid, delay);
     device_shot_delays_save_async(&map).await
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn device_offsets_async() -> ConfigLoadResult<HashMap<[u8; 6], nalgebra::Isometry3<f32>>>
 {
     let config_dir = match config_root() {
@@ -445,6 +552,11 @@ pub async fn device_offsets_async() -> ConfigLoadResult<HashMap<[u8; 6], nalgebr
     }
 }
 
+/// # Errors
+/// Returns an error if the config directory is unavailable, encoding fails,
+/// or writing the file fails.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn device_offsets_save_async(
     device_offsets: &HashMap<[u8; 6], nalgebra::Isometry3<f32>>,
 ) -> Result<(), ConfigError> {
@@ -458,25 +570,37 @@ pub async fn device_offsets_save_async(
 }
 
 /// Directory holding `screen_<id>.json`, one file per calibrated screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
+///
+/// # Errors
+/// Returns an error if the user config directory is unavailable.
 pub fn screens_dir() -> Result<PathBuf, ConfigError> {
     Ok(config_root()?.join("screens"))
 }
 
 /// File name of the calibration for screen `id` inside [`screens_dir`].
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn screen_file_name(id: u8) -> String {
     format!("screen_{id}.json")
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Debug)]
 pub struct ScreenCalibrationsResult {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub calibrations: arrayvec::ArrayVec<
         (u8, ScreenCalibration<f32>),
         { (odyssey_common::MAX_SCREEN_ID + 1) as usize },
     >,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub corrupted_screens: Vec<(u8, PathBuf, String)>,
 }
 
 /// Loads every `screen_<id>.json` in the user's screens directory.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn screen_calibrations_async() -> ScreenCalibrationsResult {
     match screens_dir() {
         Ok(dir) => screen_calibrations_from_dir_async(&dir).await,
@@ -490,9 +614,12 @@ pub async fn screen_calibrations_async() -> ScreenCalibrationsResult {
     }
 }
 
-/// Loads every `screen_<id>.json` in `dir`, ordered by id. Unreadable,
-/// malformed, or geometrically invalid calibrations are reported in
-/// `corrupted_screens` and excluded; a missing file is skipped without a report.
+/// Loads every `screen_<id>.json` in `dir`, ordered by id.
+///
+/// Unreadable, malformed, or geometrically invalid calibrations are reported in
+/// `corrupted_screens` and excluded. Missing files are skipped without a report.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub async fn screen_calibrations_from_dir_async(dir: &Path) -> ScreenCalibrationsResult {
     let mut calibrations = arrayvec::ArrayVec::new();
     let mut corrupted_screens = Vec::new();
@@ -549,6 +676,7 @@ fn accessory_map_path() -> Result<PathBuf, ConfigError> {
     Ok(dir.join("accessory_map.json"))
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn accessory_map_async() -> ConfigLoadResult<HashMap<[u8; 6], AccessoryInfo>> {
     let path = match accessory_map_path() {
         Ok(p) => p,
@@ -597,6 +725,11 @@ pub async fn accessory_map_async() -> ConfigLoadResult<HashMap<[u8; 6], Accessor
     }
 }
 
+/// # Errors
+/// Returns an error if the config directory is unavailable, encoding fails,
+/// or writing the file fails.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn accessory_map_save_async(
     map: &HashMap<[u8; 6], AccessoryInfo>,
 ) -> Result<(), ConfigError> {
@@ -647,6 +780,7 @@ mod tests {
                 kind: DisplayKind::Projector,
             }],
             prefer_camera_size: true,
+            radio_ota_bootloader_proofs: HashMap::new(),
         };
 
         block_on(async {
@@ -699,7 +833,8 @@ mod tests {
 
         let invalid = "{ selected_monitor: [oops";
         std::fs::write(&path, invalid).unwrap();
-        assert!(update_ui_state_at(&path, |state| state.prefer_camera_size = false).is_err());
+        update_ui_state_at(&path, |state| state.prefer_camera_size = false)
+            .expect_err("corrupt state must not be overwritten");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
     }
 
@@ -795,7 +930,7 @@ mod tests {
         )
         .unwrap();
         assert!(state.selected_monitor.is_some());
-        assert!(state.calibration_screens.is_empty());
-        assert!(state.display_kinds.is_empty());
+        assert_eq!(state.calibration_screens, vec![]);
+        assert_eq!(state.display_kinds, vec![]);
     }
 }

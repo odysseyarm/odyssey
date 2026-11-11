@@ -6,6 +6,16 @@
 use proc_macro::TokenStream;
 use quote::quote;
 
+mod postcard_schema;
+
+#[proc_macro_derive(PostcardSchema, attributes(postcard_type))]
+pub fn postcard_schema(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    postcard_schema::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Derives `defmt::Format`, serde and minicbor, each behind its feature.
 ///
 /// `no_cbor` skips minicbor, for types another type carries through a
@@ -20,6 +30,9 @@ use quote::quote;
 ///     pub major: u8,
 /// }
 /// ```
+///
+/// # Since
+/// Odyssey Desktop 0.6.0.
 #[proc_macro_attribute]
 pub fn protocol_type(args: TokenStream, item: TokenStream) -> TokenStream {
     let cbor = match args.to_string().trim() {
@@ -44,6 +57,7 @@ pub fn protocol_type(args: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(feature = "schema", derive(::odyssey_protocol_macros::PostcardSchema))]
         #minicbor
         #item
     }

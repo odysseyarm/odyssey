@@ -1,10 +1,13 @@
 //! Firmware manifest fetching and DFU update support.
 
 mod dfu_download;
+/// Sends complete application and net-core images over acknowledged OTA transports.
+pub mod ota;
+/// Since: Odyssey Desktop 0.7.5.
 pub mod dongle;
+/// Since: Odyssey Desktop 0.6.6.
 pub mod pack;
-
-use std::collections::HashMap;
+use std::num::NonZeroU8;
 use std::time::Duration;
 
 use backon::{ConstantBuilder, Retryable as _};
@@ -12,8 +15,11 @@ use dfu_core::DfuIo as _;
 use dfu_nusb::DfuNusb;
 use futures::io::Cursor;
 use nusb::MaybeFuture as _;
-use odyssey_version::BootloaderRelease;
-use serde::Deserialize;
+use odyssey_firmware_manifest::asset_filename;
+pub use odyssey_firmware_manifest::{
+    DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest, ReleaseSource,
+};
+use odyssey_version::legacy_bootloader_version;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -25,16 +31,23 @@ const MANIFEST_BASE_URL: &str =
     "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests";
 
 /// Which manifest a host follows.
+///
+/// Since: Odyssey Desktop 0.6.4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FirmwareChannel {
     /// Entries someone promoted by hand. What customers follow.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     #[default]
     Stable,
     /// Every release as it is published.
+    ///
+    /// Since: Odyssey Desktop (unreleased).
     Nightly,
 }
 
 impl FirmwareChannel {
+    /// Since: Odyssey Desktop 0.6.4.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Stable => "stable",
@@ -45,6 +58,8 @@ impl FirmwareChannel {
     /// An unrecognised name falls back to stable: the safe channel is the one
     /// to land on when a settings file is stale or hand-edited. `alpha` is the
     /// nightly channel's name in settings saved before it was renamed.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub fn from_name(name: &str) -> Self {
         match name {
             "nightly" | "alpha" => Self::Nightly,
@@ -53,12 +68,21 @@ impl FirmwareChannel {
     }
 
     /// The channel the user chose, stable if they never did.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub async fn load() -> Self {
         odyssey_hub_common::config::firmware_channel_async()
             .await
             .map_or(Self::Stable, |name| Self::from_name(&name))
     }
 
+    /// Save this channel as the user's firmware preference.
+    ///
+    /// # Errors
+    ///
+    /// Returns the configuration error if the preference cannot be written.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub async fn save(self) -> Result<(), odyssey_hub_common::config::ConfigError> {
         odyssey_hub_common::config::firmware_channel_save_async(self.name()).await
     }
@@ -76,6 +100,8 @@ const RELEASES_BASE_URL: &str = "https://github.com/odysseyarm/odyssey/releases/
 const FIRMWARE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The manifest's device type name for each known (VID, PID).
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
     (0x1915, 0x5210, "legacy-atslite1"),
     (0x1915, 0x5211, "atslite1"),
@@ -85,109 +111,40 @@ pub const DEVICE_MAP: &[(u16, u16, &str)] = &[
 
 /// The product id a device enumerates under while its bootloader is running.
 ///
-/// The bootloaders add 0x10 to the application's id, so the two modes are
-/// distinguishable from the device descriptor alone and bcdDevice can mean the
-/// bootloader's own version while it is in charge. An offset rather than a bit:
-/// 0x5210 and 0x5211 already have bit 4 set, so setting it would not be
+/// The bootloaders add 0x10 to the application's id. That tells the two modes
+/// apart from the device descriptor alone, so bcdDevice can carry the
+/// bootloader's own version while it is in charge. It is an offset because
+/// 0x5210 and 0x5211 already have bit 4 set, so setting the bit would not be
 /// reversible.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub const fn bootloader_pid(app_pid: u16) -> u16 {
     app_pid + 0x10
 }
 
 /// The application's product id for a device currently in its bootloader.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub const fn app_pid(pid: u16) -> u16 {
     pid - 0x10
 }
 
-/// What a device's bcdDevice says about the bootloader it is running.
-pub fn bootloader_release(bcd_device: u16) -> BootloaderRelease {
-    BootloaderRelease::from_bcd_device(bcd_device)
-}
-
-/// A firmware manifest, as published per channel.
-#[derive(Debug, Clone, Deserialize)]
-pub struct FirmwareManifest {
-    pub version: u32,
-    pub devices: HashMap<String, DeviceManifest>,
-}
-
-/// The firmware entries of one device type.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DeviceManifest {
-    pub firmwares: Vec<FirmwareEntry>,
-}
-
-/// A single firmware version entry.
-///
-/// `requires_bootloader` is the lowest bootloader release this application can
-/// run on, `0` when it has no requirement. `requires_netcore` is the net core
-/// release the unit must already be *running*, as it reports itself, before
-/// this entry may be installed; the entry's own `net-core` release never counts
-/// towards it, because nothing can report the net core between writing it and
-/// the new application running. A net core bump therefore ships in a bridge
-/// entry whose `requires_netcore` is only what units run today, and only a later
-/// entry may require the newer release. `min_desktop` is the oldest Odyssey
-/// Desktop that is actually required and tested with this firmware, which is
-/// not necessarily the desktop that shipped alongside it: coupling a hotfix to
-/// a desktop upgrade it does not need would strand users for no reason.
-///
-/// All three are required, not optional: an entry that omitted one would read as
-/// unrestricted, so `gen-release` always writes them and a manifest missing one
-/// is rejected whole. Older hosts ignore fields they do not know, so adding one
-/// never stops them parsing.
-#[derive(Debug, Clone, Deserialize)]
-pub struct FirmwareEntry {
-    pub version: String,
-    pub requires_bootloader: u16,
-    pub requires_netcore: u16,
-    pub min_desktop: String,
-    pub files: HashMap<String, FileEntry>,
-    #[serde(default)]
-    pub released: Option<String>,
-}
-
-/// A single file within a firmware entry.
-///
-/// `release` is only present on `stage2-bootloader` and `net-core`: both are
-/// versioned independently of the application, and the same image is
-/// republished unchanged across application releases.
-#[derive(Debug, Clone, Deserialize)]
-pub struct FileEntry {
-    pub sha256: String,
-    pub size: u64,
-    #[serde(default)]
-    pub release: Option<u16>,
-}
-
-impl FirmwareEntry {
-    /// `[major, minor, patch]`, or `None` when the version string does not parse.
-    pub fn version_parts(&self) -> Option<[u16; 3]> {
-        parse_version(&self.version)
+fn legacy_bootloader_semver(bcd_device: u16) -> Option<semver::Version> {
+    if bcd_device & 0xF000 == 0xF000 {
+        let [major, minor, patch] = legacy_bootloader_version(bcd_device & 0x0FFF)?;
+        return Some(semver::Version::new(
+            major.into(),
+            minor.into(),
+            patch.into(),
+        ));
     }
-
-    /// All candidate application images, or `None` for missing or mixed single/dual-bank images.
-    pub fn application_files(&self) -> Option<impl Iterator<Item = (&'static str, &FileEntry)>> {
-        let files = match (
-            self.files.get("app"),
-            self.files.get("app-a"),
-            self.files.get("app-b"),
-        ) {
-            (Some(app), None, None)
-                if self.requires_netcore == 0
-                    && !self.files.contains_key("net-core")
-                    && !self.files.contains_key("stage2-bootloader") =>
-            {
-                [Some(("app", app)), None]
-            }
-            (None, Some(a), Some(b)) => [Some(("app-a", a)), Some(("app-b", b))],
-            _ => return None,
-        };
-        Some(files.into_iter().flatten())
-    }
+    None
 }
 
 /// Whether `manifest` is a newer version than `device`.
-pub fn version_newer(device: [u16; 3], manifest: [u16; 3]) -> bool {
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+pub fn version_newer(device: [u32; 3], manifest: [u32; 3]) -> bool {
     if manifest[0] != device[0] {
         return manifest[0] > device[0];
     }
@@ -198,6 +155,8 @@ pub fn version_newer(device: [u16; 3], manifest: [u16; 3]) -> bool {
 }
 
 /// The manifest device type of a VID/PID, if it is a known device.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn device_type_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
     DEVICE_MAP
         .iter()
@@ -206,6 +165,8 @@ pub fn device_type_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
 }
 
 /// The VID, PID and device type name of a known product id.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
     DEVICE_MAP
         .iter()
@@ -213,51 +174,79 @@ pub fn device_info_from_pid(pid: u16) -> Option<(u16, u16, &'static str)> {
         .map(|&(v, p, name)| (v, p, name))
 }
 
-/// The highest manifest version this build understands.
+/// The exact manifest schema version this build understands.
 ///
-/// Additive changes keep this number: unknown fields are ignored, so an older
-/// host does not act on them. Bump it only for a change an older host
-/// must not act on, which makes those hosts stop offering updates rather than
-/// act on a manifest they would misread.
-pub const SUPPORTED_MANIFEST_VERSION: u32 = 1;
+/// A schema change that alters field meaning makes this build reject older and
+/// newer manifests alike, so a host never acts on entries it would misread.
+///
+/// Since: Odyssey Desktop 0.6.4.
+pub const SUPPORTED_MANIFEST_VERSION: u32 = 2;
 
-/// Network and offline-pack failures retain their concrete source errors.
-/// Callers can distinguish an incompatible manifest from an incomplete pack
+/// Network and offline-pack failures keep their concrete source errors.
+/// Callers tell an incompatible manifest from an incomplete pack by variant,
 /// without inspecting the user-facing message.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Error)]
 pub enum FirmwareSourceError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("firmware request failed")]
     Network(#[from] reqwest::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error(
-        "firmware manifest is version {0}, newer than the {SUPPORTED_MANIFEST_VERSION} this build understands; update Odyssey"
+        "unsupported firmware manifest version {0}; this build requires {SUPPORTED_MANIFEST_VERSION}"
     )]
     ManifestVersion(u32),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("SHA256 mismatch: expected {expected}, got {actual}")]
-    HashMismatch { expected: String, actual: String },
+    HashMismatch {
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        expected: String,
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        actual: String,
+    },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("firmware size mismatch: expected {expected} bytes, received {actual}")]
-    ImageSize { expected: u64, actual: u64 },
+    ImageSize {
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        expected: u64,
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        actual: u64,
+    },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error(
         "There is no firmware pack in {dir}: {manifest} is missing. Unpack the Odyssey offline firmware pack into that folder."
     )]
     MissingPack {
+        /// Since: Odyssey Desktop 0.7.0.
         dir: std::path::PathBuf,
+        /// Since: Odyssey Desktop 0.7.0.
         manifest: String,
     },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("could not read firmware pack file {path}")]
     Read {
+        /// Since: Odyssey Desktop 0.7.0.
         path: std::path::PathBuf,
+        /// Since: Odyssey Desktop 0.7.0.
         #[source]
         source: std::io::Error,
     },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("{path} is not a firmware manifest")]
     Manifest {
+        /// Since: Odyssey Desktop 0.7.0.
         path: std::path::PathBuf,
+        /// Since: Odyssey Desktop 0.7.0.
         #[source]
         source: serde_json::Error,
     },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("The firmware pack in {dir} has no complete release.{details}")]
     IncompletePack {
+        /// Since: Odyssey Desktop 0.7.0.
         dir: std::path::PathBuf,
+        /// Since: Odyssey Desktop 0.7.0.
         details: String,
     },
 }
@@ -265,8 +254,13 @@ pub enum FirmwareSourceError {
 /// Fetch the channel manifest from GitHub, or complete releases from the offline pack.
 ///
 /// # Errors
-/// Returns [`FirmwareSourceError`] for failed requests, unreadable or invalid
-/// packs, unsupported manifest versions, or packs with no complete release.
+/// Returns [`FirmwareSourceError::Network`] for request, HTTP status, or JSON
+/// decoding failures, [`FirmwareSourceError::ManifestVersion`] if the manifest
+/// uses a newer version, and pack errors for a missing, unreadable, malformed,
+/// unsupported, or incomplete offline pack.
+///
+/// # Since
+/// Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn fetch_manifest(
     channel: FirmwareChannel,
 ) -> Result<FirmwareManifest, FirmwareSourceError> {
@@ -291,7 +285,7 @@ pub async fn fetch_manifest(
         .error_for_status()?
         .json()
         .await?;
-    if manifest.version > SUPPORTED_MANIFEST_VERSION {
+    if manifest.version != SUPPORTED_MANIFEST_VERSION {
         return Err(FirmwareSourceError::ManifestVersion(manifest.version));
     }
     Ok(manifest)
@@ -302,17 +296,25 @@ pub async fn fetch_manifest(
 ///
 /// `held_back` and `net_core_blocked` only ever name entries newer than
 /// `offered`: an older entry that was skipped is not news.
+///
+/// Since: Odyssey Desktop 0.6.4.
 #[derive(Debug, Clone, Copy)]
 pub struct FirmwareOffer<'a> {
     /// The newest entry this desktop can install on this unit.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub offered: Option<&'a FirmwareEntry>,
     /// A newer entry that exists but needs a newer desktop. The user is told so
-    /// and chooses whether to update; nothing updates the desktop for them.
+    /// and chooses whether to update. Nothing updates the desktop for them.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub held_back: Option<&'a FirmwareEntry>,
     /// A newer entry the desktop could install, were the unit's net core
     /// further along. When `offered` is set it is normally the bridge that
-    /// brings the net core up to what this entry requires; when it is not, the
+    /// brings the net core up to what this entry requires. When it is unset, the
     /// unit has no path to this entry from the net core it runs.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     pub net_core_blocked: Option<&'a FirmwareEntry>,
 }
 
@@ -326,10 +328,12 @@ pub struct FirmwareOffer<'a> {
 /// `running_netcore`, the release the unit reports (`0` when it reports none,
 /// which never satisfies a floor above `0`). An entry skipped for both reasons
 /// counts as held back by the desktop.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub fn select_firmware<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
-    desktop: semver::Version,
+    desktop: &semver::Version,
     running_netcore: u16,
 ) -> FirmwareOffer<'a> {
     let mut offer = FirmwareOffer {
@@ -341,16 +345,15 @@ pub fn select_firmware<'a>(
         return offer;
     };
     for entry in &device.firmwares {
-        let desktop_ok = match semver::Version::parse(&entry.min_desktop) {
-            Ok(min) => desktop >= min,
-            Err(_) => {
-                tracing::warn!(
-                    "Firmware {} has an unreadable min_desktop {:?}; not offering it",
-                    entry.version,
-                    entry.min_desktop
-                );
-                false
-            }
+        let desktop_ok = if let Ok(min) = semver::Version::parse(&entry.min_desktop) {
+            *desktop >= min
+        } else {
+            tracing::warn!(
+                "Firmware {} has an unreadable min_desktop {:?}; not offering it",
+                entry.version,
+                entry.min_desktop
+            );
+            false
         };
         if !desktop_ok {
             offer.held_back.get_or_insert(entry);
@@ -371,6 +374,8 @@ pub fn select_firmware<'a>(
 /// also what a unit shows for a while after every reboot or transport swap, so
 /// an unsettled 0 must not be judged. A 0 that stays after the hub's last retry
 /// is the net core's real answer: it predates release reporting.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn known_netcore_release(settled: bool, reported: u16) -> Option<u16> {
     settled.then_some(reported)
 }
@@ -387,15 +392,22 @@ pub fn known_netcore_release(settled: bool, reported: u16) -> Option<u16> {
 /// `running_netcore` is `None` when the net core's release is not known, so
 /// that "unknown" never counts as "behind" and offers a repair nobody needs.
 /// [`known_netcore_release`] decides which readings are real.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub fn is_worth_installing(
     entry: &FirmwareEntry,
-    installed: [u16; 3],
+    installed: [u32; 3],
     running_netcore: Option<u16>,
 ) -> bool {
-    let Some(version) = entry.version_parts() else {
+    let Ok(version) = semver::Version::parse(&entry.version) else {
         return false;
     };
-    if version_newer(installed, version) {
+    let installed = semver::Version::new(
+        u64::from(installed[0]),
+        u64::from(installed[1]),
+        u64::from(installed[2]),
+    );
+    if version > installed {
         return true;
     }
     version == installed
@@ -407,35 +419,9 @@ pub fn is_worth_installing(
             .is_some_and(|(carried, running)| carried > running)
 }
 
-/// Which GitHub release a firmware file is published under.
-///
-/// The bootloader and the net core are released on their own, because they
-/// change far less often than the application and a bad one cannot be fixed
-/// without a probe. An application release entry pins the exact component
-/// releases it was tested with, so the combination stays recorded in the
-/// manifest while each image lives in the release that built it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReleaseSource<'a> {
-    /// `<device>-v<version>`
-    Application { version: &'a str },
-    /// `<device>-bootloader-v<release>`
-    Bootloader { release: u16 },
-    /// `<device>-netcore-v<release>`
-    NetCore { release: u16 },
-}
-
-impl ReleaseSource<'_> {
-    /// The git tag of the release.
-    pub fn tag(&self, device_type: &str) -> String {
-        match self {
-            Self::Application { version } => format!("{device_type}-v{version}"),
-            Self::Bootloader { release } => format!("{device_type}-bootloader-v{release}"),
-            Self::NetCore { release } => format!("{device_type}-netcore-v{release}"),
-        }
-    }
-}
-
 /// The download URL of `filename` in the release `source` names.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename: &str) -> String {
     format!(
         "{}/{}/{}",
@@ -443,15 +429,6 @@ pub fn build_download_url(device_type: &str, source: ReleaseSource<'_>, filename
         source.tag(device_type),
         asset_filename(device_type, source, filename)
     )
-}
-
-pub(crate) fn asset_filename(device: &str, source: ReleaseSource<'_>, key: &str) -> String {
-    match (device, source, key) {
-        ("dongle", ReleaseSource::Application { version }, "dfu-fanstel" | "dfu-laird") => {
-            format!("dongle-fw-{version}-{key}.zip")
-        }
-        _ => format!("{key}.bin"),
-    }
 }
 
 /// Fails unless `data` hashes to `expected_sha256`.
@@ -469,10 +446,21 @@ fn verify_sha256(data: &[u8], expected_sha256: &str) -> Result<(), FirmwareSourc
     Ok(())
 }
 
-/// Download a firmware file and verify its SHA256 hash. In offline mode the file
-/// comes from the firmware pack instead and nothing touches the network.
-/// Online transfers have a two-minute deadline covering headers and body.
+/// Download and verify firmware bytes against the manifest's SHA256 hash.
+///
+/// Offline mode reads from the firmware pack. Online mode fetches from the release
+/// server with a two-minute deadline covering headers and body.
+///
 /// The manifest's declared size bounds accumulation before hash validation.
+///
+/// # Errors
+/// Returns [`FirmwareSourceError::Network`] for request, HTTP status, transfer,
+/// or response-body failures, [`FirmwareSourceError::ImageSize`] when received
+/// size differs from the manifest, [`FirmwareSourceError::HashMismatch`] when
+/// SHA256 differs, and pack read, size, or hash errors in offline mode.
+///
+/// # Since
+/// Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn download_firmware(
     device_type: &str,
     source: ReleaseSource<'_>,
@@ -536,8 +524,10 @@ pub async fn download_firmware(
 }
 
 /// The VID/PID of the connected known device whose USB serial is `uuid` (its BLE MAC).
-/// Serials encode the MAC as hex (e.g. "AABBCCDDEEFF"); case, colons and dashes are
-/// ignored.
+/// Serials encode the MAC as hex (e.g. "AABBCCDDEEFF"). Case, colons and dashes
+/// are ignored.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
     let uuid_hex = format!(
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
@@ -561,6 +551,8 @@ pub fn find_device_vid_pid_by_uuid(uuid: &[u8; 6]) -> Option<(u16, u16)> {
 }
 
 /// The first known device type with a device connected, and its VID/PID.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
     for &(vid, pid, device_type) in DEVICE_MAP {
         if find_device(vid, pid).is_ok() {
@@ -572,6 +564,8 @@ pub fn find_any_known_device() -> Option<(u16, u16, &'static str)> {
 
 /// Whether the device with `uuid` is connected and running its application. `false` when
 /// it is absent, cannot be opened, or exposes the DFU-mode interface.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
     let Ok(info) = find_device_by_uuid(uuid, vid, pid) else {
         return false;
@@ -602,29 +596,57 @@ pub fn is_device_in_app_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
     true
 }
 
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Debug, Error)]
 pub enum DfuError {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("Device not found")]
     DeviceNotFound,
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("No suitable alt interface found for slot: {0}")]
     AltInterfaceNotFound(String),
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("DFU interface not found on device")]
     DfuInterfaceNotFound,
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("unrecognized legacy bootloader counter {0}")]
+    UnknownBootloaderCounter(u16),
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("bootloader has no readable SemVer in USB string descriptor 4")]
+    UnreadableBootloaderVersion,
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("could not read bootloader USB version descriptor")]
+    BootloaderDescriptor(#[from] nusb::GetDescriptorError),
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("invalid bootloader version")]
+    InvalidBootloaderVersion(#[from] semver::Error),
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("DFU error: {0}")]
     Dfu(#[from] dfu_nusb::Error),
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("USB error: {0}")]
     Usb(#[from] nusb::Error),
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
 /// DFU interface class/subclass, and the protocol byte that distinguishes the
 /// bootloader from the runtime interface an application also exposes.
+///
+/// Since: Odyssey Desktop 0.6.3.
 pub const DFU_CLASS: u8 = 0xFE;
+/// Since: Odyssey Desktop 0.6.3.
 pub const DFU_SUBCLASS: u8 = 0x01;
+/// Since: Odyssey Desktop 0.6.3.
 pub const DFU_PROTOCOL_DFU_MODE: u8 = 0x02;
 
 /// The first USB device with this VID/PID.
+///
+/// # Errors
+/// Returns [`DfuError::Usb`] if USB enumeration fails, or
+/// [`DfuError::DeviceNotFound`] if no device has the requested VID/PID.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
     nusb::list_devices()
         .wait()
@@ -639,6 +661,11 @@ pub fn find_device(vid: u16, pid: u16) -> Result<nusb::DeviceInfo, DfuError> {
 /// this is the only safe way to pick one of several identical devices: flashing
 /// resolves the device several times over, and the wrong match writes an image
 /// into a device the user did not choose.
+///
+/// # Errors
+/// Returns [`DfuError::Usb`] if USB enumeration fails, or
+/// [`DfuError::DeviceNotFound`] if no matching serial is found.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_device_by_uuid(
     uuid: &[u8; 6],
     vid: u16,
@@ -655,12 +682,10 @@ pub fn find_device_by_uuid(
         .collect();
 
     if let Some(dev) = candidates.iter().find(|dev| {
-        dev.serial_number()
-            .map(|s| {
-                let clean: String = s.chars().filter(char::is_ascii_hexdigit).collect();
-                clean.eq_ignore_ascii_case(&uuid_hex)
-            })
-            .unwrap_or(false)
+        dev.serial_number().is_some_and(|s| {
+            let clean: String = s.chars().filter(char::is_ascii_hexdigit).collect();
+            clean.eq_ignore_ascii_case(&uuid_hex)
+        })
     }) {
         return Ok(dev.clone());
     }
@@ -669,6 +694,10 @@ pub fn find_device_by_uuid(
 }
 
 /// The number of the first interface with the DFU class and subclass.
+///
+/// # Errors
+/// Returns [`DfuError::DfuInterfaceNotFound`] if the device has no DFU interface.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_dfu_interface(device: &nusb::Device) -> Result<u8, DfuError> {
     for config in device.configurations() {
         for interface in config.interfaces() {
@@ -688,7 +717,11 @@ fn slot_label_matches(descriptor: &str, slot: &str) -> bool {
         .any(|label| label == slot)
 }
 
-/// The alt setting whose string descriptor names `slot` (e.g. "APP", "APP_A" or "APP_B").
+/// The alt setting whose string descriptor names `slot` (e.g. `APP`, `APP_A` or `APP_B`).
+///
+/// # Errors
+/// Returns [`DfuError::AltInterfaceNotFound`] if no DFU alternate setting names `slot`.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn find_alt_for_slot(
     device: &nusb::Device,
     interface_num: u8,
@@ -726,6 +759,10 @@ pub fn find_alt_for_slot(
 
 /// Selects the inactive dual-bank slot or the single-bank staging image.
 /// Returns USB slot name, manifest file name and alternate setting.
+///
+/// # Errors
+/// Returns [`DfuError::AltInterfaceNotFound`] if no application slot is exposed.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn determine_target_slot(
     device: &nusb::Device,
     interface_num: u8,
@@ -755,6 +792,11 @@ pub fn determine_target_slot(
 }
 
 /// [`determine_target_slot`] for the device with `uuid` while it runs its bootloader.
+///
+/// # Errors
+/// Returns [`DfuError`] if the device cannot be found, opened, or inspected, or
+/// does not expose a suitable application slot.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn determine_target_slot_for_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -766,38 +808,27 @@ pub fn determine_target_slot_for_device(
     determine_target_slot(&device, interface_num)
 }
 
-/// Parse a `major.minor.patch` string from the manifest.
-pub fn parse_version(version: &str) -> Option<[u16; 3]> {
-    let mut parts = version.split('.');
-    let parsed = [
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    ];
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(parsed)
-}
-
-/// Read the release of the bootloader a device is currently running.
+/// Parse `SemVer` with `u32` core components, retaining Nightly identity in its string field.
 ///
-/// The bootloader publishes it in bcdDevice, so this costs no transfers and
-/// needs neither an open device nor a claimed interface.
-pub fn read_bootloader_release_for_device(
-    uuid: &[u8; 6],
-    vid: u16,
-    pid: u16,
-) -> Result<BootloaderRelease, DfuError> {
-    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
-    Ok(bootloader_release(info.device_version()))
+/// Since: Odyssey Desktop 0.6.4.
+pub fn parse_version(version: &str) -> Option<[u32; 3]> {
+    let version = semver::Version::parse(version).ok()?;
+    Some([
+        u32::try_from(version.major).ok()?,
+        u32::try_from(version.minor).ok()?,
+        u32::try_from(version.patch).ok()?,
+    ])
 }
 
 /// Find a device that is currently running its bootloader.
 ///
-/// Callers pass the application's product id throughout; the bootloader
-/// enumerates under its own, so the translation lives here rather than at every
-/// call site.
+/// Callers pass the application's product id throughout. The bootloader
+/// enumerates under its own id, so the translation lives here instead of at
+/// every call site.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found by UUID.
+/// Since: Odyssey Desktop 0.6.4.
 pub fn find_bootloader_by_uuid(
     uuid: &[u8; 6],
     vid: u16,
@@ -807,17 +838,55 @@ pub fn find_bootloader_by_uuid(
         Ok(info) => Ok(info),
         // Bootloaders flashed before the split enumerate under the
         // application's id instead.
-        Err(_) => crate::migration::find_bootloader_sharing_app_pid(uuid, vid, app_pid),
+        Err(_) => crate::migration::find_bootloader_sharing_app_pid(*uuid, vid, app_pid),
     }
+}
+
+/// Read bootloader `SemVer`, preferring counter identity over historical
+/// descriptor-4 Cargo versions. Unversioned USB default `0x0010` yields `None`.
+///
+/// # Errors
+/// Returns [`DfuError`] when the device is missing, reports unknown legacy
+/// counter, or lacks a readable modern `SemVer`.
+/// Since: Odyssey Desktop (unreleased).
+pub async fn read_bootloader_release_for_device(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+) -> Result<Option<semver::Version>, DfuError> {
+    let info = find_bootloader_by_uuid(uuid, vid, pid)?;
+    let bcd_device = info.device_version();
+    if bcd_device & 0xF000 == 0xF000 {
+        return legacy_bootloader_semver(bcd_device)
+            .map(Some)
+            .ok_or(DfuError::UnknownBootloaderCounter(bcd_device & 0x0FFF));
+    }
+
+    if bcd_device == 0x0010 {
+        return Ok(None);
+    }
+    let device = info.open().await?;
+    let mut languages = device
+        .get_string_descriptor_supported_languages(Duration::from_secs(3))
+        .await?;
+    let language = languages
+        .next()
+        .ok_or(DfuError::UnreadableBootloaderVersion)?;
+    let descriptor = device
+        .get_string_descriptor(
+            const { NonZeroU8::new(4).expect("descriptor index 4 is nonzero") },
+            language,
+            Duration::from_secs(3),
+        )
+        .await?;
+    Ok(Some(semver::Version::parse(&descriptor)?))
 }
 
 /// Whether the device is running its bootloader right now.
 ///
-/// Callers pass the application's product id. Only the DFU-mode interface
-/// protocol counts: an application also exposes a DFU interface, for the runtime
-/// descriptor it accepts a detach on, and a bootloader that predates the product
-/// id split enumerates under the application's id, so neither id nor class says
-/// which of the two is in charge.
+/// Only DFU-mode interfaces count. Applications expose a runtime DFU interface too.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub fn is_device_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
     find_bootloader_by_uuid(uuid, vid, pid).is_ok_and(|info| {
         info.interfaces().any(|i| {
@@ -829,6 +898,11 @@ pub fn is_device_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
 }
 
 /// Find the alt setting that writes the stage2 bootloader itself.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or inspected,
+/// or does not expose its bootloader alternate setting.
+/// Since: Odyssey Desktop 0.6.4.
 pub fn find_bootloader_alt_for_device(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<u8, DfuError> {
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
@@ -839,6 +913,11 @@ pub fn find_bootloader_alt_for_device(uuid: &[u8; 6], vid: u16, pid: u16) -> Res
 /// Find the alt setting that writes the nRF5340 net core image.
 ///
 /// The stage2 bootloader serves it, so the device must already be in DFU mode.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or inspected,
+/// or does not expose its net-core alternate setting.
+/// Since: Odyssey Desktop 0.6.4.
 pub fn find_netcore_alt_for_device(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<u8, DfuError> {
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
@@ -847,16 +926,19 @@ pub fn find_netcore_alt_for_device(uuid: &[u8; 6], vid: u16, pid: u16) -> Result
 }
 
 /// The application cannot run on any bootloader this device will end up with.
+///
+/// Since: Odyssey Desktop 0.6.4.
 #[derive(Debug, PartialEq, Eq)]
 pub struct BootloaderTooOld {
-    pub required: u16,
+    /// Since: Odyssey Desktop 0.6.4.
+    pub required: semver::Version,
 }
 
 impl std::fmt::Display for BootloaderTooOld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "this firmware needs bootloader release {} or newer and the release publishes none",
+            "no available bootloader meets required version {}",
             self.required
         )
     }
@@ -864,37 +946,39 @@ impl std::fmt::Display for BootloaderTooOld {
 
 impl std::error::Error for BootloaderTooOld {}
 
-/// Decide what the bootloader needs before the application is written.
+/// Decide whether to flash published bootloader and whether application floor holds.
 ///
-/// Returns whether to flash `published`. Two rules, kept apart because they
-/// answer different questions: the fleet should converge on the published
-/// bootloader, so a superseded one is replaced; and the application has a floor
-/// below which it must not be installed, so the device is refused if neither the
-/// running nor the published bootloader reaches `requires`.
+/// # Errors
+/// Returns [`BootloaderTooOld`] if neither running nor published version reaches
+/// the application's required minimum.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub fn plan_bootloader(
-    running: BootloaderRelease,
-    published: Option<u16>,
-    requires: u16,
+    running: Option<&semver::Version>,
+    published: Option<&semver::Version>,
+    requires: &semver::Version,
 ) -> Result<bool, BootloaderTooOld> {
-    let flash = published.is_some_and(|p| running.superseded_by(p));
-    let ending_at = match (flash, published, running) {
-        (true, Some(published), _) => published,
-        (_, _, BootloaderRelease::Counter(running)) => running,
-        (_, _, BootloaderRelease::Legacy) => 0,
-    };
-    if ending_at < requires {
-        return Err(BootloaderTooOld { required: requires });
+    let flash = published.is_some_and(|published| {
+        running.is_none_or(|running| published.cmp_precedence(running).is_gt())
+    });
+    let ending_at = if flash { published } else { running };
+    if !requires
+        .cmp_precedence(&semver::Version::new(0, 0, 0))
+        .is_eq()
+        && ending_at.is_none_or(|version| version.cmp_precedence(requires).is_lt())
+    {
+        return Err(BootloaderTooOld {
+            required: requires.clone(),
+        });
     }
     Ok(flash)
 }
 
-/// Whether a bootloader reads back as the image just written.
+/// Whether bootloader reports exactly version written.
 ///
-/// Exact, not "at least": the artifact declares the release it carries, so a
-/// higher counter is as much a mismatch between image and manifest as a lower
-/// one or a bootloader that kept its old image.
-pub fn bootloader_took_update(now: BootloaderRelease, published: u16) -> bool {
-    now == BootloaderRelease::Counter(published)
+/// Since: Odyssey Desktop 0.6.4.
+pub fn bootloader_took_update(now: Option<&semver::Version>, published: &semver::Version) -> bool {
+    now == Some(published)
 }
 
 /// DFU alt setting label under which the stage2 bootloader exposes the net core.
@@ -902,8 +986,11 @@ const NETCORE_ALT_LABEL: &str = "NET";
 
 /// The unit is not running the net core the application needs before it may be
 /// installed.
+///
+/// Since: Odyssey Desktop 0.6.4.
 #[derive(Debug, PartialEq, Eq)]
 pub struct NetCoreTooOld {
+    /// Since: Odyssey Desktop 0.6.4.
     pub required: u16,
 }
 
@@ -934,6 +1021,11 @@ impl std::error::Error for NetCoreTooOld {}
 /// floor is judged against `running` alone: nothing reports the net core between
 /// writing it and the new application running, so the release this update
 /// publishes can never vouch for its own `requires`. See [`plan_update_steps`].
+///
+/// # Errors
+/// Returns [`NetCoreTooOld`] if the running net-core release is below the
+/// application's required minimum.
+/// Since: Odyssey Desktop 0.6.4.
 pub fn plan_netcore(
     running: u16,
     published: Option<u16>,
@@ -947,27 +1039,37 @@ pub fn plan_netcore(
 
 /// Whether a net core reads back as the image just written.
 ///
-/// Exact, not "at least", for the same reason as the bootloader: a higher
+/// An exact match is required, for the same reason as the bootloader: a higher
 /// counter is as much a mismatch between image and manifest as a lower one. A
 /// net core that reports nothing (`0`) never matches, since a copy that failed
 /// leaves it silent.
+///
+/// Since: Odyssey Desktop 0.6.4.
 pub fn netcore_took_update(now: u16, published: u16) -> bool {
     now == published
 }
 
 /// One stage of a firmware update, in the order a host performs it.
+///
+/// Since: Odyssey Desktop 0.6.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateStep {
     /// Write the published net core image through the bootloader. The net core
     /// bootloader copies it into net flash afterwards, while the device sits in
     /// the stage2 bootloader awaiting an application.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     FlashNetCore,
     /// Read the net core release back from the running application and require
     /// it to equal the published one ([`netcore_took_update`]).
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     VerifyNetCore,
     /// The bootloader and application session: detach if needed, optional
     /// bootloader update, application image, and the check that the device
     /// returns.
+    ///
+    /// Since: Odyssey Desktop 0.6.4.
     WriteApplication,
 }
 
@@ -987,6 +1089,11 @@ pub enum UpdateStep {
 /// When nothing needs flashing the update is only the application. An
 /// unreported net core counts as release 0, so it is replaced whenever a release
 /// is published and never satisfies a `requires` above `0`.
+///
+/// # Errors
+/// Returns [`NetCoreTooOld`] if the running net-core release is below the
+/// application's required minimum.
+/// Since: Odyssey Desktop 0.6.4.
 pub fn plan_update_steps(
     running: u16,
     published: Option<u16>,
@@ -1003,6 +1110,11 @@ pub fn plan_update_steps(
 }
 
 /// Open the DFU interface of the device with `uuid`, in its bootloader, at alt `alt`.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, or
+/// if the DFU interface at `alt` cannot be opened.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub fn open_dfu_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -1017,11 +1129,17 @@ pub fn open_dfu_device(
     Ok(dfu)
 }
 
-/// Send DFU detach to a device running its application; it resets and re-enumerates
-/// in its bootloader.
+/// Send DFU detach to a device running its application. It resets and
+/// re-enumerates in its bootloader.
 ///
 /// An immediate reset can interrupt the control transfer. Transfer errors count as
 /// success only when the same device enumerates its DFU-mode interface within 10 s.
+///
+/// # Errors
+/// Returns [`DfuError`] if the device cannot be found, opened, or claimed, if its
+/// DFU interface cannot be opened, or if detach fails without subsequent DFU-mode
+/// enumeration.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), DfuError> {
     let info = find_device_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
@@ -1036,7 +1154,7 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
     // A WILL_DETACH device resets at once and the control transfer stalls.
     match dfu_async.detach().await {
         Ok(()) => {
-            // The device did not reset by itself; a USB reset starts the bootloader.
+            // The device did not reset by itself. A USB reset starts the bootloader.
             let _ = dfu_async.usb_reset().await;
         }
         Err(e) => {
@@ -1062,9 +1180,14 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
     Ok(())
 }
 
-/// Flash `firmware` into `slot` ("APP_A" or "APP_B", written through alt setting `alt`)
+/// Flash `firmware` into `slot` (`APP_A` or `APP_B`, written through alt setting `alt`)
 /// of the device with `uuid`, which must already be in its bootloader. Progress is
 /// logged every 10%.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, or
+/// if the DFU transfer fails.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn flash_firmware(
     uuid: &[u8; 6],
     vid: u16,
@@ -1139,6 +1262,11 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
 
 /// [`flash_firmware`], also calling `progress_callback` with (bytes written, total
 /// bytes) during the download.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, or
+/// if the DFU transfer fails.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn flash_firmware_with_progress<F>(
     uuid: &[u8; 6],
     vid: u16,
@@ -1181,8 +1309,8 @@ struct NotInDfuMode;
 
 /// Whether the device with `uuid` currently shows its DFU-mode interface (protocol 0x02,
 /// not the application's runtime 0x01).
-fn is_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
-    let Ok(info) = find_bootloader_by_uuid(uuid, vid, pid) else {
+fn is_in_dfu_mode(uuid: [u8; 6], vid: u16, pid: u16) -> bool {
+    let Ok(info) = find_bootloader_by_uuid(&uuid, vid, pid) else {
         return false;
     };
     tracing::debug!("wait_for_dfu_device: found device, checking DFU mode");
@@ -1222,8 +1350,11 @@ fn is_in_dfu_mode(uuid: &[u8; 6], vid: u16, pid: u16) -> bool {
 /// 0x02, not the application's runtime 0x01).
 ///
 /// # Errors
+/// Returns [`DfuError::DeviceNotFound`] once `timeout` has passed without the
+/// device exposing its DFU-mode interface.
 ///
-/// [`DfuError::DeviceNotFound`] once `timeout` has passed.
+/// # Since
+/// Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn wait_for_dfu_device(
     uuid: &[u8; 6],
     vid: u16,
@@ -1237,7 +1368,7 @@ pub async fn wait_for_dfu_device(
     );
 
     let poll = (|| async {
-        if is_in_dfu_mode(uuid, vid, pid) {
+        if is_in_dfu_mode(*uuid, vid, pid) {
             Ok(())
         } else {
             Err(NotInDfuMode)
@@ -1248,18 +1379,23 @@ pub async fn wait_for_dfu_device(
             .with_delay(Duration::from_millis(100))
             .without_max_times(),
     );
-    match tokio::time::timeout(timeout, poll).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(NotInDfuMode)) | Err(_) => {
-            tracing::debug!("wait_for_dfu_device: timeout after {timeout:?}");
-            Err(DfuError::DeviceNotFound)
-        }
+    if let Ok(Ok(())) = tokio::time::timeout(timeout, poll).await {
+        Ok(())
+    } else {
+        tracing::debug!("wait_for_dfu_device: timeout after {timeout:?}");
+        Err(DfuError::DeviceNotFound)
     }
 }
 
-/// Update a device that is running its application: DFU detach, wait up to 10 s for its
-/// bootloader to enumerate, flash the slot the bootloader exposes, after which the device
-/// resets into the new firmware.
+/// Update a device that runs its application.
+///
+/// Detach it into DFU mode, wait up to 10 seconds for bootloader enumeration, flash
+/// the exposed slot, then allow it to reset into the new firmware.
+///
+/// # Errors
+/// Returns [`DfuError`] if detach, DFU enumeration, slot selection, or flashing
+/// fails.
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub async fn update_firmware(
     uuid: &[u8; 6],
     vid: u16,
@@ -1276,7 +1412,7 @@ pub async fn update_firmware(
 
     // The bootloader only identifies itself while it is the thing enumerating,
     // so this is the one point in the update where its release is readable.
-    match read_bootloader_release_for_device(uuid, vid, pid) {
+    match read_bootloader_release_for_device(uuid, vid, pid).await {
         Ok(release) => tracing::info!("Bootloader reports {:?}", release),
         Err(e) => tracing::warn!("Could not read the bootloader release: {e}"),
     }
@@ -1293,6 +1429,8 @@ pub async fn update_firmware(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -1308,6 +1446,17 @@ mod tests {
     fn parses_only_well_formed_versions() {
         assert_eq!(parse_version("0.2.0"), Some([0, 2, 0]));
         assert_eq!(parse_version("1.20.300"), Some([1, 20, 300]));
+        assert_eq!(
+            parse_version("1.2.3-nightly.20261111.t201500.gabcdef012345"),
+            Some([1, 2, 3])
+        );
+        assert_eq!(
+            parse_version("4294967295.4294967295.4294967295"),
+            Some([u32::MAX; 3])
+        );
+        assert_eq!(parse_version("4294967296.0.0"), None);
+        assert_eq!(parse_version("0.4294967296.0"), None);
+        assert_eq!(parse_version("0.0.4294967296"), None);
         assert_eq!(parse_version("0.2"), None);
         assert_eq!(parse_version("0.2.0.1"), None);
         assert_eq!(parse_version(""), None);
@@ -1315,24 +1464,76 @@ mod tests {
     }
 
     #[test]
-    fn bootloader_plan_follows_published_release() {
-        use BootloaderRelease::{Counter, Legacy};
-        // Legacy always updates once something is published.
-        assert_eq!(plan_bootloader(Legacy, Some(1), 0), Ok(true));
-        assert_eq!(plan_bootloader(Counter(1), Some(2), 0), Ok(true));
-        // Current, newer, or nothing published: leave it alone.
-        assert_eq!(plan_bootloader(Counter(2), Some(2), 0), Ok(false));
-        assert_eq!(plan_bootloader(Counter(3), Some(2), 0), Ok(false));
-        assert_eq!(plan_bootloader(Legacy, None, 0), Ok(false));
+    fn nightly_comparison_uses_semver_precedence() {
+        let nightly = FirmwareEntry {
+            version: "1.2.4-nightly.20261111.t201500.gabcdef".into(),
+            requires_bootloader: semver::Version::new(0, 0, 0),
+            requires_netcore: 0,
+            min_desktop: "0.0.0".into(),
+            files: HashMap::new(),
+            released: None,
+        };
+        assert!(is_worth_installing(&nightly, [1, 2, 3], None));
+        assert!(!is_worth_installing(&nightly, [1, 2, 4], None));
+    }
+    #[test]
+    fn legacy_bootloader_marker_maps_only_reserved_counters() {
+        for counter in 1..=5 {
+            assert_eq!(
+                legacy_bootloader_semver(0xF000 | counter),
+                Some(semver::Version::new(0, 0, u64::from(counter)))
+            );
+        }
+        assert_eq!(legacy_bootloader_semver(0xF000), None);
+        assert_eq!(legacy_bootloader_semver(0xF006), None);
     }
 
     #[test]
-    fn only_the_published_counter_counts_as_written() {
-        use BootloaderRelease::{Counter, Legacy};
-        assert!(bootloader_took_update(Counter(2), 2));
-        assert!(!bootloader_took_update(Counter(1), 2));
-        assert!(!bootloader_took_update(Counter(3), 2));
-        assert!(!bootloader_took_update(Legacy, 2));
+    fn bootloader_plan_uses_semver_precedence_without_downgrade() {
+        let v = |v| semver::Version::parse(v).unwrap();
+        let published = v("1.2.0");
+        assert_eq!(
+            plan_bootloader(None, Some(&published), &v("0.0.0")),
+            Ok(true)
+        );
+        assert_eq!(
+            plan_bootloader(Some(&v("1.1.9")), Some(&published), &v("0.0.0")),
+            Ok(true)
+        );
+        assert_eq!(
+            plan_bootloader(Some(&v("1.2.0")), Some(&published), &v("0.0.0")),
+            Ok(false)
+        );
+        assert_eq!(
+            plan_bootloader(Some(&v("2.0.0")), Some(&published), &v("0.0.0")),
+            Ok(false)
+        );
+        assert_eq!(plan_bootloader(None, None, &v("0.0.0")), Ok(false));
+        assert_eq!(
+            plan_bootloader(Some(&v("1.2.0-alpha.1")), None, &v("1.2.0")),
+            Err(BootloaderTooOld {
+                required: v("1.2.0")
+            })
+        );
+        assert_eq!(
+            plan_bootloader(
+                Some(&v("1.2.0+build.1")),
+                Some(&v("1.2.0+build.2")),
+                &v("1.2.0+floor")
+            ),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn bootloader_readback_requires_exact_semver() {
+        let expected = semver::Version::parse("1.2.0").unwrap();
+        assert!(bootloader_took_update(Some(&expected), &expected));
+        assert!(!bootloader_took_update(None, &expected));
+        assert!(!bootloader_took_update(
+            Some(&semver::Version::parse("1.2.1").unwrap()),
+            &expected,
+        ));
     }
 
     #[test]
@@ -1432,21 +1633,23 @@ mod tests {
     }
 
     #[test]
-    fn bootloader_requirement_is_a_floor() {
-        use BootloaderRelease::{Counter, Legacy};
-        // The published bootloader reaches the floor, so flashing it satisfies it.
-        assert_eq!(plan_bootloader(Legacy, Some(2), 2), Ok(true));
-        // Already at the floor.
-        assert_eq!(plan_bootloader(Counter(2), None, 2), Ok(false));
-        // Neither the running nor the published bootloader reaches it.
+    fn bootloader_requirement_is_a_semver_floor() {
+        let v = |v| semver::Version::parse(v).unwrap();
         assert_eq!(
-            plan_bootloader(Counter(1), Some(1), 2),
-            Err(BootloaderTooOld { required: 2 })
+            plan_bootloader(None, Some(&v("1.2.0")), &v("1.2.0")),
+            Ok(true)
         );
         assert_eq!(
-            plan_bootloader(Legacy, None, 1),
-            Err(BootloaderTooOld { required: 1 })
+            plan_bootloader(Some(&v("1.2.0")), None, &v("1.2.0")),
+            Ok(false)
         );
+        assert_eq!(
+            plan_bootloader(Some(&v("1.1.9")), Some(&v("1.1.9")), &v("1.2.0")),
+            Err(BootloaderTooOld {
+                required: v("1.2.0")
+            })
+        );
+        assert_eq!(plan_bootloader(None, None, &v("0.0.0")), Ok(false));
     }
 
     const NIGHTLY: &str = include_str!("../../../firmware/manifests/releases.nightly.json");
@@ -1465,7 +1668,7 @@ mod tests {
                     !entries.firmwares.is_empty(),
                     "{name} {device} has no firmware"
                 );
-                let mut previous: Option<[u16; 3]> = None;
+                let mut previous: Option<[u32; 3]> = None;
                 for entry in &entries.firmwares {
                     let version = entry.version_parts().unwrap_or_else(|| {
                         panic!("{name} {device} {} is not a version", entry.version)
@@ -1515,7 +1718,7 @@ mod tests {
             .map(|(version, min_desktop)| {
                 serde_json::json!({
                     "version": version,
-                    "requires_bootloader": 0,
+                    "requires_bootloader": "0.0.0",
                     "requires_netcore": 0,
                     "min_desktop": min_desktop,
                     "files": {},
@@ -1523,7 +1726,7 @@ mod tests {
             })
             .collect();
         serde_json::from_value(serde_json::json!({
-            "version": 1,
+            "version": 2,
             "devices": { "atslite1": { "firmwares": firmwares } },
         }))
         .unwrap()
@@ -1544,7 +1747,7 @@ mod tests {
             selected(select_firmware(
                 &manifest,
                 "atslite1",
-                semver::Version::new(0, 7, 1),
+                &semver::Version::new(0, 7, 1),
                 0
             )),
             (Some("0.2.0"), Some("0.3.0"))
@@ -1554,7 +1757,7 @@ mod tests {
             selected(select_firmware(
                 &manifest,
                 "atslite1",
-                semver::Version::new(0, 8, 0),
+                &semver::Version::new(0, 8, 0),
                 0
             )),
             (Some("0.3.0"), None)
@@ -1564,7 +1767,7 @@ mod tests {
             selected(select_firmware(
                 &manifest,
                 "atslite1",
-                semver::Version::new(0, 5, 0),
+                &semver::Version::new(0, 5, 0),
                 0
             )),
             (None, Some("0.3.0"))
@@ -1574,7 +1777,7 @@ mod tests {
             selected(select_firmware(
                 &manifest,
                 "nope",
-                semver::Version::new(9, 9, 9),
+                &semver::Version::new(9, 9, 9),
                 0
             )),
             (None, None)
@@ -1585,14 +1788,14 @@ mod tests {
         let manifest = manifest_with(&[("0.3.0", "0.7.6")]);
         let nightly = semver::Version::parse("0.7.6-nightly.20260619.t020000.gabcdef").unwrap();
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", nightly, 0)),
+            selected(select_firmware(&manifest, "atslite1", &nightly, 0)),
             (None, Some("0.3.0"))
         );
         assert_eq!(
             selected(select_firmware(
                 &manifest,
                 "atslite1",
-                semver::Version::new(0, 7, 6),
+                &semver::Version::new(0, 7, 6),
                 0
             )),
             (Some("0.3.0"), None)
@@ -1613,7 +1816,7 @@ mod tests {
                 };
                 serde_json::json!({
                     "version": version,
-                    "requires_bootloader": 0,
+                    "requires_bootloader": "0.0.0",
                     "requires_netcore": requires,
                     "min_desktop": "0.6.0",
                     "files": files,
@@ -1621,14 +1824,19 @@ mod tests {
             })
             .collect();
         serde_json::from_value(serde_json::json!({
-            "version": 1,
+            "version": 2,
             "devices": { "atslite1": { "firmwares": firmwares } },
         }))
         .unwrap()
     }
 
     fn netcore_selected(manifest: &FirmwareManifest, running: u16) -> (Option<&str>, Option<&str>) {
-        let offer = select_firmware(manifest, "atslite1", semver::Version::new(1, 0, 0), running);
+        let offer = select_firmware(
+            manifest,
+            "atslite1",
+            &semver::Version::new(1, 0, 0),
+            running,
+        );
         (
             offer.offered.map(|e| e.version.as_str()),
             offer.net_core_blocked.map(|e| e.version.as_str()),
@@ -1657,7 +1865,7 @@ mod tests {
 
     #[test]
     fn an_entry_never_satisfies_its_own_net_core_floor() {
-        // The only entry carries the release it requires; a unit below it has no path.
+        // The only entry carries the release it requires, so a unit below it has no path.
         let manifest = netcore_manifest(&[("0.3.0", 2, Some(2))]);
         assert_eq!(netcore_selected(&manifest, 1), (None, Some("0.3.0")));
         assert_eq!(netcore_selected(&manifest, 2), (Some("0.3.0"), None));
@@ -1678,7 +1886,7 @@ mod tests {
     fn desktop_hold_takes_precedence_over_the_net_core_floor() {
         let mut manifest = netcore_manifest(&[("0.2.0", 1, Some(1)), ("0.1.0", 0, None)]);
         manifest.devices.get_mut("atslite1").unwrap().firmwares[0].min_desktop = "9.0.0".into();
-        let offer = select_firmware(&manifest, "atslite1", semver::Version::new(1, 0, 0), 0);
+        let offer = select_firmware(&manifest, "atslite1", &semver::Version::new(1, 0, 0), 0);
         assert_eq!(offer.offered.map(|e| e.version.as_str()), Some("0.1.0"));
         assert_eq!(offer.held_back.map(|e| e.version.as_str()), Some("0.2.0"));
         assert!(offer.net_core_blocked.is_none());
@@ -1692,14 +1900,14 @@ mod tests {
     fn walk(
         manifest: &FirmwareManifest,
         device: &str,
-        mut app: [u16; 3],
+        mut app: [u32; 3],
         mut running: u16,
-    ) -> [u16; 3] {
+    ) -> [u32; 3] {
         for _ in 0..=2 * manifest.devices[device].firmwares.len() {
             let Some(entry) = select_firmware(
                 manifest,
                 device,
-                semver::Version::new(u64::MAX, u64::MAX, u64::MAX),
+                &semver::Version::new(u64::MAX, u64::MAX, u64::MAX),
                 running,
             )
             .offered
@@ -1720,7 +1928,7 @@ mod tests {
     /// A floor is only real if units can reach it. Selection is greedy, so an
     /// entry that carries a net core is useless as a bridge when a newer entry
     /// is installable without it: units take the newer one and never pick it up.
-    /// Checking that older entries carry a release is not enough; walk every
+    /// Checking that older entries carry a release is not enough. Walk every
     /// starting point a unit can have and require it to arrive at the newest.
     fn unreachable_starts(manifest: &FirmwareManifest) -> Vec<String> {
         let mut stuck = Vec::new();
@@ -1756,7 +1964,7 @@ mod tests {
         for (name, text) in [("nightly", NIGHTLY), ("stable", STABLE)] {
             let manifest: FirmwareManifest = serde_json::from_str(text).unwrap();
             let stuck = unreachable_starts(&manifest);
-            assert!(stuck.is_empty(), "{name}: {stuck:?}");
+            assert_eq!(stuck, Vec::<String>::new(), "{name}: {stuck:?}");
         }
     }
 
@@ -1780,7 +1988,7 @@ mod tests {
             ("0.1.0", 0, Some(1)),
         ]);
         assert_eq!(walk(&manifest, "atslite1", [0, 0, 0], 0), [0, 2, 0]);
-        assert!(!unreachable_starts(&manifest).is_empty());
+        assert_ne!(unreachable_starts(&manifest), Vec::<String>::new());
     }
 
     /// The application write went through but the net-core copy did not, so the
@@ -1820,7 +2028,7 @@ mod tests {
         assert!(!is_worth_installing(bridge, [0, 2, 1], None));
         // An entry that carries no net core never repairs anything.
         assert!(!is_worth_installing(plain, [0, 2, 0], Some(0)));
-        // Newer always counts, readable net core or not; older never does.
+        // Newer always counts, readable net core or not. Older never does.
         assert!(is_worth_installing(bridge, [0, 2, 0], Some(2)));
         assert!(is_worth_installing(bridge, [0, 2, 0], None));
         assert!(!is_worth_installing(plain, [0, 2, 1], Some(0)));
@@ -1850,7 +2058,7 @@ mod tests {
             selected(select_firmware(
                 &manifest,
                 "atslite1",
-                semver::Version::new(1, 0, 0),
+                &semver::Version::new(1, 0, 0),
                 0
             )),
             (Some("0.1.0"), Some("0.2.0"))
@@ -1864,9 +2072,15 @@ mod tests {
             url(ReleaseSource::Application { version: "0.1.15" }),
             "https://github.com/odysseyarm/odyssey/releases/download/atslite1-v0.1.15/app-a.bin"
         );
+        let legacy = semver::Version::new(0, 0, 3);
         assert_eq!(
-            ReleaseSource::Bootloader { release: 3 }.tag("legacy-atslite1"),
+            ReleaseSource::Bootloader { version: &legacy }.tag("legacy-atslite1"),
             "legacy-atslite1-bootloader-v3"
+        );
+        let modern = semver::Version::new(1, 2, 3);
+        assert_eq!(
+            ReleaseSource::Bootloader { version: &modern }.tag("legacy-atslite1"),
+            "legacy-atslite1-bootloader-v1.2.3"
         );
         assert_eq!(
             ReleaseSource::NetCore { release: 2 }.tag("atslite1"),
@@ -1910,7 +2124,7 @@ mod tests {
         ] {
             let mut entry = FirmwareEntry {
                 version: "0.1.0".into(),
-                requires_bootloader: 1,
+                requires_bootloader: semver::Version::new(0, 0, 1),
                 requires_netcore: required_netcore,
                 min_desktop: "0.7.3".into(),
                 files: HashMap::new(),
@@ -1922,6 +2136,7 @@ mod tests {
                     FileEntry {
                         sha256: "unused".into(),
                         size: 1,
+                        version: None,
                         release: None,
                     },
                 );

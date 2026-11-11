@@ -169,7 +169,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn leave_prompt(&self, p: Palette, cx: &mut Context<Self>) -> gpui::Div {
+    fn leave_prompt(&self, p: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let saving = self
             .wizard
             .as_ref()
@@ -202,7 +202,7 @@ fn apply_appearance(window: &mut Window, cx: &mut App) {
 
 impl Render for Shell {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = theme::palette(cx);
+        let palette = &theme::palette(cx);
         let links = Page::ALL.into_iter().fold(
             div().flex().flex_col().gap_1().text_sm(),
             |links, (label, page)| {
@@ -350,44 +350,36 @@ pub(crate) fn show_home(cx: &mut App) {
     let main = cx.global::<MainWindow>();
     let (window, shell) = (main.window, main.shell.clone());
     cx.activate(true);
-    window
-        .update(cx, |_, window, cx| {
-            shell.update(cx, |shell, cx| shell.navigate(Page::Home, window, cx));
-            window.activate_window();
-        })
-        .ok();
+    let _ = window.update(cx, |_, window, cx| {
+        shell.update(cx, |shell, cx| shell.navigate(Page::Home, window, cx));
+        window.activate_window();
+    });
 }
 
 pub(crate) fn activate_main(cx: &mut App) {
     let window = cx.global::<MainWindow>().window;
     cx.activate(true);
-    window
-        .update(cx, |_, window, _| window.activate_window())
-        .ok();
+    let _ = window.update(cx, |_, window, _| window.activate_window());
 }
 
 pub(crate) fn show_calibration(args: Option<cli::CalibrateArgs>, cx: &mut App) {
     let main = cx.global::<MainWindow>();
     let (window, shell) = (main.window, main.shell.clone());
     cx.defer(move |cx| {
-        window
-            .update(cx, |_, window, cx| {
-                shell.update(cx, |shell, cx| shell.begin_calibration(args, window, cx));
-                window.activate_window();
-            })
-            .ok();
+        let _ = window.update(cx, |_, window, cx| {
+            shell.update(cx, |shell, cx| shell.begin_calibration(args, window, cx));
+            window.activate_window();
+        });
     });
 }
 
 pub(crate) fn finish_calibration(cx: &mut App) {
     let main = cx.global::<MainWindow>();
     let (window, shell) = (main.window, main.shell.clone());
-    window
-        .update(cx, |_, window, cx| {
-            shell.update(cx, |shell, cx| shell.navigate(shell.page, window, cx));
-            window.activate_window();
-        })
-        .ok();
+    let _ = window.update(cx, |_, window, cx| {
+        shell.update(cx, |shell, cx| shell.navigate(shell.page, window, cx));
+        window.activate_window();
+    });
 }
 
 /// Opens the main window and starts the services behind it.
@@ -440,7 +432,7 @@ pub(crate) fn launch(cx: &mut App) {
     let cancel = CancellationToken::new();
     let corruption = shell.read(cx).corruption.clone();
     tray::start(cancel.clone(), window, cx);
-    start_server(window, corruption, cancel, server_ready_tx, cx);
+    start_server(window, corruption, &cancel, server_ready_tx, cx);
 
     if cli::has_pending_calibrate() {
         views::calibrate::automatic::open(cli::take_pending_calibrate(), cx);
@@ -452,7 +444,7 @@ pub(crate) fn launch(cx: &mut App) {
 fn start_server(
     window: gpui::AnyWindowHandle,
     corruption: Entity<ConfigCorruptionModal>,
-    cancel: CancellationToken,
+    cancel: &CancellationToken,
     server_ready: watch::Sender<bool>,
     cx: &mut App,
 ) {
@@ -487,9 +479,7 @@ fn start_server(
                 ShellMessage::BringToFront => {
                     cx.update(|cx| {
                         cx.activate(true);
-                        window
-                            .update(cx, |_, window, _| window.activate_window())
-                            .ok();
+                        let _ = window.update(cx, |_, window, _| window.activate_window());
                     });
                 }
                 ShellMessage::Exit(ServerExit::AnotherInstanceRunning) => {

@@ -10,15 +10,19 @@ use crate::radio::LinkQuality;
 use crate::stage::{Device, DeviceKind};
 
 const PAIRING_TIMEOUT_MS: u32 = 30_000;
-/// Margin the link must regain before a simulated unit reconnects; the gap to
-/// zero keeps a marginal link from flapping.
+/// Margin the link must regain before a simulated unit reconnects. Requiring
+/// more than zero keeps a marginal link from flapping.
 const REJOIN_MARGIN_DB: f64 = 3.0;
 
 /// The staged moment the simulator should show at its own time `at_ms`
 /// ([`Snapshot::time_ms`]).
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cue {
+    /// Since: Odyssey Desktop 0.7.5.
     pub t_s: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub at_ms: u64,
 }
 
@@ -28,6 +32,8 @@ type Bound<'a> = Vec<(Uuid, &'a Device)>;
 /// Turns the staged run into the commands a hub's simulator takes: which units
 /// and dongles exist, where each tracker is, its button presses, and whether
 /// its dongle can hear it.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Debug, Default)]
 pub struct SimFeed {
     prepared: bool,
@@ -41,9 +47,15 @@ impl SimFeed {
     /// Commands for the interval since the previous call, ending at `t_s`,
     /// given the simulator's current state. The first call also makes the
     /// simulator's devices match the stage's and connects them. Trackers are
-    /// posed as at `cue`, or at `t_s` at once without one. Time must advance;
-    /// a rewind (loop or scrub) forgets press history so presses replay
+    /// posed as at `cue`, or at `t_s` at once without one. Time must advance.
+    /// A rewind (loop or scrub) forgets press history so presses replay
     /// instead of being skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if stage device, geometry, or simulated state is invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn step(
         &mut self,
         compiled: &Compiled,
@@ -105,6 +117,8 @@ impl SimFeed {
     }
 
     /// The simulated unit and the dongle it belongs to.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn target(&self, unit: Uuid) -> Target {
         Target {
             unit: Some(unit),
@@ -188,7 +202,7 @@ impl SimFeed {
 
 /// One tracker's commands for the interval `(since, t_s]`, posed as at stage
 /// time `posed_at.0` for simulator time `posed_at.1`. `radio` is the stage's
-/// links and the dongle the tracker belongs to; without a dongle it is the one
+/// links and the dongle the tracker belongs to. Without a dongle it is the one
 /// that hears the tracker best.
 #[expect(
     clippy::too_many_arguments,
@@ -260,6 +274,12 @@ fn track(
 /// One tracker's staged run as an `odyssey-sim-control --scenario` file for
 /// the simulator's first unit: the display, then a pose every `interval_ms`,
 /// with presses and range changes where they happen.
+///
+/// # Errors
+///
+/// Returns an error if interval, device, or display geometry is invalid.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub fn scenario(
     compiled: &Compiled,
     device_id: &str,
@@ -441,7 +461,7 @@ mod tests {
                 "0:add_unit",
                 "0:remove_unit",
                 "0:dongle_usb",
-                // The first unit was on USB; with a dongle staged it goes wireless.
+                // The first unit was on USB. With a dongle staged it goes wireless.
                 "1:unit_usb",
                 "1:pair",
                 "2:pair",
@@ -500,6 +520,7 @@ mod tests {
             .filter(|step| matches!(step.command, Command::Shot))
             .count();
         assert_eq!(shots, 1);
-        assert!(scenario(&stage.compile().unwrap(), "tracker-1", 5).is_err());
+        scenario(&stage.compile().unwrap(), "tracker-1", 5)
+            .expect_err("a run shorter than its presses is refused");
     }
 }

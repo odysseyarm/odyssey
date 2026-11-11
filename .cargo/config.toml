@@ -7,14 +7,14 @@ xtask = ["run", "--manifest-path", "crates/xtask/Cargo.toml", "--"]
 # `cargo lint`: every crate in the workspace, tests and examples included.
 #
 # dead_code_pub_in_binary is allowed here because rustc also fires it on the
-# test harness of every library crate (the harness is a binary, so any pub item
-# the tests do not touch looks dead). `cargo lint-bins` runs it where it is
-# accurate: only the real binaries.
+# test harness of every library crate. The harness is a binary, so any pub item
+# the tests do not touch looks dead. `cargo lint-bins` runs it where it is
+# accurate, on the real binaries only.
 lint = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings", "-A", "dead_code_pub_in_binary"]
 lint-bins = ["clippy", "--workspace", "--bins", "--", "-D", "warnings"]
 
 # odyssey-cv is a private repo fetched over SSH. Cargo's built-in git transport
 # only tries ssh-agent, which fails on machines that key off ~/.ssh/config or an
-# IdentityFile instead; shelling out to git picks up the normal ssh setup.
+# IdentityFile instead. Shelling out to git picks up the normal ssh setup.
 [net]
 git-fetch-with-cli = true

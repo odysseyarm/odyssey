@@ -8,9 +8,14 @@
 extern crate std;
 
 mod cargo_version;
+mod legacy_bootloader_version;
 #[cfg(kani)]
 mod proofs;
-mod usb_release;
+mod usb_revision;
 
+/// Since: Odyssey Desktop (unreleased).
 pub use cargo_version::parse_cargo_version;
-pub use usb_release::{BootloaderRelease, UsbDeviceRelease, UsbVersionReport};
+/// Since: Odyssey Desktop (unreleased).
+pub use legacy_bootloader_version::{legacy_bootloader_counter, legacy_bootloader_version};
+/// Since: Odyssey Desktop (unreleased).
+pub use usb_revision::firmware_bcd_device;

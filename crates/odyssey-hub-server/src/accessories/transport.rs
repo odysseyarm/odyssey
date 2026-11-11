@@ -13,6 +13,7 @@ use odyssey_protocol::marker_control::{self, Mode};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use odyssey_protocol::VendorData;
 
 use super::{RadioEvent, io, native};
 use crate::dongle_list::DongleList;
@@ -104,7 +105,7 @@ impl Link {
                 characteristic,
                 notifications,
             } => {
-                // Weak links miss a connection's first events (HCI 0x3E); BlueZ gives up without retrying.
+                // Weak links miss a connection's first events (HCI 0x3E), and BlueZ gives up without retrying.
                 let mut connected = io(peripheral.connect()).await;
                 for _ in 1..CONNECT_ATTEMPTS {
                     let Err(error) = &connected else { break };
@@ -179,6 +180,84 @@ impl Link {
                     .await?;
                 }
                 Ok(())
+            }
+        }
+    }
+
+    pub(super) async fn marker_ota_exchange(
+        &mut self,
+        frame: &[u8],
+    ) -> Result<[u8; 22], String> {
+        if frame.len() > VendorData::CAPACITY {
+            return Err("Marker OTA frame exceeds transport capacity".into());
+        }
+        match self {
+            Self::Native { peripheral, .. } => {
+                let uuid = Uuid::from_bytes(marker_control::OTA_UUID);
+                let characteristic = peripheral
+                    .characteristics()
+                    .into_iter()
+                    .find(|c| c.uuid == uuid && c.service_uuid == Uuid::from_bytes(marker_control::SERVICE_UUID))
+                    .ok_or_else(|| format!("Marker OTA characteristic {uuid} unavailable"))?;
+                if !characteristic.properties.contains(
+                    btleplug::api::CharPropFlags::READ | btleplug::api::CharPropFlags::WRITE,
+                ) {
+                    return Err("Marker OTA characteristic lacks acknowledged read/write support".into());
+                }
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    peripheral.write(&characteristic, frame, WriteType::WithResponse),
+                )
+                .await
+                .map_err(|_| "Marker OTA write timed out".to_string())?
+                .map_err(|error| error.to_string())?;
+                let status = tokio::time::timeout(Duration::from_secs(5), peripheral.read(&characteristic))
+                    .await
+                    .map_err(|_| "Marker OTA status read timed out".to_string())?
+                    .map_err(|error| error.to_string())?;
+                status
+                    .try_into()
+                    .map_err(|_| "Marker OTA returned status with invalid length".to_string())
+            }
+            Self::Dongle {
+                list, id, address, ..
+            } => {
+                if !list.snapshot().iter().any(|dongle| {
+                    dongle.id == *id
+                        && dongle.protocol_version
+                            >= odyssey_protocol::ota::MARKER_OTA_MUX_PROTOCOL
+                }) {
+                    return Err(
+                        "Marker OTA requires an Odyssey dongle with mux 0.6.0+; update dongle over USB"
+                            .into(),
+                    );
+                }
+                let mut data = [0; VendorData::CAPACITY];
+                data[..frame.len()].copy_from_slice(frame);
+                let frame = VendorData {
+                    len: frame.len() as u8,
+                    data,
+                };
+                match list
+                    .accessory_request(
+                        id,
+                        Command::MarkerOta {
+                            address: *address,
+                            frame,
+                        },
+                    )
+                    .await?
+                {
+                    Reply::Done() => {}
+                    _ => return Err("Unexpected dongle marker OTA write reply".into()),
+                }
+                match list
+                    .accessory_request(id, Command::MarkerOtaStatus { address: *address })
+                    .await?
+                {
+                    Reply::MarkerOtaStatus(status) => Ok(status),
+                    _ => Err("Dongle did not return marker OTA status".into()),
+                }
             }
         }
     }
@@ -320,6 +399,7 @@ async fn done(list: &DongleList, id: &str, command: Command) -> Result<(), Strin
     match list.accessory_request(id, command).await? {
         Reply::Done() => Ok(()),
         Reply::Capabilities(_) => Err("Unexpected dongle accessory reply".into()),
+        Reply::MarkerOtaStatus(_) => Err("Unexpected dongle accessory reply".into()),
     }
 }
 
@@ -403,7 +483,7 @@ impl PairingWindows {
             return None;
         }
         let state = self.0.entry(address).or_insert((u8::MAX, 0));
-        // Native BLE properties can replay stale data; identical seconds never renew.
+        // Native BLE properties can replay stale data, so identical seconds never renew.
         if state.0 != seconds {
             *state = (
                 seconds,

@@ -4,7 +4,7 @@
 //! the horizontal forward direction (the *aligned* frame). That makes the
 //! screen's top edge horizontal for an upright screen and gives the hub a
 //! gravity-referenced rotation. Heading about gravity cannot be observed
-//! without a magnetometer; the estimator keeps the camera's own heading.
+//! without a magnetometer, so the estimator keeps the camera's own heading.
 
 use std::time::Duration;
 
@@ -14,10 +14,12 @@ use crate::camera::ImuSample;
 
 /// Madgwick's gradient-descent gain, the value the reference implementation
 /// recommends for a 6-axis filter.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const MADGWICK_GAIN: f64 = 0.5;
 
 /// A gap longer than this between samples is skipped instead of extrapolating the gyro
-/// across a dropout; integration resumes from the later sample.
+/// across a dropout. Integration resumes from the later sample.
 const MAX_STEP: Duration = Duration::from_millis(500);
 /// Accelerometer readings (m/s^2) shorter than this carry no direction, so
 /// they do not correct the filter.
@@ -26,7 +28,7 @@ const MIN_ACCEL_NORM: f64 = 1e-9;
 /// descend, so the filter integrates the gyro alone.
 const MIN_GRADIENT_NORM: f64 = 1e-12;
 /// Readings (m/s^2) shorter than this give no gravity direction to start the
-/// filter from; such samples are skipped until a usable one arrives.
+/// filter from. Such samples are skipped until a usable one arrives.
 const MIN_ACCEL_NORM_TO_START: f64 = 1e-6;
 
 /// Maps camera axes (x right, y down, z forward) to the filter's axes (x
@@ -37,6 +39,8 @@ fn camera_to_filter() -> Matrix3<f64> {
 
 /// Madgwick's IMU-only orientation filter. The quaternion rotates filter-frame
 /// vectors into the earth frame whose z axis points up.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Madgwick {
     q: Vector4<f64>, // w, x, y, z
@@ -45,6 +49,8 @@ pub struct Madgwick {
 
 impl Madgwick {
     /// Starts level with identity orientation.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(gain: f64) -> Self {
         Self {
             q: Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -54,6 +60,8 @@ impl Madgwick {
 
     /// Starts from the orientation that points "up" at the measured specific
     /// force, so the filter does not spend its first second converging.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn from_accelerometer(gain: f64, accel: &Vector3<f64>) -> Self {
         let q = UnitQuaternion::rotation_between(accel, &Vector3::z()).unwrap_or_else(|| {
             // Opposite vectors have infinitely many valid half-turn axes, so
@@ -71,6 +79,7 @@ impl Madgwick {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn orientation(&self) -> UnitQuaternion<f64> {
         UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
             self.q[0], self.q[1], self.q[2], self.q[3],
@@ -82,6 +91,8 @@ impl Madgwick {
     /// whenever the sample rate differs from the assumed one.
     /// Non-finite readings, non-positive intervals and overflowing updates are
     /// ignored rather than poisoning the orientation for the rest of a session.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn update(&mut self, gyro: &Vector3<f64>, accel: &Vector3<f64>, dt: f64) {
         if !dt.is_finite() || dt <= 0.0 || !gyro.iter().chain(accel.iter()).all(|v| v.is_finite()) {
             return;
@@ -103,6 +114,10 @@ impl Madgwick {
 
 /// Rate of change of the quaternion `q` (w, x, y, z) under angular rate
 /// `gyro`.
+#[expect(
+    clippy::manual_midpoint,
+    reason = "Quaternion derivative uses this exact three-term sum, not a midpoint."
+)]
 fn gyro_rate(q: &Vector4<f64>, gyro: &Vector3<f64>) -> Vector4<f64> {
     let [q0, q1, q2, q3] = [q[0], q[1], q[2], q[3]];
     Vector4::new(
@@ -146,15 +161,23 @@ fn gravity_gradient(q: &Vector4<f64>, accel: &Vector3<f64>) -> Option<Vector4<f6
 }
 
 /// Camera tilt relative to gravity, in degrees.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tilt {
     /// Positive when the camera looks down.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub pitch_deg: f64,
-    /// Rotation about the optical axis; positive turns the image clockwise.
+    /// Rotation about the optical axis. Positive turns the image clockwise.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub roll_deg: f64,
 }
 
 /// Consumes IMU samples and reports the camera-to-aligned rotation.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Default)]
 pub struct GravityEstimator {
     filter: Option<Madgwick>,
@@ -163,12 +186,15 @@ pub struct GravityEstimator {
 }
 
 impl GravityEstimator {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Consumes a reading, ignoring non-finite vectors and out-of-order
     /// timestamps. Neither may corrupt the last usable orientation or clock.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn push(&mut self, sample: &ImuSample) {
         self.samples += 1;
         if !sample
@@ -203,6 +229,7 @@ impl GravityEstimator {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn extend<'a>(&mut self, samples: impl IntoIterator<Item = &'a ImuSample>) {
         for s in samples {
             self.push(s);
@@ -211,18 +238,24 @@ impl GravityEstimator {
 
     /// Samples consumed since creation, including ones skipped as non-finite, out of
     /// order, or before a usable accelerometer reading started the filter.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn sample_count(&self) -> usize {
         self.samples
     }
 
     /// Whether an accelerometer reading long enough to give a gravity direction has
     /// started the filter.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn is_ready(&self) -> bool {
         self.filter.is_some()
     }
 
     /// Rotation taking camera-frame vectors to the aligned frame. Identity
     /// without IMU data, which assumes an upright camera.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn camera_to_aligned(&self) -> Matrix3<f64> {
         let Some(filter) = &self.filter else {
             return Matrix3::identity();
@@ -232,11 +265,14 @@ impl GravityEstimator {
     }
 
     /// Unit gravity direction in the camera frame, when known.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn down_in_camera(&self) -> Option<Vector3<f64>> {
         self.filter.as_ref()?;
         Some(self.camera_to_aligned().transpose() * Vector3::y())
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn tilt(&self) -> Option<Tilt> {
         let d = self.down_in_camera()?;
         Some(Tilt {
@@ -293,7 +329,7 @@ mod tests {
     #[test]
     fn filter_tracks_gyro_with_real_sample_interval() {
         // Camera rolls about its optical axis at 0.5 rad/s for one second,
-        // sampled at 50 Hz; accelerometer shows the matching gravity direction.
+        // sampled at 50 Hz, with the accelerometer showing the matching gravity direction.
         let rate = 0.5;
         let mut g = GravityEstimator::new();
         g.push(&rest_sample(0, Vector3::y()));

@@ -27,13 +27,14 @@ impl From<common::device::Device> for Device {
         Self {
             uuid: d.uuid.to_vec(),
             transport: Transport::from(d.transport) as i32,
+            name: d.name().to_owned(),
             firmware_version: if d.firmware_version == [0, 0, 0] {
                 None
             } else {
                 Some(FirmwareVersion {
-                    major: u32::from(d.firmware_version[0]),
-                    minor: u32::from(d.firmware_version[1]),
-                    patch: u32::from(d.firmware_version[2]),
+                    major: d.firmware_version[0],
+                    minor: d.firmware_version[1],
+                    patch: d.firmware_version[2],
                 })
             },
             capabilities: u32::from(d.capabilities.bits()),
@@ -43,7 +44,10 @@ impl From<common::device::Device> for Device {
             },
             events_connected: d.events_connected,
             product_id: u32::from(d.product_id),
-            name: d.name().to_string(),
+            firmware_version_string: d
+                .firmware_identity
+                .known()
+                .map(|version| version.to_string()),
             netcore_release: u32::from(d.netcore_release),
         }
     }
@@ -53,14 +57,7 @@ impl TryFrom<Device> for common::device::Device {
 
     fn try_from(d: Device) -> Result<Self, Self::Error> {
         let firmware_version = if let Some(version) = d.firmware_version {
-            [
-                u16::try_from(version.major)
-                    .map_err(|_conversion_error| "firmware major exceeds u16")?,
-                u16::try_from(version.minor)
-                    .map_err(|_conversion_error| "firmware minor exceeds u16")?,
-                u16::try_from(version.patch)
-                    .map_err(|_conversion_error| "firmware patch exceeds u16")?,
-            ]
+            [version.major, version.minor, version.patch]
         } else {
             [0; 3]
         };
@@ -84,6 +81,13 @@ impl TryFrom<Device> for common::device::Device {
             product_id: u16::try_from(d.product_id)
                 .map_err(|_conversion_error| "product id exceeds u16")?,
             name: Self::name_bytes(&d.name),
+            firmware_identity: d
+                .firmware_version_string
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .map_err(|_conversion_error| "firmware version is not an Odyssey release")?
+                .unwrap_or_default(),
             netcore_release: u16::try_from(d.netcore_release)
                 .map_err(|_conversion_error| "net core release exceeds u16")?,
         })
@@ -96,21 +100,38 @@ mod tests {
 
     #[test]
     fn unknown_wire_transports_are_errors() {
-        assert!(
-            common::device::Device::try_from(Device {
-                uuid: vec![0; 6],
-                transport: i32::MAX,
-                ..Device::default()
-            })
-            .is_err()
+        common::device::Device::try_from(Device {
+            uuid: vec![0; 6],
+            transport: i32::MAX,
+            ..Device::default()
+        })
+        .expect_err("unknown device transport must be rejected");
+        common::device::Device::try_from(Device {
+            uuid: vec![0; 6],
+            events_transport: i32::MAX,
+            ..Device::default()
+        })
+        .expect_err("unknown events transport must be rejected");
+    }
+
+    #[test]
+    fn firmware_identity_crosses_the_wire_as_release_text() {
+        let text = "1.2.4-nightly.20261111.t201500.gabcdef012345";
+        let device = common::device::Device::try_from(Device {
+            uuid: vec![0; 6],
+            firmware_version_string: Some(text.to_owned()),
+            ..Device::default()
+        })
+        .expect("a release version converts");
+        assert_eq!(
+            Device::from(device).firmware_version_string.as_deref(),
+            Some(text)
         );
-        assert!(
-            common::device::Device::try_from(Device {
-                uuid: vec![0; 6],
-                events_transport: i32::MAX,
-                ..Device::default()
-            })
-            .is_err()
-        );
+        common::device::Device::try_from(Device {
+            uuid: vec![0; 6],
+            firmware_version_string: Some("1.2.3-rc.1".to_owned()),
+            ..Device::default()
+        })
+        .expect_err("other version text must be rejected");
     }
 }

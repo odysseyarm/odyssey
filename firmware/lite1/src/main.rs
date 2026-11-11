@@ -4,7 +4,10 @@
 
 #![no_std]
 #![no_main]
-
+#![expect(
+    unsafe_code,
+    reason = "Firmware entrypoint owns peripheral stealing and erratum register access"
+)]
 use core::cell::RefCell;
 
 use better_dfu::application::DfuMarker;
@@ -38,7 +41,7 @@ use static_cell::StaticCell;
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
 
-const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
+const FIRMWARE_VERSION: [u32; 3] = odyssey_version::cargo_version!();
 
 // Same accelerometer rate the legacy atslite firmware used.
 const DEFAULT_ACCEL_ODR: u16 = 100;
@@ -59,6 +62,58 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
             Err(()) => defmt::warn!("DFU requested - FAILED"),
         }
     }
+}
+
+fn ota_flash_slots(
+    flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
+) -> atslite_common::ota::FlashSlots {
+    unsafe extern "C" {
+        static __bootloader_app_a_start: u32;
+        static __bootloader_app_a_end: u32;
+        static __bootloader_app_b_start: u32;
+        static __bootloader_app_b_end: u32;
+        static __bootloader_dfu_start: u32;
+        static __bootloader_dfu_end: u32;
+        static __bootloader_state_start: u32;
+        static __netcore_primary_start: u32;
+        static __netcore_primary_end: u32;
+        static __ota_app_ram_start: u32;
+        static __ota_app_ram_end: u32;
+        static __ota_netcore_ram_start: u32;
+        static __ota_netcore_ram_end: u32;
+    }
+    let addr = |symbol: *const u32| symbol as u32;
+    let (app_a, app_b, stage, boot_state, netcore, app_ram, netcore_ram) = unsafe {
+        (
+            addr(&raw const __bootloader_app_a_start)
+                ..addr(&raw const __bootloader_app_a_end),
+            addr(&raw const __bootloader_app_b_start)
+                ..addr(&raw const __bootloader_app_b_end),
+            addr(&raw const __bootloader_dfu_start)..addr(&raw const __bootloader_dfu_end),
+            addr(&raw const __bootloader_state_start),
+            addr(&raw const __netcore_primary_start)..addr(&raw const __netcore_primary_end),
+            addr(&raw const __ota_app_ram_start)..addr(&raw const __ota_app_ram_end),
+            addr(&raw const __ota_netcore_ram_start)..addr(&raw const __ota_netcore_ram_end),
+        )
+    };
+    let current = ota_flash_slots as *const () as usize as u32;
+    let running_app = if app_a.contains(&current) {
+        0
+    } else if app_b.contains(&current) {
+        1
+    } else {
+        unreachable!("app code address must belong to one linked bank")
+    };
+    atslite_common::ota::FlashSlots::new(atslite_common::ota::Layout {
+        flash,
+        app_banks: [app_a, app_b],
+        running_app,
+        app_ram,
+        netcore_stage: stage,
+        netcore_active: netcore,
+        netcore_ram,
+        boot_state,
+    })
 }
 
 #[embassy_executor::main]
@@ -117,11 +172,11 @@ async fn main(spawner: Spawner) {
     static PMIC_LEDS_HANDLE: StaticCell<PmicLedsHandle> = StaticCell::new();
     let pmic_leds = PMIC_LEDS_HANDLE.init(handle);
 
-    // The stage2 bootloader already started the watchdog; all we can do is feed it.
+    // The stage2 bootloader already started the watchdog, so all we can do is feed it.
     defmt::info!("Initializing watchdog...");
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
-    wdt_config.timeout_ticks = 32768 * 60; // 60 s; has to match the bootloader's value
+    wdt_config.timeout_ticks = 32768 * 60; // 60 s, has to match the bootloader's value
     wdt_config.action_during_sleep = SleepConfig::RUN;
     wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
@@ -147,11 +202,21 @@ async fn main(spawner: Spawner) {
     static NVMC: StaticCell<Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>> = StaticCell::new();
     let nvmc = NVMC.init_with(|| Mutex::new(RefCell::new(Nvmc::new(p.NVMC))));
     defmt::info!("NVMC initialized");
+    spawner
+        .spawn(
+            atslite_common::ota::task(
+                ota_flash_slots(nvmc),
+                FIRMWARE_VERSION,
+                lite1::ble::netcore::netcore_release,
+            )
+            .unwrap(),
+        );
 
     // Settings come up before the PAG so its saved configuration can be applied.
     defmt::info!("Initializing settings...");
     // SAFETY: both handles run on the application executor. BlockingAsync delegates directly
     // to synchronous NVMC operations, so settings never yields with a flash operation in flight.
+    // SAFETY: `peripherals::NVMC` was moved into the static flash handle above; no other NVMC instance exists.
     let nvmc_async = BlockingAsync::new(unsafe { Nvmc::new(peripherals::NVMC::steal()) });
     lite1::settings::init_core(&spawner, nvmc_async).await;
     let mut settings = lite1::settings::init_nodes().await;
@@ -167,6 +232,7 @@ async fn main(spawner: Spawner) {
     // The PAG7665QN gets SPIM4, the only high-speed SPI instance.
     defmt::info!("Initializing PAG7665QN...");
     // Erratum 135 workaround
+    // SAFETY: Erratum 135 requires this aligned peripheral register write before SPIM4 initialization.
     unsafe {
         (0x5000ac04 as *mut u32).write_volatile(1);
     }
@@ -301,6 +367,7 @@ async fn main(spawner: Spawner) {
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5211, // Lite1 PID
         FIRMWARE_VERSION,
+        odyssey_version::cargo_semver!(),
         usb_product_name,
         DEVICE_INTERFACE_GUID,
         p.USBD,
@@ -383,6 +450,7 @@ async fn main(spawner: Spawner) {
         usb_snd,
         usb_rcv,
         usb_configured: usb_cfg,
+        ota: atslite_common::ota::OtaHandle,
     };
 
     object_mode::run(ctx).await;

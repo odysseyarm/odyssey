@@ -1,6 +1,6 @@
 # Bootloader for nRF
 
-The bootloader uses `embassy-boot` to interact with the flash.
+The bootloader talks to flash through `embassy-boot`.
 
 # Usage
 

@@ -136,7 +136,7 @@ pub(super) async fn send<M: Serialize>(iface: &Interface, msg: &M) -> Result<()>
 /// Polls until a message satisfying `accept` arrives, discarding the others.
 ///
 /// # Errors
-/// [`Error::Timeout`] when nothing acceptable arrives within `timeout`; callers
+/// [`Error::Timeout`] when nothing acceptable arrives within `timeout`. Callers
 /// that tolerate older firmware's missing acknowledgements match on it.
 pub(super) async fn recv_matching<M: DeserializeOwned>(
     iface: &Interface,
@@ -151,7 +151,7 @@ pub(super) async fn recv_matching<M: DeserializeOwned>(
         if elapsed >= timeout {
             return Err(Error::Timeout(timeout));
         }
-        let slice = (timeout - elapsed).min(POLL_SLICE);
+        let slice = timeout.saturating_sub(elapsed).min(POLL_SLICE);
         let reply = match iface
             .control_in(
                 ControlIn {

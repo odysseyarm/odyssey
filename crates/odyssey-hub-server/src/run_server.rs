@@ -35,12 +35,18 @@ enum ServerEvent {
 }
 
 /// How the hub finds its devices. The default is what a user's hub does.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ServerOptions {
     /// Run simulated units and dongles next to the physical ones.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     #[cfg(feature = "sim")]
     pub simulator: Option<odyssey_sim::SensorModel>,
     /// Leave USB devices and the system Bluetooth radio alone.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     #[cfg(feature = "sim")]
     pub no_discovery: bool,
 }
@@ -49,9 +55,18 @@ pub struct ServerOptions {
 /// manager and the forwarding of device task messages into the shared lists.
 ///
 /// Returns once the gRPC server or the device tasks end, or `cancel_token` fires.
-/// Critical task failures are returned rather than reported as a clean shutdown.
-/// Cancellation does not wait for clients to close their streaming RPCs; Bluetooth
+/// Critical task failures come back as errors instead of a clean shutdown.
+/// Cancellation does not wait for clients to close their streaming RPCs. Bluetooth
 /// readers are stopped and the manager disconnects its accessories before returning.
+///
+/// # Errors
+///
+/// Returns `ServerError::SocketAlreadyInUse` or `ServerError::IoError` when binding the
+/// local socket fails, `ServerError::Simulator` when simulator startup fails,
+/// `ServerError::Transport` when the gRPC server fails, or `ServerError::DeviceTasksExited`
+/// when the device task supervisor exits unexpectedly.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[cfg_attr(
     not(feature = "sim"),
     expect(
@@ -108,7 +123,7 @@ pub async fn run_server(
     let marker_demand_watch = marker_demand.subscribe();
     let (accessory_radios, accessory_commands) = crate::accessories::AccessoryRadios::new();
     let server = HubServer {
-        device_list: Default::default(),
+        device_list: crate::device_list::DeviceList::default(),
         event_sender: event_sender.clone(),
         marker_demand,
         device_list_change_sender: device_list_change_sender.clone(),
@@ -118,8 +133,8 @@ pub async fn run_server(
         accessory_map: Arc::clone(&accessory_map),
         accessory_map_sender: accessory_map_sender.clone(),
         accessory_radios: accessory_radios.clone(),
-        accessory_config_lock: Default::default(),
-        dongle_list: Default::default(),
+        accessory_config_lock: Arc::default(),
+        dongle_list: crate::dongle_list::DongleList::default(),
         dongle_list_change_sender: dongle_list_change_sender.clone(),
         app_message_sender: sender.clone(),
         accessory_info_sender,
@@ -140,8 +155,8 @@ pub async fn run_server(
     }
     tracing::info!("Server running at {name:?}");
 
-    // Critical parts are supervised together; the optional Bluetooth manager
-    // owns its connections and is given time to disconnect during shutdown.
+    // Critical parts are supervised together. The optional Bluetooth manager owns its
+    // connections and gets time to disconnect during shutdown.
     let accessory_cancel = background_cancel.clone();
     let accessory_task = tokio::spawn(async move {
         #[cfg(feature = "sim")]

@@ -235,7 +235,8 @@ mod tests {
                 ..device_event::TrackingEvent::default()
             },
         ));
-        assert!(common::events::Event::try_from(event).is_err());
+        common::events::Event::try_from(event)
+            .expect_err("missing pose translation must be rejected");
     }
 
     #[test]
@@ -248,7 +249,8 @@ mod tests {
                 ..device_event::AccelerometerEvent::default()
             },
         ));
-        assert!(common::events::Event::try_from(event).is_err());
+        common::events::Event::try_from(event)
+            .expect_err("missing angular velocity must be rejected");
     }
 
     #[test]
@@ -256,6 +258,6 @@ mod tests {
         let event = wire_event(device_event::DeviceEventOneof::Packet(
             device_event::PacketEvent { bytes: vec![] },
         ));
-        assert!(common::events::Event::try_from(event).is_err());
+        common::events::Event::try_from(event).expect_err("empty packet must be rejected");
     }
 }

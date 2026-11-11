@@ -2,7 +2,7 @@
 
 One look for everything with the Odyssey Arm name on it: the website, Odyssey
 Desktop, the SDK docs, firmware-facing tools and the games. The values live in
-[`tokens.css`](./tokens.css); this page says what they are for.
+[`tokens.css`](./tokens.css). This page says what they are for.
 
 | Surface | Where the tokens come in |
 |---|---|
@@ -15,15 +15,18 @@ Change a value in `tokens.css` first, then in the copies, in the same week.
 
 ## Character
 
-Precise, calm, warm. Odyssey is aiming hardware, so the brand borrows from it:
-a reticle in the emblem, a dark range-like backdrop, one hot orange for the
-thing to look at. Screens stay quiet so the target, the camera picture or the
-next action stands out.
+Precise, calm, warm. Odyssey is aiming hardware, so the brand borrows from it.
+There is a reticle in the emblem, a dark backdrop like a range, and one hot
+orange for the thing to look at. Screens stay quiet so that the target, the
+camera picture or the next action stands out.
 
-- Warm charcoal, never blue-gray or pure black, for backgrounds.
-- Orange marks the one thing to do or look at. If everything is orange, nothing is.
-- Rounded and soft-edged: pill buttons, 10–14 px corners, thin borders over heavy shadows.
-- Short, plain words. Name the action ("Pair dongle"), not the concept ("Pairing").
+- Backgrounds are warm charcoal. Never blue-gray, never pure black.
+- Orange marks the one thing to do or look at. Spread it over a whole screen and
+  it stops pointing at anything.
+- Rounded and soft-edged: pill buttons, 10–14 px corners, and thin borders where
+  another design would use a heavy shadow.
+- Short, plain words. Name the action ("Pair dongle"). "Pairing" names the
+  concept and tells the user nothing to do.
 
 ## Logo
 
@@ -38,7 +41,7 @@ the website repository, `src/assets/images/`:
 
 - Keep clear space of at least half the emblem's width on every side.
 - Never recolour, outline, rotate, stretch or put a shadow behind it.
-- Never put the emblem on orange: the ochre ring disappears.
+- Never put the emblem on orange, because the ochre ring disappears.
 - Below 24 px, use the emblem alone, without the wordmark.
 - In running text and UI chrome, the product is "Odyssey" and the company is
   "Odyssey Arm". Never "ODYSSEY" or "OdysseyArm" (the second only in
@@ -78,15 +81,15 @@ Use roles, never raw values. Every role has a light and a dark value, and
 | `accent-ink` | `#994a00` | `#ffa44f` | Orange text, links, icons, focus outline |
 | `accent-soft` | `#ffe4c9` | `#3d2510` | Tint behind the current or selected item |
 
-Text on orange is near-black, not white: white on `#ffa44f` is 2.0:1 and fails;
-`#111111` is 9.6:1.
+Text on orange is near-black. White on `#ffa44f` comes out at 2.0:1 and fails,
+where `#111111` reaches 9.6:1.
 
 ### Status
 
 Each status has a fill, an `-ink` for text on neutral or soft backgrounds, and
-a `-soft` tint. Status colours mean something; never use them for decoration.
-Only the warning and danger fills carry text (with the colour given); success
-and info fills are for dots, shapes and overlays.
+a `-soft` tint. Status colours mean something, so never use them for
+decoration. Only the warning and danger fills carry text (with the colour
+given). Success and info fills are for dots, shapes and overlays.
 
 | Status | Fill | Ink (light / dark) | Soft (light / dark) | Means |
 |---|---|---|---|---|
@@ -96,7 +99,7 @@ and info fills are for dots, shapes and overlays.
 | `info` | `#0b5cad` / `#6cb6ff` | `#0b5cad` / `#6cb6ff` | `#e5f1ff` / `#15263b` | Neutral hint, explanation |
 
 Over a camera picture or a game scene, draw status in the fill colours with a
-dark outline or backdrop; the soft and ink values are for UI surfaces.
+dark outline or backdrop. The soft and ink values are for UI surfaces.
 
 ### Data
 
@@ -109,22 +112,24 @@ dark outline or backdrop; the soft and ink values are for UI surfaces.
 ### Contrast
 
 Every text role above meets WCAG AA (4.5:1) on `canvas`, `surface`,
-`surface-alt` and `surface-hover` in both themes, except `fg-faint`, which is
-for non-text use and placeholders. Check a new pair before shipping it.
+`surface-alt` and `surface-hover` in both themes. The one exception is
+`fg-faint`, which is for non-text use and placeholders. Check a new pair before
+shipping it.
 
 ## Type
 
 - **Inter** (variable, weights 100–900), with the system UI font as fallback.
   The website ships it. The desktop app does not bundle a font and uses the
-  system UI font, because GPUI has no font loader wired up yet. Monospace: the
-  platform's UI monospace.
+  system UI font, because GPUI has no font loader wired up yet. Monospace is
+  the platform's UI monospace.
 - Headings: bold, tracking `-0.03em`, balanced wrapping, `fg-strong`.
 - Body: 15–17 px, line height 1.5–1.6. Desktop UI text is 14 px with 12 px for
   captions and badges.
 - Numbers that update live (battery, distances, counters) use tabular figures
   so they do not jitter, where the toolkit offers them.
 - Small uppercase labels ("eyebrows") are 12 px, semibold, letter-spaced, `fg-muted`.
-- Sentence case everywhere, buttons included: "Save zero", not "Save Zero".
+- Sentence case everywhere, buttons included. Write "Save zero". "Save Zero" is
+  wrong.
 
 ## Shape, space and depth
 
@@ -136,9 +141,9 @@ for non-text use and placeholders. Check a new pair before shipping it.
 | `--oa-radius-xl` | 22 px | Hero panels, large media |
 | (pill) | 999 px | Buttons, badges, status dots |
 
-- Space in steps of 4 px; cards pad 20 px, pages 24–32 px.
+- Space in steps of 4 px. Cards pad 20 px, pages 24–32 px.
 - Separate with a 1 px `line` border before reaching for a shadow. Cards get at
-  most a small shadow; only dialogs float.
+  most a small shadow, and only dialogs float.
 - Dialog backdrops: black at 60 %.
 
 ## Motion
@@ -154,8 +159,8 @@ for non-text use and placeholders. Check a new pair before shipping it.
 
 ## Components
 
-The names below are the style guide's. The desktop builds each one from the
-colours in `crates/odyssey-desktop/src/theme.rs` in GPUI; the website's
+The names below are the style guide's. The desktop builds each one in GPUI from
+the colours in `crates/odyssey-desktop/src/theme.rs`, and the website's
 `.button` and `.button.secondary` follow the same rules in CSS.
 
 | Component | Name | Rules |
@@ -184,16 +189,16 @@ cd crates/odyssey-desktop/src
 grep -rnE '\b(rgba?|hsla?)\(|0x[0-9a-fA-F]{6}\b' . | grep -v '^./theme.rs'
 ```
 
-Things that are not branded, on purpose: the calibration patterns the camera
-photographs (pure black and white, exact geometry), crosshair images and the
-zero target.
+A few things are left unbranded on purpose. The calibration patterns the camera
+photographs are pure black and white with exact geometry. Crosshair images and
+the zero target are unbranded too.
 
 ## Writing
 
 - Say what happened and what to do next: "The dongle did not answer. Unplug it
   and plug it back in."
-- Use the user's words: screen, dongle, device, zero. Not "endpoint", "PID",
-  "transport" unless the screen is for developers.
+- Use the user's words: screen, dongle, device, zero. Keep "endpoint", "PID" and
+  "transport" for screens made for developers.
 - Units take a space, percent does not: "3.2 m", "95%".
 - No exclamation marks in errors. No blame ("You entered…").
 
@@ -218,14 +223,14 @@ variables from every stylesheet:
 }
 ```
 
-- Menus default to the dark theme: play usually happens in a dim room in
+- Menus default to the dark theme, since play usually happens in a dim room in
   front of a projector. A game's art direction may choose light menus, and a
   light or high-contrast option for accessibility is welcome.
 - HUD text over the scene always sits on a dark backing (`canvas` at 70–80%
   opacity) or carries a dark outline, so it reads over any background.
-- Orange is for the player's own reticle, score and the next action; status
+- Orange is for the player's own reticle, score and the next action. Status
   colours keep their meaning (hit: success, miss: danger).
 - Menus follow the desktop components: pill buttons, one primary per screen,
   14 px card corners.
-- Use Inter through a TextMesh Pro or UI Toolkit font asset; keep the OFL
+- Use Inter through a TextMesh Pro or UI Toolkit font asset, and keep the OFL
   licence with it.

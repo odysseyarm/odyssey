@@ -1,5 +1,9 @@
 #![no_std]
 #![no_main]
+#![expect(
+    unsafe_code,
+    reason = "Stage-one boot transfer and exception handlers require raw peripheral access"
+)]
 
 use core::cell::RefCell;
 
@@ -36,17 +40,26 @@ fn main() -> ! {
     // Swaps in a pending stage2 update, or rolls back after a failed boot.
     let bl: BootLoader = BootLoader::prepare(config);
 
+    // SAFETY: `active_offset` comes from the linker-defined active partition and BootLoader validates its vectors before transfer.
     unsafe { bl.load(active_offset) }
 }
 
+/// # Safety
+///
+/// Called only by the Cortex-M HardFault vector while executing exception context.
 #[unsafe(no_mangle)]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".HardFault.user"))]
+// SAFETY: Exception ABI requires this unmangled symbol; reset is valid from HardFault context.
 unsafe extern "C" fn HardFault() {
     cortex_m::peripheral::SCB::sys_reset();
 }
 
+/// # Safety
+///
+/// Called only by the Cortex-M exception vector with the active interrupt state.
 #[exception]
 unsafe fn DefaultHandler(_: i16) -> ! {
+    // SAFETY: SCB_ICSR is the architected, readable interrupt-control register.
     unsafe {
         const SCB_ICSR: *const u32 = 0xE000_ED04 as *const u32;
         let irqn = core::ptr::read_volatile(SCB_ICSR) as u8 as i16 - 16;

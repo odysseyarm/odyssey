@@ -135,11 +135,11 @@ pub(super) fn follow_tracking(
 /// most one sample interval stale.
 pub(super) fn closest_sample(
     history: &HistoryByDevice,
-    uuid: &[u8; 6],
+    uuid: [u8; 6],
     shot_delay_ms: u16,
     impact_timestamp: Option<u32>,
 ) -> Option<TrackingEvent> {
-    let device_history = history.get(uuid)?;
+    let device_history = history.get(&uuid)?;
     let shot_delay_us = u32::from(shot_delay_ms) * MICROS_PER_MILLI;
     let lookup_timestamp = match impact_timestamp {
         Some(timestamp) if timestamp != u32::MAX => timestamp.wrapping_sub(shot_delay_us),
@@ -179,27 +179,27 @@ mod tests {
     fn a_key_press_looks_back_from_the_newest_sample() {
         let history = history_of(&[1_000_000, 1_010_000, 1_020_000, 1_030_000]);
         // 20 ms before the newest sample lands on the second one.
-        let sample = closest_sample(&history, &[1; 6], 20, None).expect("a sample");
+        let sample = closest_sample(&history, [1; 6], 20, None).expect("a sample");
         assert_eq!(sample.timestamp, 1_010_000);
     }
 
     #[test]
     fn an_impact_looks_back_from_its_own_timestamp() {
         let history = history_of(&[1_000_000, 1_010_000, 1_020_000, 1_030_000]);
-        let sample = closest_sample(&history, &[1; 6], 10, Some(1_025_000)).expect("a sample");
+        let sample = closest_sample(&history, [1; 6], 10, Some(1_025_000)).expect("a sample");
         assert_eq!(sample.timestamp, 1_010_000);
     }
 
     #[test]
     fn the_accessory_sentinel_falls_back_to_the_newest_sample() {
         let history = history_of(&[1_000_000, 1_030_000]);
-        let sample = closest_sample(&history, &[1; 6], 0, Some(u32::MAX)).expect("a sample");
+        let sample = closest_sample(&history, [1; 6], 0, Some(u32::MAX)).expect("a sample");
         assert_eq!(sample.timestamp, 1_030_000);
     }
 
     #[test]
     fn a_device_without_history_has_no_sample() {
         let history = history_of(&[1_000_000]);
-        assert!(closest_sample(&history, &[2; 6], 0, None).is_none());
+        assert!(closest_sample(&history, [2; 6], 0, None).is_none());
     }
 }

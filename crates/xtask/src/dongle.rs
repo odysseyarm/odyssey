@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use eros::Context as _;
@@ -15,12 +17,12 @@ const BUILT: &str = "target/thumbv7em-none-eabihf/release";
 const CHIP: &str = "nRF52840_xxAA";
 
 const HW_VERSION: &str = "52";
-/// nrf-sdc links no SoftDevice, so the DFU package requires none.
+/// nrf-sdc links no `SoftDevice`, so the DFU package requires none.
 const SD_REQ: &str = "0x00";
-/// A dongle's stock bootloader is Nordic's open secure bootloader, which only
-/// accepts packages signed with the vendor's own key; anything else is rejected
-/// without a chip erase. Fanstel publishes its key at fanstel.com/s/private.pem,
-/// Laird (Ezurio) in LairdCP/Nordic_DFU_BL654_USB as laird_dongle_public.pem.
+/// A dongle's stock bootloader is Nordic's open secure bootloader. It only
+/// accepts packages signed with the vendor's own key and rejects anything else
+/// without a chip erase. Fanstel publishes its key at `fanstel.com/s/private.pem`,
+/// Laird (Ezurio) in `LairdCP/Nordic_DFU_BL654_USB` as `laird_dongle_public.pem`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub(crate) enum Vendor {
     Fanstel,
@@ -209,7 +211,7 @@ fn dfu_zip(vendor: Vendor) -> String {
 fn hex() -> eros::Result<()> {
     println!("==> Building and converting to HEX (llvm-objcopy)");
     match crate::firmware::prebuilt() {
-        // The ELF is already built; put it where a cargo build would have.
+        // The ELF is already built. Put it where a cargo build would have.
         Some(tree) => {
             let to = cmd::root().join(DIR).join(BUILT).join(BIN);
             let parent = to.parent().expect("the ELF path has a parent");
@@ -218,6 +220,9 @@ fn hex() -> eros::Result<()> {
             // llvm-objcopy gives its outputs the input's mode, and the DFU binary is
             // padded in place, so the read-only store mode cannot carry over.
             let mut permissions = fs::metadata(&to)?.permissions();
+            #[cfg(unix)]
+            permissions.set_mode(permissions.mode() | 0o200);
+            #[cfg(windows)]
             permissions.set_readonly(false);
             fs::set_permissions(&to, permissions)
                 .with_context(|| format!("making {} writable", to.display()))?;
@@ -239,7 +244,7 @@ fn hex() -> eros::Result<()> {
             .arg(&hex),
     )?;
     println!("HEX: {hex}");
-    // A peek at the first records only; failing to read them is not an error.
+    // A peek at the first records only. Failing to read them is not an error.
     if let Ok(text) = fs::read_to_string(cmd::root().join(DIR).join(&hex)) {
         for line in text.lines().take(2) {
             println!("{line}");
@@ -380,8 +385,8 @@ mod tests {
 
     #[test]
     fn application_version_rejects_what_is_not_major_minor_patch() {
-        assert!(application_version("0.1").is_err());
-        assert!(application_version("0.1.2.3").is_err());
-        assert!(application_version("0.1.10-rc1").is_err());
+        application_version("0.1").expect_err("missing patch is rejected");
+        application_version("0.1.2.3").expect_err("fourth version component is rejected");
+        application_version("0.1.10-rc1").expect_err("prerelease version is rejected");
     }
 }

@@ -34,15 +34,20 @@ use hardware::{DEVICE_INTERFACE_GUIDS, Irqs, Markers, force_markers_off, reset_s
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 
-const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
+const FIRMWARE_VERSION: [u32; 3] = odyssey_version::cargo_version!();
 include!(concat!(env!("OUT_DIR"), "/owner_bonds.rs"));
-const FIRMWARE_BCD_DEVICE: u16 =
-    odyssey_version::UsbDeviceRelease::from_version(FIRMWARE_VERSION).raw_value();
+const FIRMWARE_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(FIRMWARE_VERSION[0]);
 
 struct SafeDfuMarker;
 struct DeferredDfuReset;
-static DFU_PENDING: AtomicBool = AtomicBool::new(false);
+pub(crate) static DFU_PENDING: AtomicBool = AtomicBool::new(false);
 static DFU_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub(crate) static OTA_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub(crate) static OTA_COMMITTING: AtomicBool = AtomicBool::new(false);
+static DFU_DEFERRED: AtomicBool = AtomicBool::new(false);
+pub(crate) static OTA_COMMIT_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub(crate) static OTA_COMMIT_RESULT: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+pub(crate) static OTA_RESET_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 impl Reset for DeferredDfuReset {
     fn sys_reset(&self) {
@@ -166,7 +171,8 @@ async fn main(spawner: Spawner) {
             source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
             rc_ctiv: 0,
             rc_temp_ctiv: 0,
-            // Crystal's 20 ppm plus temperature and ageing margin; matches nRF Connect SDK's 50 ppm default.
+            // Crystal's 20 ppm plus temperature and ageing margin.
+            // Matches the nRF Connect SDK's 50 ppm default.
             accuracy_ppm: 50,
             skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
         };
@@ -188,7 +194,7 @@ async fn main(spawner: Spawner) {
         let flash = AsyncMutex::<NoopRawMutex, _>::new(mpsl::Flash::take(mpsl, nvmc));
         let fw_config = FirmwareUpdaterConfig::from_linkerfile(&flash, &flash);
         let mut aligned = AlignedBuffer([0; 4]);
-        let mut updater = FirmwareUpdater::new(fw_config, &mut aligned.0);
+        let updater = AsyncMutex::<NoopRawMutex, _>::new(FirmwareUpdater::new(fw_config, &mut aligned.0));
         let radio = async {
             if !hardware_ready {
                 core::future::pending::<()>().await;
@@ -219,6 +225,7 @@ async fn main(spawner: Spawner) {
                 ble::run(
                     controller,
                     Partition::new(&flash, OWNER_BONDS_START, 8192),
+                    &flash,
                     seed,
                 ),
                 ble::outputs(markers),
@@ -227,12 +234,47 @@ async fn main(spawner: Spawner) {
             .await;
         };
         let detach = async {
-            DFU_REQUEST.wait().await;
-            force_markers_off();
-            if updater.mark_dfu().await.is_err() {
-                reset_safe();
+            loop {
+                match embassy_futures::select::select(
+                    DFU_REQUEST.wait(),
+                    OTA_COMMIT_REQUEST.wait(),
+                )
+                .await
+                {
+                    embassy_futures::select::Either::First(()) => {
+                        if OTA_COMMITTING.load(Ordering::Acquire) {
+                            DFU_DEFERRED.store(true, Ordering::Release);
+                            continue;
+                        }
+                        DFU_PENDING.store(true, Ordering::Release);
+                        force_markers_off();
+                        ble::CHANGED.signal(());
+                        if updater.lock().await.mark_dfu().await.is_err() {
+                            reset_safe();
+                        }
+                        reset_safe();
+                    }
+                    embassy_futures::select::Either::Second(()) => {
+                        OTA_COMMITTING.store(true, Ordering::Release);
+                        DFU_PENDING.store(true, Ordering::Release);
+                        force_markers_off();
+                        ble::CHANGED.signal(());
+                        let committed = updater.lock().await.mark_updated().await.is_ok();
+                        if !committed {
+                            OTA_COMMITTING.store(false, Ordering::Release);
+                            DFU_PENDING.store(false, Ordering::Release);
+                            if DFU_DEFERRED.swap(false, Ordering::AcqRel) {
+                                DFU_REQUEST.signal(());
+                            }
+                        }
+                        OTA_COMMIT_RESULT.signal(committed);
+                        if committed {
+                            OTA_RESET_REQUEST.wait().await;
+                            reset_safe();
+                        }
+                    }
+                }
             }
-            reset_safe();
         };
         embassy_futures::join::join(radio, detach).await;
     };

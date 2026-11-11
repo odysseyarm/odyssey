@@ -1,16 +1,16 @@
 # Dongle Firmware
 
-nRF52840 USB dongle firmware acting as BLE-to-USB mux for three trackers plus three supported accessories. Accessory slots never replace tracker slots.
+Firmware for the nRF52840 USB dongle. It is a BLE-to-USB mux for three trackers plus three supported accessories, and accessory slots never replace tracker slots.
 
 ## Features
 
 - **USB Communication**: VID 0x1915, PID 0x5212
 - **Mux Protocol (bulk)**: Postcard-encoded MuxMsg over USB bulk endpoints
 - **Control Protocol (EP0)**: USB control endpoint for pairing and bond management
-- **BLE Central**: Six connections using trouble-host with nrf-sdc: three tracker slots plus three accessory slots
+- **BLE Central**: Six connections using trouble-host with nrf-sdc, split into three tracker slots and three accessory slots
 - **Device Management**: Pairing mode, bond storage, and device connection management
-- **L2CAP CoC**: Credit-based flow control for efficient data transfer
-- **Accessories**: Marker Control Board, DryFireMag, and MantisX; correlated USB completions, acknowledged marker writes, and raw shot notifications
+- **L2CAP CoC**: Credit-based flow control for data transfer
+- **Accessories**: Marker Control Board, DryFireMag, and MantisX, with correlated USB completions, acknowledged marker writes, and raw shot notifications
 
 ## Architecture
 
@@ -28,21 +28,21 @@ nRF52840 USB dongle firmware acting as BLE-to-USB mux for three trackers plus th
 ## Updating in Odyssey Desktop
 
 In Desktop 0.7.5 or newer, open **Devices → Update dongle**. Desktop downloads
-and verifies both signed packages and selects the one the bootloader accepts;
-customers do not need `nrfutil`, a vendor choice, or a manually downloaded ZIP.
+and verifies both signed packages and picks the one the bootloader accepts, so
+customers never need `nrfutil`, a vendor choice, or a manually downloaded ZIP.
 When prompted, press the dongle's reset/DFU button. Keep it in the same USB port
 until Desktop confirms the installed version. Trackers and accessories
 disconnect during the update.
 
-A dongle already in Nordic bootloader mode appears as **Recover dongle**, including
-after restarting Desktop. If an update fails, leave it in that USB port and retry;
-press reset/DFU again if needed.
+A dongle already in Nordic bootloader mode appears as **Recover dongle**, and it
+still does after Desktop restarts. If an update fails, leave the dongle in that
+USB port and retry. Press reset/DFU again if needed.
 
 Signed packages from 0.1.14 pad the application to the region in
 `memory-dongle.kdl`. Desktop queries the bootloader's existing image layout
 before erase and refuses a package whose staging could overwrite saved bonds.
 Unsupported layouts stop before flashing. An interrupted single-bank update
-requires bootloader recovery, not a chip erase.
+needs bootloader recovery. Do not chip-erase it.
 
 ## Building
 
@@ -87,15 +87,15 @@ Configured for nRF52840 with nrf-sdc (SoftDevice Controller):
   - Settings: 0xCC000–0xDE000 (72 KiB), separate tracker/accessory records
   - Bootloader begins at 0xE0000
 
-- **RAM**: 256 KiB total; first eight bytes reserved by bootloader
+- **RAM**: 256 KiB total, with the first eight bytes reserved by the bootloader
   - SDC reservation: 72,328 bytes, six centrals, 18 TX and 18 RX buffers. Smaller allocations fail controller initialization before USB command tasks start.
-  - trouble-host: six connections and 24 L2CAP channels; existing 64-packet pool
+  - trouble-host: six connections and 24 L2CAP channels, on the existing 64-packet pool
   - Three tracker task instances plus three accessory GATT session task instances
-  - Linked release build: 90.1% of RAM and 50% of flash used (416,704 B flash, 236,184 B RAM). Hardware stress run remains required before release.
+  - Linked release build: 90.1% of RAM and 50% of flash used (416,704 B flash, 236,184 B RAM). A hardware stress run is still required before release.
 
 ## Mux Protocol (bulk)
 
-The dongle communicates with the PC over USB bulk endpoints using the MuxMsg protocol (postcard-encoded):
+The dongle talks to the PC over USB bulk endpoints using the MuxMsg protocol (postcard-encoded):
 
 ### Messages from Host to Dongle:
 - `RequestDevices`: Get list of configured device UUIDs
@@ -107,39 +107,39 @@ The dongle communicates with the PC over USB bulk endpoints using the MuxMsg pro
 - `DevicesSnapshot(Vec<Uuid>)`: Connected trackers only (up to three)
 - `DevicePacket(DevicePacket)`: Packet received from a device
 - `ReadVersionResponse(Version)`: Protocol and firmware version information
-- `AccessoryCompletion { id, result }`: Correlated accepted BLE operation or explicit error, never mere queue acceptance
+- `AccessoryCompletion { id, result }`: Correlated accepted BLE operation or explicit error. Queue acceptance alone never produces one.
 - `AccessoryEvent`: Discovery, marker pairing-window status, connection/disconnection, raw notifications, and errors
 
-Accessory addresses use canonical most-significant-byte-first order, matching native host Bluetooth addresses. Tracker UUID byte order stays unchanged. Accessory commands require mux protocol 0.3.0 or newer; `MarkerMode` requires **0.4.0** (firmware **0.1.13+**). The host refuses to send it to older dongles because they cannot decode it and would never complete it.
+Accessory addresses use canonical most-significant-byte-first order, matching native host Bluetooth addresses. Tracker UUID byte order stays unchanged. Accessory commands require mux protocol 0.3.0 or newer, and `MarkerMode` requires **0.4.0** (firmware **0.1.13+**). The host refuses to send it to older dongles because they cannot decode it and would never complete it.
 
 ### Accessory lifecycle and security
 
-Existing background scanner owns controller scanning for tracker pairing/name caching; accessory Scan controls discovery reporting. Discovery cache holds 24 peers including BLE address kind. Name-only Mantis/DryFireMag advertisements are supported; GATT discovery verifies shared profile UUIDs before connection success.
+The existing background scanner owns controller scanning for tracker pairing and name caching. Accessory Scan only controls discovery reporting. The discovery cache holds 24 peers, including BLE address kind. Name-only Mantis/DryFireMag advertisements are supported, and GATT discovery verifies shared profile UUIDs before a connection counts as successful.
 
 Firmware **0.1.12+** forwards versioned marker service-data countdowns as
-`PairingWindow` events. Zero means closed; valid open values are `1..=30`.
+`PairingWindow` events. Zero means closed, and valid open values are `1..=30`.
 Unknown versions and malformed payloads do not report a window. Discovery and
-name reports remain independent of pairing status. Older dongle firmware
-provides no pairing status, so updated desktop enrollment stays disabled until
-both the board and selected dongle support it. Mux protocol was **0.3.0** at that
-point; existing accessory event indices are unchanged.
+name reports are independent of pairing status. Older dongle firmware provides
+no pairing status, so updated desktop enrollment stays disabled until both the
+board and the selected dongle support it. Mux protocol was **0.3.0** at that
+point, and existing accessory event indices are unchanged.
 
-Three accessory sessions have independent bounded command queues. Connect completes after service/characteristic discovery and notification subscription, or marker security plus acknowledged OFF write. Disconnect cancels pending connect/security/GATT work and acknowledges observed link teardown; teardown timeout is an error. USB reset, deconfiguration, and physical disable stop all accessory sessions and invalidate pending USB replies. Tracker reconnect policy stays unchanged.
+The three accessory sessions have independent bounded command queues. Connect completes after service/characteristic discovery and notification subscription, or for markers after security plus an acknowledged OFF write. Disconnect cancels pending connect/security/GATT work and acknowledges observed link teardown. A teardown timeout is an error. USB reset, deconfiguration, and physical disable stop all accessory sessions and invalidate pending USB replies. Tracker reconnect policy stays unchanged.
 
-Markers use standard SMP and six separate persistent accessory bond slots (one per supported screen); tracker bond record format and three tracker bond slots stay unchanged. New ownership requires explicit host enrollment plus board's physical enrollment window. Dongle waits for successful flash write (including GC retry) and board's acknowledged OFF write before accepting enrollment. Background storage owner finishes in-flight persistence even if caller cancels. cfg-noodle sequential records preserve previous committed record across interrupted writes; failed persistence reports BondStorage, never success.
+Markers use standard SMP and six separate persistent accessory bond slots, one per supported screen, which leaves the tracker bond record format and the three tracker bond slots unchanged. New ownership requires explicit host enrollment plus the board's physical enrollment window. The dongle waits for a successful flash write (including GC retry) and the board's acknowledged OFF write before it accepts enrollment. A background storage owner finishes in-flight persistence even if the caller cancels. cfg-noodle sequential records preserve the previous committed record across interrupted writes, and failed persistence reports BondStorage. It never reports success.
 
-Only host MarkerDemand commands renew board lease. Queued demand older than two seconds is rejected; no dongle renewal timer exists. Board's six-second lease limits stale ON demand after host failure. Just Works enrollment does not provide MITM resistance inside physical pairing window.
+Only host MarkerDemand commands renew the board lease. Queued demand older than two seconds is rejected. No dongle renewal timer exists. The board's six-second lease limits stale ON demand after a host failure. Just Works enrollment gives no MITM resistance inside the physical pairing window.
 
-`MarkerMode { address, mode }` (appended after `MarkerDemand`, so existing command indices are unchanged) writes the board's Mode characteristic (`Auto = 0`, `Off = 1`, `On = 2`) on an existing marker session and completes only after the GATT write acknowledgement. The characteristic is discovered when the command arrives, so connecting to boards without it is unaffected. The host uses it to reset a board a short button press left in On/Off back to Auto, then disconnects.
+`MarkerMode { address, mode }` writes the board's Mode characteristic (`Auto = 0`, `Off = 1`, `On = 2`) on an existing marker session and completes only after the GATT write acknowledgement. It was appended after `MarkerDemand`, so existing command indices are unchanged. The characteristic is discovered when the command arrives, which leaves connecting to boards without it unaffected. The host uses the command to reset a board that a short button press left in On/Off back to Auto. Then it disconnects.
 
 
 ## BLE Implementation
 
 ### trouble-host with nrf-sdc
 
-Uses Embassy's trouble-host BLE stack with Nordic's SoftDevice Controller (nrf-sdc):
+The dongle runs Embassy's trouble-host BLE stack on Nordic's SoftDevice Controller (nrf-sdc):
 - **Central role** with three tracker and three accessory connections
-- **L2CAP CoC** (Connection-oriented Channels) for efficient data transfer
+- **L2CAP CoC** (Connection-oriented Channels) for data transfer
 - **Pairing and bonding** with persistent bond storage
 - **Connection management** with automatic reconnection
 
@@ -148,13 +148,13 @@ Uses Embassy's trouble-host BLE stack with Nordic's SoftDevice Controller (nrf-s
 1. Device enters pairing mode when requested via USB control endpoint
 2. Scans for advertising peripherals and captures new devices
 3. Bonds are persisted to flash storage
-4. On startup, automatically reconnects bonded trackers; accessories connect only on host request
+4. On startup, automatically reconnects bonded trackers. Accessories connect only on host request.
 5. L2CAP CoC channels established for bidirectional data transfer
 6. Routes packets between USB bulk endpoints and BLE L2CAP channels
 
 ## Current Status
 
-### ✅ Implemented
+### Implemented
 - [x] USB device with MuxMsg (bulk) protocol
 - [x] USB control endpoint (EP0) for device management
 - [x] BLE central role with trouble-host stack
@@ -167,7 +167,7 @@ Uses Embassy's trouble-host BLE stack with Nordic's SoftDevice Controller (nrf-s
 - [x] Bond clearing and device management
 - [x] Bidirectional data routing framework
 
-### 🚧 TODO
+### TODO
 - [ ] Add `AddDevice`/`RemoveDevice` to data/control protocols
 
 ## Development
@@ -195,9 +195,7 @@ cargo xtask dongle flash-dk
 cargo xtask dongle attach-dk
 ```
 
-Without RTT (USB serial logging):
-- Logs are sent over USB serial interface
-- Use serial monitor to view defmt logs
+Without RTT, logs go out over the USB serial interface. Use a serial monitor to view the defmt logs.
 
 ### Testing
 

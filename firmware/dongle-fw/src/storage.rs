@@ -98,7 +98,7 @@ static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
-// cfg-noodle's scratch buffer is static; on the task stack it would overflow.
+// cfg-noodle's scratch buffer is static. On the task stack it would overflow.
 const STORAGE_BUF_SIZE: usize =
     <Flash<nrf_mpsl::Flash<'static>, NoCache> as NdlDataStorage>::MAX_ELEM_SIZE;
 static STORAGE_BUF: StaticCell<[u8; STORAGE_BUF_SIZE]> = StaticCell::new();
@@ -196,7 +196,7 @@ async fn settings_worker(
     // Static rather than on the task stack, which it would overflow.
     let buffer = STORAGE_BUF.init([0u8; STORAGE_BUF_SIZE]);
 
-    // The worker starts at once; there is no SoftDevice readiness to wait for.
+    // The worker starts at once. There is no SoftDevice readiness to wait for.
     loop {
         let read_fut = async {
             LIST.needs_read().await;
@@ -245,35 +245,7 @@ async fn settings_worker(
                 }
                 defmt::debug!("Storage: finished process_reads");
             }
-            Either::Second(Either::First(_)) => {
-                defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
-                let commit_started = COMMIT_PENDING.swap(false, Ordering::AcqRel);
-                let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;
-                match &write_result {
-                    Ok(rpt) => defmt::debug!("process_writes ok: {:?}", rpt),
-                    Err(e) => defmt::error!("process_writes err: {:?}", e),
-                }
-                defmt::debug!("Storage: finished process_writes");
-
-                defmt::debug!("Storage: starting process_garbage");
-                match LIST.process_garbage(&mut *flash, &mut buffer[..]).await {
-                    Ok(rpt) => defmt::trace!("process_garbage ok: {:?}", rpt),
-                    Err(e) => defmt::error!("process_garbage err: {:?}", e),
-                }
-                defmt::debug!("Storage: finished process_garbage");
-
-                let committed = if write_result.is_err() {
-                    LIST.process_writes(&mut *flash, &mut buffer[..])
-                        .await
-                        .is_ok()
-                } else {
-                    true
-                };
-                if commit_started {
-                    COMMIT_RESULT.signal(if committed { Ok(()) } else { Err(()) });
-                }
-            }
-            Either::Second(Either::Second(_)) => {
+            Either::Second(Either::First(_) | Either::Second(_)) => {
                 defmt::debug!("Storage: starting process_writes (triggered by write/tick)");
                 let commit_started = COMMIT_PENDING.swap(false, Ordering::AcqRel);
                 let write_result = LIST.process_writes(&mut *flash, &mut buffer[..]).await;

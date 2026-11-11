@@ -11,6 +11,8 @@ allow-expect-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
 
+doc-valid-idents = ["OpenCV", "UniFFI", ".."]
+
 # Wildcard imports (`wildcard_imports`, warn in Cargo.toml) stay at clippy's
 # defaults, which allow exactly the accepted cases: `use super::*` in a
 # test module, `prelude` modules, enum variants, and

@@ -13,13 +13,16 @@ const VENDOR_START_ID: u8 = 0x80;
 /// Last id of the vendor range.
 const VENDOR_END_ID: u8 = 0xff;
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug)]
 pub struct Packet {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub data: PacketData,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     pub id: u8,
 }
@@ -28,6 +31,7 @@ pub struct Packet {
 // small-packet stack budget even for full-resolution capture.
 const _: () = assert!(size_of::<Packet>() <= 768);
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
@@ -37,104 +41,188 @@ const _: () = assert!(size_of::<Packet>() <= 768);
     reason = "boxing a payload would change the public enum and the no_std wire types"
 )]
 pub enum PacketData {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(0))]
     WriteRegister(#[cfg_attr(feature = "minicbor", n(0))] WriteRegister),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(1))]
     ReadRegister(#[cfg_attr(feature = "minicbor", n(0))] Register),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(2))]
     ReadRegisterResponse(#[cfg_attr(feature = "minicbor", n(0))] ReadRegisterResponse),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(3))]
     WriteConfig(
         #[cfg_attr(feature = "minicbor", n(0))]
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::serde_with"))]
         GeneralConfig,
     ),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(4))]
     ReadConfig(#[cfg_attr(feature = "minicbor", n(0))] ConfigKind),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(5))]
     ReadConfigResponse(
         #[cfg_attr(feature = "minicbor", n(0))]
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::serde_with"))]
         GeneralConfig,
     ),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(6))]
     ReadProp(#[cfg_attr(feature = "minicbor", n(0))] PropKind),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(7))]
     ReadPropResponse(#[cfg_attr(feature = "minicbor", n(0))] Props),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(8))]
     LegacyObjectReportRequest(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(9))]
     LegacyObjectReport(#[cfg_attr(feature = "minicbor", n(0))] ObjectReport),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(10))]
     LegacyCombinedMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] CombinedMarkersReport),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(11))]
     MarkersReport(#[cfg_attr(feature = "minicbor", n(0))] MarkersReport),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(12))]
     AccelReport(#[cfg_attr(feature = "minicbor", n(0))] AccelReport),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(13))]
     ImpactReport(#[cfg_attr(feature = "minicbor", n(0))] ImpactReport),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(14))]
     StreamUpdate(#[cfg_attr(feature = "minicbor", n(0))] StreamUpdate),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(15))]
     FlashSettings(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(16))]
     Ack(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(17))]
     LegacyWriteMode(#[cfg_attr(feature = "minicbor", n(0))] Mode),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(19))]
     ReadVersionResponse(#[cfg_attr(feature = "minicbor", n(0))] Version),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(20))]
     Vendor(
         #[cfg_attr(feature = "minicbor", n(0))] u8,
         #[cfg_attr(feature = "minicbor", n(1))] VendorData,
     ),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(21))]
     BatteryReport(#[cfg_attr(feature = "minicbor", n(0))] BatteryReport),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(22))]
     SetDeviceName(
         #[cfg_attr(feature = "minicbor", n(0))]
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::heapless_str32"))]
         DeviceName,
     ),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(23))]
     SetDeviceNameResponse(#[cfg_attr(feature = "minicbor", n(0))] SetDeviceNameResult),
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(24))]
     ImageCommand(#[cfg_attr(feature = "minicbor", n(0))] crate::image::ImageCommand),
-    #[cfg_attr(
-        all(feature = "serde", feature = "device", not(feature = "std")),
-        serde(skip_deserializing)
-    )]
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(25))]
     ImageStatus(
         #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "serde", feature = "device", not(feature = "std")),
+            serde(deserialize_with = "crate::serde_reject::image_response")
+        )]
         #[cfg_attr(
             all(feature = "minicbor", feature = "device", not(feature = "std")),
             cbor(decode_with = "crate::cbor::reject_image_response")
         )]
         crate::image::ImageStatus,
     ),
-    #[cfg_attr(
-        all(feature = "serde", feature = "device", not(feature = "std")),
-        serde(skip_deserializing)
-    )]
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(26))]
     ImageChunk(
         #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "serde", feature = "device", not(feature = "std")),
+            serde(deserialize_with = "crate::serde_reject::image_response")
+        )]
         #[cfg_attr(
             all(feature = "minicbor", feature = "device", not(feature = "std")),
             cbor(decode_with = "crate::cbor::reject_image_response")
         )]
         crate::image::ImageChunk,
     ),
-    #[cfg_attr(
-        all(feature = "serde", feature = "device", not(feature = "std")),
-        serde(skip_deserializing)
-    )]
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(27))]
     ImageObject(
         #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(
+            all(feature = "serde", feature = "device", not(feature = "std")),
+            serde(deserialize_with = "crate::serde_reject::image_response")
+        )]
         #[cfg_attr(
             all(feature = "minicbor", feature = "device", not(feature = "std")),
             cbor(decode_with = "crate::cbor::reject_image_response")
@@ -143,92 +231,193 @@ pub enum PacketData {
     ),
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VendorData {
-    /// Bytes of `data` in use; at most [`VendorData::CAPACITY`].
+    /// Bytes of `data` in use. At most [`VendorData::CAPACITY`].
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub len: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "minicbor", n(1))]
     pub data: [u8; Self::CAPACITY],
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "serde"))]
     pub data: [u8; Self::CAPACITY],
 }
 
 impl VendorData {
     /// Payload bytes a vendor packet can carry.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub const CAPACITY: usize = 98;
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Copy, Clone, Debug)]
 pub enum PacketType {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(0))]
     WriteRegister(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(1))]
     ReadRegister(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(2))]
     ReadRegisterResponse(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(3))]
     WriteConfig(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(4))]
     ReadConfig(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(5))]
     ReadConfigResponse(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(6))]
     ReadProp(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(7))]
     ReadPropResponse(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(8))]
     LegacyObjectReportRequest(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(9))]
     LegacyObjectReport(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(10))]
     LegacyCombinedMarkersReport(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(11))]
     AccelReport(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(12))]
     ImpactReport(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(13))]
     StreamUpdate(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(14))]
     FlashSettings(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(15))]
     Ack(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(16))]
     MarkersReport(),
+    /// Since: Odyssey Desktop 0.7.5.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(17))]
     LegacyWriteMode(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(18))]
     ReadVersion(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(19))]
     ReadVersionResponse(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(20))]
     End(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(21))]
     VendorStart(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(22))]
     Vendor(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(23))]
     VendorEnd(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(24))]
     BatteryReport(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(25))]
     SetDeviceName(),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(26))]
     SetDeviceNameResponse(),
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(27))]
     ImageCommand(),
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(28))]
     ImageStatus(),
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(29))]
     ImageChunk(),
+    /// Since: Odyssey Desktop 0.7.0.
+    ///
+    /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(30))]
     ImageObject(),
 }
@@ -312,6 +501,7 @@ impl From<PacketType> for u8 {
 }
 
 impl Packet {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn ty(&self) -> PacketType {
         match self.data {
             PacketData::WriteRegister(_) => PacketType::WriteRegister(),
@@ -348,8 +538,10 @@ impl Packet {
     /// True for commands and their responses, false for streamed reports.
     ///
     /// BLE links carry the two kinds on separate L2CAP channels (control and
-    /// data) so a burst of reports cannot delay a response; every device and the
+    /// data) so a burst of reports cannot delay a response. Every device and the
     /// dongle route by this one answer.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn is_control(&self) -> bool {
         match self.data {
             PacketData::StreamUpdate(_)
@@ -385,6 +577,7 @@ impl Packet {
 }
 
 impl PacketData {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn read_register_response(self) -> Option<ReadRegisterResponse> {
         match self {
             Self::ReadRegisterResponse(x) => Some(x),
@@ -392,6 +585,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn read_config_response(self) -> Option<GeneralConfig> {
         match self {
             Self::ReadConfigResponse(x) => Some(x),
@@ -399,6 +593,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn read_prop_response(self) -> Option<Props> {
         match self {
             Self::ReadPropResponse(x) => Some(x),
@@ -406,6 +601,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn legacy_object_report(self) -> Option<ObjectReport> {
         match self {
             Self::LegacyObjectReport(x) => Some(x),
@@ -413,6 +609,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn legacy_combined_markers_report(self) -> Option<CombinedMarkersReport> {
         match self {
             Self::LegacyCombinedMarkersReport(x) => Some(x),
@@ -420,6 +617,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn markers_report(self) -> Option<MarkersReport> {
         match self {
             Self::MarkersReport(x) => Some(x),
@@ -427,6 +625,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn accel_report(self) -> Option<AccelReport> {
         match self {
             Self::AccelReport(x) => Some(x),
@@ -434,6 +633,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn impact_report(self) -> Option<ImpactReport> {
         match self {
             Self::ImpactReport(x) => Some(x),
@@ -441,6 +641,7 @@ impl PacketData {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn battery_report(self) -> Option<BatteryReport> {
         match self {
             Self::BatteryReport(x) => Some(x),
@@ -453,7 +654,7 @@ impl PacketData {
 mod tests {
     use super::*;
 
-    /// The two tables (`u8 -> PacketType` and back) are written out by hand; a
+    /// The two tables (`u8 -> PacketType` and back) are written out by hand. A
     /// row that differs between them would corrupt every packet of that type.
     #[test]
     fn every_known_packet_id_round_trips() {

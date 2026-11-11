@@ -127,7 +127,7 @@ impl PajPanel {
         &self,
         state: &PajState,
         show_issues: bool,
-        palette: Palette,
+        palette: &Palette,
     ) -> impl IntoElement {
         let issues = paj_validate(state).err().unwrap_or_default();
         let issue = |field: &str| visible_issue(&issues, field, show_issues);

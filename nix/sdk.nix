@@ -73,7 +73,7 @@ let
   '';
 
   # How one target is compiled against a given glibc floor (gnu rows only).
-  # `build` is the cargo front end (without -p); `maturin` the extra maturin
+  # `build` is the cargo front end (without -p). `maturin` holds the extra maturin
   # flags that select the same cross backend.
   backendWith = glibc: triple:
     if lib.hasInfix "windows" triple then {
@@ -84,7 +84,7 @@ let
     } else if lib.hasInfix "apple-darwin" triple then {
       tools = [ ];
       # nixpkgs' darwin stdenv exports its own (newer) deployment target, which
-      # would change the wheel tags and the libs' minimum macOS; keep rustc's.
+      # would change the wheel tags and the libs' minimum macOS. Keep rustc's.
       prelude = sandbox + ''
         export MACOSX_DEPLOYMENT_TARGET=${if lib.hasPrefix "aarch64" triple then "11.0" else "10.12"}
       '';
@@ -103,7 +103,7 @@ let
         export CARGO_TARGET_APPLIES_TO_HOST=false
         export CARGO_HOST_LINKER=cc
         # rustc's default release `strip = "debuginfo"` reaches zig as a full
-        # strip, dropping .symtab; uniffi-bindgen reads UniFFI metadata from it.
+        # strip, dropping .symtab. uniffi-bindgen reads UniFFI metadata from it.
         export CARGO_PROFILE_RELEASE_STRIP=none
       '' + lib.optionalString (lib.hasInfix "musl" triple) ''
         # A cdylib needs a dynamic musl (musllinux wheels load into CPython).
@@ -138,7 +138,7 @@ let
         doCheck = false;
         doInstallCargoArtifacts = true;
         # maturin runs the workspace's own `cargo run --bin uniffi-bindgen` on the
-        # host (dev profile); build its dependencies here so they are cached too.
+        # host (dev profile). Build its dependencies here so they are cached too.
         buildPhaseCargoCommand = cargoBuild + lib.optionalString (ws == uniffi) ''
 
           cargo build --locked --offline -p odyssey-uniffi-bindgen
@@ -234,7 +234,7 @@ let
 
   # ---- UniFFI: C# bindings generator ---------------------------------------------
   # Pinned to the tag the C# project and xtask name (v<tool>+v<uniffi>, must
-  # match uniffi in sdk/odyssey-hub-client-uniffi/Cargo.toml; also
+  # match uniffi in sdk/odyssey-hub-client-uniffi/Cargo.toml, and also
   # UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs).
   uniffiBindgenCs =
     let
@@ -261,6 +261,8 @@ let
     cargoExtraArgs = "--locked --offline";
   };
   uniffiHostDeps = craneLib.buildDepsOnly uniffiHostArgs;
+  ffiHostArgs = argsFor ffi "-host";
+  ffiHostDeps = craneLib.buildDepsOnly ffiHostArgs;
   csBindgen = craneLib.buildPackage (uniffiHostArgs // {
     cargoArtifacts = uniffiHostDeps;
     cargoExtraArgs = "--locked --offline --bin cs_bindgen";
@@ -304,7 +306,7 @@ let
 
   # ---- NuGet package ----------------------------------------------------------
   # The pack step is host-native (below) because the macOS natives come from
-  # other runners; everything it consumes is pinned here: the .NET SDK and the
+  # other runners. Everything it consumes is pinned here: the .NET SDK and the
   # restored NuGet packages (a fixed-output `dotnet restore`).
   dotnetSdk = pkgs.dotnetCorePackages.combinePackages [
     pkgs.dotnetCorePackages.sdk_10_0
@@ -375,6 +377,14 @@ in {
   };
 
   checks = {
+    sdk-ffi-lint = craneLib.cargoClippy (ffiHostArgs // {
+      cargoArtifacts = ffiHostDeps;
+      cargoClippyExtraArgs = "--all-targets -- -D warnings -A dead_code_pub_in_binary";
+    });
+    sdk-uniffi-lint = craneLib.cargoClippy (uniffiHostArgs // {
+      cargoArtifacts = uniffiHostDeps;
+      cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings -A dead_code_pub_in_binary";
+    });
     sdk-uniffi-tests = uniffiTests;
     sdk-python-wheel-import = wheelImport "sdk-python-wheel-import" nativeWheel;
   };

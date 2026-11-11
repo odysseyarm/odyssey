@@ -49,12 +49,18 @@ jobs:
       - name: Test host applications
         if: steps.impact.outputs.host == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.host-tests
+      - name: Check postcard compatibility on host and firmware
+        if: steps.impact.outputs.protocols == 'true'
+        run: nix build -L --no-link .#checks.x86_64-linux.postcard-compatibility .#checks.x86_64-linux.better-ota-tests
       - name: Test repository tools
         if: steps.impact.outputs.xtask == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.xtask-tests
       - name: Lint host applications
         if: steps.impact.outputs.host == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.host-lint .#checks.x86_64-linux.host-lint-bins
+      - name: Lint repository tools
+        if: steps.impact.outputs.xtask == 'true'
+        run: nix build -L --no-link .#checks.x86_64-linux.xtask-lint .#checks.x86_64-linux.xtask-lint-bins
       - name: Prove release rules and wire layouts
         id: proofs
         if: steps.impact.outputs.proofs == 'true'

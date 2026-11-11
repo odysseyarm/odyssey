@@ -1,25 +1,42 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui::{App, AppContext as _, Entity, Global};
 use odyssey_hub_common::device::Device;
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
 use crate::hub::HubHandle;
+
+struct DeviceUpdate {
+    state: FirmwareUpdateState,
+    updating: bool,
+}
+
+impl Default for DeviceUpdate {
+    fn default() -> Self {
+        Self {
+            state: FirmwareUpdateState::Idle,
+            updating: false,
+        }
+    }
+}
 
 /// Firmware update state per device, shared between the tokio update tasks
 /// and the views that show it. `generation` counts every change so the UI can
 /// redraw only when something moved.
 #[derive(Clone)]
 pub(crate) struct FirmwareUpdateManager {
-    states: Arc<Mutex<HashMap<[u8; 6], FirmwareUpdateState>>>,
-    updating: Arc<Mutex<HashSet<[u8; 6]>>>,
+    states: Arc<Mutex<HashMap<[u8; 6], DeviceUpdate>>>,
     /// The hub's device list as last seen, which the tokio update task cannot
     /// read from the GPUI-side hub entity.
     devices: Arc<Mutex<Vec<Device>>>,
+    radio_ota_proofs: Arc<
+        Mutex<HashMap<[u8; 6], odyssey_hub_common::config::RadioOtaBootloaderProof>>,
+    >,
     generation: Arc<AtomicU64>,
     pub(super) dongles: Arc<Mutex<super::dongle_update::DongleUpdates>>,
 }
@@ -44,7 +61,7 @@ pub(super) struct UpdateClaim {
 
 impl Drop for UpdateClaim {
     fn drop(&mut self) {
-        self.manager.release_claim(&self.uuid);
+        self.manager.release_claim(self.uuid);
     }
 }
 
@@ -54,7 +71,7 @@ impl Default for FirmwareUpdateManager {
     }
 }
 
-/// How often the ticker checks whether the manager changed; the update task
+/// How often the ticker checks whether the manager changed. The update task
 /// writes it from another thread.
 const STATE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -62,8 +79,8 @@ impl FirmwareUpdateManager {
     pub(crate) fn new() -> Self {
         Self {
             states: Arc::new(Mutex::new(HashMap::new())),
-            updating: Arc::new(Mutex::new(HashSet::new())),
             devices: Arc::new(Mutex::new(Vec::new())),
+            radio_ota_proofs: Arc::new(Mutex::new(HashMap::new())),
             generation: Arc::new(AtomicU64::new(0)),
             dongles: Arc::new(Mutex::new(super::dongle_update::DongleUpdates::default())),
         }
@@ -78,6 +95,22 @@ impl FirmwareUpdateManager {
         }
         let manager = Self::new();
         let ticker = cx.new(|_| UpdateTicker);
+        let proof_manager = manager.clone();
+        crate::runtime::spawn(async move {
+            let state = odyssey_hub_common::config::ui_state_async()
+                .await
+                .into_value();
+            let mut proofs = proof_manager.radio_ota_proofs.lock();
+            for (address, proof) in state.radio_ota_bootloader_proofs {
+                if let Ok(address) = hex::decode(address)
+                    && let Ok(address) = <[u8; 6]>::try_from(address)
+                {
+                    proofs.insert(address, proof);
+                }
+            }
+            drop(proofs);
+            proof_manager.bump();
+        });
 
         let hub = cx.global::<HubHandle>().0.clone();
         manager.set_devices(hub.read(cx).devices.clone());
@@ -121,20 +154,87 @@ impl FirmwareUpdateManager {
         self.devices.lock().clone()
     }
 
+    pub(super) fn radio_ota_bootloader_version(
+        &self,
+        uuid: [u8; 6],
+        app_version: Option<FirmwareVersion>,
+        numeric_core: [u32; 3],
+    ) -> Option<semver::Version> {
+        let mut proofs = self.radio_ota_proofs.lock();
+        let bootloader = proofs
+            .get(&uuid)
+            .and_then(|proof| Self::radio_ota_proof_version(proof, app_version, numeric_core));
+        if bootloader.is_none() && proofs.remove(&uuid).is_some() {
+            let address = hex::encode(uuid);
+            crate::runtime::spawn(async move {
+                let _ = odyssey_hub_common::config::ui_state_update_async(move |state| {
+                    state.radio_ota_bootloader_proofs.remove(&address);
+                })
+                .await;
+            });
+        }
+        bootloader
+    }
+
+fn radio_ota_proof_version(
+    proof: &odyssey_hub_common::config::RadioOtaBootloaderProof,
+    app_version: Option<FirmwareVersion>,
+    numeric_core: [u32; 3],
+) -> Option<semver::Version> {
+    let proven_app = proof.app_version.parse::<FirmwareVersion>().ok()?;
+    let identity_matches = match app_version {
+        Some(current) => current.to_string() == proof.app_version,
+        None => numeric_core != [0, 0, 0] && numeric_core == proven_app.core,
+    };
+    if !identity_matches {
+        return None;
+    }
+    semver::Version::parse(&proof.bootloader_version)
+        .ok()
+        .filter(|version| *version >= semver::Version::new(0, 2, 0))
+}
+
+    pub(super) fn record_radio_ota_proof(
+        &self,
+        uuid: [u8; 6],
+        app_version: FirmwareVersion,
+        bootloader_version: semver::Version,
+    ) {
+        if bootloader_version < semver::Version::new(0, 2, 0) {
+            return;
+        }
+        let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
+            app_version: app_version.to_string(),
+            bootloader_version: bootloader_version.to_string(),
+        };
+        self.radio_ota_proofs.lock().insert(uuid, proof.clone());
+        let address = hex::encode(uuid);
+        crate::runtime::spawn(async move {
+            if let Err(error) = odyssey_hub_common::config::ui_state_update_async(move |state| {
+                state.radio_ota_bootloader_proofs.insert(address, proof);
+            })
+            .await
+            {
+                tracing::error!("Could not persist radio OTA compatibility proof: {error}");
+            }
+        });
+        self.bump();
+    }
+
     pub(super) fn bump(&self) {
         self.generation.fetch_add(1, Ordering::Release);
     }
 
-    pub(super) fn get_state(&self, uuid: &[u8; 6]) -> FirmwareUpdateState {
+    pub(super) fn get_state(&self, uuid: [u8; 6]) -> FirmwareUpdateState {
         self.states
             .lock()
-            .get(uuid)
-            .cloned()
+            .get(&uuid)
+            .map(|device| device.state.clone())
             .unwrap_or(FirmwareUpdateState::Idle)
     }
 
     pub(super) fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
-        self.states.lock().insert(uuid, state);
+        self.states.lock().entry(uuid).or_default().state = state;
         self.bump();
     }
 
@@ -142,7 +242,7 @@ impl FirmwareUpdateManager {
     /// is ready to publish. Never let it overwrite a task's progress or result.
     pub(super) fn set_before_update_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
         let mut states = self.states.lock();
-        let current = states.entry(uuid).or_insert(FirmwareUpdateState::Idle);
+        let current = &mut states.entry(uuid).or_default().state;
         // Equal states would bump every render and loop the ticker forever.
         if current.is_before_update() && *current != state {
             *current = state;
@@ -151,74 +251,91 @@ impl FirmwareUpdateManager {
         }
     }
 
-    /// Claim a device for the lifetime of one update. The check and insert are
-    /// atomic, so two clicks cannot start competing transfers.
+    /// Claim a device for the lifetime of one update. State and claim change
+    /// under one lock, so two clicks cannot start competing transfers.
     pub(super) fn try_claim(&self, uuid: [u8; 6]) -> Option<UpdateClaim> {
-        if !self.updating.lock().insert(uuid) {
+        let mut states = self.states.lock();
+        let device = states.entry(uuid).or_default();
+        if device.updating {
             return None;
         }
-        self.set_state(uuid, FirmwareUpdateState::Downloading);
+        device.updating = true;
+        device.state = FirmwareUpdateState::Downloading;
+        drop(states);
+        self.bump();
         Some(UpdateClaim {
             manager: self.clone(),
             uuid,
         })
     }
 
-    pub(crate) fn is_updating(&self, uuid: &[u8; 6]) -> bool {
-        self.updating.lock().contains(uuid)
+    pub(crate) fn is_updating(&self, uuid: [u8; 6]) -> bool {
+        self.states
+            .lock()
+            .get(&uuid)
+            .is_some_and(|device| device.updating)
     }
 
     pub(crate) fn get_visible_updates(&self) -> Vec<[u8; 6]> {
-        let mut uuids: Vec<_> = self.updating.lock().iter().copied().collect();
-        uuids.extend(self.states.lock().iter().filter_map(|(uuid, state)| {
-            matches!(
-                state,
-                FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete
-            )
-            .then_some(*uuid)
-        }));
+        let states = self.states.lock();
+        let mut uuids: Vec<_> = states
+            .iter()
+            .filter_map(|(uuid, device)| {
+                (device.updating
+                    || matches!(
+                        &device.state,
+                        FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete
+                    ))
+                .then_some(*uuid)
+            })
+            .collect();
         uuids.sort_unstable();
-        uuids.dedup();
         uuids
     }
 
     pub(super) fn dismiss_result(&self, uuid: [u8; 6]) {
-        let updating = self.updating.lock();
-        if updating.contains(&uuid) {
+        let mut states = self.states.lock();
+        let Some(device) = states.get_mut(&uuid) else {
+            return;
+        };
+        if device.updating
+            || !matches!(
+                &device.state,
+                FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete
+            )
+        {
             return;
         }
-        let mut states = self.states.lock();
-        if matches!(
-            states.get(&uuid),
-            Some(FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete)
-        ) {
-            states.remove(&uuid);
-            self.bump();
-        }
+        device.state = FirmwareUpdateState::Idle;
+        drop(states);
+        self.bump();
     }
 
     pub(super) fn retry_failed(&self, uuid: [u8; 6]) {
-        let updating = self.updating.lock();
-        if updating.contains(&uuid) {
+        let mut states = self.states.lock();
+        let Some(device) = states.get_mut(&uuid) else {
+            return;
+        };
+        if device.updating || !matches!(&device.state, FirmwareUpdateState::Failed(_)) {
             return;
         }
-        let mut states = self.states.lock();
-        if matches!(states.get(&uuid), Some(FirmwareUpdateState::Failed(_))) {
-            states.remove(&uuid);
-            self.bump();
-        }
+        device.state = FirmwareUpdateState::Idle;
+        drop(states);
+        self.bump();
     }
 
-    fn release_claim(&self, uuid: &[u8; 6]) {
-        let mut updating = self.updating.lock();
+    fn release_claim(&self, uuid: [u8; 6]) {
         let mut states = self.states.lock();
-        if !matches!(
-            states.get(uuid),
-            Some(FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete)
-        ) {
-            states.remove(uuid);
+        if let Some(device) = states.get_mut(&uuid) {
+            if !matches!(
+                &device.state,
+                FirmwareUpdateState::Failed(_) | FirmwareUpdateState::Complete
+            ) {
+                device.state = FirmwareUpdateState::Idle;
+            }
+            device.updating = false;
         }
-        updating.remove(uuid);
+        drop(states);
         self.bump();
     }
 }
@@ -226,6 +343,35 @@ impl FirmwareUpdateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_usb_mux_identity_reuses_only_matching_persisted_proof() {
+        let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
+            app_version: "1.2.3-nightly.20261111.t010000.g000000000001".into(),
+            bootloader_version: "0.2.0".into(),
+        };
+        assert!(
+            FirmwareUpdateManager::radio_ota_proof_version(&proof, None, [1, 2, 3]).is_some()
+        );
+        assert!(
+            FirmwareUpdateManager::radio_ota_proof_version(&proof, None, [1, 2, 4]).is_none()
+        );
+        assert!(
+            FirmwareUpdateManager::radio_ota_proof_version(
+                &proof,
+                Some("1.2.3-nightly.20261111.t020000.g000000000002".parse().unwrap()),
+                [1, 2, 3],
+            )
+            .is_none()
+        );
+        assert!(
+            FirmwareUpdateManager::radio_ota_proof_version(
+                &proof,
+                Some(proof.app_version.parse().unwrap()),
+                [1, 2, 3],
+            )
+            .is_some()
+        );
+    }
     #[test]
     fn retry_preserves_active_transfer_and_resets_only_failure() {
         let manager = FirmwareUpdateManager::new();
@@ -235,25 +381,25 @@ mod tests {
         manager.set_state(uuid, FirmwareUpdateState::Failed("USB lost".into()));
         manager.retry_failed(uuid);
         assert!(matches!(
-            manager.get_state(&uuid),
+            manager.get_state(uuid),
             FirmwareUpdateState::Failed(_)
         ));
         manager.dismiss_result(uuid);
         assert!(matches!(
-            manager.get_state(&uuid),
+            manager.get_state(uuid),
             FirmwareUpdateState::Failed(_)
         ));
         drop(claim);
         assert_eq!(manager.get_visible_updates(), vec![uuid]);
         manager.retry_failed(uuid);
-        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Idle);
-        assert!(manager.get_visible_updates().is_empty());
+        assert_eq!(manager.get_state(uuid), FirmwareUpdateState::Idle);
+        assert_eq!(manager.get_visible_updates(), Vec::<[u8; 6]>::new());
         manager.set_state(uuid, FirmwareUpdateState::Complete);
         manager.retry_failed(uuid);
-        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Complete);
+        assert_eq!(manager.get_state(uuid), FirmwareUpdateState::Complete);
         assert_eq!(manager.get_visible_updates(), vec![uuid]);
         manager.dismiss_result(uuid);
-        assert!(manager.get_visible_updates().is_empty());
+        assert_eq!(manager.get_visible_updates(), Vec::<[u8; 6]>::new());
     }
 
     #[test]
@@ -262,11 +408,11 @@ mod tests {
         let uuid = [1; 6];
         let claim = manager.try_claim(uuid).expect("the device is idle");
         manager.set_before_update_state(uuid, FirmwareUpdateState::Idle);
-        assert_eq!(manager.get_state(&uuid), FirmwareUpdateState::Downloading);
+        assert_eq!(manager.get_state(uuid), FirmwareUpdateState::Downloading);
         manager.set_state(uuid, FirmwareUpdateState::Failed("Disconnected".into()));
         manager.set_before_update_state(uuid, FirmwareUpdateState::Idle);
         assert_eq!(
-            manager.get_state(&uuid),
+            manager.get_state(uuid),
             FirmwareUpdateState::Failed("Disconnected".into())
         );
         assert!(manager.try_claim(uuid).is_none());
@@ -285,7 +431,7 @@ mod tests {
         });
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
-        assert!(!manager.is_updating(&uuid));
+        assert!(!manager.is_updating(uuid));
         assert!(manager.try_claim(uuid).is_some());
     }
 }

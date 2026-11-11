@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,14 +23,37 @@ SHA256SUMS lists the checksum of every firmware file.\n";
 pub(super) fn read(path: &Path) -> eros::Result<Value> {
     let text =
         fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?;
-    let manifest = serde_json::from_str(&text)
+    let manifest: Value = serde_json::from_str(&text)
         .with_context(|| format!("{} is not valid JSON", path.display()))?;
+    validate(&manifest)
+        .with_context(|| format!("{} is not a valid firmware manifest", path.display()))?;
     Ok(manifest)
 }
 
-/// Two-space indented with a trailing newline, the layout jq wrote; replaced
-/// whole so an interrupted write leaves the old manifest.
+fn validate(manifest: &Value) -> eros::Result<()> {
+    let manifest: odyssey_firmware_manifest::FirmwareManifest =
+        serde_json::from_value(manifest.clone()).context("manifest fields do not match schema")?;
+    if manifest.version != 2 {
+        eros::bail!("firmware manifest must use schema 2");
+    }
+    for (device, entries) in manifest.devices {
+        for entry in entries.firmwares {
+            if entry
+                .files
+                .get("stage2-bootloader")
+                .is_some_and(|file| file.release.is_some())
+            {
+                eros::bail!("{device} stage2 bootloader uses obsolete release counter");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Two-space indented with a trailing newline, the layout jq wrote. Replaced
+/// whole, so an interrupted write leaves the old manifest.
 pub(super) fn write(path: &Path, manifest: &Value) -> eros::Result<()> {
+    validate(manifest)?;
     let mut text =
         serde_json::to_string_pretty(manifest).context("could not serialize the manifest")?;
     text.push('\n');
@@ -58,12 +82,12 @@ pub(super) fn prepend(manifest: &mut Value, device: &str, entry: Value) -> eros:
     Ok(())
 }
 
-/// A manifest file's release counter; files that predate the counter count as 0.
+/// A manifest file's release counter. Files that predate the counter count as 0.
 pub(super) fn release_of(file: &Value) -> u64 {
     file.get("release").and_then(Value::as_u64).unwrap_or(0)
 }
 
-/// The device's entries, newest first; none when the device is not listed.
+/// The device's entries, newest first. None when the device is not listed.
 fn entries<'a>(manifest: &'a Value, device: &str) -> &'a [Value] {
     entries_of(&manifest["devices"][device])
 }
@@ -113,6 +137,20 @@ fn promote_entry(
             "{version} is not newer than {head_version}, stable's current newest for {device}; promote in order."
         );
     }
+    let required_bootloader =
+        semver::Version::parse(entry["requires_bootloader"].as_str().unwrap_or("0.0.0"))
+            .context("nightly entry has invalid requires_bootloader SemVer")?;
+    let carried_bootloader = head
+        .and_then(|head| head["files"]["stage2-bootloader"]["version"].as_str())
+        .map(semver::Version::parse)
+        .transpose()
+        .context("stable entry has invalid stage2 bootloader SemVer")?
+        .unwrap_or_else(|| semver::Version::new(0, 0, 0));
+    if required_bootloader > carried_bootloader {
+        eros::bail!(
+            "{version} requires bootloader {required_bootloader} but stable's newest entry for {device} carries {carried_bootloader}; promote the bridge entry that carries it first."
+        );
+    }
     // A stable unit installs stable's head, so the candidate's net-core floor has
     // to be one that head delivers. Promoting the entry that requires a net core
     // before the bridge carrying it would publish a head no stable unit can ever
@@ -130,7 +168,7 @@ fn promote_entry(
 
 /// Orders versions like `sort -V`: digit runs compare as numbers, other runs as
 /// text, and a version that is a prefix of another sorts first.
-/// shortcut: none of sort -V's `~` or file-suffix rules; upgrade if versions grow them.
+/// shortcut: none of sort -V's `~` or file-suffix rules, upgrade if versions grow them.
 fn version_cmp(a: &str, b: &str) -> Ordering {
     let (mut a, mut b) = (a, b);
     loop {
@@ -187,10 +225,10 @@ impl Channel {
 pub(crate) struct PackArgs {
     /// The folder to write the pack into.
     out: PathBuf,
-    /// A channel to include; repeat for both [default: stable].
+    /// A channel to include. Repeat for both [default: stable].
     #[arg(long = "channel", value_enum)]
     channels: Vec<Channel>,
-    /// Only this device; repeat for more [default: all].
+    /// Only this device. Repeat for more [default: all].
     #[arg(long = "device")]
     devices: Vec<String>,
     /// Newest releases per device.
@@ -212,7 +250,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
     let channels = if args.channels.is_empty() {
         &[Channel::Stable][..]
     } else {
-        &args.channels[..]
+        &args.channels
     };
     let out = &args.out;
     create_dir(out)?;
@@ -265,7 +303,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
             let path = out.join(&tag).join(asset_filename(device, entry, key));
             let size = fs::metadata(&path)
                 .ok()
-                .filter(|meta| meta.is_file())
+                .filter(fs::Metadata::is_file)
                 .map(|meta| meta.len());
             if size.is_none() || size != file["size"].as_u64() {
                 eros::bail!(
@@ -277,7 +315,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
     }
     let mut sums = String::new();
     for (relative, digest) in &have {
-        sums.push_str(&format!("{digest}  {relative}\n"));
+        writeln!(sums, "{digest}  {relative}").expect("writing to String cannot fail");
     }
     let sums_path = out.join("SHA256SUMS");
     fs::write(&sums_path, sums)
@@ -352,21 +390,20 @@ fn validate_layout(entry: &Value) -> eros::Result<()> {
             );
         }
     } else if !a || !b {
-        let missing = if !a { "app-a" } else { "app-b" };
+        let missing = if a { "app-b" } else { "app-a" };
         eros::bail!("lists no {missing}");
     }
     Ok(())
 }
 
 fn asset_filename(device: &str, entry: &Value, key: &str) -> String {
-    if device == "dongle" && matches!(key, "dfu-fanstel" | "dfu-laird") {
-        format!(
-            "dongle-fw-{}-{key}.zip",
-            entry["version"].as_str().unwrap_or_default()
-        )
-    } else {
-        format!("{key}.bin")
-    }
+    odyssey_firmware_manifest::asset_filename(
+        device,
+        odyssey_firmware_manifest::ReleaseSource::Application {
+            version: entry["version"].as_str().unwrap_or_default(),
+        },
+        key,
+    )
 }
 
 /// Every (device, entry, file key, file) in the manifest, files in key order.
@@ -390,36 +427,73 @@ fn files(source: &Value) -> Vec<(&str, &Value, &str, &Value)> {
     listed
 }
 
-/// A device's entries, newest first; none when it lists no firmwares.
+/// A device's entries, newest first. None when it lists no firmwares.
 fn entries_of(info: &Value) -> &[Value] {
     info["firmwares"].as_array().map_or(&[][..], Vec::as_slice)
 }
 
-/// Which GitHub release holds a manifest file. Mirrors `ReleaseSource::tag` in
-/// odyssey-hub-server.
-///
-/// `None` for a net core or bootloader listed without a release number: older
-/// entries list those for the record only, and the updater never downloads them.
 fn tag_for(device: &str, entry: &Value, key: &str, file: &Value) -> Option<String> {
-    let kind = match key {
-        "net-core" => "netcore",
-        "stage2-bootloader" => "bootloader",
-        _ => {
-            return Some(format!(
-                "{device}-v{}",
-                entry["version"].as_str().unwrap_or_default()
-            ));
+    use odyssey_firmware_manifest::ReleaseSource;
+
+    match key {
+        "net-core" => Some(
+            ReleaseSource::NetCore {
+                release: u16::try_from(file.get("release")?.as_u64()?).ok()?,
+            }
+            .tag(device),
+        ),
+        "stage2-bootloader" => {
+            let version = semver::Version::parse(file.get("version")?.as_str()?).ok()?;
+            Some(ReleaseSource::Bootloader { version: &version }.tag(device))
         }
-    };
-    let release = file.get("release")?;
-    Some(format!("{device}-{kind}-v{release}"))
+        _ => Some(
+            ReleaseSource::Application {
+                version: entry["version"].as_str()?,
+            }
+            .tag(device),
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn writer_rejects_invalid_schema_and_preserves_unknown_metadata() {
+        let path =
+            std::env::temp_dir().join(format!("odyssey-manifest-{}.json", std::process::id()));
+        fs::write(&path, "original").expect("create sentinel manifest");
+        let invalid = json!({
+            "version": 2,
+            "devices": { "unit": { "firmwares": [{
+                "version": "1.2.3",
+                "requires_bootloader": "0.0.0",
+                "min_desktop": "0.1.0",
+                "files": {}
+            }] } }
+        });
+        assert!(write(&path, &invalid).is_err());
+        assert_eq!(
+            fs::read_to_string(&path).expect("read sentinel"),
+            "original"
+        );
+
+        let mut valid = manifest(vec![entry("1.2.3", 0, None)]);
+        valid["future"] = json!(true);
+        valid["devices"]["atslite1"]["firmwares"][0]["future"] = json!("retained");
+        write(&path, &valid).expect("write valid manifest");
+        let roundtrip = read(&path).expect("read valid manifest");
+        assert_eq!(roundtrip["future"], true);
+        assert_eq!(
+            roundtrip["devices"]["atslite1"]["firmwares"][0]["future"],
+            "retained"
+        );
+        fs::remove_file(path).expect("remove test manifest");
+    }
 
     /// A nightly entry: `carried` is the net-core release it ships, if any.
     fn entry(version: &str, requires_netcore: u64, carried: Option<u64>) -> Value {
@@ -429,7 +503,7 @@ mod tests {
         }
         json!({
             "version": version,
-            "requires_bootloader": 0,
+            "requires_bootloader": "0.0.0",
             "requires_netcore": requires_netcore,
             "min_desktop": "0.6.0",
             "files": files,
@@ -437,7 +511,7 @@ mod tests {
     }
 
     fn manifest(entries: Vec<Value>) -> Value {
-        json!({ "version": 1, "devices": { "atslite1": { "firmwares": entries } } })
+        json!({ "version": 2, "devices": { "atslite1": { "firmwares": Value::Array(entries) } } })
     }
 
     /// Nightly holds the bridge chain: 0.2.1 carries net core 2, 0.3.0 requires it.
@@ -517,7 +591,7 @@ mod tests {
 
     #[test]
     fn a_device_new_to_stable_gets_its_first_entry() {
-        let mut stable = json!({ "version": 1, "devices": {} });
+        let mut stable = json!({ "version": 2, "devices": {} });
         promote_entry(&nightly(), &mut stable, "atslite1", "0.1.0")
             .expect("empty stable takes any entry");
         assert_eq!(versions(&stable), ["0.1.0"]);
@@ -549,10 +623,30 @@ mod tests {
                 "legacy-atslite1",
                 &entry,
                 "stage2-bootloader",
-                &json!({ "release": 4 })
+                &json!({ "version": "0.0.4" })
             )
             .as_deref(),
             Some("legacy-atslite1-bootloader-v4")
+        );
+        assert_eq!(
+            tag_for(
+                "atslite1",
+                &entry,
+                "stage2-bootloader",
+                &json!({ "version": "0.0.4-rc.1" })
+            )
+            .as_deref(),
+            Some("atslite1-bootloader-v0.0.4-rc.1")
+        );
+        assert_eq!(
+            tag_for(
+                "atslite1",
+                &entry,
+                "stage2-bootloader",
+                &json!({ "version": "0.2.1" })
+            )
+            .as_deref(),
+            Some("atslite1-bootloader-v0.2.1")
         );
         assert_eq!(
             tag_for("atslite1", &entry, "stage2-bootloader", &json!({})),
@@ -563,7 +657,7 @@ mod tests {
     fn pack_source() -> Value {
         let full =
             |version: &str| json!({ "version": version, "files": { "app-a": {}, "app-b": {} } });
-        json!({ "version": 1, "devices": {
+        json!({ "version": 2, "devices": {
             "atslite1": { "firmwares": [full("0.3.0"), full("0.2.0"), full("0.1.0")] },
             "legacy-atslite1": { "firmwares": [full("0.1.22")] },
         }})
@@ -583,24 +677,24 @@ mod tests {
 
     #[test]
     fn select_refuses_no_matching_device_and_a_missing_app_slot() {
-        assert!(select(&mut pack_source(), "nightly", &["vm".to_owned()], 2).is_err());
+        select(&mut pack_source(), "nightly", &["vm".to_owned()], 2)
+            .expect_err("unlisted device is rejected");
 
         let mut source = pack_source();
         source["devices"]["atslite1"]["firmwares"][1]["files"]
             .as_object_mut()
             .expect("files is an object")
             .remove("app-b");
-        assert!(select(&mut source, "stable", &[], 2).is_err());
-        assert!(
-            select(&mut source, "stable", &[], 1).is_ok(),
-            "0.2.0 is beyond --latest 1"
-        );
+        select(&mut source, "stable", &[], 2).expect_err("missing app slot is rejected");
+        select(&mut source, "stable", &[], 1).expect("entry beyond --latest is excluded");
     }
 
     #[test]
     fn pack_accepts_single_or_dual_but_not_mixed_layouts() {
-        assert!(validate_layout(&json!({"files": {"app": {}}, "requires_netcore": 0})).is_ok());
-        assert!(validate_layout(&json!({"files": {"app-a": {}, "app-b": {}}})).is_ok());
+        validate_layout(&json!({"files": {"app": {}}, "requires_netcore": 0}))
+            .expect("single app layout is valid");
+        validate_layout(&json!({"files": {"app-a": {}, "app-b": {}}}))
+            .expect("dual app layout is valid");
         for entry in [
             json!({"files": {"app": {}, "app-a": {}}, "requires_netcore": 0}),
             json!({"files": {"app": {}, "net-core": {}}, "requires_netcore": 0}),
@@ -609,13 +703,13 @@ mod tests {
             json!({"files": {"app-a": {}}}),
             json!({"files": {}}),
         ] {
-            assert!(validate_layout(&entry).is_err(), "{entry}");
+            validate_layout(&entry).expect_err("mixed app layout is rejected");
         }
     }
 
     #[test]
     fn dongle_pack_requires_both_signed_packages() {
-        let mut source = json!({"version": 1, "devices": {"dongle": {"firmwares": [{
+        let mut source = json!({"version": 2, "devices": {"dongle": {"firmwares": [{
             "version": "0.1.13", "files": {"dfu-fanstel": {}, "dfu-laird": {}}
         }]}}});
         select(&mut source, "nightly", &[], 1).unwrap();
@@ -623,7 +717,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("dfu-laird");
-        assert!(select(&mut source, "nightly", &[], 1).is_err());
+        select(&mut source, "nightly", &[], 1).expect_err("missing DFU package is rejected");
     }
 
     #[test]
@@ -637,14 +731,12 @@ mod tests {
         .unwrap();
         let before = source.clone();
         for version in ["0.1.0", "0.2.0"] {
-            assert!(
-                prepend(
-                    &mut source,
-                    "marker-control-board",
-                    json!({"version": version})
-                )
-                .is_err()
-            );
+            prepend(
+                &mut source,
+                "marker-control-board",
+                json!({"version": version}),
+            )
+            .expect_err("non-newer version is refused");
             assert_eq!(source, before);
         }
         prepend(
@@ -669,7 +761,8 @@ mod tests {
         prepend(&mut source, "dongle", json!({"version": "0.2.0"})).unwrap();
         let before = source.clone();
         for version in ["0.1.9", "0.2.0"] {
-            assert!(prepend(&mut source, "dongle", json!({"version": version})).is_err());
+            prepend(&mut source, "dongle", json!({"version": version}))
+                .expect_err("non-newer version is refused");
             assert_eq!(source, before, "{version}");
         }
         prepend(&mut source, "dongle", json!({"version": "0.10.0"})).unwrap();
