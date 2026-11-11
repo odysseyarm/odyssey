@@ -12,6 +12,39 @@ Hosts parse a manifest whole or not at all, and take the **first** entry they ca
 install, so entries are newest-first and a malformed entry hides every update.
 `cargo test -p odyssey-hub-server --lib firmware` parses both files.
 
+## Releasing everything that changed
+
+Three commands cover Desktop, the SDKs, the dongle, the marker board and both
+ATS Lites with their net cores and bootloaders. The sections below describe the
+steps they run.
+
+```
+cargo xtask release plan      # what changed since each tag; reads only
+cargo xtask release bump      # raise versions and counters; commit and push to master
+cargo xtask release publish   # tag and publish whatever is ahead of its tag
+```
+
+- **Changed** means a file differs between the component's newest tag and HEAD
+  in its crate, a path dependency it builds with, its lock file or its memory
+  map. That errs toward bumping: a comment in a shared crate counts.
+- `bump` raises a patch version or a release counter. A raised net core also
+  raises the application that delivers it. Bootloaders are raised only by name
+  (`cargo xtask release bump atslite1-bootloader`): a bootloader release
+  reflashes every unit's bootloader. Name components to bump only those.
+- `publish` needs a clean tree on a commit that is on `origin/master`. It tags
+  net cores and bootloaders and waits for their workflows, then builds each ATS
+  Lite application, adds its alpha entry and publishes it, then tags the rest
+  for their workflows. Name components to publish only those; `--dry-run`
+  prints the tags.
+- `min_desktop` is the oldest Desktop release from which every later one
+  speaks the firmware's wire version (`DEVICE_PROTOCOL`, or `MUX_PROTOCOL` for
+  the dongle), and never below the device's previous entry.
+  `requires_bootloader` and `requires_netcore` carry over from the previous
+  entry; raise one with `gen-release` by hand.
+- ATS Lite and dongle entries land in the working tree's
+  `releases.alpha.json`: commit and push it, or no unit is offered the release.
+  The marker board's workflow commits its own entry.
+
 ## Components and tags
 
 Each image is released under its own tag. A manifest entry for an application

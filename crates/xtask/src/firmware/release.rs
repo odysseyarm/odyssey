@@ -102,7 +102,7 @@ fn bcd_device(release: u32) -> String {
 
 /// The digits of the last `macro_rules! release { () => { N }; }` in `source`,
 /// whatever its layout. Spaces, tabs, CR and LF are dropped before matching.
-pub(super) fn counter(source: &str) -> Option<String> {
+pub(crate) fn counter(source: &str) -> Option<String> {
     let tokens: String = source
         .chars()
         .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))

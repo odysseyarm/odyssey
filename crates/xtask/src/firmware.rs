@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use board::{Board, Cores, Crate, Flash, LEGACY_ATSLITE, LEGACY_VM, LITE1, MARKER_CONTROL_BOARD};
 use eros::Context as _;
+pub(crate) use manifest::alpha_head;
 use release::Part;
-pub(crate) use release::gen_asset_release;
+pub(crate) use release::{counter, gen_asset_release};
 use sha2::{Digest as _, Sha256};
 
 use crate::cmd;

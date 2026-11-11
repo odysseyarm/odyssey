@@ -8,6 +8,7 @@ mod cmd;
 mod desktop;
 mod dongle;
 mod firmware;
+mod release;
 mod sdk;
 
 use clap::{Parser, Subcommand};
@@ -36,6 +37,9 @@ enum Command {
     /// Scale-board artwork and the Orbbec FFI bindings.
     #[command(subcommand)]
     Autocalib(autocalib::Cmd),
+    /// Plan, bump and publish releases of everything that changed since its tag.
+    #[command(subcommand)]
+    Release(release::Cmd),
     /// Flash a device over SWD with sector erase only: bootloader and app, or
     /// the app alone. Select a probe with PROBE_RS_PROBE=VID:PID:SERIAL.
     Flash {
@@ -80,5 +84,6 @@ fn main() -> eros::Result<()> {
         Command::Sdk(command) => sdk::run(command),
         Command::Flash { device, app_only } => flash(device, app_only),
         Command::Autocalib(command) => autocalib::run(command),
+        Command::Release(command) => release::run(command),
     }
 }

@@ -68,6 +68,12 @@ fn entries<'a>(manifest: &'a Value, device: &str) -> &'a [Value] {
     entries_of(&manifest["devices"][device])
 }
 
+/// The newest alpha entry of `device`, if it has one.
+pub(crate) fn alpha_head(device: &str) -> eros::Result<Option<Value>> {
+    let manifest = read(&cmd::root().join(MANIFESTS).join(ALPHA))?;
+    Ok(entries(&manifest, device).first().cloned())
+}
+
 pub(super) fn promote(device: &str, version: &str) -> eros::Result<()> {
     let dir = cmd::root().join(MANIFESTS);
     let alpha = read(&dir.join(ALPHA))?;
