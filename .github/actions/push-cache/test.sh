@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 selector=$(realpath "$(dirname "$0")/paths.sh")
-shell=$(realpath "$(command -v bash)")
+# The fixture's builder has to be a store path; a runner's /usr/bin/bash is not one.
+repo=$(realpath "$(dirname "$0")/../../..")
+shell=$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#bash.out)/bin/bash
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
