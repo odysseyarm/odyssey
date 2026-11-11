@@ -105,7 +105,7 @@ jobs:
           from pathlib import Path
           version, floor = os.environ['VERSION'], os.environ['MIN_DESKTOP']
           assert re.fullmatch(r'\d+\.\d+\.\d+', floor), floor
-          path = Path('firmware/manifests/releases.alpha.json')
+          path = Path('firmware/manifests/releases.nightly.json')
           manifest = json.loads(path.read_text())
           entries = manifest['devices'].setdefault('marker-control-board', {}).setdefault('firmwares', [])
           data = Path('published/app.bin').read_bytes()
@@ -118,13 +118,13 @@ jobs:
               assert all(old[k] == entry[k] for k in entry if k != 'released'), 'published entry differs'
           else:
               key = lambda v: tuple(map(int, v.split('.')))
-              assert not entries or key(version) > key(entries[0]['version']), 'release older than alpha head'
+              assert not entries or key(version) > key(entries[0]['version']), 'release older than nightly head'
               entries.insert(0, entry)
               tmp = path.with_suffix('.json.tmp')
               tmp.write_text(json.dumps(manifest, indent=2) + '\n')
               tmp.replace(path)
           PY
-          git add firmware/manifests/releases.alpha.json
+          git add firmware/manifests/releases.nightly.json
           if git diff --cached --quiet; then
             echo "Manifest already records marker-control-board $VERSION; no PR needed."
             exit 0
@@ -141,10 +141,10 @@ jobs:
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git checkout -b "$branch"
-            git commit -m "Publish marker-control-board $VERSION alpha manifest"
+            git commit -m "Publish marker-control-board $VERSION nightly manifest"
             git push origin "$branch"
             pr=$(gh pr create --base master --head "$branch" \
-              --title "Publish marker-control-board $VERSION alpha manifest" \
+              --title "Publish marker-control-board $VERSION nightly manifest" \
               --body "Generated from immutable published app.bin; SHA256 and size checked. Review and squash-merge to master.")
           fi
           # GITHUB_TOKEN PRs do not trigger pull_request workflows; dispatch checks on branch HEAD.

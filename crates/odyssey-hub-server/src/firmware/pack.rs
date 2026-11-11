@@ -4,7 +4,7 @@
 //! and nobody has to name anything by hand:
 //!
 //! ```text
-//! releases.stable.json                       the manifest (and releases.alpha.json)
+//! releases.stable.json                       the manifest (and releases.nightly.json)
 //! atslite1-v0.1.22/app-a.bin                 an application release carries both slots
 //! atslite1-v0.1.22/app-b.bin
 //! atslite1-netcore-v1/net-core.bin           the net core and bootloader releases a
@@ -295,9 +295,13 @@ mod tests {
                 "files": { "app": { "sha256": sha(image), "size": image.len() } }
             }] } }
         });
-        put(&dir, "releases.alpha.json", manifest.to_string().as_bytes());
+        put(
+            &dir,
+            "releases.nightly.json",
+            manifest.to_string().as_bytes(),
+        );
         put(&dir, "marker-control-board-v0.1.0/app.bin", image);
-        let loaded = load_manifest(&dir, FirmwareChannel::Alpha).unwrap();
+        let loaded = load_manifest(&dir, FirmwareChannel::Nightly).unwrap();
         let entry = &loaded.manifest.devices["marker-control-board"].firmwares[0];
         let file = &entry.files["app"];
         assert_eq!(
@@ -327,7 +331,11 @@ mod tests {
                 "min_desktop": "0.7.4", "files": {"dfu-fanstel": file, "dfu-laird": file}
             }]}}
         });
-        put(&dir, "releases.alpha.json", manifest.to_string().as_bytes());
+        put(
+            &dir,
+            "releases.nightly.json",
+            manifest.to_string().as_bytes(),
+        );
         for vendor in ["fanstel", "laird"] {
             put(
                 &dir,
@@ -335,7 +343,7 @@ mod tests {
                 bytes,
             );
         }
-        let loaded = load_manifest(&dir, FirmwareChannel::Alpha).unwrap();
+        let loaded = load_manifest(&dir, FirmwareChannel::Nightly).unwrap();
         let entry = &loaded.manifest.devices["dongle"].firmwares[0];
         let file = &entry.files["dfu-fanstel"];
         assert_eq!(
@@ -354,7 +362,7 @@ mod tests {
         );
         std::fs::remove_file(dir.join("dongle-v0.1.13/dongle-fw-0.1.13-dfu-laird.zip")).unwrap();
         assert!(matches!(
-            load_manifest(&dir, FirmwareChannel::Alpha),
+            load_manifest(&dir, FirmwareChannel::Nightly),
             Err(super::super::FirmwareSourceError::IncompletePack { .. })
         ));
     }
@@ -473,8 +481,8 @@ mod tests {
     fn each_channel_reads_its_own_manifest() {
         let dir = complete_pack("channels");
         assert!(
-            load_manifest(&dir, FirmwareChannel::Alpha).is_err(),
-            "no alpha manifest here"
+            load_manifest(&dir, FirmwareChannel::Nightly).is_err(),
+            "no nightly manifest here"
         );
     }
 

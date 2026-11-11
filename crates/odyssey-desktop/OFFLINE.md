@@ -51,7 +51,7 @@ In offline mode Odyssey reads firmware from a **firmware pack**: a folder laid o
 GitHub, so nothing has to be named or placed by hand.
 
 ```
-releases.stable.json                          the manifest (and releases.alpha.json)
+releases.stable.json                          the manifest (and releases.nightly.json)
 atslite1-v0.1.22/app-a.bin                    an application release carries both slots
 atslite1-v0.1.22/app-b.bin
 atslite1-netcore-v1/net-core.bin              net core and bootloader releases a manifest
@@ -86,4 +86,4 @@ cargo xtask firmware build-pack D:\odyssey-firmware-pack --channel stable --late
 
 It downloads the newest releases of each device, checks every file's size and hash, and writes
 `releases.<channel>.json`, `SHA256SUMS` and a short README. Use `--device` to limit it, and
-`--channel stable --channel alpha` for both channels.
+`--channel stable --channel nightly` for both channels.

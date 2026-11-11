@@ -6,7 +6,7 @@ use eros::Context as _;
 use serde_json::{Value, json};
 
 use super::board::{Board, Crate};
-use super::manifest::{self, ALPHA};
+use super::manifest::{self, NIGHTLY};
 use super::{FileDigest, OUTPUT_DIR, download, listing};
 use crate::cmd;
 
@@ -226,7 +226,7 @@ pub(super) fn gen_release(
         eros::bail!("min_desktop must be a version like 0.6.0, got '{min_desktop}'.");
     }
     let version = cmd::package_version(board.dir)?;
-    let manifest_name = format!("{}/{ALPHA}", manifest::MANIFESTS);
+    let manifest_name = format!("{}/{NIGHTLY}", manifest::MANIFESTS);
     let manifest_path = cmd::root().join(&manifest_name);
 
     // The bootloader and net core are not among these: they are released on
@@ -336,7 +336,7 @@ fn gen_single_release(
     }
     let app = FileDigest::of(&data);
     let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
-    let path = cmd::root().join(manifest::MANIFESTS).join(ALPHA);
+    let path = cmd::root().join(manifest::MANIFESTS).join(NIGHTLY);
     let mut manifest = manifest::read(&path)?;
     manifest::prepend(
         &mut manifest,
@@ -353,7 +353,7 @@ fn gen_single_release(
     manifest::write(&path, &manifest)
 }
 
-/// Adds `device`'s alpha entry for a release whose images this repo only
+/// Adds `device`'s nightly entry for a release whose images this repo only
 /// announces, not installs: each file is a published asset, hashed as downloaded.
 /// `assets` pairs a manifest file key with its asset name in release `tag`.
 pub(crate) fn gen_asset_release(
@@ -381,7 +381,7 @@ pub(crate) fn gen_asset_release(
         );
     }
     let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
-    let path = cmd::root().join(manifest::MANIFESTS).join(ALPHA);
+    let path = cmd::root().join(manifest::MANIFESTS).join(NIGHTLY);
     let mut manifest = manifest::read(&path)?;
     manifest::prepend(
         &mut manifest,

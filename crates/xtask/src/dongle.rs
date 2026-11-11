@@ -91,7 +91,7 @@ pub(crate) enum Cmd {
     /// Build and program the app over SWD (probe-rs), erasing only the sectors it
     /// covers. Needs the stock bootloader already installed.
     FlashSwd,
-    /// Add the published release to the alpha manifest so desktops prompt for it.
+    /// Add the published release to the nightly manifest so desktops prompt for it.
     /// Run after the release workflow has published the assets.
     GenRelease {
         /// The oldest Odyssey Desktop this firmware is required and tested with.
