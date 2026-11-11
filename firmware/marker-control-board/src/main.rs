@@ -34,7 +34,7 @@ use hardware::{DEVICE_INTERFACE_GUIDS, Irqs, Markers, force_markers_off, reset_s
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 
-include!(concat!(env!("OUT_DIR"), "/version.rs"));
+const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
 include!(concat!(env!("OUT_DIR"), "/owner_bonds.rs"));
 const FIRMWARE_BCD_DEVICE: u16 =
     odyssey_version::UsbDeviceRelease::from_version(FIRMWARE_VERSION).raw_value();

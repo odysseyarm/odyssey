@@ -1611,6 +1611,7 @@ dependencies = [
  "nrf-fuel-gauge",
  "nrfxlib-sys",
  "odyssey-protocol",
+ "odyssey-version",
  "pag7665qn",
  "panic-probe",
  "postcard",

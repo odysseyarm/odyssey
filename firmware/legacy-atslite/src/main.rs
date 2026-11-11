@@ -35,22 +35,7 @@ use static_cell::StaticCell;
 const DEVICE_INTERFACE_GUID: &str = "{A4769731-EC56-49FF-9924-613E5B3D4D6C}";
 const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
 
-const fn parse_version_component(s: &str) -> u16 {
-    let b = s.as_bytes();
-    let mut val: u16 = 0;
-    let mut i = 0;
-    while i < b.len() {
-        val = val * 10 + (b[i] - b'0') as u16;
-        i += 1;
-    }
-    val
-}
-
-const FIRMWARE_VERSION: [u16; 3] = [
-    parse_version_component(env!("CARGO_PKG_VERSION_MAJOR")),
-    parse_version_component(env!("CARGO_PKG_VERSION_MINOR")),
-    parse_version_component(env!("CARGO_PKG_VERSION_PATCH")),
-];
+const FIRMWARE_VERSION: [u16; 3] = odyssey_version::cargo_version!();
 
 unsafe extern "C" {
     static __bootloader_state_start: u32;
