@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  merge_group:
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * *'
@@ -20,20 +21,31 @@ jobs:
       GIT_CONFIG_VALUE_0: ssh://git@github.com/odysseyarm/odyssey-cv.git
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/impact
+        id: impact
       - uses: ./.github/actions/setup-nix
+        if: steps.impact.outputs.tracking == 'true'
       - name: Test regression contracts
+        if: steps.impact.outputs.tracking == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.tracking-tests
       - name: Build tracking runner
+        if: steps.impact.outputs.tracking == 'true'
         run: |
           runner=$(nix build -L --no-link --print-out-paths .#tracking)
           echo "TRACKING_REGRESSION=$runner/bin/tracking-regression" >> "$GITHUB_ENV"
       - name: Run deterministic tracking suite
+        if: steps.impact.outputs.tracking == 'true'
         run: '"$TRACKING_REGRESSION" suite tracking-report.json'
       - name: Run display-mapping suite
+        if: steps.impact.outputs.tracking == 'true'
         run: '"$TRACKING_REGRESSION" surface-suite surface-report.json'
       - name: Check Rerun recording semantics
+        if: steps.impact.outputs.tracking == 'true'
         run: nix develop .#tracking --command python3 -m unittest discover -s tools/tracking_scene -p test_rerun_export.py -v
       - name: Render and round-trip calibrated Blender scenes
+        if: steps.impact.outputs.tracking == 'true'
         run: |
           nix develop .#tracking --command bash -euc '
             V="$TRACKING_REGRESSION"
@@ -44,7 +56,7 @@ jobs:
               --images scene-tool-evidence/authored-environment/manifest.json \
               --validator "$V" --self-check'
       - name: Upload tracking evidence
-        if: always()
+        if: always() && steps.impact.outputs.tracking == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: tracking-report

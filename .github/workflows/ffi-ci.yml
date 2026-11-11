@@ -1,6 +1,7 @@
 name: FFI CI
 
-# Build + package the C/C++ FFI library on every PR and push to master.
+# Build + package the C/C++ FFI library on pull requests, merge groups and pushes
+# to master, skipping it when nothing the library builds from changed.
 # Publishing (GitHub Release + vcpkg registry update) happens separately in
 # ffi-release.yml on odyssey-hub-client-ffi-v* tags.
 
@@ -10,15 +11,43 @@ on:
       - main
       - master
   pull_request:
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ffi: ${{ steps.impact.outputs.ffi }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/impact
+        id: impact
+
   build:
+    needs: changes
+    if: needs.changes.outputs.ffi == 'true'
     uses: ./.github/workflows/ffi-build.yml
     secrets:
       NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+  result:
+    name: FFI CI result
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when the build failed or was cancelled
+        env:
+          RESULTS: ${{ needs.changes.result }} ${{ needs.build.result }}
+        run: |
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) echo "::error::$RESULTS"; exit 1 ;;
+          esac
