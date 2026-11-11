@@ -45,8 +45,10 @@ cargo xtask release publish   # tag and publish whatever is ahead of its tag
   `releases.alpha.json`: commit and push it, or no unit is offered the release.
   The marker board's workflow commits its own entry.
 
-The bump and publish decisions live in `crates/xtask/src/release_rules.rs`.
-Host CI runs Kani over the production functions:
+The bump and publish decisions come from the pinned
+[`pure-release`](https://github.com/Abrahamh08/pure-release) dependency. Component
+mapping, dependency discovery and publishing I/O remain in `crates/xtask/src/release.rs`.
+Host CI runs Kani against the dependency revision in `crates/xtask/Cargo.lock`:
 
 ```
 nix build .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs

@@ -27,11 +27,24 @@ let
       extensions = [ "llvm-tools" "rustc-dev" "rust-src" "rustfmt" ];
     };
   };
-  releaseProofs = pkgs.runCommand "release-proofs" { nativeBuildInputs = [ kani ]; } ''
-    cp ${../crates/xtask/src/release_rules.rs} release_rules.rs
-    kani release_rules.rs --output-format terse
-    touch $out
-  '';
+  releaseProofs = craneLib.mkCargoDerivation ((common.mkArgs {
+    workspace = "crates/xtask";
+    pname = "release-proofs";
+  }) // {
+    nativeBuildInputs = [ kani pkgs.jq ];
+    cargoArtifacts = null;
+    buildPhaseCargoCommand = ''
+      manifest=$(cargo metadata --locked --offline --format-version 1 \
+        | jq -er '.packages[] | select(.name == "pure-release") | .manifest_path')
+      cp -rL "$(dirname "$manifest")" "$TMPDIR/pure-release"
+      chmod -R u+w "$TMPDIR/pure-release"
+      cargo-kani kani --manifest-path "$TMPDIR/pure-release/Cargo.toml" \
+        --lib --output-format terse
+    '';
+    doCheck = false;
+    doInstallCargoArtifacts = false;
+    installPhaseCommand = "touch $out";
+  });
   wireProofs = craneLib.mkCargoDerivation ((common.mkArgs {
     pname = "odyssey-wire-proofs";
   }) // {

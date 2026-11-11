@@ -9,13 +9,10 @@ clap = { version = "4.5", features = ["derive"] }
 eros = "0.8"
 hex = "0.4"
 memory-spec = "0.3"
+pure-release = { git = "https://github.com/Abrahamh08/pure-release", rev = "c806b437d21c59d891e138d55d4b1263c3f76b76" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.11"
 sha2 = "0.11"
 ureq = "3"
 zip = { version = "8", default-features = false, features = ["deflate"] }
-
-[lints.rust]
-# Kani proof configuration for src/release_rules.rs.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

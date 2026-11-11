@@ -481,6 +481,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "pure-release"
+version = "0.1.0"
+source = "git+https://github.com/Abrahamh08/pure-release?rev=c806b437d21c59d891e138d55d4b1263c3f76b76#c806b437d21c59d891e138d55d4b1263c3f76b76"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -842,6 +847,7 @@ dependencies = [
  "eros",
  "hex",
  "memory-spec",
+ "pure-release",
  "serde",
  "serde_json",
  "sha1",

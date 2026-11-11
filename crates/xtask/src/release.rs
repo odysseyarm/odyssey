@@ -12,10 +12,10 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use eros::Context as _;
+use pure_release::{self as rules, Kind, Link, Refusal, State};
 use serde_json::Value;
 
 use crate::firmware::{self, Task};
-use crate::release_rules::{self as rules, Kind, Link, Refusal, State};
 use crate::{cmd, dongle};
 
 const DESKTOP: &str = "odyssey-desktop";
