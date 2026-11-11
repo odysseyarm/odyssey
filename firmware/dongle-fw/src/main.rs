@@ -131,40 +131,7 @@ bind_interrupts!(pub struct Irqs {
     USBD => nrf_usb::InterruptHandler<peripherals::USBD>;
 });
 
-const fn parse_firmware_semver(version: &str) -> [u16; 3] {
-    let bytes = version.as_bytes();
-    let mut out = [0u16; 3];
-    let mut i = 0;
-    let mut part = 0;
-    let mut saw_digit = false;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b >= b'0' && b <= b'9' {
-            saw_digit = true;
-            out[part] = out[part] * 10 + (b - b'0') as u16;
-        } else if b == b'.' {
-            if !saw_digit || part >= 2 {
-                panic!("invalid CARGO_PKG_VERSION");
-            }
-            part += 1;
-            saw_digit = false;
-        } else if b == b'-' || b == b'+' {
-            break;
-        } else {
-            panic!("invalid CARGO_PKG_VERSION");
-        }
-        i += 1;
-    }
-
-    if part != 2 || !saw_digit {
-        panic!("invalid CARGO_PKG_VERSION");
-    }
-
-    out
-}
-
-const FIRMWARE_SEMVER: [u16; 3] = parse_firmware_semver(env!("CARGO_PKG_VERSION"));
+const FIRMWARE_SEMVER: [u16; 3] = odyssey_version::cargo_version!();
 
 #[exception]
 unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {

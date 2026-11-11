@@ -65,17 +65,6 @@ pub fn build(bootloader: bool) -> io::Result<()> {
             bonds.origin()
         ),
     )?;
-    let mut version = [0; 3];
-    for (index, part) in ["MAJOR", "MINOR", "PATCH"].into_iter().enumerate() {
-        version[index] = env::var(format!("CARGO_PKG_VERSION_{part}"))
-            .expect("Cargo sets numeric semver components")
-            .parse::<u16>()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    }
-    fs::write(
-        out.join("version.rs"),
-        format!("pub const FIRMWARE_VERSION: [u16; 3] = {version:?};\n"),
-    )?;
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");

@@ -1615,6 +1615,7 @@ dependencies = [
  "nrf-fuel-gauge",
  "nrfxlib-sys",
  "odyssey-protocol",
+ "odyssey-version",
  "paj7025",
  "postcard",
  "rand_chacha",
