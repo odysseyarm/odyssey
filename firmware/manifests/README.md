@@ -5,8 +5,14 @@ channel and download the images from GitHub releases.
 
 | File | Who follows it | How it changes |
 |---|---|---|
-| `releases.alpha.json` | Users who chose Alpha in Settings | `cargo xtask firmware <board> gen-release` adds an entry |
-| `releases.stable.json` | Everyone else (the default) | `cargo xtask firmware promote` copies an entry from alpha |
+| `releases.nightly.json` | Users who chose Nightly in Settings | `cargo xtask firmware <board> gen-release` adds an entry |
+| `releases.stable.json` | Everyone else (the default) | `cargo xtask firmware promote` copies an entry from nightly |
+
+Nightly used to be called alpha. A saved `alpha` choice reads as nightly, and
+`--channel alpha` still works in xtask. Older Desktops request
+`releases.alpha.json`, which no longer exists, so they see no firmware updates
+until they are updated. There is no beta tier: an entry is nightly until it is
+promoted to stable.
 
 Hosts parse a manifest whole or not at all, and take the **first** entry they can
 install, so entries are newest-first and a malformed entry hides every update.
@@ -42,7 +48,7 @@ cargo xtask release publish   # tag merged master commits and publish
   SHAs. It tags net cores and bootloaders and waits for their workflows, then
   builds and publishes ATS Lite application assets and tags the remaining
   selected components.
-  It generates ATS Lite and dongle alpha entries locally from published assets;
+  It generates ATS Lite and dongle nightly entries locally from published assets;
   commit each manifest change on a branch and submit a separate PR. Name
   components to publish only those; `--dry-run` prints tags.
 - `min_desktop` is the oldest Desktop release from which every later one
@@ -50,7 +56,7 @@ cargo xtask release publish   # tag merged master commits and publish
   the dongle), and never below the device's previous entry.
   `requires_bootloader` and `requires_netcore` carry over from the previous
   entry; raise one with `gen-release` by hand.
-- Generated ATS Lite, dongle, and marker alpha entries require separate PRs
+- Generated ATS Lite, dongle, and marker nightly entries require separate PRs
   after asset publication. Review, pass required checks, and squash-merge each
   before units are offered its release. Marker workflow opens its PR and
   explicitly dispatches required checks.
@@ -215,7 +221,7 @@ then the later application once N+1 is reported as running.
 
 ## Releasing application firmware
 
-Build the application, publish its immutable assets, then generate the alpha
+Build the application, publish its immutable assets, then generate the nightly
 entry from those published bytes:
 
 ```
@@ -248,10 +254,10 @@ a higher counter, a counter reused for a different image, and an image
 published under two counters. Entries that predate a counter have no `release`
 and count as 0.
 
-After publishing application assets, generate the alpha entry from those
+After publishing application assets, generate the nightly entry from those
 immutable bytes and submit a separate manifest PR. Require review, required
 checks, and squash merge before units are offered the release. Promote it once
-it has run on alpha units:
+it has run on nightly units:
 
 ```
 cargo xtask firmware promote <device> <version>
@@ -286,7 +292,7 @@ application version and compatibility floor for review and squash-merge before
 publishing; final release tag must point to merged `master` SHA, not pre-squash
 branch SHA. *Marker Control Board Release* builds application plus factory
 images, publishes immutable GitHub assets, downloads published `app.bin`,
-computes SHA256 and size, then opens a PR adding newest-first alpha entry onto
+computes SHA256 and size, then opens a PR adding newest-first nightly entry onto
 latest master. Generated entry describes immutable published bytes. Existing
 releases are not overwritten; reruns accept identical manifest entries, reject
 changed hashes, and reuse an open matching PR without replacing branch contents.

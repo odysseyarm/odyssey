@@ -39,7 +39,7 @@ pub(crate) enum Cmd {
     /// bootloaders first, then the applications that deliver them, then the rest.
     ///
     /// Needs a clean tree on a commit merged into master. Firmware entries
-    /// are added to the alpha manifest in the working tree; merge them through a PR.
+    /// are added to the nightly manifest in the working tree; merge them through a PR.
     Publish {
         components: Vec<String>,
         /// Print what would be published and stop.
@@ -86,9 +86,9 @@ impl AtsLite {
 enum Role {
     /// Pushing the tag is the release: a workflow builds and publishes.
     Workflow,
-    /// A workflow publishes the packages; the alpha manifest entry is added here.
+    /// A workflow publishes the packages; the nightly manifest entry is added here.
     Dongle,
-    /// Built and published here, with its alpha manifest entry.
+    /// Built and published here, with its nightly manifest entry.
     App(AtsLite),
     /// A net core or bootloader: released by counter and delivered as `file` of
     /// `app`'s manifest entries.
@@ -501,7 +501,7 @@ fn plan() -> eros::Result<Plan> {
             );
         };
         if let Role::Part { app, file } = component.role {
-            let carried = firmware::alpha_head(app)?
+            let carried = firmware::nightly_head(app)?
                 .and_then(|entry| entry["files"][file]["release"].as_u64())
                 .unwrap_or(0);
             behind[rows.len()] = carried < source.first().copied().unwrap_or(0);
@@ -580,7 +580,7 @@ fn min_desktop(row: &Row, plan: &Plan) -> eros::Result<Option<String>> {
         }
         desktop.source.clone()
     };
-    let previous = firmware::alpha_head(row.component.name)?
+    let previous = firmware::nightly_head(row.component.name)?
         .and_then(|entry| parse_version(entry["min_desktop"].as_str()?));
     if let Some(previous) = previous
         && previous > floor
@@ -811,13 +811,13 @@ fn publish_app(
     head: &str,
 ) -> eros::Result<()> {
     let device = row.component.name;
-    let previous = firmware::alpha_head(device)?;
+    let previous = firmware::nightly_head(device)?;
     if previous
         .as_ref()
         .is_some_and(|entry| entry["version"] == version)
     {
         eros::bail!(
-            "the alpha manifest already lists {device} {version}: restore it, or finish this release by hand"
+            "the nightly manifest already lists {device} {version}: restore it, or finish this release by hand"
         );
     }
     // A floor is a compatibility claim nothing here can derive, so it carries

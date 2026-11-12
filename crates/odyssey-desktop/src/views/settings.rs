@@ -16,8 +16,8 @@ const CHANNELS: [(FirmwareChannel, &str, &str); 2] = [
         "Firmware that has been tested and promoted. Recommended.",
     ),
     (
-        FirmwareChannel::Alpha,
-        "Alpha",
+        FirmwareChannel::Nightly,
+        "Nightly",
         "Every firmware release as soon as it is published. May contain unfinished changes.",
     ),
 ];

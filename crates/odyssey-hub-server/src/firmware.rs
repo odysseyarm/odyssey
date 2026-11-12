@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::policy;
 
-/// Where firmware manifests are published. Promotion from alpha to stable is a
+/// Where firmware manifests are published. Promotion from nightly to stable is a
 /// deliberate copy of an entry between the two files.
 const MANIFEST_BASE_URL: &str =
     "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests";
@@ -31,22 +31,23 @@ pub enum FirmwareChannel {
     #[default]
     Stable,
     /// Every release as it is published.
-    Alpha,
+    Nightly,
 }
 
 impl FirmwareChannel {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Stable => "stable",
-            Self::Alpha => "alpha",
+            Self::Nightly => "nightly",
         }
     }
 
     /// An unrecognised name falls back to stable: the safe channel is the one
-    /// to land on when a settings file is stale or hand-edited.
+    /// to land on when a settings file is stale or hand-edited. `alpha` is the
+    /// nightly channel's name in settings saved before it was renamed.
     pub fn from_name(name: &str) -> Self {
         match name {
-            "alpha" => Self::Alpha,
+            "nightly" | "alpha" => Self::Nightly,
             _ => Self::Stable,
         }
     }
@@ -1448,14 +1449,14 @@ mod tests {
         );
     }
 
-    const ALPHA: &str = include_str!("../../../firmware/manifests/releases.alpha.json");
+    const NIGHTLY: &str = include_str!("../../../firmware/manifests/releases.nightly.json");
     const STABLE: &str = include_str!("../../../firmware/manifests/releases.stable.json");
 
     /// Every host parses the manifest whole or not at all, so one entry missing
     /// a required field would hide every update from every device.
     #[test]
     fn committed_manifests_parse() {
-        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
+        for (name, text) in [("nightly", NIGHTLY), ("stable", STABLE)] {
             let manifest: FirmwareManifest =
                 serde_json::from_str(text).unwrap_or_else(|e| panic!("{name} parses: {e}"));
             assert!(manifest.version <= SUPPORTED_MANIFEST_VERSION);
@@ -1488,20 +1489,20 @@ mod tests {
         }
     }
 
-    /// Stable is promoted from alpha by copying, so it can never hold an entry
-    /// alpha does not, or one that differs from it.
+    /// Stable is promoted from nightly by copying, so it can never hold an entry
+    /// nightly does not, or one that differs from it.
     #[test]
-    fn stable_only_holds_promoted_alpha_entries() {
-        let alpha: serde_json::Value = serde_json::from_str(ALPHA).unwrap();
+    fn stable_only_holds_promoted_nightly_entries() {
+        let nightly: serde_json::Value = serde_json::from_str(NIGHTLY).unwrap();
         let stable: serde_json::Value = serde_json::from_str(STABLE).unwrap();
         for (device, entries) in stable["devices"].as_object().unwrap() {
             for entry in entries["firmwares"].as_array().unwrap() {
-                let in_alpha = alpha["devices"][device]["firmwares"]
+                let in_nightly = nightly["devices"][device]["firmwares"]
                     .as_array()
                     .is_some_and(|all| all.contains(entry));
                 assert!(
-                    in_alpha,
-                    "stable {device} {} is not an alpha entry",
+                    in_nightly,
+                    "stable {device} {} is not a nightly entry",
                     entry["version"]
                 );
             }
@@ -1708,7 +1709,7 @@ mod tests {
 
     #[test]
     fn committed_manifests_let_every_unit_reach_the_newest_entry() {
-        for (name, text) in [("alpha", ALPHA), ("stable", STABLE)] {
+        for (name, text) in [("nightly", NIGHTLY), ("stable", STABLE)] {
             let manifest: FirmwareManifest = serde_json::from_str(text).unwrap();
             let stuck = unreachable_starts(&manifest);
             assert!(stuck.is_empty(), "{name}: {stuck:?}");
@@ -1783,13 +1784,18 @@ mod tests {
 
     #[test]
     fn channel_names_round_trip_and_unknown_falls_back_to_stable() {
-        for channel in [FirmwareChannel::Stable, FirmwareChannel::Alpha] {
+        for channel in [FirmwareChannel::Stable, FirmwareChannel::Nightly] {
             assert_eq!(FirmwareChannel::from_name(channel.name()), channel);
         }
         assert_eq!(FirmwareChannel::from_name(""), FirmwareChannel::Stable);
+        assert_eq!(FirmwareChannel::from_name("beta"), FirmwareChannel::Stable);
+    }
+
+    #[test]
+    fn a_channel_saved_as_alpha_reads_as_nightly() {
         assert_eq!(
-            FirmwareChannel::from_name("nightly"),
-            FirmwareChannel::Stable
+            FirmwareChannel::from_name("alpha"),
+            FirmwareChannel::Nightly
         );
     }
 
