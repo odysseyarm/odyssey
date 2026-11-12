@@ -27,12 +27,4 @@ runs:
         CACHE_ACTION_PATH: ${{ github.action_path }}
         AWS_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
         AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
-      run: |
-        set -euo pipefail
-        set -f
-        paths=$(bash "$CACHE_ACTION_PATH/paths.sh")
-        key=$(mktemp)
-        trap 'rm -f "$key"' EXIT
-        printf '%s' "$NIX_SIGNING_KEY" > "$key"
-        nix store sign -r -k "$key" $paths
-        nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' $paths
+      run: nix shell --inputs-from . nixpkgs#python3 nixpkgs#zstd nixpkgs#jq --command bash "$CACHE_ACTION_PATH/upload.sh"
