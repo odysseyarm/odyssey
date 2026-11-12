@@ -40,6 +40,16 @@ after reviewing the patch. Checks must be current with the base branch.
 Publish only from the merged `master` commit; a pre-squash PR head is not a
 release commit. See [firmware releases](../../firmware/manifests/README.md).
 
+Host, format, tracking, FFI and UniFFI checks run only for suites a change can
+affect. `.github/actions/impact` compares a pull request or merge group with its
+base and selects suites from each crate's Cargo path-dependency closure plus
+listed non-Cargo inputs, such as firmware manifests, Nix files and the
+toolchain pin. Pushes to master, scheduled runs, manual runs on master and any
+selector failure run every suite. A skipped suite reports success, so required
+checks never wait: `host`, `rustfmt`, `tracking`, `FFI CI result` and
+`UniFFI CI result`. `merge_group` is a trigger of every one of those workflows;
+a merge queue must not be required for `master` before they all carry it.
+
 Vision-tool simulation attaches to `odyssey_sim::UNIT_UUID`; USB presence and
 reconnect generation come from that unit's snapshot, not global simulator state.
 Check Host CI's optional simulator features, including simulator-control test targets:
