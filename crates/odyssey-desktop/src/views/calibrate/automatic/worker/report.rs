@@ -86,7 +86,7 @@ pub(super) fn attempt_summary(attempt: &Attempt) -> String {
     let _ = writeln!(
         text,
         "Odyssey Desktop {} on {} {}",
-        env!("CARGO_PKG_VERSION"),
+        env!("ODYSSEY_BUILD_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH
     );

@@ -43,7 +43,7 @@ pub(super) fn packager(variant: Variant, dir: &Path, out_dir: &str) -> eros::Res
     let manifest_path = dir.join("prebuilt.json");
     let manifest: Manifest = serde_json::from_slice(&orbbec::read(&manifest_path)?)
         .with_context(|| format!("parsing {}", manifest_path.display()))?;
-    let app_version = cmd::package_version(DIR)?;
+    let app_version = std::env::var("ODYSSEY_BUILD_VERSION").unwrap_or(cmd::package_version(DIR)?);
     let pinned = pinned_packager(&root_manifest()?)?;
     let config = verify(variant, &dir, &manifest, &app_version, &pinned)?;
 

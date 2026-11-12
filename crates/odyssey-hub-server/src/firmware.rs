@@ -329,7 +329,7 @@ pub struct FirmwareOffer<'a> {
 pub fn select_firmware<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
-    desktop: [u16; 3],
+    desktop: semver::Version,
     running_netcore: u16,
 ) -> FirmwareOffer<'a> {
     let mut offer = FirmwareOffer {
@@ -341,9 +341,9 @@ pub fn select_firmware<'a>(
         return offer;
     };
     for entry in &device.firmwares {
-        let desktop_ok = match parse_version(&entry.min_desktop) {
-            Some(min) => !version_newer(desktop, min),
-            None => {
+        let desktop_ok = match semver::Version::parse(&entry.min_desktop) {
+            Ok(min) => desktop >= min,
+            Err(_) => {
                 tracing::warn!(
                     "Firmware {} has an unreadable min_desktop {:?}; not offering it",
                     entry.version,
@@ -1541,23 +1541,61 @@ mod tests {
         let manifest = manifest_with(&[("0.3.0", "0.8.0"), ("0.2.0", "0.6.0"), ("0.1.0", "0.6.0")]);
         // Below the newest entry's floor: offer the next one, mention the newest.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 7, 1], 0)),
+            selected(select_firmware(
+                &manifest,
+                "atslite1",
+                semver::Version::new(0, 7, 1),
+                0
+            )),
             (Some("0.2.0"), Some("0.3.0"))
         );
         // Exactly at the floor counts as meeting it.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 8, 0], 0)),
+            selected(select_firmware(
+                &manifest,
+                "atslite1",
+                semver::Version::new(0, 8, 0),
+                0
+            )),
             (Some("0.3.0"), None)
         );
         // Older than every floor: nothing installable, but say what exists.
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [0, 5, 0], 0)),
+            selected(select_firmware(
+                &manifest,
+                "atslite1",
+                semver::Version::new(0, 5, 0),
+                0
+            )),
             (None, Some("0.3.0"))
         );
         // Unknown device.
         assert_eq!(
-            selected(select_firmware(&manifest, "nope", [9, 9, 9], 0)),
+            selected(select_firmware(
+                &manifest,
+                "nope",
+                semver::Version::new(9, 9, 9),
+                0
+            )),
             (None, None)
+        );
+    }
+    #[test]
+    fn nightly_desktop_is_below_matching_stable_firmware_floor() {
+        let manifest = manifest_with(&[("0.3.0", "0.7.6")]);
+        let nightly = semver::Version::parse("0.7.6-nightly.20260619.t020000.gabcdef").unwrap();
+        assert_eq!(
+            selected(select_firmware(&manifest, "atslite1", nightly, 0)),
+            (None, Some("0.3.0"))
+        );
+        assert_eq!(
+            selected(select_firmware(
+                &manifest,
+                "atslite1",
+                semver::Version::new(0, 7, 6),
+                0
+            )),
+            (Some("0.3.0"), None)
         );
     }
 
@@ -1590,7 +1628,7 @@ mod tests {
     }
 
     fn netcore_selected(manifest: &FirmwareManifest, running: u16) -> (Option<&str>, Option<&str>) {
-        let offer = select_firmware(manifest, "atslite1", [1, 0, 0], running);
+        let offer = select_firmware(manifest, "atslite1", semver::Version::new(1, 0, 0), running);
         (
             offer.offered.map(|e| e.version.as_str()),
             offer.net_core_blocked.map(|e| e.version.as_str()),
@@ -1640,7 +1678,7 @@ mod tests {
     fn desktop_hold_takes_precedence_over_the_net_core_floor() {
         let mut manifest = netcore_manifest(&[("0.2.0", 1, Some(1)), ("0.1.0", 0, None)]);
         manifest.devices.get_mut("atslite1").unwrap().firmwares[0].min_desktop = "9.0.0".into();
-        let offer = select_firmware(&manifest, "atslite1", [1, 0, 0], 0);
+        let offer = select_firmware(&manifest, "atslite1", semver::Version::new(1, 0, 0), 0);
         assert_eq!(offer.offered.map(|e| e.version.as_str()), Some("0.1.0"));
         assert_eq!(offer.held_back.map(|e| e.version.as_str()), Some("0.2.0"));
         assert!(offer.net_core_blocked.is_none());
@@ -1658,7 +1696,13 @@ mod tests {
         mut running: u16,
     ) -> [u16; 3] {
         for _ in 0..=2 * manifest.devices[device].firmwares.len() {
-            let Some(entry) = select_firmware(manifest, device, [u16::MAX; 3], running).offered
+            let Some(entry) = select_firmware(
+                manifest,
+                device,
+                semver::Version::new(u64::MAX, u64::MAX, u64::MAX),
+                running,
+            )
+            .offered
             else {
                 break;
             };
@@ -1803,7 +1847,12 @@ mod tests {
     fn unreadable_min_desktop_is_never_offered() {
         let manifest = manifest_with(&[("0.2.0", "soon"), ("0.1.0", "0.6.0")]);
         assert_eq!(
-            selected(select_firmware(&manifest, "atslite1", [1, 0, 0], 0)),
+            selected(select_firmware(
+                &manifest,
+                "atslite1",
+                semver::Version::new(1, 0, 0),
+                0
+            )),
             (Some("0.1.0"), Some("0.2.0"))
         );
     }

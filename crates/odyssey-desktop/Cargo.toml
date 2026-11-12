@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 eros = { workspace = true }
+semver = "1"
 backon = { workspace = true }
 futures = { version = "0.3.30", default-features = false, features = ["std", "async-await"] }
 futures-concurrency = { workspace = true }
@@ -66,7 +67,6 @@ required-features = ["sim"]
 
 # Installer config for cargo-packager (`cargo bin cargo-packager`; see
 # crates/xtask/src/desktop.rs and .github/workflows/desktop-release.yml).
-# Version, binaries_dir and the main binary come from this package.
 [package.metadata.packager]
 productName = "Odyssey"
 identifier = "com.odysseyarm.odyssey"
