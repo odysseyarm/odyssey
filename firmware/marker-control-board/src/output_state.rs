@@ -1,12 +1,14 @@
 use odyssey_protocol::marker_control::{LEASE_MILLIS, Mode, WriteError, parse_demand};
 
-#[derive(Default)]
+/// Since: Odyssey Desktop 0.7.4.
+#[derive(Debug, Default)]
 pub struct OutputState {
     mode: Mode,
     deadline: Option<u64>,
 }
 
 impl OutputState {
+    /// Since: Odyssey Desktop 0.7.4.
     pub const fn new() -> Self {
         Self {
             mode: Mode::Auto,
@@ -14,24 +16,33 @@ impl OutputState {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn mode(&self) -> Mode {
         self.mode
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn deadline(&self) -> Option<u64> {
         self.deadline
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn expire(&mut self, now: u64) {
         if self.deadline.is_some_and(|deadline| now >= deadline) {
             self.deadline = None;
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn on(&self) -> bool {
         self.mode == Mode::On || (self.mode == Mode::Auto && self.deadline.is_some())
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Updates demand and lease deadline from a protocol value.
+    ///
+    /// # Errors
+    /// Returns `WriteError` when `data` is not a valid demand value.
     pub fn write_demand(&mut self, data: &[u8], now: u64) -> Result<(), WriteError> {
         let active = parse_demand(data)?;
         self.deadline = if active && self.mode == Mode::Auto {
@@ -42,11 +53,17 @@ impl OutputState {
         Ok(())
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Updates mode from a protocol value.
+    ///
+    /// # Errors
+    /// Returns `WriteError` when `data` is not a valid mode value.
     pub fn write_mode(&mut self, data: &[u8]) -> Result<(), WriteError> {
         self.set_mode(Mode::parse(data)?);
         Ok(())
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn set_mode(&mut self, mode: Mode) {
         if self.mode != mode {
             self.deadline = None;
@@ -54,7 +71,9 @@ impl OutputState {
         }
     }
 
-    /// Short clicks cycle Auto → On → Off → Auto; boot-held button is ignored.
+    /// Short clicks cycle Auto → On → Off → Auto. A button held at boot is ignored.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn click(&mut self) {
         self.set_mode(match self.mode {
             Mode::Auto => Mode::On,
@@ -63,11 +82,14 @@ impl OutputState {
         });
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn disconnect(&mut self) {
         self.deadline = None;
     }
 
     /// Pairing wins over the output mode so a button hold is always acknowledged.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn led(&self, pairing: bool) -> Led {
         if pairing {
             return Led::Blue;
@@ -81,19 +103,27 @@ impl OutputState {
     }
 }
 
-/// Status LED colour. The RGB LED is common-anode to V3 behind low-side N-FETs
-/// driven from PCAL6408A P5 (red), P6 (green), P7 (blue); schematic 117-27606 rev B
-/// sheet 3. The expander has no PWM, so colours are on/off mixes.
+/// Status LED colour. The RGB LED is common-anode to V3 behind low-side N-FETs, driven
+/// from PCAL6408A P5 (red), P6 (green), P7 (blue). Schematic 117-27606 rev B sheet 3.
+/// The expander has no PWM, so colours are on/off mixes.
+///
+/// Since: Odyssey Desktop 0.7.4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Led {
+    /// Since: Odyssey Desktop 0.7.4.
     Off,
+    /// Since: Odyssey Desktop 0.7.4.
     Green,
+    /// Since: Odyssey Desktop 0.7.4.
     Blue,
+    /// Since: Odyssey Desktop 0.7.4.
     Yellow,
+    /// Since: Odyssey Desktop 0.7.4.
     Magenta,
 }
 
 impl Led {
+    /// Since: Odyssey Desktop 0.7.4.
     pub const fn bits(self) -> u8 {
         match self {
             Self::Off => 0,

@@ -1,3 +1,4 @@
+/// Since: Odyssey Desktop 0.7.0.
 pub fn device_id() -> [u8; 8] {
     let ficr = embassy_nrf::pac::FICR;
     let low = ficr.info().deviceid(0).read();
@@ -7,6 +8,7 @@ pub fn device_id() -> [u8; 8] {
     [a, b, c, d, e, f, g, h]
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn set_pin_sense(
     port: &embassy_nrf::gpio::Port,
     idx: u8,
@@ -26,6 +28,7 @@ pub fn set_pin_sense(
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[macro_export]
 macro_rules! battery_model_inc {
     (

@@ -7,6 +7,7 @@ use embassy_time::Duration;
 
 const LED_MASK: u8 = 0xE0;
 
+/// Since: Odyssey Desktop 0.7.4.
 pub const DEVICE_INTERFACE_GUIDS: &[&str] = &["{265744E6-40E8-41C4-AE17-F6F2EB187F1C}"];
 
 embassy_nrf::bind_interrupts!(pub struct Irqs {
@@ -14,7 +15,9 @@ embassy_nrf::bind_interrupts!(pub struct Irqs {
     TWISPI0 => twim::InterruptHandler<peripherals::TWISPI0>;
 });
 
-/// Also used before HAL initialization and in fatal/reset paths; never raises an output.
+/// Also used before HAL initialization and in fatal/reset paths. Never raises an output.
+///
+/// Since: Odyssey Desktop 0.7.4.
 pub fn force_markers_off() {
     pac::P0.outclr().write(|w| {
         w.set_pin(15, true);
@@ -30,17 +33,20 @@ pub fn force_markers_off() {
     pac::P1.dirset().write(|w| w.set_pin(9, true));
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub fn reset_safe() -> ! {
     cortex_m::interrupt::disable();
     force_markers_off();
     cortex_m::peripheral::SCB::sys_reset()
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub fn clear_reset_reason() {
     let reason = pac::POWER.resetreas().read();
     pac::POWER.resetreas().write_value(reason);
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub fn serial_number() -> [u8; 12] {
     let low = pac::FICR.deviceid(0).read().to_le_bytes();
     let high = pac::FICR.deviceid(1).read().to_le_bytes();
@@ -53,22 +59,32 @@ pub fn serial_number() -> [u8; 12] {
     serial
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub struct MarkerPins {
+    /// Since: Odyssey Desktop 0.7.4.
     pub output_1: embassy_nrf::Peri<'static, peripherals::P0_15>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub output_2: embassy_nrf::Peri<'static, peripherals::P1_09>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub output_3: embassy_nrf::Peri<'static, peripherals::P0_17>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub output_4: embassy_nrf::Peri<'static, peripherals::P0_20>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub twi: embassy_nrf::Peri<'static, peripherals::TWISPI0>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub scl: embassy_nrf::Peri<'static, peripherals::P0_10>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub sda: embassy_nrf::Peri<'static, peripherals::P0_09>,
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub struct Markers<'d> {
     outputs: [Output<'d>; 4],
     twi: Twim<'d>,
 }
 
 impl<'d> Markers<'d> {
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn new(p: MarkerPins, tx_ram_buffer: &'d mut [u8]) -> Self {
         let outputs = [
             Output::new(p.output_1, Level::Low, OutputDrive::Standard),
@@ -87,6 +103,9 @@ impl<'d> Markers<'d> {
         Self { outputs, twi }
     }
     /// PCAL6408A ADDR=false (0x20): io0 ISET1=1, io1 ISET0=0, io2 DRIVEV=0.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Returns an I2C error if the expander cannot be read or written.
     pub fn configure_off(&mut self) -> Result<(), twim::Error> {
         // Output register powers up as 0xFF: clear the LED bits before they become outputs.
         self.set_led(0)?;
@@ -105,7 +124,10 @@ impl<'d> Markers<'d> {
         )
     }
 
-    /// `bits` are the PCAL6408A P5..P7 positions of the RGB LED; other pins keep their value.
+    /// `bits` are the PCAL6408A P5..P7 positions of the RGB LED. Other pins keep their value.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Returns an I2C error if the expander cannot be read or written.
     pub fn set_led(&mut self, bits: u8) -> Result<(), twim::Error> {
         let mut value = [0];
         self.twi.blocking_write_read_timeout(
@@ -119,6 +141,8 @@ impl<'d> Markers<'d> {
             .blocking_write_timeout(0x20, &[0x01, value], Duration::from_millis(100))
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Returns an I2C error if the expander cannot be read or written.
     pub fn set(&mut self, on: bool) -> Result<(), twim::Error> {
         for output in &mut self.outputs {
             output.set_low();

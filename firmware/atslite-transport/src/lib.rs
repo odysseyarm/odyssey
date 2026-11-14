@@ -13,6 +13,8 @@ use odyssey_protocol::control::device::TransportMode;
 
 /// Transport that carries streamed reports, and the one `GetTransportMode`
 /// reports: USB while a USB host has the device configured, BLE otherwise.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn report_transport(usb_configured: bool) -> TransportMode {
     if usb_configured {
         TransportMode::Usb
@@ -26,6 +28,8 @@ pub fn report_transport(usb_configured: bool) -> TransportMode {
 /// Returns `None` for a USB request whose USB host has gone away since: the
 /// reply is dropped instead of rerouted, because the request's sender waits for
 /// it on USB and fails over by sending the request again on BLE.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn reply_transport(
     request_transport: TransportMode,
     usb_configured: bool,

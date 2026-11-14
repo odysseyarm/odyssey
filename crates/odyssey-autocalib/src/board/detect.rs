@@ -21,7 +21,7 @@ const INLIER_PITCH_FRACTION: f64 = 0.05;
 const MIN_INLIER_THRESHOLD_PX: f64 = 1.0;
 /// RANSAC samples for the inlier homography.
 const RANSAC_ITERATIONS: usize = 300;
-/// Fixed seed so that a frame always gives the same detection.
+/// Fixed seed, so a frame always gives the same detection.
 const RANSAC_SEED: u64 = 0xB0A2D;
 /// Fewest distinct columns, and rows, the inliers must cover: dots along a
 /// line do not fix the board's pose.
@@ -34,14 +34,14 @@ const MIN_RMS_LIMIT_PX: f64 = 1.0;
 
 /// Finds the board in a color image.
 ///
-/// The dots are the dark, round, contrasty blobs; the local white level is a
+/// The dots are the dark, round, contrasty blobs. The local white level is a
 /// morphological closing of the image, so uneven lighting, glare and dark
 /// surroundings do not change which blobs count as dots. Printed text and the
 /// scale bar fail the shape tests or fail to fit the grid. Blob centers are
 /// intensity-weighted centroids undistorted with `intrinsics`, corrected for
 /// the perspective bias of a circle's centroid once the pose is known. The
 /// grid is matched without any knowledge of the print's size, so the result
-/// is in grid units; ask the detection for a metric pose with
+/// is in grid units. Ask the detection for a metric pose with
 /// [`BoardDetection::pose`].
 ///
 /// # Errors
@@ -51,6 +51,9 @@ const MIN_RMS_LIMIT_PX: f64 = 1.0;
 /// [`BoardError::AmbiguousPlacement`] when a partial view fits two placements
 /// equally well, [`BoardError::BadFit`] when the matched dots do not span the
 /// board or do not fit a rigid board, and [`BoardError::DegeneratePose`].
+///
+/// # Since
+/// Odyssey Desktop 0.6.7.
 pub fn detect_board(
     color: &RgbImage,
     intrinsics: &Intrinsics,
@@ -82,8 +85,8 @@ pub fn detect_board(
             "reprojection error {rms_px:.2} px against dots {median_dot_diameter_px:.1} px across; the dots do not lie on a rigid flat board"
         )));
     }
-    // Run for its checks only (in front, facing the camera, not too oblique);
-    // they do not depend on the pitch.
+    // Run for its checks only (in front, facing the camera, not too oblique).
+    // They do not depend on the pitch.
     BoardPose::new(r, t, 1.0)?;
 
     let homography = pose_homography(intrinsics, &r, &t);
@@ -177,6 +180,7 @@ fn board_footprint(
         corner(1.0, 1.0)?,
         corner(-1.0, 1.0)?,
     ];
+    #[expect(clippy::manual_midpoint, reason = "preserve existing mean rounding")]
     let extent = [
         ((corners[1] - corners[0]).norm() + (corners[2] - corners[3]).norm()) / 2.0,
         ((corners[3] - corners[0]).norm() + (corners[2] - corners[1]).norm()) / 2.0,

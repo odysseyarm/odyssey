@@ -28,8 +28,8 @@ const MIN_MATCH_SHARE: f64 = 0.4;
 /// A seed that matches this share of the dots ends the search: no other seed can be
 /// meaningfully better, and searching on is most of the cost.
 const GOOD_ENOUGH_SCORE_SHARE: f64 = 0.9;
-/// Weight of a match's distance (in gates) in the seed score. Small, so that equal match
-/// counts are decided by the tighter fit.
+/// Weight of a match's distance (in gates) in the seed score. Small, so the tighter fit
+/// breaks ties between equal match counts.
 const SLOPPY_MATCH_PENALTY: f64 = 0.01;
 
 /// At most this many blobs, the ones that stand out most in area, are tried as anchors.
@@ -39,7 +39,7 @@ const MIN_ANCHOR_NEIGHBORS: usize = 4;
 /// ... and its area is compared with the median of this many of its nearest blobs.
 const ANCHOR_NEIGHBORS_COMPARED: usize = 8;
 /// Anchor-to-neighbor area ratio of an anchor candidate. The dots' radii give a nominal ratio
-/// of about 3; perspective and thresholding blur it.
+/// of about 3. Perspective and thresholding blur it.
 const ANCHOR_AREA_RATIO: std::ops::RangeInclusive<f64> = 1.9..=5.0;
 
 /// A candidate corner triple must have its across-to-down length ratio within this factor of
@@ -140,7 +140,7 @@ impl Matcher<'_> {
         let (mut tried, mut hit) = (0usize, 0usize);
         for r in (0..p.rows).step_by(PLAUSIBLE_STRIDE) {
             for c in (0..p.cols).step_by(PLAUSIBLE_STRIDE) {
-                // The last row and column have no successor; use the predecessor.
+                // The last row and column have no successor, so use the predecessor.
                 let c_next = if c + 1 < p.cols { c + 1 } else { c - 1 };
                 let r_next = if r + 1 < p.rows { r + 1 } else { r - 1 };
                 let (Some(here), Some(across), Some(down)) =
@@ -360,8 +360,8 @@ impl SeedSearch<'_, '_> {
 
     /// Tries every blob but the three in `used` as the fourth corner, keeping the hypothesis
     /// that matches the most dots. The fourth corner is not where an affine guess puts it once
-    /// perspective is strong, so any blob that keeps the quad convex is a candidate; the grid
-    /// evaluation picks the real one. Returns whether a hypothesis matched nearly every dot.
+    /// perspective is strong, so any blob that keeps the quad convex is a candidate, and the
+    /// grid evaluation picks the real one. Returns whether a hypothesis matched nearly every dot.
     fn try_fourth_corners(&mut self, used: [usize; 3], [a, b, c]: [Point2<f64>; 3]) -> bool {
         let matcher = self.matcher;
         let pattern = matcher.pattern;

@@ -65,7 +65,7 @@ const CAMERA_POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) enum CameraList {
     Searching,
     Found(Vec<CameraInfo>),
-    /// The camera library is not usable; Setup explains why and what to do.
+    /// The camera library is not usable. Setup explains why and what to do.
     Unavailable(RuntimeStatus),
     Failed(String),
 }
@@ -81,7 +81,7 @@ pub(crate) struct Wizard {
     pub demo: bool,
     pub monitors: Entity<MonitorSelection>,
     pub stage: Stage,
-    /// Stepper position; stays put while a problem is shown.
+    /// Stepper position. Stays put while a problem is shown.
     pub step: usize,
     worker: Rc<Worker>,
     /// The wizard's own window, where the pattern may land on top of it.
@@ -102,10 +102,10 @@ pub(crate) struct Wizard {
     pub size_text: String,
     /// Which dimension the size field takes for a projector.
     pub size_field: SizeField,
-    /// The tech's explicit answer to "What are you calibrating?"; until then
+    /// The tech's explicit answer to "What are you calibrating?" Until then
     /// the remembered or default kind shows. Set it with [`Wizard::set_kind`].
     kind_choice: Option<DisplayKind>,
-    /// What the display's own information says about its size; `None` while
+    /// What the display's own information says about its size. `None` while
     /// it is being read.
     pub finding: Option<Finding>,
     /// Whether the "Not right? Enter the size yourself" field is open.
@@ -154,7 +154,7 @@ pub(crate) struct Wizard {
     pub same_monitor: bool,
     hidden: bool,
 
-    /// The countdown flow; dropping it cancels the flow.
+    /// The countdown flow. Dropping it cancels the flow.
     flow: Option<Task<()>>,
     camera_poll: Option<Task<()>>,
     finding_task: Option<Task<()>>,

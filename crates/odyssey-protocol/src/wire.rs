@@ -5,24 +5,32 @@ use odyssey_common::ocv_types::{MinimalStereoCalibrationParams, OpenCVMatrix3, O
 use odyssey_protocol_macros::protocol_type;
 use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccelConfig {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "serde", serde(default = "default_accel_odr"))]
     #[cfg_attr(feature = "minicbor", n(0))]
     pub accel_odr: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(2))]
     pub b_x: f32,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(3))]
     pub b_y: f32,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(4))]
     pub b_z: f32,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(5))]
     pub s_x: f32,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(6))]
     pub s_y: f32,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(7))]
     pub s_z: f32,
 }
@@ -74,18 +82,21 @@ impl From<AccelConfig> for super::AccelConfig {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CameraCalibrationParams {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub camera_matrix: [f32; 9],
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     pub dist_coeffs: [f32; 5],
 }
 
-/// Wire `camera_matrix` is OpenCV's `K`, row-major; the pod stores `p`/`k`
+/// Wire `camera_matrix` is OpenCV's `K`, row-major. The pod stores `p`/`k`
 /// column-major. `rect` is the identity and the rest of `p` is derived, which
 /// is what `RosOpenCvIntrinsics::from_params_with_distortion` reconstructs.
 impl From<CameraCalibrationParams> for RosOpenCvIntrinsicsPod<f32> {
@@ -111,13 +122,16 @@ impl From<RosOpenCvIntrinsicsPod<f32>> for CameraCalibrationParams {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct StereoCalibrationParams {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub r: [f32; 9],
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     pub t: [f32; 3],
 }
@@ -152,23 +166,45 @@ impl From<nalgebra::Isometry3<f32>> for StereoCalibrationParams {
 }
 
 // lite1 stores this same layout on flash.
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum GeneralConfig {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(0))]
     ImpactThreshold(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(1))]
     SuppressMs(#[cfg_attr(feature = "minicbor", n(0))] u8),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(2))]
     AccelConfig(#[cfg_attr(feature = "minicbor", n(0))] AccelConfig),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(3))]
     GyroConfig(#[cfg_attr(feature = "minicbor", n(0))] super::GyroConfig),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(4))]
     CameraModelNf(#[cfg_attr(feature = "minicbor", n(0))] CameraCalibrationParams),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(5))]
     CameraModelWf(#[cfg_attr(feature = "minicbor", n(0))] CameraCalibrationParams),
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// Wire baseline: device protocol 0.1.4.
     #[cfg_attr(feature = "minicbor", n(6))]
     StereoIso(#[cfg_attr(feature = "minicbor", n(0))] StereoCalibrationParams),
 }

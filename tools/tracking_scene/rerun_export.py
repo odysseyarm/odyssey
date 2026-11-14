@@ -426,7 +426,7 @@ def export_recording(output, scene, trace=None, report=None, images=None, visual
                                               np.array(tracking["position_m"])-truth["position_m"]))))
         recording.flush()
         recording.disconnect()
-        # Hard-link is atomic and refuses any concurrent output creation; SDK never opens evidence path.
+        # Hard-link is atomic and refuses concurrent output creation. SDK never opens evidence path.
         os.link(temporary, output)
     return output
 

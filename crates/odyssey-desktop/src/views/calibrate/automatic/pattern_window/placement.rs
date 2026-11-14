@@ -21,7 +21,7 @@ impl Rect {
         }
     }
 
-    /// Whether the two share any area; touching edges do not count.
+    /// Whether the two share any area. Touching edges do not count.
     pub(crate) fn overlaps(&self, other: &Self) -> bool {
         self.x < other.x + other.width
             && other.x < self.x + self.width

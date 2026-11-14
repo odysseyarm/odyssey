@@ -22,6 +22,8 @@ struct Server {}
 
 /// Runs the BLE host: loads the stored bond, advertises, and serves one connection at a time,
 /// advertising again whenever the connection ends. Never returns.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn run<C>(
     controller: C,
     seed: [u8; 32],
@@ -151,8 +153,8 @@ const DISCONNECT_GRACE: Duration = Duration::from_secs(1);
 
 /// Makes the host's bond table hold exactly the bond stored in settings, and returns whether
 /// there is one. Settings have a single bond slot, so any other bond in the table is stale.
-/// Running this before each advertising cycle is what makes an `AddBond` from device control
-/// usable on the next connection without a reboot.
+/// Run before each advertising cycle, so an `AddBond` from device control is usable on the
+/// next connection without a reboot.
 fn sync_bond<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
     if !settings::is_initialized() {
         defmt::warn!("[ble] Settings not initialized, bond storage disabled");
@@ -255,7 +257,7 @@ async fn gatt_events_task(
                         let mut addr = [0u8; 6];
                         addr.copy_from_slice(bond.identity.bd_addr.raw());
                         PAIRING_COMPLETE_SIGNAL.signal(addr);
-                        // Keep the successful connection; only cancellation tears one down.
+                        // Keep the successful connection. Only cancellation tears one down.
                         PAIRING.store(false, Ordering::Relaxed);
                         ADVERTISING_STALE.signal(());
                     }
@@ -372,7 +374,7 @@ fn shortened_name(name: &str, max_bytes: usize) -> &str {
 /// How long one L2CAP accept waits for the central to open the channel.
 const L2CAP_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Attempts to accept one L2CAP channel; only timeouts are retried.
+/// Attempts to accept one L2CAP channel. Only timeouts are retried.
 const MAX_L2CAP_ACCEPT_ATTEMPTS: usize = 5;
 
 enum AcceptError<E> {
@@ -715,7 +717,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BmRaw;
 static DISCONNECT_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The advertising data no longer matches the pairing state. Only an advertising cycle in
-/// progress restarts on it; a connection stays up, and the next cycle builds fresh data anyway.
+/// progress restarts on it. A connection stays up, and the next cycle builds fresh data anyway.
 static ADVERTISING_STALE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static PAIRING: AtomicBool = AtomicBool::new(false);
@@ -725,7 +727,9 @@ static CURRENT_NAME: BlockingMutex<BmRaw, RefCell<heapless::String<32>>> =
     BlockingMutex::new(RefCell::new(heapless::String::new()));
 
 /// Sets the advertised name without restarting advertising. Before `run()` this replaces its
-/// `device_name`; afterwards the name takes effect on the next advertising cycle.
+/// `device_name`. Afterwards the name takes effect on the next advertising cycle.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn set_device_name_initial(name: &str) {
     CURRENT_NAME.lock(|n| {
         let mut s = n.borrow_mut();
@@ -736,10 +740,12 @@ pub fn set_device_name_initial(name: &str) {
     });
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn get_device_name() -> heapless::String<32> {
     CURRENT_NAME.lock(|n| n.borrow().clone())
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn request_disconnect() {
     DISCONNECT_REQUEST.signal(());
 }
@@ -747,6 +753,8 @@ pub fn request_disconnect() {
 /// Advertises the pairing data and makes the next connection bondable. Drops the current
 /// connection so the host pairs from scratch, and forgets a completion left over from an
 /// earlier pairing window.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn enter_pairing_mode() {
     PAIRING_COMPLETE_SIGNAL.reset();
     PAIRING.store(true, Ordering::Relaxed);
@@ -755,6 +763,8 @@ pub fn enter_pairing_mode() {
 
 /// Leaves pairing mode and aborts an in-flight pairing connection. Successful pairing clears
 /// `PAIRING` before notifying device control, so acknowledging success keeps the link up.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn cancel_pairing_mode() {
     if PAIRING.swap(false, Ordering::Relaxed) {
         DISCONNECT_REQUEST.signal(());
@@ -762,10 +772,12 @@ pub fn cancel_pairing_mode() {
     ADVERTISING_STALE.signal(());
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn is_pairing_active() -> bool {
     PAIRING.load(Ordering::Relaxed)
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn wait_for_pairing_complete() -> odyssey_protocol::control::BondedDevice {
     let addr = PAIRING_COMPLETE_SIGNAL.wait().await;
     let name = get_device_name();

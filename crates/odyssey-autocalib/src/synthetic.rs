@@ -1,6 +1,4 @@
-//! A camera that needs no hardware: it renders what a depth camera with a
-//! color imager, an infrared imager and an IMU would see while looking at a
-//! screen that shows the dot pattern.
+//! Simulates color, depth, infrared, and IMU camera data for a known scene.
 //!
 //! The tests drive [`crate::session::Session`] with it, and a GUI can offer it
 //! as a demo camera. The scene is a physical screen of known size at a known
@@ -9,7 +7,7 @@
 //! should recover.
 //!
 //! Conventions: the *world* frame is gravity aligned with `x` right, `y` down
-//! and `z` forward; the camera starts at its origin. Screen and marker
+//! and `z` forward, and the camera starts at its origin. Screen and marker
 //! coordinates in [`Truth`] use the physical screen frame: origin at the top
 //! left corner, `x` right, `y` down, `z` away from the viewer.
 //!
@@ -22,5 +20,10 @@ mod scene;
 mod stream;
 mod view;
 
+/// # Since
+/// - `SIMULATED_MARKERS`: Odyssey Desktop 0.6.7.
+/// - `SyntheticScene`: Odyssey Desktop 0.6.5.
+/// - `Truth`: Odyssey Desktop 0.6.5.
 pub use scene::{SIMULATED_MARKERS, SyntheticScene, Truth};
+/// Since: Odyssey Desktop 0.6.5.
 pub use stream::{SyntheticBackend, SyntheticStream};

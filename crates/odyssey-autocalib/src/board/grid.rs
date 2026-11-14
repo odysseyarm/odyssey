@@ -144,6 +144,7 @@ fn warp(h: &Rows, x: f64, y: f64) -> Option<[f64; 2]> {
 fn pitch_at(h: &Rows, pos: [f64; 2], at: [f64; 2]) -> Option<f64> {
     let a = warp(h, pos[0] + 1.0, pos[1])?;
     let b = warp(h, pos[0], pos[1] + 1.0)?;
+    #[expect(clippy::manual_midpoint, reason = "preserve existing mean rounding")]
     Some(((a[0] - at[0]).hypot(a[1] - at[1]) + (b[0] - at[0]).hypot(b[1] - at[1])) / 2.0)
 }
 
@@ -281,7 +282,7 @@ fn count_unmatched_inside(
 /// Grows a hypothesis: matches dots under `h0`, refits a homography to the
 /// matches, and repeats until the matches stop changing. The first round is
 /// limited to the neighborhood of the seed because the seed is only a local
-/// affine guess. `seen` holds the match sets already grown, so that two seeds
+/// affine guess. `seen` holds the match sets already grown, so two seeds
 /// reaching the same placement cost one fit, not two.
 fn grow_hypothesis(
     h0: &Rows,
@@ -373,8 +374,8 @@ fn seed_order(blobs: &[DotBlob]) -> Vec<usize> {
 }
 
 /// Local frames at blob `seed`: pairs of image vectors to two neighbors that
-/// stand for the grid's two axes, ordered so that they wind the same way
-/// every time (a board seen from the front is never mirrored).
+/// stand for the grid's two axes, ordered to wind the same way every time
+/// (a board seen from the front is never mirrored).
 fn seed_frames(blobs: &[DotBlob], seed: usize) -> Vec<Matrix2<f64>> {
     let origin = blobs[seed].center;
     let mut neighbors: Vec<(f64, usize)> = blobs
@@ -494,10 +495,10 @@ impl Search {
 }
 
 /// Finds the grid's placement. Each of the most grid-like blobs seeds a local
-/// frame with two of its nearest neighbors; the frame is tried at every
+/// frame with two of its nearest neighbors. The frame is tried at every
 /// lattice cell in the four ways a camera can see the grid rotated in its
 /// plane, grown into a homography, and the hypothesis that explains the most
-/// blobs wins. The missing dot is what makes the winner unique; if another
+/// blobs wins. The missing dot is what makes the winner unique. If another
 /// placement ties it, the view is ambiguous.
 pub(super) fn match_grid(
     blobs: &[DotBlob],

@@ -89,7 +89,7 @@ pub async fn begin_connect() -> ConnectLease {
 }
 
 /// A pending connect counted in [`CONNECT_PENDING`]. Dropping it releases the
-/// count, also when the device task is stopped mid-connect; the last one out
+/// count, also when the device task is stopped mid-connect. The last one out
 /// resumes the background scanner.
 pub struct ConnectLease {
     _guard: embassy_sync::mutex::MutexGuard<'static, ThreadModeRawMutex, ()>,

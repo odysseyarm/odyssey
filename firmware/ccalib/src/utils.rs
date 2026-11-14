@@ -10,6 +10,8 @@ use opencv::highgui::{
 use opencv::imgproc::{INTER_LINEAR, LINE_AA, ellipse, remap};
 
 /// Distorts an image, propagating OpenCV allocation, mapping, and image errors.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn distort_image(
     undistorted: &impl ToInputArray,
     distorted: &mut impl ToOutputArray,
@@ -66,6 +68,8 @@ pub fn distort_image(
 /// Displays a nonempty image collection, propagating image and window errors.
 ///
 /// An empty collection returns an OpenCV bad-argument error before opening a window.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) -> opencv::Result<()> {
     if imgs.is_empty() {
         return Err(opencv::Error::new(
@@ -103,6 +107,7 @@ pub fn imshow_multi<T: ToInputArray>(imgs: &[T], title: &str) -> opencv::Result<
     destroy_window("imshow_multi")
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn fill_circle(
     im: &mut impl ToInputOutputArray,
     center: (f64, f64),
@@ -126,6 +131,7 @@ pub fn fill_circle(
     )
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn stroke_circle(
     im: &mut impl ToInputOutputArray,
     center: (f64, f64),

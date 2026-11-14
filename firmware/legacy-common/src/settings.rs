@@ -1,12 +1,13 @@
 //! Settings backed by cfg-noodle. The object-mode task exclusively owns the
-//! initialized settings; external persistence callbacks borrow general settings
-//! from that owner rather than constructing another mutable reference.
+//! initialized settings. External persistence callbacks borrow general settings
+//! from that owner and never build a second mutable reference.
 
 mod settings_region {
     unsafe extern "C" {
         static __settings_start: u32;
         static __settings_end: u32;
     }
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn get_settings_region() -> core::ops::Range<u32> {
         let s = core::ptr::addr_of!(__settings_start) as u32;
         let e = core::ptr::addr_of!(__settings_end) as u32;
@@ -32,14 +33,16 @@ use embassy_time::{Duration, Instant, Timer, WithTimeout as _};
 use embedded_hal_bus::spi::DeviceError;
 use odyssey_protocol::wire::{CameraCalibrationParams, StereoCalibrationParams};
 use paj7025::Paj7025Error;
+/// Since: Odyssey Desktop 0.7.0.
 pub use settings_region::get_settings_region;
 use static_cell::StaticCell;
 
 use crate::Paj;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
-/// StorageList in use, this module's own LIST or an external one; set by
+/// StorageList in use, this module's own LIST or an external one. Set by
 /// init_settings or init_legacy_settings.
 static ACTIVE_LIST: AtomicPtr<StorageList<NoodleRawMutex>> = AtomicPtr::new(core::ptr::null_mut());
 
@@ -51,6 +54,7 @@ static FLUSH_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 /// another crate must register it (legacy atslite delegates to atslite-common).
 static GENERAL_WRITE_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn register_general_write_fn(f: fn(&GeneralSettings)) {
     GENERAL_WRITE_FN.store(f as *mut (), Ordering::Release);
 }
@@ -58,12 +62,14 @@ pub fn register_general_write_fn(f: fn(&GeneralSettings)) {
 fn active_list() -> &'static StorageList<NoodleRawMutex> {
     let ptr = ACTIVE_LIST.load(Ordering::Acquire);
     assert!(!ptr.is_null(), "settings not initialized");
+    // SAFETY: set_active publishes a live `'static` StorageList pointer with Release ordering.
     unsafe { &*ptr }
 }
 
 fn flush() {
     let ptr = FLUSH_FN.load(Ordering::Acquire);
     assert!(!ptr.is_null(), "settings not initialized");
+    // SAFETY: set_active publishes only a `fn()` pointer with Release ordering.
     let f: fn() = unsafe { core::mem::transmute(ptr) };
     f();
 }
@@ -81,10 +87,12 @@ static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
 static ACCEL_ODR: AtomicU16 = AtomicU16::new(100);
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn accel_odr() -> u16 {
     ACCEL_ODR.load(Ordering::Relaxed)
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn set_accel_odr(odr: u16) {
     ACCEL_ODR.store(odr, Ordering::Relaxed);
 }
@@ -166,6 +174,7 @@ async fn settings_worker(
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[inline]
 pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
@@ -178,6 +187,8 @@ fn set_active(list: &'static StorageList<NoodleRawMutex>, flush_fn: fn()) {
 
 /// Self-contained init that spawns its own worker on this module's LIST, for
 /// boards that share no settings infrastructure with another crate (the VM).
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init_settings(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
@@ -198,7 +209,7 @@ pub async fn init_settings(
 
     set_active(&LIST, settings_flush_now);
 
-    // Nodes start from defaults; the worker hydrates them.
+    // Nodes start from defaults. The worker hydrates them.
     let h_pajs = NODE_PAJS
         .attach_with_default(&LIST, PajsSettings::default)
         .await
@@ -238,8 +249,10 @@ pub async fn init_settings(
 }
 
 /// Attaches the legacy settings nodes to an external StorageList (e.g. from
-/// atslite-common). The caller must already run the worker on that list; no
+/// atslite-common). The caller must already run the worker on that list. No
 /// worker is spawned and the BLE bond is left to the external crate.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn init_legacy_settings(
     list: &'static StorageList<NoodleRawMutex>,
     flush_fn: fn(),
@@ -253,7 +266,7 @@ pub async fn init_legacy_settings(
         .attach_with_default(list, PajsSettings::default)
         .await
         .unwrap();
-    // NODE_GENERAL belongs to atslite-common ("settings/general"); the caller
+    // NODE_GENERAL belongs to atslite-common ("settings/general"). The caller
     // fills general settings from it after init_board_nodes.
     let h_transient = NODE_TRANSIENT
         .attach_with_default(list, TransientSettings::default)
@@ -268,7 +281,7 @@ pub async fn init_legacy_settings(
         pajs,
         general,
         transient,
-        // The external crate owns the BLE bond; this is a placeholder.
+        // The external crate owns the BLE bond. This is a placeholder.
         ble_bond: BleBondSettings::default(),
     };
 
@@ -276,14 +289,20 @@ pub async fn init_legacy_settings(
     Ok(SETTINGS_CELL.init(s))
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct Settings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub pajs: PajsSettings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub general: GeneralSettings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub transient: TransientSettings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub ble_bond: BleBondSettings,
 }
 
 impl Settings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn apply(
         &self,
         pajr2: &mut Paj,
@@ -292,6 +311,7 @@ impl Settings {
         self.pajs.apply(pajr2, pajr3).await
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn write(&self) {
         let list = active_list();
         embassy_futures::block_on(async {
@@ -313,6 +333,7 @@ impl Settings {
         flush();
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn transient_write(&self) {
         let list = active_list();
         embassy_futures::block_on(async {
@@ -322,6 +343,7 @@ impl Settings {
         flush();
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn ble_bond_write(&self) {
         let list = active_list();
         embassy_futures::block_on(async {
@@ -331,7 +353,7 @@ impl Settings {
         flush();
     }
 
-    #[allow(dead_code)]
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn ble_bond_clear(&mut self) {
         self.ble_bond = BleBondSettings::default();
         let list = active_list();
@@ -343,36 +365,51 @@ impl Settings {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct PajSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub frame_period: u32,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(1)]
     pub area_threshold_max: u16,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(2)]
     pub exposure_time: u16,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(3)]
     pub resolution_x: u16,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub resolution_y: u16,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(5)]
     pub area_threshold_min: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(6)]
     pub brightness_threshold: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(7)]
     pub frame_subtraction: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(8)]
     pub gain_1: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(9)]
     pub gain_2: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(10)]
     pub max_object_cnt: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(11)]
     pub noise_threshold: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(12)]
     pub operation_mode: u8,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct PajsSettings(#[n(0)] pub PajSettings, #[n(1)] pub PajSettings);
 
@@ -622,6 +659,7 @@ async fn paj_read_settings(
 }
 
 impl PajsSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn apply(
         &self,
         pajr2: &mut Paj,
@@ -631,6 +669,7 @@ impl PajsSettings {
         paj_apply_settings(pajr3, &self.1).await
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn read_from_pajs(
         pajr2: &mut Paj,
         pajr3: &mut Paj,
@@ -647,6 +686,7 @@ mod heapless_str32_cbor {
     use cfg_noodle::minicbor::encode::{Error as EncodeError, Write};
     use cfg_noodle::minicbor::{Decoder, Encoder};
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn encode<Ctx, W: Write>(
         s: &heapless::String<32>,
         e: &mut Encoder<W>,
@@ -656,6 +696,7 @@ mod heapless_str32_cbor {
         Ok(())
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn decode<'b, Ctx>(
         d: &mut Decoder<'b>,
         _ctx: &mut Ctx,
@@ -670,6 +711,7 @@ mod heapless_str32_cbor {
         Ok(hs)
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn cbor_len<Ctx>(s: &heapless::String<32>, _ctx: &mut Ctx) -> usize {
         let n = s.as_bytes().len();
         let header = if n <= 23 { 1 } else { 2 };
@@ -677,26 +719,37 @@ mod heapless_str32_cbor {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct GeneralSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub impact_threshold: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(1)]
     pub suppress_ms: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(2)]
     pub accel_config: odyssey_protocol::AccelConfig,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(3)]
     pub gyro_config: odyssey_protocol::GyroConfig,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub camera_model_nf: CameraCalibrationParams,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(5)]
     pub camera_model_wf: CameraCalibrationParams,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(6)]
     pub stereo_iso: StereoCalibrationParams,
     /// Ignored: the device picks USB or BLE from the USB state at run time. The field stays so
     /// settings stored by earlier firmware keep decoding with the same CBOR indices.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(7)]
     pub transport_mode: odyssey_protocol::control::device::TransportMode,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(8)]
     #[cbor(with = "heapless_str32_cbor")]
     pub name: heapless::String<32>,
@@ -734,6 +787,7 @@ impl Default for GeneralSettings {
 }
 
 impl GeneralSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn set_general_config(&mut self, config: &odyssey_protocol::wire::GeneralConfig) {
         use odyssey_protocol::wire::GeneralConfig as GC;
         match config {
@@ -751,8 +805,10 @@ impl GeneralSettings {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct TransientSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub mode: odyssey_protocol::legacy::Mode,
 }
@@ -765,16 +821,22 @@ impl Default for TransientSettings {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
 pub struct BleBondSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(0)]
     pub bd_addr: [u8; 6],
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(1)]
     pub ltk: [u8; 16],
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(2)]
     pub security_level: u8,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(3)]
     pub is_bonded: bool,
+    /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub irk: Option<[u8; 16]>,
 }
@@ -792,6 +854,7 @@ impl Default for BleBondSettings {
 }
 
 impl BleBondSettings {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn from_bond_info(info: &trouble_host::prelude::BondInformation) -> Self {
         let mut bd_addr = [0u8; 6];
         bd_addr.copy_from_slice(info.identity.bd_addr.raw());
@@ -808,6 +871,7 @@ impl BleBondSettings {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn to_bond_info(&self) -> Option<trouble_host::prelude::BondInformation> {
         if !self.is_bonded {
             return None;

@@ -1,5 +1,5 @@
 //! Typed accessors for the image sensors' registers, one line per register.
-//! Each `(bank, addresses)` pair is the sensor datasheet's register map; a
+//! Each `(bank, addresses)` pair is the sensor datasheet's register map. A
 //! multi-byte value is stored little-endian across the listed addresses.
 
 use super::VmDevice;
@@ -7,6 +7,8 @@ use crate::packets::vm::Port;
 
 macro_rules! read_register_spec {
     ($name:ident : $ty:ty = $bank:literal; [$($addr:literal),*]) => {
+        /// # Errors
+        /// Returns register transport or unexpected-reply errors.
         pub async fn $name(&self, port: Port) -> $crate::Result<$ty> {
             let mut bytes = <$ty>::to_le_bytes(0);
             for (byte, addr) in ::std::iter::zip(&mut bytes, [$($addr),*]) {
@@ -19,6 +21,8 @@ macro_rules! read_register_spec {
 
 macro_rules! write_register_spec {
     ($name:ident : $ty:ty = $bank:literal; [$($addr:literal),*]) => {
+        /// # Errors
+        /// Returns register transport errors.
         pub async fn $name(&self, port: Port, value: $ty) -> $crate::Result<()> {
             let bytes = <$ty>::to_le_bytes(value);
             for (byte, addr) in ::std::iter::zip(bytes, [$($addr),*]) {

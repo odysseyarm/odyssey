@@ -91,14 +91,14 @@ impl FieldChecker {
         u16::try_from(self.check(field, raw, u32::from(max))?).ok()
     }
 
-    /// The recorded issues; call after a failed `let ... else` on the checked
+    /// The recorded issues. Call after a failed `let ... else` on the checked
     /// values, which implies at least one was recorded.
     pub(super) fn into_issues(self) -> Vec<FieldIssue> {
         self.issues
     }
 }
 
-/// Summarise invalid input without repeating every message; the offending
+/// Summarise invalid input without repeating every message. The offending
 /// fields are already marked in place.
 pub(super) fn invalid_status(issues: &[FieldIssue]) -> OpStatus {
     let fields: Vec<&str> = issues.iter().map(|i| i.field).collect();

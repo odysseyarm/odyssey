@@ -6,7 +6,7 @@ use tonic::Status;
 /// The display text is the message the client receives. `task` is "device" or "dongle".
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RpcError {
-    /// A required request field was not set; carries the field's path.
+    /// A required request field was not set. Carries the field's path.
     #[error("{0} missing")]
     MissingField(&'static str),
     /// A wire value cannot be represented by the device protocol.

@@ -77,8 +77,8 @@ pub(super) struct SettingsForm {
     pub(super) pag: PagState,
     pub(super) status: OpStatus,
     pub(super) loading: bool,
-    /// Empty fields before the first read are "not loaded yet", not "invalid";
-    /// marking them red on first paint is noise the user cannot act on.
+    /// Empty fields before the first read are "not loaded yet", not "invalid".
+    /// Marking them red on first paint is noise the user cannot act on.
     pub(super) hydrated: bool,
 }
 
@@ -100,7 +100,7 @@ fn write_failure(log_context: &str, action: &str, error: &dyn Display) -> OpStat
     rpc_failure(action, error)
 }
 
-/// The device settings a load read, as form text; empty where the read failed.
+/// The device settings a load read, as form text. Empty where the read failed.
 struct GeneralFields {
     impact_threshold: String,
     suppress_ms: String,
@@ -167,7 +167,7 @@ impl SettingsForm {
         !self.general_issues().is_empty() || sensor_issue_count > 0
     }
 
-    /// Fills the form with factory values; nothing reaches the device.
+    /// Fills the form with factory values. Nothing reaches the device.
     pub(super) fn restore_defaults(&mut self, sensors: Option<SensorFamily>) {
         if self.loading {
             return;
@@ -243,7 +243,7 @@ impl SettingsForm {
     /// Validates the whole form into one snapshot, so later edits cannot reach
     /// an in-flight save. `persist` adds the flash step, so "Save" and "Try
     /// without saving" cannot drift apart in what they send to the device.
-    /// `None` when the form is invalid; the status then says so.
+    /// `None` when the form is invalid, and the status then says so.
     pub(super) fn start_write(
         &mut self,
         target: &LoadTarget,
@@ -390,7 +390,7 @@ async fn read_sensors(
 }
 
 /// Writes a validated snapshot to the device. Both outcomes are a status for
-/// the user; the error side is the early-exit path.
+/// the user, and the error side is the early-exit path.
 pub(super) async fn write_to_device(job: WriteJob) -> OpStatus {
     try_write(job).await.unwrap_or_else(|failed| failed)
 }

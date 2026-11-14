@@ -17,8 +17,8 @@ const EXPOSURE_UNIT_US: u16 = 100;
 const EXPOSURE_UNITS_MASK: u8 = 0x7F;
 const LED_ALWAYS_ON_FLAG: u8 = 0x80;
 
-// The exposure register's 7 bits of 100us units make 12700us the ceiling;
-// anything finer than 100us is truncated by the device.
+// The exposure register's 7 bits of 100us units make 12700us the ceiling.
+// Anything finer than 100us is truncated by the device.
 pub(super) const PAG_MAX_EXPOSURE_US: u16 = 12_700;
 
 #[derive(Clone, PartialEq, Default)]

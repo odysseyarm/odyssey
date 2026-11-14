@@ -13,12 +13,14 @@ use super::uninit_write_buf::UninitWriteBuf;
 
 const STASH_MAX: usize = 1024;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct MyTransport<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> {
     reader: Mutex<M, icmsg::Receiver<W, { icmsg_config::ALIGN }>>,
     writer: Mutex<M, icmsg::Sender<N, { icmsg_config::ALIGN }>>,
 }
 
 impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> MyTransport<M, W, N> {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new(
         reader: icmsg::Receiver<W, { icmsg_config::ALIGN }>,
         writer: icmsg::Sender<N, { icmsg_config::ALIGN }>,

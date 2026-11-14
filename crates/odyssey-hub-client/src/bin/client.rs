@@ -5,6 +5,11 @@ use futures::stream::StreamExt as _;
 use odyssey_hub_client::client;
 
 #[tokio::main]
+/// # Errors
+/// Returns an error if connecting to the hub or an RPC fails.
+///
+/// # Panics
+/// Panics if Tokio runtime initialization fails.
 pub async fn main() -> eros::Result<()> {
     let _ = tracing_subscriber::fmt();
     let client = client::Client::connect().await?;

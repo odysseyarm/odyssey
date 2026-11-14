@@ -16,28 +16,45 @@ const MIN_DISTANCE_M: f64 = 0.1;
 const FADE_RMS: f64 = 0.608;
 
 /// Typical path-loss exponents by room type, for quick comparisons.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub const ENVIRONMENTS: [(&str, f64); 3] = [("open", 2.0), ("furnished", 3.0), ("cluttered", 3.8)];
 
 /// A flat obstruction in the floor plan, from `a` to `b` as `[x, z]` points.
+///
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Wall {
+    /// Since: Odyssey Desktop 0.7.5.
     pub a: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.5.
     pub b: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.5.
     pub loss_db: f64,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Radio {
+    /// Since: Odyssey Desktop 0.7.5.
     pub tx_power_dbm: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub sensitivity_dbm: f64,
     /// 2.0 in free space, about 3 in a furnished room, 3.8 and up in clutter.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub path_loss_exponent: f64,
     /// Loss the datasheet figures leave out: PCB antennas, enclosures, a hand
     /// around the tracker.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub implementation_loss_db: f64,
     /// Standard deviation of the slow fading in dB.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fading_db: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub walls: Vec<Wall>,
 }
 
@@ -54,27 +71,45 @@ impl Default for Radio {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkQuality {
+    /// Since: Odyssey Desktop 0.7.5.
     Strong,
+    /// Since: Odyssey Desktop 0.7.5.
     Fair,
+    /// Since: Odyssey Desktop 0.7.5.
     Marginal,
+    /// Since: Odyssey Desktop 0.7.5.
     Lost,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Link {
+    /// Since: Odyssey Desktop 0.7.5.
     pub distance_m: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub rssi_dbm: f64,
     /// Headroom over the receiver's sensitivity.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub margin_db: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub quality: LinkQuality,
     /// Expected fraction of packets lost at this margin.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub loss: f64,
 }
 
 impl Radio {
+    /// # Errors
+    ///
+    /// Returns an error if radio settings or wall data are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         let ok = [
             self.tx_power_dbm,
@@ -103,6 +138,8 @@ impl Radio {
 
     /// Received power for a transmitter at `from` and receiver at `to` (stage
     /// positions). `link` selects an independent fading sequence.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn rssi_dbm(&self, from: [f64; 3], to: [f64; 3], t_s: f64, link: u64) -> f64 {
         let distance = distance(from, to).max(MIN_DISTANCE_M);
         let walls: f64 = self
@@ -112,7 +149,7 @@ impl Radio {
             .map(|wall| wall.loss_db)
             .sum();
         // Two incommensurate slow sines stand in for multipath fading, so a run
-        // repeats exactly. Their rms is `FADE_RMS`; dividing by it makes
+        // repeats exactly. Their rms is `FADE_RMS`, and dividing by it makes
         // `fading_db` the standard deviation.
         let phase = link as f64 * 1.618;
         let fade = self.fading_db
@@ -123,6 +160,7 @@ impl Radio {
             + fade
     }
 
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn link(&self, from: [f64; 3], to: [f64; 3], t_s: f64, link: u64) -> Link {
         let rssi_dbm = self.rssi_dbm(from, to, t_s, link);
         let margin_db = rssi_dbm - self.sensitivity_dbm;
@@ -145,12 +183,16 @@ impl Radio {
     }
 
     /// Distance at which the margin reaches zero without walls or fading.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn range_m(&self) -> f64 {
         let budget = self.tx_power_dbm - self.sensitivity_dbm - self.loss_at_1m_db();
         10.0_f64.powf(budget / (10.0 * self.path_loss_exponent))
     }
 
     /// Signal strength against distance in open air, for plotting.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn curve(&self, max_m: f64, points: usize) -> Vec<[f64; 2]> {
         (0..points)
             .map(|i| {

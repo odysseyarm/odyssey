@@ -54,7 +54,7 @@ unsafe fn configure_spu_for_network_core() {
         });
     }
 
-    // EXTDOMAIN[0] is the network core; map it non-secure.
+    // EXTDOMAIN[0] is the network core. Map it non-secure.
     spu.extdomain(0).perm().write(|w| {
         w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
         w.set_lock(false);
@@ -85,6 +85,7 @@ unsafe fn configure_spu_for_network_core() {
     configure_ram_range(rx_first, rx_last);
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     crate::crash_record::report_previous_boot();
 
@@ -97,11 +98,12 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     config.hfclk_source = HfclkSource::ExternalXtal; // the radio needs HFXO
     config.lfclk_source = LfclkSource::ExternalXtal;
 
-    // The BC40P module carries both crystals' load capacitors; internal ones would add to them.
+    // The BC40P module carries both crystals' load capacitors. Internal ones would add to them.
     config.internal_capacitors.hfxo = None;
     config.internal_capacitors.lfxo = None;
 
     // SPU permissions must be in place before anything else touches the network core.
+    // SAFETY: SPU and linker symbols are available before the network core starts.
     unsafe {
         configure_spu_for_network_core();
     }
@@ -124,9 +126,12 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
 }
 
 /// Releases the network core from FORCEOFF. Call only after the SPU grants are written.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn start_network_core_after_spu() {
     use embassy_nrf::pac::reset::vals::Forceoff;
     // Erratum 161: hold 0x50005618 at 1 while toggling FORCEOFF.
+    // SAFETY: Erratum 161 register is memory-mapped at this fixed nRF5340 address.
     unsafe {
         (0x50005618 as *mut u32).write_volatile(1);
     }
@@ -145,6 +150,7 @@ pub fn start_network_core_after_spu() {
         .network()
         .forceoff()
         .write(|w| w.set_forceoff(Forceoff::RELEASE));
+    // SAFETY: Erratum 161 register is memory-mapped at this fixed nRF5340 address.
     unsafe {
         (0x50005618 as *mut u32).write_volatile(0);
     }

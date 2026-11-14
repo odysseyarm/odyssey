@@ -54,7 +54,7 @@ pub fn claim(addr: Uuid) -> Result<TaskSlot, ClaimError> {
     })
 }
 
-/// Frees `slot`. The task that owns it calls this as its last action; the
+/// Frees `slot`. The task that owns it calls this as its last action. The
 /// manager calls it only when spawning failed.
 pub fn release(slot: TaskSlot) {
     SLOTS.lock(|slots| slots.borrow_mut()[slot.0] = None);

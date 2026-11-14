@@ -2,10 +2,10 @@
 //! one is attached, streams for about three seconds while printing its geometry
 //! and frame statistics.
 //!
-//! The SDK is found as described in `odyssey_autocalib::orbbec::runtime`;
+//! The SDK is found as described in `odyssey_autocalib::orbbec::runtime`, and
 //! `ODYSSEY_ORBBEC_SDK_DIR` points the probe at a particular install. The exit
 //! code is 0 whenever the program runs to the end, including when the SDK or
-//! the camera is missing; the printed text says what happened.
+//! the camera is missing. The printed text says what happened.
 
 #![expect(
     clippy::print_stdout,

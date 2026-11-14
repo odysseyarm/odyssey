@@ -1,7 +1,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Painter, Pos2, Shape, Stroke, Vec2};
 use nalgebra::{Matrix3, Point2, Rotation2, Transform2, Vector2};
 
-/// Colour of on-canvas labels; readable on the dark canvas background.
+/// Colour of on-canvas labels, readable on the dark canvas background.
 pub(crate) const TEXT_COLOR: Color32 = Color32::from_gray(220);
 
 /// Converts a canvas-space point (screen pixels, y down) to an egui position.

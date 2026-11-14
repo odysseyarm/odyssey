@@ -84,7 +84,7 @@ pub fn usb_device(
 
     builder.handler(&mut *handler);
 
-    // Vendor-specific class 0xFF; the MS OS descriptors bind it to WinUSB.
+    // Vendor-specific class 0xFF. The MS OS descriptors bind it to WinUSB.
     let mut function = builder.function(0xFF, 0, 0);
     function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     function.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(

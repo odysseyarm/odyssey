@@ -1,6 +1,7 @@
 use crate::imu::{VmImu, VmImuInterrupt};
 use crate::l2cap::VmL2capChannels;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct VmPlatform;
 
 impl legacy_common::platform::Platform for VmPlatform {

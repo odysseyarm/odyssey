@@ -7,9 +7,12 @@ use crate::camera::{CameraGeometry, Extrinsics, Intrinsics};
 use crate::pattern::Pattern;
 use crate::solve::METERS_PER_INCH;
 
-/// Where the simulated markers sit, as fractions of the panel from its top-left corner: the
-/// original autocalib's pattern, three along the top edge and three along the bottom. It is
-/// also in the order the tracker needs (see `crate::placement`).
+/// Simulated marker positions, as fractions of panel size from its top-left.
+///
+/// Positions follow the original autocalib pattern: three along each horizontal
+/// edge, ordered for the tracker (see `crate::placement`).
+///
+/// Since: Odyssey Desktop 0.6.7.
 pub const SIMULATED_MARKERS: [[f64; 2]; 6] = [
     [0.2, 1.0],
     [0.2, 0.0],
@@ -21,56 +24,99 @@ pub const SIMULATED_MARKERS: [[f64; 2]; 6] = [
 
 /// Everything that defines the synthetic scene. Fields are public: build one
 /// from [`Default`] and change what a scenario needs.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct SyntheticScene {
     /// Physical width and height of the screen in meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_size_m: [f64; 2],
     /// Center of the screen in the world frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_center_m: Vector3<f64>,
-    /// How much a display overscans: the image is scaled up about its center
-    /// by `1 + overscan_fraction` while the panel keeps its size, so the
-    /// border of the image is cut off. The solver measures the image, not the
-    /// panel.
+    /// Overscan of the display. The image is scaled up about its center by
+    /// `1 + overscan_fraction` while the panel keeps its size, which cuts off the
+    /// border of the image. The solver measures the image, not the panel.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub overscan_fraction: f64,
     /// Multiplicative bias on every depth value (`0.01` reads 1% too far),
     /// standing in for depth scale error.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_scale_error: f64,
     /// Rotation of the screen about the vertical axis, degrees.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_yaw_deg: f64,
     /// Backward lean of the screen's top edge, degrees.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_pitch_deg: f64,
     /// Camera rotation about the vertical axis, degrees.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub camera_yaw_deg: f64,
-    /// Camera pitch in degrees; positive looks down.
+    /// Camera pitch in degrees. Positive looks down.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub camera_pitch_deg: f64,
-    /// Camera rotation about its optical axis in degrees; positive lowers the
+    /// Camera rotation about its optical axis in degrees. Positive lowers the
     /// camera's right side.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub camera_roll_deg: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub geometry: CameraGeometry,
     /// Distance in front of the screen plane at which the markers sit.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub marker_standoff_m: f64,
     /// Standard deviation of per-pixel, per-frame depth noise, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_noise_m: f64,
     /// Fraction of depth pixels that drop out independently in every frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_hole_fraction: f64,
     /// Fraction of depth pixels that read a persistent wrong value.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_outlier_fraction: f64,
     /// Rectangle `[u0, v0, u1, v1]` of the screen, in unit coordinates, where
     /// the depth sensor returns nothing.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_dropout_region: Option<[f64; 4]>,
     /// Standard deviation of color noise in 8-bit levels.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub color_noise: f64,
     /// Extra bright spots in the infrared image, in infrared pixels.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir_clutter: Vec<Point2<f64>>,
     /// Whether the camera reports IMU samples.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub imu_enabled: bool,
     /// Whether the screen shows the dot pattern. Without it the color image
     /// shows a plain black screen.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub show_pattern: bool,
-    /// Multiplier on the pattern's dot radii; see [`Pattern::with_dot_scale`].
+    /// Multiplier on the pattern's dot radii. See [`Pattern::with_dot_scale`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub dot_scale: f64,
     /// Wait one frame interval per frame, honoring shorter capture timeouts.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub realtime: bool,
+    /// Since: Odyssey Desktop 0.6.5.
     pub seed: u64,
 }
 
@@ -139,23 +185,35 @@ impl Default for SyntheticScene {
 }
 
 /// The calibration the solver should recover from a [`SyntheticScene`].
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy)]
 pub struct Truth {
     /// Takes color-camera coordinates to the physical screen frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_from_camera: Extrinsics,
     /// Width and height of the displayed image: what the calibration must
     /// recover. Equals `panel_m` without overscan.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_m: [f64; 2],
     /// Width and height of the physical panel: what an EDID reports.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub panel_m: [f64; 2],
     /// Markers in the physical screen frame, whose origin is the image's
     /// top-left corner, in layout order.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub markers_m: [Point3<f64>; 6],
 }
 
 impl Truth {
     /// Screen corners (top left, top right, bottom right, bottom left) in
     /// the physical screen frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn corners_m(&self) -> [Point2<f64>; 4] {
         let [w, h] = self.size_m;
         [
@@ -166,12 +224,15 @@ impl Truth {
         ]
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn diagonal_in(&self) -> f64 {
         self.size_m[0].hypot(self.size_m[1]) / METERS_PER_INCH
     }
 
     /// The calibration a perfect solver returns when the camera-to-aligned
     /// rotation is `camera_to_aligned`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn calibration(&self, camera_to_aligned: &Matrix3<f64>) -> ScreenCalibration<f32> {
         let screen_from_aligned = self.screen_from_camera.rotation * camera_to_aligned.transpose();
         let rotation = UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
@@ -195,11 +256,14 @@ pub(super) struct Pose {
 }
 
 impl SyntheticScene {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn aspect(&self) -> f64 {
         self.screen_size_m[0] / self.screen_size_m[1]
     }
 
     /// The pattern the screen shows.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn pattern(&self) -> Pattern {
         Pattern::with_dot_scale(self.aspect(), self.dot_scale)
     }
@@ -228,6 +292,7 @@ impl SyntheticScene {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn truth(&self) -> Truth {
         let [w, h] = self.screen_size_m;
         let [iw, ih] = self.image_extent_m();
@@ -236,7 +301,7 @@ impl SyntheticScene {
             screen_from_camera: self.pose().screen_from_camera,
             size_m: [iw, ih],
             panel_m: self.screen_size_m,
-            // The markers sit on the panel; the frame starts at the image's corner.
+            // The markers sit on the panel. The frame starts at the image's corner.
             markers_m: SIMULATED_MARKERS
                 .map(|[u, v]| Point3::new(u * w - origin.x, v * h - origin.y, 0.0)),
         }
@@ -244,13 +309,17 @@ impl SyntheticScene {
 
     /// Width and height in meters of the displayed image, which exceeds the
     /// panel by the overscan.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn image_extent_m(&self) -> [f64; 2] {
         let scale = 1.0 + self.overscan_fraction;
         [self.screen_size_m[0] * scale, self.screen_size_m[1] * scale]
     }
 
-    /// Position of the image's top-left corner in panel coordinates; negative
+    /// Position of the image's top-left corner in panel coordinates. Negative
     /// under overscan, since the image extends past the panel.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn image_origin_m(&self) -> Vector2<f64> {
         Vector2::new(
             -self.screen_size_m[0] * self.overscan_fraction / 2.0,
@@ -259,12 +328,16 @@ impl SyntheticScene {
     }
 
     /// Gravity direction in the camera frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn down_in_camera(&self) -> Vector3<f64> {
         self.pose().world_from_camera.transpose() * Vector3::y()
     }
 
     /// The camera-to-aligned rotation an ideal gravity estimate yields: the
     /// smallest rotation that points gravity along `+y`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn camera_to_aligned(&self) -> Matrix3<f64> {
         UnitQuaternion::rotation_between(&self.down_in_camera(), &Vector3::y())
             .unwrap_or_default()

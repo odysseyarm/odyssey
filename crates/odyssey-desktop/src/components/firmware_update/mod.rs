@@ -2,8 +2,8 @@
 //!
 //! Update state lives in a shared `Arc<Mutex<HashMap>>`. The update itself runs
 //! on the tokio runtime, outside any view's lifetime, and views redraw when the
-//! manager's ticker fires. Its claim follows the future through cancellation;
-//! task panics become failures rather than leaving a device claimed forever.
+//! manager's ticker fires. Its claim follows the future through cancellation,
+//! and task panics become failures instead of leaving a device claimed forever.
 //! Every image must be nonempty and match its manifest size before DFU starts.
 
 mod bootloader;

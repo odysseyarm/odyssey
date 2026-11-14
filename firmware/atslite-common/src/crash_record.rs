@@ -1,7 +1,7 @@
 //! Crash record kept in `.uninit` RAM across the reset that follows a panic or hard fault,
 //! and logged on the next boot.
 //!
-//! The handlers reset with SYSRESETREQ, which keeps RAM; power loss does not. The
+//! The handlers reset with SYSRESETREQ, which keeps RAM, but power loss does not. The
 //! bootloaders run in between, so a checksum rejects a record they overwrote.
 
 use core::mem::MaybeUninit;
@@ -13,11 +13,16 @@ use cortex_m_rt::ExceptionFrame;
 const MAGIC: u32 = 0x4352_4153;
 
 /// What ended the previous boot.
+///
+/// Since: Odyssey Desktop 0.7.1.
 #[derive(Clone, Copy, PartialEq, Eq, defmt::Format)]
 #[repr(u32)]
 pub enum CrashKind {
+    /// Since: Odyssey Desktop 0.7.1.
     Panic = 1,
     /// A hard fault, including a UsageFault escalated from an MSPLIM stack overflow.
+    ///
+    /// Since: Odyssey Desktop 0.7.1.
     Fault = 2,
 }
 
@@ -78,6 +83,8 @@ fn store(kind: CrashKind, pc: u32, lr: u32) {
 }
 
 /// Logs and clears the record left by the previous boot, with the reset reason.
+///
+/// Since: Odyssey Desktop 0.7.1.
 pub fn report_previous_boot() {
     // Read only: the boards' boot VBUS policy reads and clears RESETREAS after this.
     let reason = embassy_nrf::pac::RESET.resetreas().read();
@@ -96,7 +103,7 @@ pub fn report_previous_boot() {
 }
 
 // shortcut: records no panic location. Reading `PanicInfo` keeps every panic site's
-// `Location` and file path alive through LTO, +61 KB that lite1's flash lacks; build lite1
+// `Location` and file path alive through LTO, +61 KB that lite1's flash lacks. Build lite1
 // with `-Z location-detail=line` like legacy-atslite to afford it. A probe still halts here
 // with the message, and `defmt::panic!` / `defmt::unwrap!` log theirs over RTT.
 #[panic_handler]
@@ -112,7 +119,7 @@ fn panic(_info: &PanicInfo) -> ! {
 // stays set after the probe detaches, and the watchdog pauses during debug halt.
 #[cortex_m_rt::exception]
 unsafe fn HardFault(frame: &ExceptionFrame) -> ! {
-    // A panic already stored its record before raising this fault; keep it.
+    // A panic already stored its record before raising this fault, so keep it.
     if read().is_none() {
         store(CrashKind::Fault, frame.pc(), frame.lr());
     }

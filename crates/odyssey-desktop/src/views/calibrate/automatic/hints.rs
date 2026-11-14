@@ -1,5 +1,5 @@
 //! Plain-language text for everything the calibration core reports as an enum.
-//! The core returns data only; this is the one place that decides the words.
+//! The core returns data only. This is the one place that decides the words.
 //!
 //! Every `match` below is exhaustive on purpose: a new `Hint` or `MarkerHint`
 //! variant fails to compile here instead of reaching a tech as a blank banner.
@@ -276,7 +276,7 @@ pub(crate) fn circle_text(circle: &Circle) -> String {
 }
 
 /// Where the tracker markers can go and what to avoid, for the markers step. Each item is
-/// what the wizard's marker search enforces or what the tracker was run to need; see
+/// what the wizard's marker search enforces or what the tracker was run to need. See
 /// `crates/odyssey-autocalib/MARKERS.md` and `crates/odyssey-hub-server/tests/marker_order.rs`
 /// for where each comes from.
 pub(crate) const MARKER_RULES: [(&str, &str); 6] = [

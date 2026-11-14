@@ -17,23 +17,36 @@ const GLARE_RADIUS_DEG: f64 = 8.0;
 /// Signal must reach this share of the background.
 const DETECTION_RATIO: f64 = 0.25;
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LightSource {
+    /// Since: Odyssey Desktop 0.7.5.
     pub position_m: [f64; 3],
     /// Background added around the source's image on the sensor. 1.0 matches a
-    /// marker seen from 2 m; a sunlit window is far above that.
+    /// marker seen from 2 m, and a sunlit window is far above that.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub intensity: f64,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Lighting {
     /// Infrared everywhere in the scene: 0 is a dark room, 1 is bright daylight.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub ambient: f64,
+    /// Since: Odyssey Desktop 0.7.5.
     pub sources: Vec<LightSource>,
 }
 
 impl Lighting {
+    /// # Errors
+    ///
+    /// Returns an error if ambient level or light sources are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn validate(&self) -> Result<(), StageError> {
         let ok = self.ambient.is_finite()
             && (0.0..=10.0).contains(&self.ambient)
@@ -52,6 +65,8 @@ impl Lighting {
 
     /// Whether a tracker at `camera` looking along `forward` can pick out a
     /// marker at `marker`.
+    ///
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn marker_detected(&self, camera: [f64; 3], forward: [f64; 3], marker: [f64; 3]) -> bool {
         let to_marker = Vector3::from(marker) - Vector3::from(camera);
         let distance = to_marker.norm();

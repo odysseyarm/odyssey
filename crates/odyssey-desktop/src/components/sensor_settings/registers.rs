@@ -77,7 +77,7 @@ impl<'a> Registers<'a> {
         Ok(u32::from_le_bytes([b0, b1, b2, 0]))
     }
 
-    /// The top byte of `value` is dropped; callers validate it fits in 24 bits.
+    /// The top byte of `value` is dropped. Callers validate it fits in 24 bits.
     pub(super) async fn write_u24(&self, run: RegisterRun<3>, value: u32) -> eros::Result<()> {
         let [b0, b1, b2, _] = value.to_le_bytes();
         self.write_bytes(run, [b0, b1, b2]).await

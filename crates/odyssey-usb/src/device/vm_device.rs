@@ -42,12 +42,13 @@ const STREAM_REPLY_BUFFER: usize = 100;
 /// Whether a USB connection insists on the device being in USB data mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UsbModeRequirement {
-    /// The device must report USB transport; anything else is an error.
+    /// The device must report USB transport. Anything else is an error.
     Required,
     /// Connect whatever the transport mode, e.g. to pair while in BLE mode.
     NotRequired,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Debug)]
 pub struct VmDevice {
     transport: PacketTransportTx,
@@ -55,7 +56,7 @@ pub struct VmDevice {
     // Arc drops the guards exactly once even when clones drop concurrently.
     keepalive: Arc<(tokio_util::sync::DropGuard, tokio_util::sync::DropGuard)>,
     ctrl_if: Option<ControlLink<odyssey_protocol::control::device::DeviceMsg>>,
-    // Serialize request/reply pairs; retain pairing events encountered while
+    // Serialize request/reply pairs. Retain pairing events encountered while
     // waiting for a different reply.
     ctrl: Arc<tokio::sync::Mutex<Option<odyssey_protocol::control::device::PairingOutcome>>>,
     image_requests: mpsc::Sender<image_session::ImageRequest>,
@@ -64,6 +65,7 @@ pub struct VmDevice {
 }
 
 impl VmDevice {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn from_transport(transport: PacketTransport, ctrl_if: Option<Interface>) -> Self {
         Self::from_control_link(transport, ctrl_if.map(ControlLink::usb))
     }
@@ -126,6 +128,8 @@ impl VmDevice {
 
     /// Opens an opt-in simulator link using bounded packet and control channels.
     /// The peer receives host requests on `outgoing` and `control_outgoing`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "sim")]
     pub fn from_simulated_channels(
         outgoing: mpsc::Sender<Packet>,
@@ -139,12 +143,19 @@ impl VmDevice {
         )
     }
 
+    /// # Errors
+    /// Returns USB, interface discovery, transport-mode, or stream-cleanup errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
         Self::connect_usb_inner(info, UsbModeRequirement::Required).await
     }
 
     /// Connects whatever the transport mode, for control-endpoint operations
     /// such as pairing while the device runs in BLE mode.
+    ///
+    /// # Errors
+    /// Returns USB, interface discovery, or control-endpoint errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn connect_usb_any_mode(info: DeviceInfo) -> Result<Self> {
         Self::connect_usb_inner(info, UsbModeRequirement::NotRequired).await
     }
@@ -161,7 +172,7 @@ impl VmDevice {
         if usb_mode == UsbModeRequirement::Required {
             // Ask over the control endpoint first: firmware with a manual
             // transport mode (legacy vm-fw) answers bulk requests over BLE while
-            // in BLE mode, so clearing streams first would spend every DisableAll
+            // in BLE mode, so clearing streams first would spend every `DisableAll`
             // resend before reporting the wrong mode.
             let mode = device.get_transport_mode().await?;
             if mode != TransportMode::Usb {
@@ -177,6 +188,9 @@ impl VmDevice {
         Ok(device)
     }
 
+    /// # Errors
+    /// Returns mux transport or stream-disable errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn connect_via_mux(mux: MuxDevice, device_addr: [u8; 6]) -> Result<Self> {
         let device = Self::open_via_mux(mux, device_addr);
 
@@ -192,7 +206,9 @@ impl VmDevice {
     /// Opens a link through `mux` without touching the unit's streams.
     ///
     /// For a unit whose stream subscriptions are shared by all its links: a
-    /// DisableAll sent while it streams over USB would stop those reports too.
+    /// `DisableAll` sent while it streams over USB would stop those reports too.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn open_via_mux(mux: MuxDevice, device_addr: [u8; 6]) -> Self {
         debug!(
             "VmDevice::open_via_mux() creating new device for {}",
@@ -225,6 +241,11 @@ impl VmDevice {
         }
     }
 
+    /// Sends packet over device transport.
+    ///
+    /// # Errors
+    /// Returns the unsent packet if transport receiver closes.
+    /// Since: Odyssey Desktop 0.6.0.
     #[expect(
         clippy::result_large_err,
         reason = "SendError<Packet> hands the unsent packet back and is part of the public API"
@@ -247,6 +268,10 @@ impl VmDevice {
     /// Send a request and wait for its reply. A device that never answers (e.g. it
     /// rebooted or switched transport mid-request) yields an error instead of
     /// hanging the caller forever.
+    ///
+    /// # Errors
+    /// Returns transport-closed, timeout, or request-slot errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn request(&self, data: PacketData) -> Result<PacketData> {
         tokio::time::timeout(REQUEST_TIMEOUT, self.request_unbounded(data))
             .await
@@ -265,10 +290,14 @@ impl VmDevice {
     }
 
     /// Like [`Self::request`], but re-sends when no reply arrives within `timeout`,
-    /// up to `limit` attempts. Only a missing reply is retried; any other error
+    /// up to `limit` attempts. Only a missing reply is retried. Any other error
     /// (send failure, closed transport) is returned immediately. Only for
-    /// idempotent requests: the first packet after a device (re)boots is sometimes
-    /// lost. A zero limit sends nothing and returns [`Error::NoResponse`].
+    /// idempotent requests, since the first packet after a device (re)boots is
+    /// sometimes lost. A zero limit sends nothing and returns [`Error::NoResponse`].
+    ///
+    /// # Errors
+    /// Returns [`Error::NoResponse`] when no attempt receives a reply, or other transport errors.
+    /// Since: Odyssey Desktop 0.6.5.
     pub async fn request_with_retry(
         &self,
         data: PacketData,
@@ -308,6 +337,11 @@ impl VmDevice {
         self.live_state()?.reserve_stream(buffer, stream_type)
     }
 
+    /// Reads sensor register and verifies reply address.
+    ///
+    /// # Errors
+    /// Returns transport, timeout, request-slot, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     #[instrument(skip(self))]
     pub async fn read_register(&self, port: Port, bank: u8, address: u8) -> Result<u8> {
         let reply = self
@@ -327,6 +361,11 @@ impl VmDevice {
         Ok(r.data)
     }
 
+    /// Writes sensor register without waiting for a reply.
+    ///
+    /// # Errors
+    /// Returns transport-closed errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn write_register(&self, port: Port, bank: u8, address: u8, data: u8) -> Result<()> {
         info!("write_register: port={port:?} bank={bank} addr={address} data={data}");
         self.send_without_reply(PacketData::WriteRegister(WriteRegister {
@@ -338,6 +377,11 @@ impl VmDevice {
         .await
     }
 
+    /// Sends payload under a vendor packet tag.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidArgument`] for out-of-range tags or oversized payloads, and transport errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn write_vendor(&self, tag: u8, data: &[u8]) -> Result<()> {
         // Both ends of the range are marker ids, not tags a payload may carry.
         let first_tag = u8::from(PacketType::VendorStart()) + 1;
@@ -364,6 +408,9 @@ impl VmDevice {
         .await
     }
 
+    /// # Errors
+    /// Returns transport, timeout, request-slot, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn read_config(&self, kind: ConfigKind) -> Result<GeneralConfig> {
         let reply = self.request(PacketData::ReadConfig(kind)).await?;
         let PacketData::ReadConfigResponse(r) = reply else {
@@ -373,12 +420,20 @@ impl VmDevice {
         Ok(r)
     }
 
+    /// Writes general configuration without waiting for a reply.
+    ///
+    /// # Errors
+    /// Returns transport-closed errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn write_config(&self, config: GeneralConfig) -> Result<()> {
         info!("write_config: {config:?}");
         self.send_without_reply(PacketData::WriteConfig(config))
             .await
     }
 
+    /// # Errors
+    /// Returns transport, timeout, request-slot, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn read_prop(&self, kind: PropKind) -> Result<Props> {
         let reply = self.request(PacketData::ReadProp(kind)).await?;
         let PacketData::ReadPropResponse(r) = reply else {
@@ -388,10 +443,20 @@ impl VmDevice {
         Ok(r)
     }
 
+    /// Reads each general configuration section.
+    ///
+    /// # Errors
+    /// Returns the first section-read error.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn read_all_config(&self) -> Result<GeneralSettings> {
         GeneralSettings::read_with(|kind| self.read_config(kind)).await
     }
 
+    /// Reads legacy near-field and wide-field object arrays.
+    ///
+    /// # Errors
+    /// Returns transport, timeout, request-slot, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.7.5.
     pub async fn get_legacy_frame(&self) -> Result<([MotData; 16], [MotData; 16])> {
         let reply = self
             .request(PacketData::LegacyObjectReportRequest())
@@ -405,6 +470,10 @@ impl VmDevice {
     /// Starts one USB-only image session. The owned stream is Send + 'static,
     /// cancels on drop and keeps only the most recent complete frame. Its
     /// supervised stop handshake completes before a replacement can start.
+    ///
+    /// # Errors
+    /// Returns USB-mode, argument, capacity, transport, or image-start errors.
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn stream_images(
         &self,
         config: odyssey_protocol::image::ImageStreamConfig,
@@ -441,6 +510,9 @@ impl VmDevice {
         result
     }
 
+    /// # Errors
+    /// Returns stream-slot, duplicate-subscription, or transport errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn stream(
         &self,
         stream_type: PacketType,
@@ -496,6 +568,9 @@ impl VmDevice {
         Ok(self.stream(stream_type).await?.filter_map(extract))
     }
 
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.7.5.
     pub async fn stream_legacy_objects(
         &self,
     ) -> Result<impl Stream<Item = ObjectReport> + Send + Sync + use<>> {
@@ -506,6 +581,9 @@ impl VmDevice {
         .await
     }
 
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.7.5.
     pub async fn stream_legacy_combined_markers(
         &self,
     ) -> Result<impl Stream<Item = CombinedMarkersReport> + Send + Sync + use<>> {
@@ -516,6 +594,9 @@ impl VmDevice {
         .await
     }
 
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.7.5.
     pub async fn stream_markers(
         &self,
     ) -> Result<impl Stream<Item = MarkersReport> + Send + Sync + use<>> {
@@ -523,6 +604,9 @@ impl VmDevice {
             .await
     }
 
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn stream_accel(
         &self,
     ) -> Result<impl Stream<Item = AccelReport> + Send + Sync + use<>> {
@@ -530,6 +614,11 @@ impl VmDevice {
             .await
     }
 
+    /// Streams impact reports.
+    ///
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn stream_impact(
         &self,
     ) -> Result<impl Stream<Item = ImpactReport> + Send + Sync + use<>> {
@@ -537,6 +626,11 @@ impl VmDevice {
             .await
     }
 
+    /// Streams battery reports.
+    ///
+    /// # Errors
+    /// Returns stream reservation or transport errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn stream_battery(
         &self,
     ) -> Result<impl Stream<Item = BatteryReport> + Send + Sync + use<>> {
@@ -544,12 +638,21 @@ impl VmDevice {
             .await
     }
 
+    /// Persists current settings to device flash.
+    ///
+    /// # Errors
+    /// Returns transport-closed errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn flash_settings(&self) -> Result<()> {
         self.send_without_reply(PacketData::FlashSettings()).await
     }
 
     /// Stops firmware streaming and closes existing subscriptions. Generation
     /// checks keep old subscription guards from disabling their replacements.
+    ///
+    /// # Errors
+    /// Returns closed-dispatcher or stream-disable errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn clear_all_streams(&self) -> Result<()> {
         let state = self.live_state()?;
         let _control = state.stream_control.lock().await;
@@ -562,6 +665,8 @@ impl VmDevice {
     /// them sends no Disable. For a device whose subscriptions are shared with
     /// another link that keeps streaming: a Disable over this link would stop
     /// that link's reports too.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn forget_streams(&self) {
         if let Some(state) = self.thread_state.upgrade() {
             state.clear_streams();

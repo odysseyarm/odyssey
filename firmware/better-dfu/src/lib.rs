@@ -3,15 +3,20 @@
 #![warn(missing_docs)]
 mod fmt;
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod consts;
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(feature = "dfu")]
 pub mod dfu;
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(all(feature = "dfu", not(feature = "application")))]
 pub use self::dfu::*;
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(feature = "application")]
 pub mod application;
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(all(feature = "application", not(feature = "dfu")))]
 pub use self::application::*;
 
@@ -19,12 +24,18 @@ pub use self::application::*;
 ///
 /// With the `cortex-m` or `esp32c3-hal` feature the crate provides `ResetImmediate`, which issues the reset
 /// without touching any other peripheral. For other behaviour, pass a custom implementation to `Control::new`.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub trait Reset {
     /// Reset the device.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn sys_reset(&self);
 }
 
 /// Reset immediately.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(feature = "esp32c3-hal")]
 pub struct ResetImmediate;
 
@@ -37,6 +48,8 @@ impl Reset for ResetImmediate {
 }
 
 /// Reset immediately.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg(feature = "cortex-m")]
 pub struct ResetImmediate;
 

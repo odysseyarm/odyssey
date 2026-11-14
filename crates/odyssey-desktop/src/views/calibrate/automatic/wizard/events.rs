@@ -142,7 +142,7 @@ impl Wizard {
         } else if matches!(&self.cameras, CameraList::Found(list) if !list.is_empty())
             && self.camera_choice.is_some()
         {
-            // The named camera is not attached; let the tech choose.
+            // The named camera is not attached, so let the tech choose.
             self.auto_start = false;
             let name = self.camera_choice.take().unwrap_or_default();
             self.note(

@@ -23,7 +23,7 @@ use super::task_slots::{self, TaskSlot};
 
 /// Wait between the end of one connection attempt or session and the next
 /// connect, whatever ended it. A device that keeps failing pairing or
-/// encryption is retried at this pace rather than in a tight loop.
+/// encryption is retried at this pace, never in a tight loop.
 const RETRY_BACKOFF: core::time::Duration = core::time::Duration::from_secs(5);
 
 /// Owns one device for its whole lifetime: connect, pair or encrypt, open the

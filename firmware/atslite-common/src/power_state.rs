@@ -8,11 +8,15 @@ use nrf_fuel_gauge as fg;
 
 use crate::power;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub static SOC_PERCENT: AtomicU8 = AtomicU8::new(0);
+/// Since: Odyssey Desktop 0.7.0.
 pub static VBUS_PRESENT: AtomicBool = AtomicBool::new(false);
 
 /// Re-derives the LED state from the last battery reading and the BLE connection. Call it when
 /// the BLE connection changes so the LED reacts without waiting for the next battery tick.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn update_led_for_ble_state() {
     let vbus_present = VBUS_PRESENT.load(Ordering::Relaxed);
     let soc = SOC_PERCENT.load(Ordering::Relaxed) as f32;
@@ -22,6 +26,7 @@ pub async fn update_led_for_ble_state() {
     crate::pmic_leds::set_state_seamless_global(led_state).await;
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[embassy_executor::task]
 pub async fn power_state_task(
     pmic: &'static embassy_sync::mutex::Mutex<

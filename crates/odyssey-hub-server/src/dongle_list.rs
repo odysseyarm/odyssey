@@ -26,7 +26,7 @@ impl DongleList {
         Some(sender.clone())
     }
 
-    /// Routes only to the selected live actor; an unavailable radio never falls back.
+    /// Routes only to the selected live actor. An unavailable radio never falls back.
     pub(crate) async fn accessory_request(
         &self,
         id: &str,

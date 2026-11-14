@@ -1,17 +1,20 @@
 /// Transport error with the gRPC status preserved.
 ///
-/// Renders only the message the server sent; `tonic::Status`'s own Display
+/// Renders only the message the server sent. `tonic::Status`'s own Display
 /// appends the code, details and gRPC metadata, which ends up verbatim in UI
-/// error text. `into_status` hands back the original for anything that needs
-/// the code or metadata.
+/// error text. `into_status` hands back the original when you need the code or
+/// metadata.
 ///
 /// The status is boxed because it is ~176 bytes, which would otherwise make
 /// every `Result<_, RpcError>` and `Result<_, ClientError>` that large.
+///
+/// Since: Odyssey Desktop 0.6.3.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{}", rpc_message(.0))]
 pub struct RpcError(Box<tonic::Status>);
 
 impl RpcError {
+    /// Since: Odyssey Desktop 0.6.3.
     pub fn into_status(self) -> tonic::Status {
         *self.0
     }
@@ -38,12 +41,16 @@ fn rpc_message(status: &tonic::Status) -> String {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.3.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
+    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Rpc(#[from] RpcError),
+    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
+    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

@@ -1,6 +1,6 @@
 //! Units in the field decode these packets by number, in three encodings: the
 //! packed binary ID, the postcard variant index and the CBOR index. The names
-//! may change; the numbers may not.
+//! can change. The numbers cannot.
 
 use odyssey_protocol::legacy::{CombinedMarkersReport, Mode, ObjectReport};
 use odyssey_protocol::{MarkersReport, Packet, PacketData};
