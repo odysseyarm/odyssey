@@ -1,6 +1,6 @@
 [package]
 name = "odyssey-hub-client-ffi"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 # A standalone workspace with its own Cargo.lock. The root Cargo.toml says why.
