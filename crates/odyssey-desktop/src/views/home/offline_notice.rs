@@ -8,7 +8,7 @@ use crate::theme::Palette;
 /// Says so when offline mode is on and where firmware updates come from, and
 /// shows what is wrong with the firmware pack or the policy file. Shows nothing
 /// when everything is online and fine.
-pub(super) fn offline_notice(error: Option<&str>, p: Palette) -> Option<AnyElement> {
+pub(super) fn offline_notice(error: Option<&str>, p: &Palette) -> Option<AnyElement> {
     let policy = odyssey_hub_server::policy::current();
     if !policy.offline && policy.issues.is_empty() {
         return None;

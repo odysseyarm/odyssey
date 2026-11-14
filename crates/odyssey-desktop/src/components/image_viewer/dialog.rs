@@ -187,12 +187,12 @@ impl ImageDialog {
         if !can_stream {
             self.running = false;
             self.session = None;
-            self.status = if is_legacy(&self.device) {
+            if is_legacy(&self.device) {
                 "USB unavailable. Legacy image mode still requires reboot/power-cycle and reconnect."
             } else {
                 "Stopped: the USB image connection is unavailable."
             }
-            .to_owned();
+            .clone_into(&mut self.status);
         }
     }
 
@@ -212,33 +212,33 @@ impl ImageDialog {
         let legacy = is_legacy(&self.device);
         match event {
             SessionEvent::Started => {
-                self.status = if legacy {
+                if legacy {
                     "Capturing legacy USB images. Tracking is stopped until reboot/reconnect."
                 } else {
                     "Capturing USB images. Tracking paused until Stop or close."
                 }
-                .to_owned();
+                .clone_into(&mut self.status);
             }
             SessionEvent::StartFailed(cause) => {
                 self.error = Some(format!("Could not start USB image capture: {cause}"));
-                self.status = if legacy {
+                if legacy {
                     "No preview active. Legacy startup may have changed sensor mode: reboot/power-cycle and reconnect before tracking."
                 } else {
                     "Stopped; no image session is active."
                 }
-                .to_owned();
+                .clone_into(&mut self.status);
                 self.running = false;
                 self.session = None;
             }
             SessionEvent::Frame(frame) => self.set_latest(Some(frame), window),
             SessionEvent::Ended(failure) => {
                 self.error = Some(failure);
-                self.status = if legacy {
+                if legacy {
                     "Pixels stopped. Legacy tracking is NOT restored; reboot/power-cycle and reconnect."
                 } else {
                     "Stopped. Any displayed image is the last received frame."
                 }
-                .to_owned();
+                .clone_into(&mut self.status);
                 self.running = false;
                 self.session = None;
             }
@@ -249,7 +249,7 @@ impl ImageDialog {
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_latest(None, window);
         self.error = None;
-        self.status = "Starting USB image session…".to_owned();
+        "Starting USB image session…".clone_into(&mut self.status);
         let legacy = is_legacy(&self.device);
         if legacy {
             self.needs_reboot.update(cx, |needs_reboot, cx| {
@@ -273,12 +273,12 @@ impl ImageDialog {
     fn stop(&mut self, cx: &mut Context<Self>) {
         self.running = false;
         self.session = None;
-        self.status = if is_legacy(&self.device) {
+        if is_legacy(&self.device) {
             "Pixels stopped. Legacy tracking is NOT restored: reboot/power-cycle and reconnect."
         } else {
             "Stopped. Last received frame is frozen; normal tracking is being restored."
         }
-        .to_owned();
+        .clone_into(&mut self.status);
         cx.notify();
     }
 
@@ -286,9 +286,8 @@ impl ImageDialog {
         self.running = false;
         self.session = None;
         self.rebooting = true;
-        self.status =
-            "Stopping pixels and requesting legacy reboot; waiting for reconnect is required."
-                .to_owned();
+        "Stopping pixels and requesting legacy reboot; waiting for reconnect is required."
+            .clone_into(&mut self.status);
         cx.notify();
         let device = self.device.clone();
         let client = cx.global::<HubHandle>().0.read(cx).client();
@@ -305,15 +304,14 @@ impl ImageDialog {
             })
             .await
             .unwrap_or_else(|cause| Err(cause.to_string()));
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(()) => this.status = "Reboot acknowledged. Wait for the device to reconnect; acknowledgement alone does not confirm tracking recovery.".to_owned(),
+                    Ok(()) => "Reboot acknowledged. Wait for the device to reconnect; acknowledgement alone does not confirm tracking recovery.".clone_into(&mut this.status),
                     Err(cause) => this.error = Some(format!("Reboot failed: {cause}. Fully power-cycle the unit and reconnect.")),
                 }
                 this.rebooting = false;
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -321,7 +319,7 @@ impl ImageDialog {
 
 impl Render for ImageDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = palette(cx);
+        let palette = &palette(cx);
         let reason = unavailable(&self.device, self.is_updating);
         let can_stream = reason.is_none();
         let legacy = is_legacy(&self.device);

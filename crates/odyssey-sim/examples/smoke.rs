@@ -96,7 +96,7 @@ async fn main() -> eros::Result<()> {
         .context("image stream closed")??;
     assert_eq!((first_image.width, first_image.height), (320, 240));
     assert_eq!(first_image.pixels.len(), 320 * 240);
-    assert!(first_image.objects.is_empty());
+    assert_eq!(first_image.objects.len(), 0);
     assert_eq!(first_image.objects_timestamp_us, 0);
     loop {
         tokio::select! {
@@ -112,7 +112,7 @@ async fn main() -> eros::Result<()> {
         frame = tokio::time::timeout(Duration::from_secs(3), images.next()) =>
             frame?.context("image stream closed")??,
     };
-    assert!(next_image.objects.is_empty());
+    assert_eq!(next_image.objects.len(), 0);
     assert_eq!(next_image.objects_timestamp_us, 0);
     let cadence_us = next_image
         .timestamp_us
@@ -235,7 +235,9 @@ async fn main() -> eros::Result<()> {
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.units[0].transport, Transport::Ble);
     assert_eq!(snapshot.units[0].dongle, Some(DONGLE_UUID));
-    assert!(usb.read_uuid().await.is_err());
+    usb.read_uuid()
+        .await
+        .expect_err("the unplugged USB link must fail");
     let ble = VmDevice::open_via_mux(dongle.clone(), UNIT_UUID);
     assert!(matches!(
         ble.read_prop(PropKind::Uuid).await?,
@@ -303,7 +305,10 @@ async fn main() -> eros::Result<()> {
     ));
     handle.execute(Command::RemoveUnit { uuid: second }).await?;
     assert!(new_dongle.request_devices().await?.is_empty());
-    assert!(second_usb.read_uuid().await.is_err());
+    second_usb
+        .read_uuid()
+        .await
+        .expect_err("the removed unit's USB link must fail");
     sim.shutdown().await?;
     assert!(!handle.snapshot().running);
     assert!(handle.execute(Command::Shot).await.is_err());

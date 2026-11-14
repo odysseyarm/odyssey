@@ -100,8 +100,8 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: dongle-fw
-      # Re-running a tag has to replace the artifacts rather than fail on the
-      # release that already exists, so create only when it does not.
+      # Re-running a tag replaces the artifacts. The release exists by then, so create
+      # it only when it is missing.
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -211,7 +211,7 @@ fn a_seventh_bright_spot_on_the_screen_is_refused_with_its_count() {
 #[test]
 fn known_diagonal_rectifies_the_size() {
     let mut scene = SyntheticScene::default();
-    // The physical screen is 55 inches; the solver gets the user's answer.
+    // The physical screen is 55 inches. The solver gets the user's answer.
     let truth_diagonal = 55.0;
     let options = SessionOptions {
         known_size: Some(KnownSize::Diagonal {
@@ -278,7 +278,7 @@ fn preview_explains_what_is_wrong() {
         &settings,
         SessionOptions::default(),
     );
-    // Looking down 50 degrees may lose the screen too; either way the user is told.
+    // Looking down 50 degrees may lose the screen too. Either way the user is told.
     assert_ne!(tilted.preview().unwrap().hint, Hint::Ready);
 
     let mut depthless = open(
@@ -607,7 +607,7 @@ fn overscan_blocks_readiness_only_when_edges_are_required() {
     let preview = projector.preview().unwrap();
     assert!(matches!(preview.edges, EdgeCheck::Cropped { .. }));
     assert_eq!(preview.hint, Hint::Ready);
-    assert!(projector.measure_screen(&mut |_| {}).is_ok());
+    projector.measure_screen(&mut |_| {}).unwrap();
 }
 
 #[test]
@@ -673,7 +673,7 @@ fn overscan_makes_a_panel_size_disagree_with_the_measurement() {
 }
 
 /// The ring must read as visible, never as cropped, wherever the screen is
-/// shown completely; otherwise a flat-screen user would be blocked for no reason.
+/// shown completely, or a flat-screen user would be blocked for no reason.
 #[test]
 fn an_uncropped_ring_is_never_reported_cropped() {
     let default = SyntheticScene::default();
@@ -799,12 +799,12 @@ fn calibration_export_rejects_singular_maps_nonfinite_markers_and_invalid_rotati
     let mut fit = session.screen_fit().unwrap().clone();
     let mut markers = [Point2::origin(); 6];
     fit.unit_to_screen = Matrix3::zeros();
-    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    odyssey_autocalib::solve::build_calibration(&fit, &markers).unwrap_err();
     fit = session.screen_fit().unwrap().clone();
     markers[0].x = f64::NAN;
-    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    odyssey_autocalib::solve::build_calibration(&fit, &markers).unwrap_err();
     markers[0].x = f64::MAX;
-    assert!(odyssey_autocalib::solve::build_calibration(&fit, &markers).is_err());
+    odyssey_autocalib::solve::build_calibration(&fit, &markers).unwrap_err();
     fit.screen_from_aligned.rotation = Matrix3::new(-1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
     assert!(matches!(
         odyssey_autocalib::solve::build_calibration(&fit, &[Point2::origin(); 6]),

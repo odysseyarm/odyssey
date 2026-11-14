@@ -2,6 +2,7 @@
 //! hand to a [`DeviceHandler`], and tell it when the cable goes away.
 
 use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
+use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_protocol::ProductId;
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_usb::device::VmDevice;
@@ -45,6 +46,7 @@ impl<'a> DirectUsbMetadata<'a> {
 struct ProbedUsbDevice {
     uuid: DeviceAddress,
     firmware: Option<odyssey_protocol::Version>,
+    firmware_identity: Option<FirmwareVersion>,
     events_protocol_version: [u16; 3],
     transport_mode: TransportMode,
     transport_selection: TransportSelection,
@@ -71,9 +73,9 @@ impl ProbedUsbDevice {
 /// How an already-running handler relates to a unit that was just found on USB.
 enum ExistingHandler {
     None,
-    /// Created for a direct-USB connection; its control device is already embedded.
+    /// Created for a direct-USB connection. Its control device is already embedded.
     DirectUsb(mpsc::Sender<DeviceTaskMessage>),
-    /// Created for a BLE-mux connection; it can take the USB control device.
+    /// Created for a BLE-mux connection. It can take the USB control device.
     BleMux(mpsc::Sender<DeviceTaskMessage>),
 }
 
@@ -134,7 +136,7 @@ impl UsbDeviceManager {
         let Some(product_id) = ProductId::from_u16(product_id) else {
             return;
         };
-        if let Some(probed) = Self::probe_connection(connection, product_id, false).await {
+        if let Some(probed) = Self::probe_connection(connection, product_id, false, None).await {
             self.register_direct_usb(
                 id,
                 DirectUsbMetadata {
@@ -168,7 +170,7 @@ impl UsbDeviceManager {
             return;
         }
 
-        // No handler yet, or a BLE-mux handler is being replaced; the probe's connection
+        // No handler yet, or a BLE-mux handler is being replaced. The probe's connection
         // is reused.
         info!("Connecting new USB device with UUID {uuid:02x?}, PID: 0x{pid:04x}");
         self.spawn_direct_usb_handler(&metadata, probed).await;
@@ -183,6 +185,7 @@ impl UsbDeviceManager {
         direct_usb_id: &str,
         present: &mut PresentUsbDevices,
     ) -> Option<ProbedUsbDevice> {
+        let firmware_identity = super::read_firmware_identity(dev_info);
         let vm_device = match VmDevice::connect_usb_any_mode(dev_info.clone()).await {
             Ok(vm_device) => vm_device,
             Err(e) => {
@@ -196,6 +199,7 @@ impl UsbDeviceManager {
             vm_device,
             product_id,
             DirectUsbMetadata::from_usb(dev_info).dfu,
+            firmware_identity,
         )
         .await
     }
@@ -204,6 +208,7 @@ impl UsbDeviceManager {
         vm_device: VmDevice,
         product_id: ProductId,
         dfu: bool,
+        firmware_identity: Option<FirmwareVersion>,
     ) -> Option<ProbedUsbDevice> {
         // Control plane for AtsLite/AtsPro (control endpoint), packet protocol for AtsVm.
         let uuid = read_uuid_with_retry(&vm_device, product_id).await?;
@@ -225,6 +230,7 @@ impl UsbDeviceManager {
         Some(ProbedUsbDevice {
             uuid,
             firmware,
+            firmware_identity,
             events_protocol_version,
             transport_mode,
             transport_selection,
@@ -294,7 +300,7 @@ impl UsbDeviceManager {
         );
 
         // SetTransportMode ends its handler at once, which can leave a finished entry
-        // in device_handles; without evicting it the next scan would never reconnect
+        // in device_handles. Without evicting it the next scan would never reconnect
         // the device.
         if handles
             .get(&uuid)
@@ -350,7 +356,7 @@ impl UsbDeviceManager {
         let control_protocol_version = probed.control_protocol_version();
 
         // A unit in USB transport mode streams events over the same connection it is
-        // controlled over; in BLE mode only control comes over USB.
+        // controlled over. In BLE mode only control comes over USB.
         let connections = if probed.streams_over_usb() {
             DeviceConnections {
                 control_device: Some(probed.vm_device.clone()),
@@ -387,8 +393,8 @@ impl UsbDeviceManager {
         drop(handles);
         let netcore_probe_commands = commands.clone();
 
-        // The channel always goes to the device list so commands have a live sender;
-        // the handler serves those that need events (like Zero) once events are available.
+        // The channel always goes to the device list so commands have a live sender.
+        // The handler serves those that need events (like Zero) once events are available.
         let channels = DeviceChannels {
             commands: Some(commands),
         };
@@ -463,7 +469,7 @@ impl UsbDeviceManager {
 fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice) -> Device {
     let in_usb_mode = probed.streams_over_usb();
 
-    // CONTROL always; EVENTS only in USB transport mode; DFU whenever the device exposes
+    // CONTROL always, EVENTS only in USB transport mode, DFU whenever the device exposes
     // a DFU interface (class 0xFE).
     let mut capabilities = DeviceCapabilities::new(DeviceCapabilities::CONTROL);
     if in_usb_mode {
@@ -484,6 +490,7 @@ fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice)
             .firmware
             .as_ref()
             .map_or([0, 0, 0], |version| version.firmware_semver),
+        firmware_identity: probed.firmware_identity.unwrap_or_default(),
         events_transport: if in_usb_mode {
             EventsTransport::Wired
         } else {
@@ -498,10 +505,12 @@ fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice)
 
 #[cfg(all(test, feature = "sim"))]
 mod tests {
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::time::Duration;
 
     use arc_swap::ArcSwap;
+    use arrayvec::ArrayVec;
     use odyssey_sim::{Command, SensorModel, Simulator};
     use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -523,13 +532,13 @@ mod tests {
             let (message_channel, mut messages) = mpsc::channel(16);
             let context = DeviceTaskContext {
                 message_channel,
-                screen_calibrations: Arc::new(ArcSwap::from_pointee(Default::default())),
-                device_offsets: Arc::new(Mutex::new(Default::default())),
-                device_shot_delays: Arc::new(RwLock::new(Default::default())),
-                shot_delay_watch: Arc::new(RwLock::new(Default::default())),
+                screen_calibrations: Arc::new(ArcSwap::from_pointee(ArrayVec::default())),
+                device_offsets: Arc::new(Mutex::new(HashMap::default())),
+                device_shot_delays: Arc::new(RwLock::new(HashMap::default())),
+                shot_delay_watch: Arc::new(RwLock::new(HashMap::default())),
                 event_sender: broadcast::channel(16).0,
-                direct_usb_handler_uuids: Arc::new(Mutex::new(Default::default())),
-                bond_names: Arc::new(Mutex::new(Default::default())),
+                direct_usb_handler_uuids: Arc::new(Mutex::new(HashSet::default())),
+                bond_names: Arc::new(Mutex::new(HashMap::default())),
             };
             let mut manager = UsbDeviceManager::new(context);
             tokio::time::timeout(

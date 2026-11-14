@@ -69,6 +69,22 @@ in {
       cargoExtraArgs = "--locked --offline -p odyssey-sim -p odyssey-hub-server --features odyssey-hub-server/tracking-regression";
     });
     host-tests = craneLib.cargoTest (common.withPrivateSource hostArgs // { cargoArtifacts = hostArtifacts; });
+    postcard-compatibility = craneLib.mkCargoDerivation ((common.mkArgs {
+      pname = "odyssey-postcard-compatibility";
+    }) // {
+      cargoArtifacts = null;
+      buildPhaseCargoCommand = ''
+        cargo test --locked --offline -p odyssey-protocol -p odyssey-protocol-macros \
+          --features odyssey-protocol/schema,odyssey-protocol/minicbor --lib --tests
+        cargo test --locked --offline -p odyssey-protocol --no-default-features \
+          --features schema,serde-no-std,device,minicbor --lib --tests
+        cargo clippy --locked --offline -p odyssey-protocol -p odyssey-protocol-macros \
+          --features odyssey-protocol/schema,odyssey-protocol/minicbor \
+          --all-targets -- -D warnings -A dead_code_pub_in_binary
+      '';
+      doCheck = false;
+      installPhaseCommand = "touch $out";
+    });
     host-lint = craneLib.cargoClippy (common.withPrivateSource hostArgs // {
       cargoArtifacts = hostArtifacts;
       cargoClippyExtraArgs = "--all-targets -- -D warnings -A dead_code_pub_in_binary";
@@ -78,6 +94,14 @@ in {
       cargoClippyExtraArgs = "--bins -- -D warnings";
     });
     xtask-tests = craneLib.cargoTest (xtaskArgs // { cargoArtifacts = xtaskArtifacts; });
+    xtask-lint = craneLib.cargoClippy (xtaskArgs // {
+      cargoArtifacts = xtaskArtifacts;
+      cargoClippyExtraArgs = "--all-targets -- -D warnings -A dead_code_pub_in_binary";
+    });
+    xtask-lint-bins = craneLib.cargoClippy (xtaskArgs // {
+      cargoArtifacts = xtaskArtifacts;
+      cargoClippyExtraArgs = "--bins -- -D warnings";
+    });
     format = pkgs.runCommand "odyssey-format" {
       nativeBuildInputs = [ craneLib.rustfmt ];
     } ''

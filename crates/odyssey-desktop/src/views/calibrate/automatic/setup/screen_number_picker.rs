@@ -10,7 +10,7 @@ use crate::theme::{Palette, RADIUS};
 use crate::views::calibrate::automatic::screens::screen_label;
 use crate::views::calibrate::automatic::wizard::Wizard;
 
-pub(super) fn screen_number_picker(p: Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
+pub(super) fn screen_number_picker(p: &Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
     let state = wizard.read(cx);
     let chosen = state.screen_id();
     let saved = state.saved;
@@ -23,6 +23,7 @@ pub(super) fn screen_number_picker(p: Palette, wizard: &Entity<Wizard>, cx: &App
         } else {
             (p.surface, p.line, p.fg, p.fg_muted)
         };
+        let accent_ink = p.accent_ink;
         let wizard = wizard.clone();
         let mut cell = div()
             .id(("screen-number", usize::from(id)))
@@ -55,7 +56,7 @@ pub(super) fn screen_number_picker(p: Palette, wizard: &Entity<Wizard>, cx: &App
                 });
             });
         if !selected {
-            cell = cell.hover(move |s| s.border_color(p.accent_ink));
+            cell = cell.hover(move |s| s.border_color(accent_ink));
         }
         grid = grid.child(cell);
     }

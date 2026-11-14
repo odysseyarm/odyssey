@@ -21,8 +21,8 @@ const IMU_RATE_HZ: f64 = 200.0;
 const FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
 const DEPTH_UNIT_M: f32 = 0.001;
 
-/// How long the camera is taken to have been streaming when it opens, so that
-/// the IMU already has history.
+/// How long the camera has supposedly been streaming when it opens. Gives the
+/// IMU history from the first frame.
 const WARM_UP: Duration = Duration::from_millis(600);
 
 /// Standard deviation of the accelerometer noise per axis, in the units of
@@ -51,8 +51,8 @@ const PROJECTOR_SPECKLE_SHARE: f64 = 0.02;
 const PROJECTOR_SPECKLE_LEVEL: f64 = 60.0;
 
 /// A marker LED renders as a Gaussian spot of this standard deviation in
-/// pixels, drawn out to [`MARKER_SPOT_HALF_SIZE_PX`] around its center; the
-/// peak is brighter than the sensor's maximum so the core saturates.
+/// pixels, drawn out to [`MARKER_SPOT_HALF_SIZE_PX`] around its center. The
+/// peak is brighter than the sensor's maximum, so the core saturates.
 const MARKER_SPOT_SIGMA_PX: f64 = 1.6;
 const MARKER_SPOT_HALF_SIZE_PX: i32 = 7;
 const MARKER_SPOT_PEAK: f64 = 255.0 * 1.8;
@@ -74,16 +74,21 @@ fn gaussian_vector(rng: &mut StdRng, sigma: f64) -> Vector3<f64> {
 }
 
 /// Lists one synthetic camera and opens it.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Default)]
 pub struct SyntheticBackend {
+    /// Since: Odyssey Desktop 0.6.5.
     pub scene: SyntheticScene,
 }
 
 impl SyntheticBackend {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(scene: SyntheticScene) -> Self {
         Self { scene }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn truth(&self) -> Truth {
         self.scene.truth()
     }
@@ -109,6 +114,8 @@ impl CameraBackend for SyntheticBackend {
 }
 
 /// A running synthetic camera.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub struct SyntheticStream {
     view: View,
     color_base: RgbImage,
@@ -136,6 +143,7 @@ impl fmt::Debug for SyntheticStream {
 }
 
 impl SyntheticStream {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(scene: SyntheticScene, settings: &CaptureSettings) -> Self {
         let mut rng = StdRng::seed_from_u64(scene.seed);
         let view = View::new(scene, settings);
@@ -159,6 +167,7 @@ impl SyntheticStream {
         stream
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn scene(&self) -> &SyntheticScene {
         &self.view.scene
     }
@@ -332,7 +341,10 @@ mod tests {
         ));
         // A second partial wait completes the same frame instead of restarting
         // the full interval after each timeout.
-        let frames = stream.next_frames(FRAME_INTERVAL - half).unwrap();
+        let remaining = FRAME_INTERVAL
+            .checked_sub(half)
+            .expect("half frame interval is shorter than full interval");
+        let frames = stream.next_frames(remaining).unwrap();
         assert!(matches!(frames.depth_m(320, 200), Some(depth) if (1.9..2.1).contains(&depth)));
         assert!(matches!(
             stream.next_frames(Duration::ZERO),

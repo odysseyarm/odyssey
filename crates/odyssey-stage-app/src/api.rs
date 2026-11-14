@@ -29,7 +29,7 @@ const SCRIPT: &str = include_str!("../web/app.js");
 const STYLE: &str = include_str!("../web/style.css");
 
 fn asset(
-    app: Arc<App>,
+    app: &Arc<App>,
     name: &str,
     embedded: &'static str,
     content_type: &'static str,
@@ -54,18 +54,18 @@ pub(crate) fn router(app: Arc<App>, port: u16) -> Router {
         .route(
             "/",
             get(|State(app): Shared| async move {
-                asset(app, "index.html", INDEX, "text/html; charset=utf-8")
+                asset(&app, "index.html", INDEX, "text/html; charset=utf-8")
             }),
         )
         .route(
             "/app.js",
             get(
-                |State(app): Shared| async move { asset(app, "app.js", SCRIPT, "text/javascript") },
+                |State(app): Shared| async move { asset(&app, "app.js", SCRIPT, "text/javascript") },
             ),
         )
         .route(
             "/style.css",
-            get(|State(app): Shared| async move { asset(app, "style.css", STYLE, "text/css") }),
+            get(|State(app): Shared| async move { asset(&app, "style.css", STYLE, "text/css") }),
         )
         .route("/api/state", get(state))
         .route("/api/stage", axum::routing::put(put_stage))
@@ -212,16 +212,14 @@ async fn press(
     }
     let data =
         serde_json::json!({ "device": request.device, "button": request.button }).to_string();
-    app.messages
-        .send(Message {
-            event: "press",
-            data: data.into(),
-        })
-        .ok();
+    let _ = app.messages.send(Message {
+        event: "press",
+        data: data.into(),
+    });
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// A simulator command and the unit and dongle it is for; without an address
+/// A simulator command and the unit and dongle it is for. Without an address
 /// it is for the first.
 #[derive(Deserialize)]
 struct SimRequest {
@@ -334,7 +332,7 @@ mod tests {
 
     async fn status(method: Method, host: &str, content_type: Option<&str>) -> StatusCode {
         let (_hub, view) = watch::channel(HubView::default());
-        let app = App::new(Stage::default(), view, None, None).unwrap();
+        let app = App::new(&Stage::default(), view, None, None).unwrap();
         let mut request = Request::builder()
             .method(method)
             .uri("/api/run")

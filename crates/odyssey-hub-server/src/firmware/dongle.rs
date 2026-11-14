@@ -19,15 +19,19 @@ const BOOTLOADER_TIMEOUT: Duration = Duration::from_secs(120);
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PACKAGE: u64 = 2 * 1024 * 1024;
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DongleTarget {
+    /// Since: Odyssey Desktop 0.7.5.
     pub id: String,
+    /// Since: Odyssey Desktop 0.7.5.
     pub in_bootloader: bool,
     bus: String,
     ports: Vec<u8>,
 }
 
 impl DongleTarget {
+    /// Since: Odyssey Desktop 0.7.5.
     pub fn same_port(&self, other: &Self) -> bool {
         self.bus == other.bus && self.ports == other.ports
     }
@@ -49,48 +53,77 @@ impl DongleTarget {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Clone, Copy, Debug)]
 pub enum DongleUpdateProgress {
+    /// Since: Odyssey Desktop 0.7.5.
     Downloading,
+    /// Since: Odyssey Desktop 0.7.5.
     WaitingForBootloader,
-    Flashing { written: usize, total: usize },
+    /// Since: Odyssey Desktop 0.7.5.
+    Flashing {
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        written: usize,
+        #[doc = "Since: Odyssey Desktop 0.7.5."]
+        total: usize,
+    },
+    /// Since: Odyssey Desktop 0.7.5.
     Reconnecting,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Debug, Error)]
 pub enum DongleUpdateError {
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(transparent)]
     Source(#[from] FirmwareSourceError),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("USB enumeration failed: {0}")]
     Usb(#[from] nusb::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Invalid signed dongle package: {0}")]
     InvalidPackage(&'static str),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Cannot read signed dongle ZIP: {0}")]
     Zip(#[from] zip::result::ZipError),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Invalid dongle package manifest: {0}")]
     Json(#[from] serde_json::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Cannot read dongle package: {0}")]
     Io(#[from] std::io::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(transparent)]
     Transport(#[from] nordic::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Dongle update worker stopped: {0}")]
     Worker(#[from] tokio::task::JoinError),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "Dongle did not enter bootloader mode. Press its reset/DFU button, keeping it in the same USB port, then retry."
     )]
     BootloaderTimeout,
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "Dongle did not reconnect after flashing. Unplug/replug it in the same USB port. If it stays in bootloader mode, use Recover dongle."
     )]
     ReconnectTimeout,
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "Cannot safely identify the dongle's serial port. Unplug other bootloader devices, check the USB serial driver, then retry."
     )]
     SerialPortUnavailable,
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("A different dongle appeared in the selected USB port; update stopped")]
     IdentityChanged,
 }
 
+/// Enumerates connected application- and bootloader-mode dongles.
+///
+/// # Errors
+/// Returns [`DongleUpdateError::Usb`] if USB device enumeration fails.
+///
+/// Since: Odyssey Desktop 0.7.5.
 pub async fn connected_targets() -> Result<Vec<DongleTarget>, DongleUpdateError> {
     Ok(nusb::list_devices()
         .await?
@@ -150,11 +183,27 @@ fn serial_port(bootloader: &DongleTarget) -> Result<String, DongleUpdateError> {
     }
 }
 
-/// Downloads and validates both vendor packages before waiting for the stock bootloader.
-/// Returns the reconnected application's full USB serial; caller must confirm its firmware version.
-/// Interrupted uploads restart from the beginning. The bootloader, not the host, checks vendor signatures.
+/// Update a dongle's firmware.
+///
+/// Download and validate both vendor packages before waiting for the stock bootloader.
+/// Returns the reconnected application's full USB serial. The caller must confirm
+/// its firmware version. Interrupted uploads restart from the beginning. The
+/// bootloader checks signatures.
+///
 /// # Errors
-/// Returns an error on invalid packages, ambiguous identity, timeout, or any rejected DFU operation.
+/// Returns [`DongleUpdateError::Source`] for firmware download failures.
+/// [`DongleUpdateError::InvalidPackage`], [`DongleUpdateError::Zip`],
+/// [`DongleUpdateError::Json`], or [`DongleUpdateError::Io`] for invalid or
+/// unreadable packages. [`DongleUpdateError::Usb`] or
+/// [`DongleUpdateError::IdentityChanged`] when USB enumeration or identity checks
+/// fail. [`DongleUpdateError::BootloaderTimeout`],
+/// [`DongleUpdateError::ReconnectTimeout`], or
+/// [`DongleUpdateError::SerialPortUnavailable`] when bootloader or serial-port
+/// discovery times out. [`DongleUpdateError::Transport`] for rejected DFU
+/// operations. [`DongleUpdateError::Worker`] if a blocking update task fails.
+///
+/// # Since
+/// Odyssey Desktop 0.7.5.
 pub async fn update_dongle(
     target: DongleTarget,
     entry: FirmwareEntry,

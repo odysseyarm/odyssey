@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 
-use futures_util::stream::StreamExt;
+use futures_util::stream::StreamExt as _;
 use odyssey_hub_client::client::Client as NativeClient;
 use odyssey_hub_common as common;
 use parking_lot::Mutex;
@@ -9,17 +9,27 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Handle;
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct UserObj {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     pub ptr: *const c_void,
 }
 
 /// Opaque, thread-safe client handle. Calls borrow the handle only until they
-/// return; asynchronous work owns its connection snapshot.
+/// return. Asynchronous work owns its connection snapshot.
+///
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[derive(Default)]
 pub struct Client {
     inner: Arc<Mutex<State>>,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client").finish_non_exhaustive()
+    }
 }
 
 #[derive(Default)]
@@ -32,18 +42,32 @@ impl Client {
     fn snapshot(&self) -> Option<NativeClient> {
         self.inner.lock().client.clone()
     }
+
+    fn subscription_snapshot(&self) -> (Option<NativeClient>, CancellationToken) {
+        let mut inner = self.inner.lock();
+        if inner.end_token.is_cancelled() {
+            inner.end_token = CancellationToken::default();
+        }
+        (inner.client.clone(), inner.end_token.clone())
+    }
 }
 
-// SAFETY: the C API requires callers to pass userdata that may be used from any thread.
+// SAFETY: C callbacks may run on runtime worker threads. The API requires userdata to stay valid and thread-safe until completion.
 unsafe impl Send for UserObj {}
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClientError {
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     None,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     NotConnected,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     StreamEnd,
+    /// Since: FFI SDK 0.1.0 (earliest tagged release).
     ConnectFailure,
+    /// Since: FFI SDK 0.1.1.
     RpcFailure,
 }
 
@@ -53,6 +77,7 @@ impl From<odyssey_hub_client::client::ClientError> for ClientError {
     }
 }
 
+/// Since: FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub extern "C" fn client_new() -> *mut Client {
     Box::into_raw(Box::new(Client::default()))
@@ -60,9 +85,13 @@ pub extern "C" fn client_new() -> *mut Client {
 
 /// # Safety
 /// `client` must be null or an owned handle from `client_new`, not in use by another call.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_free(client: *mut Client) {
     if !client.is_null() {
+        // SAFETY: The API requires `client` to be an owned handle not in use.
         unsafe {
             drop(Box::from_raw(client));
         }
@@ -71,6 +100,9 @@ pub unsafe extern "C" fn client_free(client: *mut Client) {
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_connect(
     handle: *const Handle,
@@ -78,10 +110,12 @@ pub unsafe extern "C" fn client_connect(
     userdata: UserObj,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let state = unsafe { &*client }.inner.clone();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
+    let state = Arc::clone(&unsafe { &*client }.inner);
 
     tokio::spawn(async move {
         match NativeClient::connect().await {
@@ -97,9 +131,12 @@ pub unsafe extern "C" fn client_connect(
 }
 
 /// The device array is borrowed only for the duration of the callback.
-/// Copy any devices needed afterward; do not free the array. An empty list is null.
+/// Copy any devices you need afterward, and do not free the array. An empty list is null.
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_get_device_list(
     handle: *const Handle,
@@ -107,8 +144,10 @@ pub unsafe extern "C" fn client_get_device_list(
     userdata: UserObj,
     callback: extern "C" fn(UserObj, ClientError, *mut common::device::Device, usize),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -132,28 +171,26 @@ pub unsafe extern "C" fn client_get_device_list(
 }
 
 /// Starts an event subscription. A start after stop uses a fresh cancellation
-/// token; resetting the handle's token before snapshotting keeps subsequent
+/// token. The handle's token is reset before snapshotting, which keeps later
 /// stops attached to this subscription.
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_start_stream(
-    handle: *const crate::Handle,
+    handle: *const Handle,
     client: *mut Client,
     userdata: UserObj,
     callback: extern "C" fn(UserObj, ClientError, std::mem::MaybeUninit<crate::event::Event>),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let (client, end_token) = {
-        let client = unsafe { &*client };
-        let mut inner = client.inner.lock();
-        if inner.end_token.is_cancelled() {
-            inner.end_token = Default::default();
-        }
-        (inner.client.clone(), inner.end_token.clone())
-    };
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
+    let (client, end_token) = unsafe { &*client }.subscription_snapshot();
 
     tokio::spawn(async move {
         let Some(client) = client else {
@@ -170,9 +207,8 @@ pub unsafe extern "C" fn client_start_stream(
                 loop {
                     match stream.next().await {
                         Some(Ok(event)) => {
-                            let event = match crate::event::Event::try_from(event) {
-                                Ok(event) => event,
-                                Err(()) => continue,
+                            let Ok(event) = crate::event::Event::try_from(event) else {
+                                continue;
                             };
                             callback(
                                 userdata,
@@ -206,18 +242,25 @@ pub unsafe extern "C" fn client_start_stream(
     });
 }
 
-/// Requests cancellation before returning. The stream's terminal callback is
-/// asynchronous; consumers must wait for it before freeing callback userdata.
+/// Requests cancellation of every active subscription. Terminal callbacks run
+/// asynchronously; consumers must wait for them before freeing callback userdata.
 /// # Safety
 /// `client` must be a live handle. `_handle` is unused and may be null.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_stop_stream(_handle: *const Handle, client: *mut Client) {
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client };
     client.inner.lock().end_token.cancel();
 }
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_read_register(
     handle: *const Handle,
@@ -229,8 +272,10 @@ pub unsafe extern "C" fn client_read_register(
     address: u8,
     callback: extern "C" fn(UserObj, ClientError, u8),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -250,6 +295,9 @@ pub unsafe extern "C" fn client_read_register(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_write_register(
     handle: *const Handle,
@@ -262,8 +310,10 @@ pub unsafe extern "C" fn client_write_register(
     data: u8,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -274,15 +324,19 @@ pub unsafe extern "C" fn client_write_register(
             .device(device)
             .write_register(port, bank, address, data)
             .await;
-        let error = result
-            .map(|_| ClientError::None)
-            .unwrap_or_else(ClientError::from);
+        let error = match result {
+            Ok(()) => ClientError::None,
+            Err(error) => ClientError::from(error),
+        };
         callback(userdata, error);
     });
 }
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_flash_settings(
     handle: *const Handle,
@@ -291,8 +345,10 @@ pub unsafe extern "C" fn client_flash_settings(
     device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -300,15 +356,19 @@ pub unsafe extern "C" fn client_flash_settings(
             return callback(userdata, ClientError::NotConnected);
         };
         let result = client.device(device).flash_settings().await;
-        let error = result
-            .map(|_| ClientError::None)
-            .unwrap_or_else(ClientError::from);
+        let error = match result {
+            Ok(()) => ClientError::None,
+            Err(error) => ClientError::from(error),
+        };
         callback(userdata, error);
     });
 }
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_reset_zero(
     handle: *const Handle,
@@ -317,8 +377,10 @@ pub unsafe extern "C" fn client_reset_zero(
     device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -327,9 +389,10 @@ pub unsafe extern "C" fn client_reset_zero(
         };
         let result = client.device(device).reset_zero().await;
 
-        let error = result
-            .map(|_| ClientError::None)
-            .unwrap_or_else(ClientError::from);
+        let error = match result {
+            Ok(()) => ClientError::None,
+            Err(error) => ClientError::from(error),
+        };
 
         callback(userdata, error);
     });
@@ -337,6 +400,9 @@ pub unsafe extern "C" fn client_reset_zero(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_zero(
     handle: *const Handle,
@@ -347,8 +413,10 @@ pub unsafe extern "C" fn client_zero(
     target: crate::funny::Vector2f32,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     let translation = odyssey_hub_server_interface::Vector3 {
@@ -366,15 +434,19 @@ pub unsafe extern "C" fn client_zero(
             return callback(userdata, ClientError::NotConnected);
         };
         let result = client.device(device).zero(translation, target, None).await;
-        let error = result
-            .map(|_| ClientError::None)
-            .unwrap_or_else(ClientError::from);
+        let error = match result {
+            Ok(()) => ClientError::None,
+            Err(error) => ClientError::from(error),
+        };
         callback(userdata, error);
     });
 }
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_reset_shot_delay(
     handle: *const Handle,
@@ -383,8 +455,10 @@ pub unsafe extern "C" fn client_reset_shot_delay(
     device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -402,6 +476,9 @@ pub unsafe extern "C" fn client_reset_shot_delay(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_get_shot_delay(
     handle: *const Handle,
@@ -410,8 +487,10 @@ pub unsafe extern "C" fn client_get_shot_delay(
     device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -429,6 +508,9 @@ pub unsafe extern "C" fn client_get_shot_delay(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_set_shot_delay(
     handle: *const Handle,
@@ -438,8 +520,10 @@ pub unsafe extern "C" fn client_set_shot_delay(
     delay_ms: u16,
     callback: extern "C" fn(UserObj, ClientError),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -448,9 +532,10 @@ pub unsafe extern "C" fn client_set_shot_delay(
         };
         let result = client.device(device).set_shot_delay(delay_ms).await;
 
-        let error = result
-            .map(|_| ClientError::None)
-            .unwrap_or_else(ClientError::from);
+        let error = match result {
+            Ok(()) => ClientError::None,
+            Err(error) => ClientError::from(error),
+        };
 
         callback(userdata, error);
     });
@@ -458,6 +543,9 @@ pub unsafe extern "C" fn client_set_shot_delay(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_get_screen_info_by_id(
     handle: *const Handle,
@@ -466,8 +554,10 @@ pub unsafe extern "C" fn client_get_screen_info_by_id(
     screen_id: u8,
     callback: extern "C" fn(UserObj, ClientError, crate::event::ScreenInfo),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
     let client = unsafe { &*client }.snapshot();
 
     tokio::spawn(async move {
@@ -491,9 +581,12 @@ pub unsafe extern "C" fn client_get_screen_info_by_id(
 }
 
 /// Each device array is borrowed only for the duration of its callback.
-/// Copy any devices needed afterward; do not free the array. An empty list is null.
+/// Copy any devices you need afterward, and do not free the array. An empty list is null.
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_subscribe_device_list(
     handle: *const Handle,
@@ -501,36 +594,41 @@ pub unsafe extern "C" fn client_subscribe_device_list(
     userdata: UserObj,
     callback: extern "C" fn(UserObj, ClientError, *mut common::device::Device, usize),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
-    let client = unsafe { &*client }.snapshot();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
+    let (client, end_token) = unsafe { &*client }.subscription_snapshot();
 
     tokio::spawn(async move {
         let Some(client) = client else {
             return callback(userdata, ClientError::NotConnected, std::ptr::null_mut(), 0);
         };
         match client.subscribe_device_list().await {
-            Ok(mut stream) => loop {
-                match stream.next().await {
-                    Some(Ok(mut devices)) => {
-                        let len = devices.len();
-                        let ptr = if devices.is_empty() {
-                            std::ptr::null_mut()
-                        } else {
-                            devices.as_mut_ptr()
-                        };
-                        callback(userdata, ClientError::None, ptr, len);
-                    }
-                    None => {
-                        callback(userdata, ClientError::StreamEnd, std::ptr::null_mut(), 0);
-                        break;
-                    }
-                    Some(Err(_)) => {
-                        callback(userdata, ClientError::RpcFailure, std::ptr::null_mut(), 0);
-                        break;
+            Ok(stream) => {
+                let mut stream = std::pin::pin!(stream.take_until(end_token.cancelled_owned()));
+                loop {
+                    match stream.next().await {
+                        Some(Ok(mut devices)) => {
+                            let len = devices.len();
+                            let ptr = if devices.is_empty() {
+                                std::ptr::null_mut()
+                            } else {
+                                devices.as_mut_ptr()
+                            };
+                            callback(userdata, ClientError::None, ptr, len);
+                        }
+                        None => {
+                            callback(userdata, ClientError::StreamEnd, std::ptr::null_mut(), 0);
+                            break;
+                        }
+                        Some(Err(_)) => {
+                            callback(userdata, ClientError::RpcFailure, std::ptr::null_mut(), 0);
+                            break;
+                        }
                     }
                 }
-            },
+            }
             Err(error) => {
                 callback(userdata, error.into(), std::ptr::null_mut(), 0);
             }
@@ -540,6 +638,9 @@ pub unsafe extern "C" fn client_subscribe_device_list(
 
 /// # Safety
 /// The pointers and callback userdata must satisfy the crate's ownership contract.
+///
+/// # Since
+/// FFI SDK 0.1.0 (earliest tagged release).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn client_subscribe_shot_delay(
     handle: *const Handle,
@@ -548,31 +649,36 @@ pub unsafe extern "C" fn client_subscribe_shot_delay(
     device: common::device::Device,
     callback: extern "C" fn(UserObj, ClientError, u16),
 ) {
+    // SAFETY: The API requires `handle` to be a live runtime handle.
     let handle = unsafe { &*handle };
     let _guard = handle.tokio_rt.enter();
 
-    let client = unsafe { &*client }.snapshot();
+    // SAFETY: The API requires `client` to be a live handle not freed concurrently.
+    let (client, end_token) = unsafe { &*client }.subscription_snapshot();
 
     tokio::spawn(async move {
         let Some(client) = client else {
             return callback(userdata, ClientError::NotConnected, 0);
         };
         match client.device(device).subscribe_shot_delay().await {
-            Ok(mut stream) => loop {
-                match stream.next().await {
-                    Some(Ok(delay)) => {
-                        callback(userdata, ClientError::None, delay);
-                    }
-                    None => {
-                        callback(userdata, ClientError::StreamEnd, 0);
-                        break;
-                    }
-                    Some(Err(_)) => {
-                        callback(userdata, ClientError::RpcFailure, 0);
-                        break;
+            Ok(stream) => {
+                let mut stream = std::pin::pin!(stream.take_until(end_token.cancelled_owned()));
+                loop {
+                    match stream.next().await {
+                        Some(Ok(delay)) => {
+                            callback(userdata, ClientError::None, delay);
+                        }
+                        None => {
+                            callback(userdata, ClientError::StreamEnd, 0);
+                            break;
+                        }
+                        Some(Err(_)) => {
+                            callback(userdata, ClientError::RpcFailure, 0);
+                            break;
+                        }
                     }
                 }
-            },
+            }
             Err(error) => {
                 callback(userdata, error.into(), 0);
             }
@@ -593,13 +699,28 @@ mod tests {
         let handle = Handle { tokio_rt: runtime };
         let mut client = Client::default();
         let subscription_token = client.inner.lock().end_token.clone();
-        unsafe { client_stop_stream(&handle, &mut client) };
+        // SAFETY: Both pointers refer to live handles owned by this test.
+        unsafe {
+            client_stop_stream(std::ptr::addr_of!(handle), std::ptr::addr_of_mut!(client));
+        };
         assert!(subscription_token.is_cancelled());
+    }
+
+    #[test]
+    fn subscription_tokens_reset_after_stop() {
+        let client = Client::default();
+        let (_, original) = client.subscription_snapshot();
+        original.cancel();
+
+        let (_, restarted) = client.subscription_snapshot();
+        assert!(!restarted.is_cancelled());
+        assert!(original.is_cancelled());
     }
 
     #[test]
     fn queued_register_read_owns_its_client_until_callback() {
         extern "C" fn complete(userdata: UserObj, error: ClientError, value: u8) {
+            // SAFETY: The callback receives the test's boxed sender exactly once.
             let sender = unsafe {
                 Box::from_raw(userdata.ptr as *mut tokio::sync::oneshot::Sender<(ClientError, u8)>)
             };
@@ -621,6 +742,7 @@ mod tests {
             uuid: [1, 2, 3, 4, 5, 6],
             transport: common::device::Transport::Usb,
             capabilities: common::device::DeviceCapabilities::empty(),
+            firmware_identity: common::firmware_version::FirmwareVersion::default(),
             firmware_version: [0; 3],
             events_transport: common::device::EventsTransport::Wired,
             events_connected: false,
@@ -630,10 +752,21 @@ mod tests {
         };
 
         // The current-thread runtime has not polled the queued request yet.
+        // SAFETY: The test-created runtime and client are live. The callback owns sender storage.
         unsafe {
-            client_read_register(&handle, client, userdata, device, 0, 0, 0, complete);
-            client_free(client);
-        }
+            client_read_register(
+                std::ptr::addr_of!(handle),
+                client,
+                userdata,
+                device,
+                0,
+                0,
+                0,
+                complete,
+            );
+        };
+        // SAFETY: `client` came from `client_new`. The queued operation has snapshotted its state.
+        unsafe { client_free(client) };
         let reply = handle.tokio_rt.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(1), receiver)
                 .await

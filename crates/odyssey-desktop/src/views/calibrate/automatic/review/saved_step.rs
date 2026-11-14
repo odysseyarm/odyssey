@@ -10,7 +10,7 @@ use crate::views::calibrate::automatic::ui::{act, details, fact, step_page};
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 pub(in crate::views::calibrate::automatic) fn saved_step(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     details_open: &Entity<bool>,
     cx: &App,
@@ -83,7 +83,7 @@ pub(in crate::views::calibrate::automatic) fn saved_step(
                 .on_click(act(wizard, Wizard::calibrate_another))
                 .into_any_element(),
             button("done", "Done", ButtonKind::Primary, p)
-                .on_click(act(wizard, Wizard::exit))
+                .on_click(act(wizard, |_, cx| Wizard::exit(cx)))
                 .into_any_element(),
         ],
     )

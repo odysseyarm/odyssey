@@ -9,7 +9,7 @@ use tokio::sync::watch;
 /// Why the status stream ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ServerExit {
-    /// Another app instance owns the hub socket; this one should close.
+    /// Another app instance owns the hub socket, so this one should close.
     AnotherInstanceRunning,
     /// The server stopped, failed to start, or hung up.
     Stopped,
@@ -31,9 +31,10 @@ async fn bring_existing_instance_to_front() {
     let Ok(client) = Client::connect().await else {
         return;
     };
-    match client.bring_to_front().await {
-        Ok(()) => tracing::info!("Successfully brought existing instance to front"),
-        Err(_) => tracing::warn!("Failed to bring existing instance to front"),
+    if client.bring_to_front().await.is_ok() {
+        tracing::info!("Successfully brought existing instance to front");
+    } else {
+        tracing::warn!("Failed to bring existing instance to front");
     }
 }
 
@@ -53,7 +54,7 @@ fn report_corruptions(corruptions: &[ConfigCorruptionEvent]) {
 }
 
 /// Applies the hub server's status messages until it stops. `server_ready`
-/// turns true once the server listens; every other outcome goes to `shell`.
+/// turns true once the server listens, and every other outcome goes to `shell`.
 pub(crate) async fn handle_server_status(
     mut receiver: UnboundedReceiver<Message>,
     shell: tokio::sync::mpsc::UnboundedSender<ShellMessage>,

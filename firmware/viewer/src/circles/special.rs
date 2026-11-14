@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 
 use opencv::core::{Point2f, Size, Vector};
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn _find_circles_grid_special_old(
     centers: &Vector<Point2f>,
     board_size: Size,
@@ -67,6 +68,7 @@ pub fn _find_circles_grid_special_old(
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn find_circles_grid_special(centers: &[Point2f], board_size: Size) -> Option<Vector<Point2f>> {
     let expected_num_outer_points = 2 * (board_size.width + board_size.height - 2) as usize;
     if centers.len() != expected_num_outer_points {
@@ -104,6 +106,8 @@ pub fn find_circles_grid_special(centers: &[Point2f], board_size: Size) -> Optio
 }
 
 /// Returns `None` if less than 3 points are provided.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn convex_hull(points: Vec<Point2f>) -> Option<Vec<Point2f>> {
     if points.len() <= 2 {
         return None;
@@ -143,6 +147,7 @@ pub fn convex_hull(points: Vec<Point2f>) -> Option<Vec<Point2f>> {
     Some(hull)
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn find_corners(hull: &[Point2f]) -> Vec<usize> {
     let mut corners = vec![];
     for (i, &cur) in hull.iter().enumerate() {
@@ -163,13 +168,13 @@ pub fn find_corners(hull: &[Point2f]) -> Vec<usize> {
 struct TotalF32(f32);
 
 impl PartialOrd for TotalF32 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.0.total_cmp(&other.0))
     }
 }
 
 impl Ord for TotalF32 {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.0.total_cmp(&other.0)
     }
 }

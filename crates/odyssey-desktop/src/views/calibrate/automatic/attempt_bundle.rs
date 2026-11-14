@@ -19,7 +19,7 @@ pub(super) struct Bundle<'a> {
     pub summary: &'a str,
     /// `None` when no camera was open, e.g. when it would not start.
     pub frames: Option<&'a AttemptFrames>,
-    /// The app's log, as text; only the calibration lines are kept.
+    /// The app's log, as text. Only the calibration lines are kept.
     pub log: &'a str,
 }
 
@@ -30,8 +30,8 @@ pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> eros::Result<u64> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
+        options.mode(0o600)
+    };
     let file = options.open(path)?;
     let mut zip = zip::ZipWriter::new(file);
     let text = zip::write::SimpleFileOptions::default();
@@ -61,7 +61,7 @@ pub(super) fn write(path: &Path, bundle: &Bundle<'_>) -> eros::Result<u64> {
             image,
             &png(&frame.color)?,
         )?;
-        // 16-bit raw depth; the unit is in summary.txt.
+        // 16-bit raw depth. The unit is in summary.txt.
         put(
             &format!("screen/{n:02}-depth.png"),
             image,

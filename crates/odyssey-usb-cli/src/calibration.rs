@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, BufReader};
 /// The optimizer gives up after this many iterations.
 const MAX_OPTIMIZER_ITERATIONS: u64 = 1000;
 
-/// One prompt per device orientation; the six faces give the optimizer enough
+/// One prompt per device orientation. Six faces give the optimizer enough
 /// distinct gravity directions to separate bias from scale.
 const ACCEL_ORIENTATIONS: [&str; 6] = [
     "Place the device with the top side facing up.",
@@ -36,9 +36,12 @@ struct AccelCalibration {
 
 #[derive(Serialize, Deserialize)]
 struct GyroCalibration {
-    b_x: f64,
-    b_y: f64,
-    b_z: f64,
+    #[serde(rename = "b_x")]
+    x: f64,
+    #[serde(rename = "b_y")]
+    y: f64,
+    #[serde(rename = "b_z")]
+    z: f64,
 }
 
 /// Sum of squared deviations of the scaled and biased accelerometer magnitude
@@ -52,8 +55,9 @@ impl CostFunction for CostFn {
     type Param = Vec<f64>;
     type Output = f64;
 
-    fn cost(&self, p: &Self::Param) -> Result<Self::Output, Error> {
-        let [b_x, b_y, b_z, s_x, s_y, s_z] = [p[0], p[1], p[2], p[3], p[4], p[5]];
+    fn cost(&self, param: &Self::Param) -> Result<Self::Output, Error> {
+        let [b_x, b_y, b_z, s_x, s_y, s_z] =
+            [param[0], param[1], param[2], param[3], param[4], param[5]];
 
         let mut cost = 0.0;
         for m in &self.measurements {
@@ -71,8 +75,9 @@ impl Gradient for CostFn {
     type Param = Vec<f64>;
     type Gradient = Vec<f64>;
 
-    fn gradient(&self, p: &Self::Param) -> Result<Self::Gradient, Error> {
-        let [b_x, b_y, b_z, s_x, s_y, s_z] = [p[0], p[1], p[2], p[3], p[4], p[5]];
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, Error> {
+        let [b_x, b_y, b_z, s_x, s_y, s_z] =
+            [param[0], param[1], param[2], param[3], param[4], param[5]];
 
         let mut grad = vec![0.0; 6];
         for m in &self.measurements {
@@ -216,9 +221,9 @@ pub(crate) async fn calculate_and_save_gyro_bias(
     let gyro_bias = collect_gyro_bias(&mut samples, num_samples).await?;
 
     let calibration = GyroCalibration {
-        b_x: gyro_bias.x,
-        b_y: gyro_bias.y,
-        b_z: gyro_bias.z,
+        x: gyro_bias.x,
+        y: gyro_bias.y,
+        z: gyro_bias.z,
     };
     save_calibration(gyro_path, &calibration)?;
     println!("Gyroscope bias saved to {gyro_path}");
@@ -256,8 +261,8 @@ mod tests {
     #[tokio::test]
     async fn prompts_preserve_buffered_confirmations_and_reject_eof() {
         let mut reader = BufReader::new(&b"\n\n"[..]);
-        assert!(wait_for_enter(&mut reader).await.is_ok());
-        assert!(wait_for_enter(&mut reader).await.is_ok());
+        wait_for_enter(&mut reader).await.unwrap();
+        wait_for_enter(&mut reader).await.unwrap();
         assert!(wait_for_enter(&mut reader).await.is_err());
     }
 
@@ -277,15 +282,15 @@ mod tests {
             Some(Vector3::new(2.0, -3.0, 4.0))
         );
         let mut short = futures::stream::iter([first]);
-        assert!(collect_gyro_bias(&mut short, 2).await.is_err());
+        collect_gyro_bias(&mut short, 2).await.unwrap_err();
         let mut empty = futures::stream::empty();
-        assert!(collect_gyro_bias(&mut empty, 0).await.is_err());
+        collect_gyro_bias(&mut empty, 0).await.unwrap_err();
         let invalid = AccelReport {
             gyro: Vector3::new(f32::INFINITY, 0.0, 0.0),
             ..AccelReport::default()
         };
         let mut non_finite = futures::stream::iter([invalid]);
-        assert!(collect_gyro_bias(&mut non_finite, 1).await.is_err());
+        collect_gyro_bias(&mut non_finite, 1).await.unwrap_err();
     }
 
     #[test]
@@ -293,6 +298,6 @@ mod tests {
         for gravity in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(validate_gravity(gravity).is_err());
         }
-        assert!(validate_gravity(9.80665).is_ok());
+        validate_gravity(9.80665).unwrap();
     }
 }

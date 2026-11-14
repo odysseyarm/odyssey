@@ -454,6 +454,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "odyssey-firmware-manifest"
+version = "0.0.0"
+dependencies = [
+ "odyssey-version",
+ "semver",
+ "serde",
+]
+
+[[package]]
+name = "odyssey-version"
+version = "0.0.0"
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -483,7 +496,7 @@ dependencies = [
 [[package]]
 name = "pure-release"
 version = "0.1.0"
-source = "git+https://github.com/Abrahamh08/pure-release#c806b437d21c59d891e138d55d4b1263c3f76b76"
+source = "git+https://github.com/Abrahamh08/pure-release#b9854b318690639cac644169fe9df2bd87da4268"
 
 [[package]]
 name = "quote"
@@ -541,6 +554,16 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "untrusted",
+]
+
+[[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -847,7 +870,10 @@ dependencies = [
  "eros",
  "hex",
  "memory-spec",
+ "odyssey-firmware-manifest",
+ "odyssey-version",
  "pure-release",
+ "semver",
  "serde",
  "serde_json",
  "sha1",

@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::StreamExt as _;
 use odyssey_hub_client::client::RpcError;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::ffi_common::*;
+use crate::ffi_common::{Device, Event, ScreenInfo};
 
 /// A gRPC failure with the original typed status retained as its error source.
+///
+/// Since: UniFFI SDK 0.3.0.
 #[derive(uniffi::Object, Debug, thiserror::Error)]
 #[error("{}", .source.message())]
 pub struct RpcFailure {
@@ -17,16 +19,20 @@ pub struct RpcFailure {
 
 #[uniffi::export]
 impl RpcFailure {
+    /// Since: UniFFI SDK 0.3.0.
     pub fn message(&self) -> String {
         self.source.message().to_string()
     }
 
+    /// Since: UniFFI SDK 0.3.0.
     pub fn code(&self) -> u32 {
         self.source.code() as u32
     }
 }
 
 /// A local socket or transport failure, retaining the typed native error.
+///
+/// Since: UniFFI SDK 0.3.0.
 #[derive(uniffi::Object, Debug, thiserror::Error)]
 #[error("{source}")]
 pub struct ConnectionFailure {
@@ -36,29 +42,41 @@ pub struct ConnectionFailure {
 
 #[uniffi::export]
 impl ConnectionFailure {
+    /// Since: UniFFI SDK 0.3.0.
     pub fn message(&self) -> String {
         self.to_string()
     }
 }
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Enum, Debug, thiserror::Error)]
 pub enum ClientError {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[error("Not connected to the server")]
     NotConnected,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[error("Stream ended unexpectedly")]
     StreamEnd,
+    /// Since: UniFFI SDK 0.3.0.
     #[error("{source}")]
     RpcFailure {
+        /// Since: UniFFI SDK 0.3.0.
         #[source]
         source: Arc<RpcFailure>,
     },
+    /// Since: UniFFI SDK 0.3.0.
     #[error("{source}")]
     ConnectionFailure {
+        /// Since: UniFFI SDK 0.3.0.
         #[source]
         source: Arc<ConnectionFailure>,
     },
+    /// Since: UniFFI SDK 0.3.0.
     #[error("{message}")]
-    InvalidArgument { message: String },
+    InvalidArgument {
+        #[doc = "Since: UniFFI SDK 0.3.0."]
+        message: String,
+    },
 }
 
 impl From<odyssey_hub_client::client::ClientError> for ClientError {
@@ -82,6 +100,7 @@ impl From<RpcError> for ClientError {
     }
 }
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Object, Default)]
 pub struct Client {
     inner: Arc<RwLock<Option<odyssey_hub_client::client::Client>>>,
@@ -133,34 +152,77 @@ async fn next_until_closed<T>(
 }
 
 /// A hub subscription shared between the foreign handle and its pending `next()` calls.
+///
+/// Since: UniFFI SDK 0.3.0.
 pub type SharedStream<T> = Arc<Mutex<futures::stream::BoxStream<'static, Result<T, RpcError>>>>;
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Object)]
 pub struct EventStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub inner: SharedStream<odyssey_hub_common::events::Event>,
     closed: CancellationToken,
 }
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Object)]
 pub struct DeviceListStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub inner: SharedStream<Vec<odyssey_hub_common::device::Device>>,
     closed: CancellationToken,
 }
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Object)]
 pub struct ShotDelayStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub inner: SharedStream<u16>,
     closed: CancellationToken,
 }
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[derive(uniffi::Object)]
 pub struct AccessoryMapStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub inner: SharedStream<odyssey_hub_common::accessory::AccessoryMap>,
     closed: CancellationToken,
 }
 
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for EventStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventStream").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for DeviceListStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceListStream").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ShotDelayStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShotDelayStream").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for AccessoryMapStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessoryMapStream").finish_non_exhaustive()
+    }
+}
+
 #[uniffi::export(async_runtime = "tokio")]
 impl EventStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `StreamEnd` when stream closes, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn next(&self) -> Result<Event, ClientError> {
         match next_until_closed(&self.closed, &self.inner).await {
@@ -173,6 +235,9 @@ impl EventStream {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl DeviceListStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `StreamEnd` when stream closes, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<Device>, ClientError> {
         match next_until_closed(&self.closed, &self.inner).await {
@@ -187,6 +252,9 @@ impl DeviceListStream {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl ShotDelayStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `StreamEnd` when stream closes, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn next(&self) -> Result<u16, ClientError> {
         match next_until_closed(&self.closed, &self.inner).await {
@@ -201,6 +269,9 @@ impl ShotDelayStream {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl AccessoryMapStream {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `StreamEnd` when stream closes, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn next(&self) -> Result<Vec<crate::ffi_common::AccessoryMapEntry>, ClientError> {
         match next_until_closed(&self.closed, &self.inner).await {
@@ -232,6 +303,7 @@ impl AccessoryMapStream {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Client {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::constructor]
     pub fn new() -> Self {
         Self::default()
@@ -242,11 +314,16 @@ impl Client {
     ///
     /// Call it before the host unloads the code that awaits these calls (e.g. Unity domain
     /// reload, interpreter shutdown): a call still pending afterwards calls back into unloaded code.
+    ///
+    /// Since: UniFFI SDK 0.3.0.
     #[uniffi::method]
     pub fn close(&self) {
         self.closed.cancel();
     }
 
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `NotConnected` if closed, or a typed connection failure.
     #[uniffi::method]
     pub async fn connect(&self) -> Result<(), ClientError> {
         self.until_closed(async {
@@ -261,13 +338,19 @@ impl Client {
         .await
     }
 
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn get_device_list(&self) -> Result<Vec<Device>, ClientError> {
         self.until_closed(self.client().await?.get_device_list())
             .await
-            .map(|dl| dl.into_iter().map(|d| d.into()).collect())
+            .map(|dl| dl.into_iter().map(Into::into).collect())
     }
 
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn subscribe_device_list(&self) -> Result<DeviceListStream, ClientError> {
         let client = self.client().await?;
@@ -281,6 +364,9 @@ impl Client {
         }
     }
 
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
     #[uniffi::method]
     pub async fn get_accessory_map(
         &self,
@@ -305,6 +391,9 @@ impl Client {
             })
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn subscribe_accessory_map(&self) -> Result<AccessoryMapStream, ClientError> {
         let client = self.client().await?;
@@ -318,6 +407,9 @@ impl Client {
         }
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn subscribe_events(&self) -> Result<EventStream, ClientError> {
         let client = self.client().await?;
@@ -331,6 +423,9 @@ impl Client {
         }
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or the device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn subscribe_shot_delay(
         &self,
@@ -345,7 +440,9 @@ impl Client {
             Err(error) => Err(error),
         }
     }
-
+    /// # Errors
+    /// Returns `NotConnected` if closed or the device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn write_vendor(
         &self,
@@ -355,16 +452,20 @@ impl Client {
     ) -> Result<(), ClientError> {
         self.until_closed(self.device(device).await?.write_vendor(tag, data))
             .await
-            .map(|_| ())
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or the device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn reset_zero(&self, device: Device) -> Result<(), ClientError> {
         self.until_closed(self.device(device).await?.reset_zero())
             .await
-            .map(|_| ())
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn zero(
         &self,
@@ -384,42 +485,56 @@ impl Client {
 
         self.until_closed(self.device(device).await?.zero(translation, target, None))
             .await
-            .map(|_| ())
     }
-
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn reset_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
         self.until_closed(self.device(device).await?.reset_shot_delay())
             .await
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn get_shot_delay(&self, device: Device) -> Result<u16, ClientError> {
         self.until_closed(self.device(device).await?.get_shot_delay())
             .await
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn set_shot_delay(&self, device: Device, delay_ms: u16) -> Result<(), ClientError> {
         self.until_closed(self.device(device).await?.set_shot_delay(delay_ms))
             .await
-            .map(|_| ())
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn save_shot_delay(&self, device: Device) -> Result<(), ClientError> {
         self.until_closed(self.device(device).await?.save_shot_delay())
             .await
-            .map(|_| ())
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if not connected or closed, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn get_screen_info_by_id(&self, screen_id: u8) -> Result<ScreenInfo, ClientError> {
         self.until_closed(self.client().await?.get_screen_info_by_id(screen_id))
             .await
-            .map(|info| info.into())
+            .map(Into::into)
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn read_register(
         &self,
@@ -436,6 +551,9 @@ impl Client {
         .await
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn write_register(
         &self,
@@ -453,12 +571,18 @@ impl Client {
         .await
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     #[uniffi::method]
     pub async fn flash_settings(&self, device: Device) -> Result<(), ClientError> {
         self.until_closed(self.device(device).await?.flash_settings())
             .await
     }
 
+    /// # Errors
+    /// Returns `NotConnected` if closed or device data is invalid, or a typed RPC or connection failure.
+    /// Returns `InvalidArgument` for invalid accessory data, `NotConnected` if closed, or typed RPC/connection failures.
     #[uniffi::method]
     pub async fn update_accessory_info_map(
         &self,
@@ -480,12 +604,12 @@ impl Client {
 
         self.until_closed(self.client().await?.update_accessory_info_map(map))
             .await
-            .map(|_| ())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::ffi_common::{AccessoryInfo, AccessoryInfoMapEntry, AccessoryType};
     use super::*;
 
     #[test]
@@ -570,11 +694,11 @@ mod tests {
 
         runtime.block_on(async {
             let first = tokio::spawn({
-                let stream = stream.clone();
+                let stream = Arc::clone(&stream);
                 async move { stream.next().await }
             });
             let queued = tokio::spawn({
-                let stream = stream.clone();
+                let stream = Arc::clone(&stream);
                 async move { stream.next().await }
             });
             tokio::task::yield_now().await;

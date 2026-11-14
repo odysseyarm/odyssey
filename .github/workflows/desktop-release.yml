@@ -201,8 +201,8 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: odyssey-desktop-nixos-store-path
-      # Re-running a tag has to replace the artifacts rather than fail on the
-      # release that already exists, so create only when it does not.
+      # Re-running a tag replaces the artifacts. The release exists by then, so create
+      # it only when it is missing.
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -231,7 +231,7 @@ jobs:
             "Odyssey-$VERSION-x86_64.AppImage" \
             "odyssey-desktop-nixos-store-path.txt"
   # A release created with GITHUB_TOKEN starts no workflows, so docs-site.yml's
-  # `release` trigger never sees this one; call it directly instead.
+  # `release` trigger never sees this one. Call it directly instead.
   website:
     needs: github-release
     uses: ./.github/workflows/docs-site.yml

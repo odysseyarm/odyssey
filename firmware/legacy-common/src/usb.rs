@@ -10,6 +10,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _};
 use embassy_usb::msos::windows_version;
+use embassy_usb::types::StringIndex;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -19,12 +20,15 @@ const USB_STATE_WAITERS: usize = 4;
 
 mod transfer;
 use transfer::BULK_MAX_PACKET_SIZE;
+/// Since: Odyssey Desktop 0.7.0.
 pub use transfer::TransferReader;
 
 type UsbActiveWatch = Watch<CriticalSectionRawMutex, bool, USB_STATE_WAITERS>;
 
 /// Waits on whether a USB host is using the device (see [`is_active`]). Up to
 /// [`USB_STATE_WAITERS`] tasks can wait at once.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy)]
 pub struct UsbConfigHandle {
     watch: &'static UsbActiveWatch,
@@ -33,6 +37,8 @@ pub struct UsbConfigHandle {
 /// Whether a USB host is talking to the device: it has configured the device
 /// and the bus is not suspended. False until [`usb_device`] has been called
 /// and a host has enumerated the device.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn is_active() -> bool {
     USB_ACTIVE.try_get().unwrap_or(false)
 }
@@ -44,6 +50,9 @@ impl UsbConfigHandle {
     /// # Panics
     ///
     /// Panics if more than [`USB_STATE_WAITERS`] waits are pending at once.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub async fn wait_until_active(&self) {
         self.wait_for(true).await;
     }
@@ -54,6 +63,9 @@ impl UsbConfigHandle {
     /// # Panics
     ///
     /// Panics if more than [`USB_STATE_WAITERS`] waits are pending at once.
+    ///
+    /// # Since
+    /// Odyssey Desktop 0.7.0.
     pub async fn wait_until_inactive(&self) {
         self.wait_for(false).await;
     }
@@ -69,11 +81,15 @@ impl UsbConfigHandle {
 
 use crate::utils::static_byte_buffer;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub type UsbDriver = NrfUsbDriver<'static, HardwareVbusDetect>;
+/// Since: Odyssey Desktop 0.7.0.
 pub type StaticUsbDevice = UsbDevice<'static, UsbDriver>;
 
+/// Since: Odyssey Desktop 0.7.0.
 pub const VID: u16 = 0x1915;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[embassy_executor::task]
 pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
     dev.run().await
@@ -81,9 +97,11 @@ pub async fn run_usb(mut dev: StaticUsbDevice) -> ! {
 
 static USB_ACTIVE: UsbActiveWatch = Watch::new_with(false);
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn usb_device<Irqs>(
     pid: u16,
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
+    firmware_version_string: &'static str,
     guid: &'static str,
     usbd: Peri<'static, USBD>,
     irqs: Irqs,
@@ -128,11 +146,7 @@ where
     config.manufacturer = Some("Odyssey Arm");
     config.product = Some("ATS USB Legacy");
     config.serial_number = Some(serial);
-    // Redundant with the control protocol's version property, but readable from
-    // enumeration alone, so a device whose control channel is unreachable can
-    // still be offered the right firmware.
-    config.device_release =
-        odyssey_version::UsbDeviceRelease::from_version(firmware_version).raw_value();
+    config.device_release = odyssey_version::firmware_bcd_device(firmware_version[0]);
     config.max_power = 310;
     config.max_packet_size_0 = 64;
     config.composite_with_iads = true;
@@ -153,9 +167,10 @@ where
         msos_descriptor,
         control_buf,
     );
+    let firmware_version_index = builder.string();
 
-    // Microsoft OS descriptors. Device-level headers are always needed;
-    // function-level headers only for composite devices.
+    // Microsoft OS descriptors. Device-level headers are always needed.
+    // Function-level headers only for composite devices.
     builder.msos_descriptor(windows_version::WIN8_1, 0);
     builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
@@ -168,6 +183,8 @@ where
         active: &USB_ACTIVE,
         configured: false,
         suspended: false,
+        firmware_version_index,
+        firmware_version_string,
     });
 
     builder.handler(&mut *handler);
@@ -199,6 +216,8 @@ struct MyHandler {
     active: &'static UsbActiveWatch,
     configured: bool,
     suspended: bool,
+    firmware_version_index: StringIndex,
+    firmware_version_string: &'static str,
 }
 
 impl MyHandler {
@@ -242,6 +261,10 @@ impl embassy_usb::Handler for MyHandler {
         info!("USB suspended: {}", suspended);
         self.suspended = suspended;
         self.publish();
+    }
+
+    fn get_string(&mut self, index: StringIndex, _lang_id: u16) -> Option<&str> {
+        (index == self.firmware_version_index).then_some(self.firmware_version_string)
     }
 
     fn control_out(
@@ -298,6 +321,7 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn write_transfer<'d>(
     ep: &mut Endpoint<'d, In>,
     payload: &[u8],

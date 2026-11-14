@@ -21,11 +21,11 @@ pub(super) struct PresentedFrame {
 
 impl PresentedFrame {
     pub(super) fn new(
-        frame: ImageFrame,
+        frame: &ImageFrame,
         received_at: Instant,
         observed_fps: Option<f64>,
     ) -> Result<Self, String> {
-        // GPUI textures are BGRA; the sensor sends one gray byte per pixel.
+        // GPUI textures are BGRA. The sensor sends one gray byte per pixel.
         let bgra: Vec<u8> = frame
             .pixels
             .iter()
@@ -55,7 +55,7 @@ pub(super) fn frame_view(
     frame: &PresentedFrame,
     now: Instant,
     live: bool,
-    palette: Palette,
+    palette: &Palette,
 ) -> impl IntoElement {
     let age_ms = now.saturating_duration_since(frame.received_at).as_millis();
     let observed = frame.observed_fps.map_or_else(
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn gray_pixels_become_opaque_bgra() {
         let presented =
-            PresentedFrame::new(frame(2, 1, vec![0, 200]), Instant::now(), None).expect("valid");
+            PresentedFrame::new(&frame(2, 1, vec![0, 200]), Instant::now(), None).expect("valid");
         assert_eq!(
             presented.image.as_bytes(0),
             Some([0, 0, 0, 255, 200, 200, 200, 255].as_slice())
@@ -123,6 +123,6 @@ mod tests {
 
     #[test]
     fn pixel_count_must_match_dimensions() {
-        assert!(PresentedFrame::new(frame(2, 2, vec![0; 3]), Instant::now(), None).is_err());
+        assert!(PresentedFrame::new(&frame(2, 2, vec![0; 3]), Instant::now(), None).is_err());
     }
 }

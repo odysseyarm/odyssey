@@ -46,7 +46,7 @@ impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
         Self {
             name: v.name,
             ty: AccessoryType::from(v.ty) as i32,
-            assignment: v.assignment.map(NonZero::get).unwrap_or(0),
+            assignment: v.assignment.map_or(0, NonZero::get),
             screen_id: v.screen_id.map(u32::from),
             radio: Some(v.radio.into()),
             features: v
@@ -386,7 +386,8 @@ mod tests {
                 id: "usb\nid".into(),
             },
         ] {
-            assert!(common::accessory::AccessoryRadio::try_from(radio).is_err());
+            common::accessory::AccessoryRadio::try_from(radio)
+                .expect_err("invalid radio route must be rejected");
         }
         let legacy = common::accessory::AccessoryInfo::try_from(AccessoryInfo::default()).unwrap();
         assert_eq!(legacy.radio, common::accessory::AccessoryRadio::System);
@@ -435,14 +436,13 @@ mod tests {
             )]
             .into(),
         };
-        assert!(common::accessory::AccessoryInfoMap::try_from(map).is_err());
-        assert!(
-            common::accessory::AccessoryInfo::try_from(AccessoryInfo {
-                features: vec![i32::MAX],
-                ..AccessoryInfo::default()
-            })
-            .is_err()
-        );
+        common::accessory::AccessoryInfoMap::try_from(map)
+            .expect_err("unknown accessory kind must be rejected");
+        common::accessory::AccessoryInfo::try_from(AccessoryInfo {
+            features: vec![i32::MAX],
+            ..AccessoryInfo::default()
+        })
+        .expect_err("unknown accessory feature must be rejected");
     }
 
     #[test]
@@ -481,6 +481,7 @@ mod tests {
             )]
             .into(),
         };
-        assert!(common::accessory::AccessoryMap::try_from(reply).is_err());
+        common::accessory::AccessoryMap::try_from(reply)
+            .expect_err("accessory status without info must be rejected");
     }
 }

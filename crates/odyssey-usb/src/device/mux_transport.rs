@@ -68,6 +68,8 @@ pub(super) fn unregister_route(
 
 /// The link to a dongle: control messages, device snapshots, and the packets
 /// of every device behind it, demultiplexed.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
 pub struct MuxTransport {
     writer: mpsc::Sender<MuxMsg>,
@@ -91,6 +93,7 @@ pub(super) struct MuxTransportParts {
 }
 
 impl MuxTransport {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn usb(in_ep: EndpointRead<Bulk>, out_ep: EndpointWrite<Bulk>) -> Self {
         let (writer, writer_rx) = mpsc::channel::<MuxMsg>(OUTGOING_CAPACITY);
         let (snapshots_tx, snapshots_rx) = mpsc::channel::<DeviceSnapshot>(INCOMING_CAPACITY);
@@ -149,6 +152,8 @@ impl MuxTransport {
     }
 
     /// Opens a typed in-process dongle link, using the same routing as USB.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "sim")]
     pub fn from_channels(
         writer: mpsc::Sender<MuxMsg>,
@@ -247,18 +252,17 @@ async fn route_message(
             let route = lock_routes(routes)
                 .get(&dev_pkt.dev)
                 .map(|route| (route.sender.clone(), route.cancel.clone()));
-            match route {
-                Some((tx, route_cancel)) => {
-                    tokio::select! {
-                        biased;
-                        () = route_cancel.cancelled() => {}
-                        _ = tx.send(dev_pkt.pkt) => {}
-                    }
+            if let Some((tx, route_cancel)) = route {
+                tokio::select! {
+                    biased;
+                    () = route_cancel.cancelled() => {}
+                    _ = tx.send(dev_pkt.pkt) => {}
                 }
-                None => trace!(
+            } else {
+                trace!(
                     "mux reader: no receiver registered for device {}",
                     HexAddress(dev_pkt.dev)
-                ),
+                );
             }
         }
         other => {

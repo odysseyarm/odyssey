@@ -35,7 +35,7 @@ fn exposure_percent(us: u32) -> u32 {
 pub(super) struct PositionStep {
     wizard: Entity<Wizard>,
     exposure: Entity<SliderState>,
-    /// Bumped on every slider movement; a debounce that finds it changed gives up.
+    /// Bumped on every slider movement. A debounce that finds it changed gives up.
     generation: u64,
     frame: FrameSlot,
     _subscriptions: Vec<Subscription>,
@@ -62,13 +62,12 @@ impl PositionStep {
                 let mine = this.generation;
                 cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(EXPOSURE_DEBOUNCE).await;
-                    this.update(cx, |this, cx| {
+                    let _ = this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
                             this.wizard.update(cx, Wizard::restart_camera);
                         }
-                    })
-                    .ok();
+                    });
                 })
                 .detach();
             }),
@@ -85,7 +84,7 @@ impl PositionStep {
 
 impl Render for PositionStep {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let wizard = self.wizard.clone();
         let details_open = open_state("position-details", window, cx);
         let target = SliderValue::Single(wizard.read(cx).color_exposure as f32);
@@ -99,7 +98,7 @@ impl Render for PositionStep {
         let has_frame = state.preview.is_some();
         let exposure = state.color_exposure;
         let restarting = state.restarting;
-        let camera = state.camera().map(|c| c.name).unwrap_or_default();
+        let camera = state.camera().map_or_default(|c| c.name);
         self.frame
             .show(state.preview.as_ref().map(|f| &f.image), window);
 
@@ -156,7 +155,7 @@ impl Render for PositionStep {
     }
 }
 
-fn banner(p: Palette, wizard: &Wizard) -> AnyElement {
+fn banner(p: &Palette, wizard: &Wizard) -> AnyElement {
     let preview = wizard.preview.as_ref();
     if wizard.same_monitor {
         return status_banner(
@@ -185,7 +184,7 @@ fn banner(p: Palette, wizard: &Wizard) -> AnyElement {
     };
 
     let message = if frame.hint == Hint::Ready && !wizard.position_ready() {
-        // Ready for a moment is not ready yet; asking for a still hand avoids a
+        // Ready for a moment is not ready yet. Asking for a still hand avoids a
         // measurement started on a passing glimpse.
         let mut hold = screen_hint(Hint::ScreenNotFound);
         hold.icon = Icon::Camera;
@@ -198,7 +197,7 @@ fn banner(p: Palette, wizard: &Wizard) -> AnyElement {
     status_banner(p, message.tone, message.icon, message.title, message.detail).into_any_element()
 }
 
-fn live_preview(p: Palette, wizard: &Wizard) -> AnyElement {
+fn live_preview(p: &Palette, wizard: &Wizard) -> AnyElement {
     let Some(frame) = wizard.preview.as_ref() else {
         return camera_placeholder(p, "Waiting for the camera…").into_any_element();
     };
@@ -259,7 +258,7 @@ fn depth_text(frame: &PreviewFrame) -> (String, String) {
 }
 
 fn position_details(
-    p: Palette,
+    p: &Palette,
     wizard: &Wizard,
     camera: String,
     exposure: u32,

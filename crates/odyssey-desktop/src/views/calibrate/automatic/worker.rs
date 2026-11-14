@@ -12,6 +12,9 @@
 //! the consecutive-timeout limit. Invalid camera data closes the session rather
 //! than leaving a supposedly reusable stream behind.
 
+//! `Close` signals active capture before queuing shutdown, so bursts stop between
+//! frames and the worker still owns camera cleanup.
+
 mod backend;
 mod command;
 mod encode;
@@ -40,24 +43,31 @@ use tokio::sync::mpsc::UnboundedSender;
 pub(crate) struct Worker {
     commands: Sender<Command>,
     in_flight: Arc<AtomicBool>,
+    cancellation: Arc<AtomicBool>,
 }
 
 impl Worker {
     /// Starts an idle thread: no camera is touched until a command asks.
     ///
     /// If the OS cannot start the thread, the worker still exists but nothing
-    /// listens to it; the UI is told through a failed camera listing, which is
+    /// listens to it. The UI is told through a failed camera listing, which is
     /// where Setup shows what stopped it.
     pub(crate) fn spawn(backend: Backend, events: UnboundedSender<Event>) -> Self {
         let (commands, receiver) = mpsc::channel();
         let in_flight = Arc::new(AtomicBool::new(false));
+        let cancellation = Arc::new(AtomicBool::new(false));
         let failure_events = events.clone();
-        let engine = Engine::new(backend, events, Arc::clone(&in_flight));
+        let engine = Engine::new(
+            backend,
+            events,
+            Arc::clone(&in_flight),
+            Arc::clone(&cancellation),
+        );
         // The thread is detached: it ends when `commands` drops, and closing an
         // SDK pipeline can take a moment the UI thread must not wait for.
         let started = std::thread::Builder::new()
             .name("calibration-camera".into())
-            .spawn(move || engine.run(receiver));
+            .spawn(move || engine.run(&receiver));
         if let Err(e) = started {
             tracing::error!("could not start the camera thread: {e}");
             let _ = failure_events.send(Event::Cameras(Err(ListError::Camera(format!(
@@ -67,17 +77,21 @@ impl Worker {
         Self {
             commands,
             in_flight,
+            cancellation,
         }
     }
 
     /// Queues a command, or returns it if the camera thread has stopped.
-    /// Callers must finish the corresponding UI operation on failure; no reply
+    /// Callers must finish the corresponding UI operation on failure. No reply
     /// can arrive from a disconnected thread.
     #[expect(
         clippy::result_large_err,
         reason = "The UI recovers the rejected command; boxing would allocate on a channel close."
     )]
     pub(crate) fn send(&self, command: Command) -> Result<(), mpsc::SendError<Command>> {
+        if matches!(&command, Command::Close) {
+            self.cancellation.store(true, Ordering::Release);
+        }
         self.commands.send(command)
     }
 
@@ -89,7 +103,6 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        // Stop the stream first; the thread then sees the channel close and exits.
-        let _ = self.commands.send(Command::Close);
+        let _ = self.send(Command::Close);
     }
 }

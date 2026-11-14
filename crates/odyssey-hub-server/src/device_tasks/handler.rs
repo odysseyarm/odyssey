@@ -94,8 +94,8 @@ impl DeviceHandler {
         tokio::spawn(async move { Self::start(init).await.run().await })
     }
 
-    /// Reads the unit's config and starts its sensor streams, which can take seconds; that
-    /// is why this runs inside the spawned task rather than in the caller.
+    /// Reads the unit's config and starts its sensor streams. That can take seconds, so it
+    /// runs inside the spawned task instead of in the caller.
     async fn start(init: DeviceHandlerInit) -> Self {
         let DeviceHandlerInit {
             connections,
@@ -116,7 +116,7 @@ impl DeviceHandler {
         );
 
         // All config (camera models, impact threshold, etc.) is readable over both
-        // USB and BLE via packet protocol. Prefer the events device; fall back to
+        // USB and BLE via packet protocol. Prefer the events device and fall back to
         // the control device only when no events device is present.
         let general_settings = read_initial_settings(&connections, uuid).await;
 
@@ -243,6 +243,7 @@ impl DeviceHandler {
                     | DeviceTaskMessage::ReadConfig { .. }
                     | DeviceTaskMessage::WriteConfig { .. }
                     | DeviceTaskMessage::FlashSettings { .. }
+                    | DeviceTaskMessage::OtaExchange { .. }
                     | DeviceTaskMessage::SetTransportMode { .. }
                     | DeviceTaskMessage::AddControlDevice { .. }
                     | DeviceTaskMessage::RemoveControlDevice
@@ -310,6 +311,10 @@ impl DeviceHandler {
             DeviceTaskMessage::ClearZero => self.on_clear_zero().await,
             DeviceTaskMessage::SetShotDelay(ms) => self.on_set_shot_delay(ms).await,
             DeviceTaskMessage::WriteVendor(tag, data) => self.on_write_vendor(tag, &data).await,
+            DeviceTaskMessage::OtaExchange { frame, reply } => {
+                let result = self.on_ota_exchange(&frame).await;
+                let _ = reply.send(result);
+            }
             DeviceTaskMessage::ReadRegister {
                 port,
                 bank,
@@ -534,8 +539,8 @@ async fn call_with_timeout<T, E: ToString>(
     }
 }
 
-/// [`call_with_timeout`] over each of `links` in turn until one succeeds; the error is the
-/// last link's. While the cable is in the first link is USB, and a request caught by the
+/// [`call_with_timeout`] over each of `links` in turn until one succeeds. The error is the
+/// last link's. While the cable is in, the first link is USB and a request caught by the
 /// unplug fails there before the scan notices, while the unit already listens on BLE.
 async fn call_over_links<T, Call, Fut>(
     links: &[VmDevice],

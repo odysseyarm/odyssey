@@ -1,10 +1,10 @@
 # First-Stage Bootloader for ATSlite (nRF5340)
 
-This is the first-stage bootloader that implements **A/B DirectXIP** (eXecute-In-Place) boot logic for the ATSlite board.
+This is the first-stage bootloader. It implements the A/B DirectXIP (eXecute-In-Place) boot logic for the ATSlite board.
 
 ## Architecture Overview
 
-The ATSlite uses a **two-stage bootloader architecture** with A/B DirectXIP mode:
+The ATSlite boots through a two-stage bootloader architecture in A/B DirectXIP mode:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -21,57 +21,35 @@ The ATSlite uses a **two-stage bootloader architecture** with A/B DirectXIP mode
 
 ## What is A/B DirectXIP?
 
-**A/B DirectXIP** combines two powerful features:
-
-1. **DirectXIP (eXecute-In-Place)**: Applications run **directly from flash** without copying to RAM or another slot
-2. **A/B Slots**: Two independent firmware slots that can each boot independently
+A/B DirectXIP is two features put together. DirectXIP (eXecute-In-Place) means applications run directly from flash, with no copy to RAM or to another slot. A/B slots means there are two firmware slots, and each can boot independently.
 
 ### The Two Slots:
-- **Slot A** (0x00007000, 340K) - Primary application slot
-- **Slot B** (0x0005C000, 344K) - Update/alternate slot
+- Slot A (0x00007000, 340K) is the primary application slot.
+- Slot B (0x0005C000, 344K) is the update/alternate slot.
 
 ### How It Works:
-1. Firmware is downloaded to the **inactive** slot (built for that slot's address)
-2. Boot state is updated to try the new slot
-3. Device resets and boots from the new slot
-4. **If the app confirms boot** → update successful, new slot becomes active
-5. **If the app doesn't confirm** → automatic rollback to previous slot after 1 failed boot
+1. Firmware is downloaded to the inactive slot. It has to be built for that slot's address.
+2. Boot state is updated to try the new slot.
+3. The device resets and boots from the new slot.
+4. If the app confirms boot, the update was successful and the new slot becomes active.
+5. If the app doesn't confirm, the bootloader rolls back to the previous slot automatically after 1 failed boot.
 
 ### Benefits:
-- **Fast boot** - no copying, just validate and jump
-- **Safe updates** - automatic rollback if new firmware fails
-- **Always bootable** - previous firmware stays intact during update
-- **Low flash wear** - no swap operations
+Boot is fast. There is nothing to copy, so the bootloader validates and jumps. Updates are safe because new firmware that fails gets rolled back automatically, and since the previous firmware stays intact during an update the device is always bootable. Flash wear stays low with no swap operations.
 
 ### Trade-offs:
-- **Two builds required** - firmware must be built for both slot addresses
-- **Larger flash usage** - need space for both slots
+Two builds are required, because firmware must be built for both slot addresses. Flash usage is larger as well. Both slots need space.
 
 ## Boot Process
 
-The first-stage bootloader performs the following on every boot:
+The first-stage bootloader does the following on every boot:
 
-1. **Read boot state** from flash (0x00006000)
-   - Which slot is active?
-   - Is there a pending update to try?
-   - How many boot attempts?
-
-2. **Try pending slot** (if different from active)
-   - Boot from pending slot for trial
-   - Increment boot counter
-   
-3. **Check boot counter**
-   - If boot_counter >= 2: **ROLLBACK** to other slot
-   - Prevents infinite boot loops
-   
-4. **Try active slot** (normal boot)
-   - Boot from last confirmed working slot
-   
-5. **Fallback to other slot**
-   - Try the alternate slot if active fails
-   
-6. **Fallback to Stage 2**
-   - Boot second-stage bootloader for recovery/DFU
+1. Read boot state from flash (0x00006000). It records which slot is active, whether a pending update is waiting to be tried, and how many boot attempts there have been.
+2. Try the pending slot, if it is different from the active one. This is a trial boot from the pending slot, and it increments the boot counter.
+3. Check the boot counter. If boot_counter >= 2, roll back to the other slot. This prevents infinite boot loops.
+4. Try the active slot. This is the normal boot, from the last confirmed working slot.
+5. Fall back to the other slot. The alternate slot is tried if the active one fails.
+6. Fall back to Stage 2. The second-stage bootloader boots for recovery/DFU.
 
 ## Boot State Tracking
 
@@ -88,20 +66,17 @@ struct BootState {
 ```
 
 ### Boot Counter Rollback:
-- `boot_counter == 0`: Fresh boot or confirmed boot
-- `boot_counter == 1`: First boot attempt (normal)
-- `boot_counter >= 2`: **Failed to confirm → ROLLBACK**
+- `boot_counter == 0`: fresh boot or confirmed boot
+- `boot_counter == 1`: first boot attempt (normal)
+- `boot_counter >= 2`: the app failed to confirm, so the bootloader rolls back
 
 ## Image Validation
 
-Images are validated by checking:
-- **Magic number** (`0x77c2_95f3`) - Compatible with embassy-boot
-- **Not marked bad** - Images marked `BOOT_FLAG_BAD` are skipped
-- **Vector table validity** - Stack pointer in RAM, reset vector has thumb bit
+Validation starts with the magic number (`0x77c2_95f3`), which is compatible with embassy-boot. Images marked `BOOT_FLAG_BAD` are skipped. The vector table has to be valid too: stack pointer in RAM, thumb bit on the reset vector.
 
 ## Application Integration
 
-Your application **MUST** call `BootConfirmation::confirm_boot()` after successful initialization:
+Your application must call `BootConfirmation::confirm_boot()` after successful initialization:
 
 ```rust
 use atslite_boot_api::BootConfirmation;
@@ -137,7 +112,7 @@ cortex_m::peripheral::SCB::sys_reset();
 
 ## Building Firmware for Both Slots
 
-You need **two builds** of every firmware release:
+Every firmware release needs two builds:
 
 ```bash
 # Build for Slot A (0x00007000)
@@ -174,22 +149,15 @@ cargo flash --release --chip nRF5340_xxAA
 
 ## Network Core Updates
 
-**Important**: DirectXIP mode means NetCore updates cannot use the traditional swap mechanism. Instead:
-
-1. The **application firmware** is responsible for updating NetCore
-2. Updates are transferred via **IPC** (Inter-Process Communication) using shared memory regions
-3. The application can write directly to NetCore flash or use RAM boot
+DirectXIP mode rules out the traditional swap mechanism for NetCore updates. The application firmware is responsible for updating NetCore. Updates are transferred via IPC (Inter-Process Communication) using shared memory regions, and the application can write directly to NetCore flash or use RAM boot.
 
 See the Zephyr MCUboot documentation for reference on network core IPC update mechanisms.
 
 ## Size Constraints
 
-The first-stage bootloader **must fit in 8KB** (0x2000 bytes). Current optimizations:
-- LTO enabled (`lto = 'fat'`)
-- Size optimization (`opt-level = 'z'`)
-- Minimal dependencies (no USB, no DFU protocol)
+The first-stage bootloader must fit in 8KB (0x2000 bytes). It gets there today with LTO enabled (`lto = 'fat'`), size optimization (`opt-level = 'z'`) and minimal dependencies. No USB. No DFU protocol.
 
 ## See Also
 
-- `firmware/legacy-atslite-bootloader/` - Second-stage bootloader (DFU functionality)
-- `firmware/memory/memory-atslite.kdl` - Complete memory layout specification
+- `firmware/legacy-atslite-bootloader/` is the second-stage bootloader, with the DFU functionality.
+- `firmware/memory/memory-atslite.kdl` is the complete memory layout specification.

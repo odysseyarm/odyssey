@@ -5,7 +5,7 @@ use odyssey_autocalib::solve::SolveError;
 
 use crate::views::calibrate::automatic::kind::SizeOrigin;
 
-/// What went wrong, coarsely enough to give advice; `details` keeps the
+/// What went wrong, coarsely enough to give advice. `details` keeps the
 /// technical text for the Details section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Failure {
@@ -63,6 +63,7 @@ impl FailureKind {
             SessionError::Solve(e) => Self::of_solve(e),
             SessionError::Markers(_) => Self::Markers,
             SessionError::EdgesCropped(sides) => Self::EdgesCropped(*sides),
+            SessionError::Cancelled => Self::Internal,
             SessionError::ScreenNotMeasured | SessionError::MarkersNotMeasured => Self::Internal,
         }
     }

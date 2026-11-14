@@ -1,7 +1,7 @@
 //! Concurrent sensor/control handling. Bulk request assembly survives BLE
-//! preemption; a terminating sensor/control error cancels the background loops.
+//! preemption. A terminating sensor/control error cancels the background loops.
 //! PAJ7025 image entry cancels tracking and releases register SPI permanently.
-//! Stop/disconnect ends reception; only reboot/power-cycle restores tracking.
+//! Stop/disconnect ends reception. Only reboot/power-cycle restores tracking.
 //!
 use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -40,35 +40,60 @@ type Sender<'a, T, const N: usize> = embassy_sync::channel::Sender<'a, NoopRawMu
 type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopRawMutex, T, N>;
 
 /// Everything object_mode needs from the board.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ObjectModeContext<
     'd,
     P: Platform,
     C1: embassy_nrf::gpiote::Channel,
     C2: embassy_nrf::gpiote::Channel,
 > {
+    /// Since: Odyssey Desktop 0.7.0.
     pub paj7025r2_group: PajGroup<'d, C1>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub paj7025r3_group: PajGroup<'d, C2>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub fod_set_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub fod_clr_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub timer: embassy_nrf::Peri<'d, P::Timer>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub imu: P::Imu,
+    /// Since: Odyssey Desktop 0.7.0.
     pub imu_int: P::ImuInterrupt,
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_snd: Endpoint<'static, In>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_rcv: Endpoint<'static, Out>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_configured: UsbConfigHandle,
+    /// Since: Odyssey Desktop 0.7.0.
     pub settings: &'d mut Settings,
+    /// Since: Odyssey Desktop 0.7.0.
     pub l2cap_channels: P::L2capChannels,
     /// Transport that carries reports right now. Requests are accepted from every transport.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub data_mode: fn() -> TransportMode,
     /// Firmware version [major, minor, patch].
-    pub version: [u16; 3],
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
+    pub version: [u32; 3],
     /// Battery state-of-charge percentage (0–100), updated by power_state_task.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub battery_soc: &'static AtomicU8,
     /// Whether VBUS (USB power / charging) is present, updated by power_state_task.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub battery_charging: &'static AtomicBool,
+    /// Since: Odyssey Desktop 0.7.0.
     pub image_receivers: ImageReceivers,
+    pub ota: atslite_common::ota::OtaHandle,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn object_mode<
     'd,
     P: Platform,
@@ -100,6 +125,7 @@ pub async fn object_mode<
         ctx.settings,
         &ctx.l2cap_channels,
         P::device_id(),
+        ctx.ota,
         ctx.version,
         P::netcore_release,
         &impact_settings,
@@ -154,6 +180,8 @@ pub async fn object_mode<
         ctx.usb_rcv,
         ctx.usb_configured,
         start,
+        &ctx.l2cap_channels,
+        ctx.ota,
     )
     .await
 }
@@ -175,7 +203,8 @@ async fn usb_rcv_loop<L: L2capChannels>(
     settings: &mut Settings,
     l2cap_channels: &L,
     device_id: [u8; 8],
-    version: [u16; 3],
+    ota: atslite_common::ota::OtaHandle,
+    version: [u32; 3],
     netcore_release: fn() -> u16,
     impact_settings: &ImpactSettings,
     round_accel_odr: fn(u16) -> u16,
@@ -214,6 +243,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
         let ble_generation =
             matches!(src, PacketSource::Ble).then(|| l2cap_channels.session_generation());
 
+        let mut reset_after_reply = false;
         let response = match pkt.data {
             PacketData::WriteRegister(register) => {
                 let paj = match register.port {
@@ -419,6 +449,30 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
+            PacketData::Vendor(tag, data)
+                if tag == odyssey_protocol::ota::VENDOR_TAG
+                    && matches!(src, PacketSource::Ble) =>
+            {
+                let len = usize::from(data.len);
+                let Some(payload) = data.data.get(..len) else {
+                    continue;
+                };
+                if let Some(reply) = ota.request(payload).await {
+                    reset_after_reply = reply.reset;
+                    let mut body = odyssey_protocol::VendorData {
+                        len: odyssey_protocol::ota::STATUS_LEN as u8,
+                        data: [0; odyssey_protocol::VendorData::CAPACITY],
+                    };
+                    body.data[..odyssey_protocol::ota::STATUS_LEN]
+                        .copy_from_slice(&reply.status);
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Vendor(tag, body),
+                    })
+                } else {
+                    None
+                }
+            }
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
@@ -452,19 +506,34 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     // Sensor I/O can span a disconnect/reconnect. Never hand
                     // the new central a response belonging to the old session.
                     if ble_generation != Some(l2cap_channels.session_generation()) {
+                        if reset_after_reply {
+                            atslite_common::settings::settings_wait_settled(
+                                embassy_time::Duration::from_millis(500),
+                            )
+                            .await;
+                            cortex_m::peripheral::SCB::sys_reset();
+                        }
                         continue;
                     }
                     if r.is_control() {
-                        if l2cap_channels.control_tx().try_send(r).is_err() {
+                        if reset_after_reply {
+                            l2cap_channels.control_tx().send(r).await;
+                        } else if l2cap_channels.control_tx().try_send(r).is_err() {
                             defmt::warn!("[app] Dropped control response - channel full");
                         }
-                    } else {
-                        if l2cap_channels.data_tx().try_send(r).is_err() {
-                            defmt::warn!("[app] Dropped data response - channel full");
-                        }
+                    } else if reset_after_reply {
+                        l2cap_channels.data_tx().send(r).await;
+                    } else if l2cap_channels.data_tx().try_send(r).is_err() {
+                        defmt::warn!("[app] Dropped data response - channel full");
                     }
                 }
             }
+        }
+        if reset_after_reply {
+            embassy_time::Timer::after_millis(100).await;
+            atslite_common::settings::settings_wait_settled(embassy_time::Duration::from_millis(500))
+                .await;
+            cortex_m::peripheral::SCB::sys_reset();
         }
     }
 }
@@ -481,7 +550,7 @@ async fn usb_snd_loop<L: L2capChannels>(
 ) -> ! {
     loop {
         let pkt = pkt_rcv.receive().await;
-        // BLE replies bypass this queue; all queued control packets belong to USB.
+        // BLE replies bypass this queue. All queued control packets belong to USB.
         let Some(transport) = transport::queued_transport(&pkt, data_mode(), usb::is_active())
         else {
             continue;
@@ -698,12 +767,14 @@ async fn obj_loop<
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct PacketReader<'a> {
     rcv: &'a mut Endpoint<'static, Out>,
     transfer: usb::TransferReader<1024>,
 }
 
 impl<'a> PacketReader<'a> {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new(rcv: &'a mut Endpoint<'static, Out>) -> Self {
         Self {
             rcv,
@@ -711,6 +782,11 @@ impl<'a> PacketReader<'a> {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns USB endpoint errors or postcard decoding errors.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn wait_for_packet(&mut self) -> Result<Packet, WaitForPacketError> {
         defmt::debug!("Read transfer start");
         let data = self.transfer.read(self.rcv).await?;
@@ -719,11 +795,17 @@ impl<'a> PacketReader<'a> {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct PacketWriter<'a> {
     pub(crate) snd: &'a mut Endpoint<'static, In>,
 }
 
 impl PacketWriter<'_> {
+    /// # Errors
+    ///
+    /// Returns postcard encoding errors or USB endpoint errors.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub async fn write_packet(&mut self, pkt: &Packet) -> Result<(), WaitForPacketError> {
         let payload = postcard::to_vec::<_, 1024>(pkt)?;
         defmt::debug!(
@@ -736,10 +818,14 @@ impl PacketWriter<'_> {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Format)]
 pub enum WaitForPacketError {
+    /// Since: Odyssey Desktop 0.7.0.
     Postcard(postcard::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     Packet(odyssey_protocol::Error),
+    /// Since: Odyssey Desktop 0.7.0.
     Usb(EndpointError),
 }
 

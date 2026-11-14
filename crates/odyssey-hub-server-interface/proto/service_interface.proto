@@ -1,6 +1,9 @@
 syntax = "proto3";
 
 package odyssey.service_interface;
+// # Since
+// Odyssey Desktop 0.7.5. All service methods, messages, enums, and fields in
+// this schema inherit this release unless marked otherwise.
 
 service Service {
   rpc GetDeviceList(DeviceListRequest) returns (DeviceListReply) {}
@@ -14,19 +17,21 @@ service Service {
   rpc EnrollAccessory(EnrollAccessoryRequest) returns (EmptyReply) {}
   // Briefly connects to a configured marker control board and sets its Mode to Auto.
   rpc ResetMarkerMode(ResetMarkerModeRequest) returns (EmptyReply) {}
+  rpc UpdateMarkerOta(MarkerOtaRequest) returns (MarkerOtaReply) {}
 
   rpc GetScreenInfoById(ScreenInfoByIdRequest) returns (ScreenInfoReply) {}
 
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event) {}
 
-  // USB-only camera stream. The first request selects device/camera/fps; send another
+  // USB-only camera stream. The first request selects device/camera/fps. Send another
   // request every IMAGE_LEASE_RENEW_INTERVAL_MS while frames are being consumed. Modern
-  // devices restore tracking when renewals stop; legacy needs reboot to track again.
+  // devices restore tracking when renewals stop, legacy needs a reboot to track again.
   rpc StreamImages(stream StreamImagesRequest) returns (stream ImageFrame) {}
   // Acknowledges a requested device reset, not successful tracking recovery.
   rpc RebootDevice(Device) returns (EmptyReply) {}
 
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
+  rpc ExchangeVendor(ExchangeVendorRequest) returns (ExchangeVendorReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
   rpc ReadConfig(ReadConfigRequest) returns (ReadConfigReply) {}
@@ -48,7 +53,7 @@ service Service {
   rpc CancelPairing(CancelPairingRequest) returns (EmptyReply) {}
   rpc ClearBond(ClearBondRequest) returns (EmptyReply) {}
   // Deprecated: only firmware without the AUTO_TRANSPORT capability (device protocol
-  // below 0.1.6) has a transport mode; it stores the mode and reboots. For a device with
+  // below 0.1.6) has a transport mode. It stores the mode and reboots. For a device with
   // AUTO_TRANSPORT the request is ignored and the reply reports the link in use, without
   // contacting the device.
   rpc SetTransportMode(SetTransportModeRequest) returns (TransportModeReply) {}
@@ -115,13 +120,18 @@ message Device {
   uint32 product_id = 7; // USB PID (0x520F=AtsVm, 0x5210=AtsLite, 0x5211=Lite1, 0x5212=Mux), 0=unknown
   string name = 8; // BLE bond name, USB product string, or a name the user set.
   uint32 netcore_release = 9; // nRF5340 net core release counter, 0=unknown or not reported
+  // `X.Y.Z` (Stable) or `X.Y.Z-nightly.YYYYMMDD.tHHMMSS.g<12 hex>` (Nightly),
+  // absent when the device reported no Odyssey release version.
+  // # Since
+  // Unreleased.
+  optional string firmware_version_string = 10;
 }
 
 // Only the first message's fields are read; later messages are lease renewals.
 message StreamImagesRequest {
   Device device = 1;
   uint32 camera = 2; // 0 = near-field, 1 = wide-field.
-  uint32 fps = 3; // Requested rate, 1..15; firmware may cap it lower.
+  uint32 fps = 3; // Requested rate, 1..15. Firmware may cap it lower.
 }
 
 message ImageBounds {
@@ -329,6 +339,13 @@ message EnrollAccessoryRequest {
 message ResetMarkerModeRequest {
   uint64 address = 1;
 }
+message MarkerOtaRequest {
+  uint64 address = 1;
+  string desktop_version = 2;
+}
+message MarkerOtaReply {
+  string version = 1;
+}
 
 message SubscribeShotDelayRequest {
   Device device = 1;
@@ -363,6 +380,15 @@ message WriteVendorRequest {
   Device device = 1;
   uint32 tag = 2;
   bytes data = 3;
+}
+
+message ExchangeVendorRequest {
+  Device device = 1;
+  uint32 tag = 2;
+  bytes data = 3;
+}
+message ExchangeVendorReply {
+  bytes data = 1;
 }
 
 message ZeroRequest {
@@ -419,7 +445,7 @@ message SetTransportModeRequest {
   bool usb_mode = 2; // true = USB, false = BLE
 }
 message TransportModeReply {
-  bool usb_mode = 1; // Mode the device confirmed; for AUTO_TRANSPORT devices, whether USB carries its events now.
+  bool usb_mode = 1; // Mode the device confirmed. For AUTO_TRANSPORT devices, whether USB carries its events now.
 }
 
 message Dongle {
@@ -455,7 +481,7 @@ message SubscribeEventsRequest {
   // Passive UI monitoring does not request marker illumination. Existing clients
   // keep active tracking demand by leaving this false.
   bool passive_tracking = 1;
-  optional uint32 screen_id = 2; // Omitted requests all screens; event payloads remain unfiltered.
+  optional uint32 screen_id = 2; // Omitted requests all screens. Event payloads remain unfiltered.
 }
 message EmptyRequest {}
 message EmptyReply {}

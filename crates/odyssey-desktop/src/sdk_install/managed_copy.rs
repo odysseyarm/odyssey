@@ -7,7 +7,7 @@ use super::locations::{DIR_NAME, managed_dir};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Removal {
     Removed,
-    /// The running copy is in use and stays intact; it is deleted the next time
+    /// The running copy is in use and stays intact. It is deleted the next time
     /// the app starts, by [`finish_pending`].
     AfterRestart,
 }
@@ -25,8 +25,8 @@ enum MoveAside {
     InUse(io::Error),
 }
 
-/// Renames a directory; a parameter so tests can stand in for a mapped library
-/// that Windows will not let go of.
+/// Renames a directory. It is a parameter so tests can stand in for a mapped
+/// library that Windows will not let go of.
 type Rename<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
 
 pub(super) fn rename_fs(from: &Path, to: &Path) -> io::Result<()> {
@@ -529,7 +529,7 @@ mod tests {
         // remove_dir_all. It must not be ignored while claiming success.
         std::fs::write(staging_dir(&dest), b"damaged").unwrap();
 
-        assert!(remove_at_with(&dest, &rename_fs).is_err());
+        remove_at_with(&dest, &rename_fs).unwrap_err();
         assert!(removal_marker(&dest).exists());
         finish_pending_at(&dest, &rename_fs);
         assert_eq!(read(&dest), "old");

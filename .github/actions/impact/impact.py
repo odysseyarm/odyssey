@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-SUITES = ("host", "xtask", "proofs", "cache", "tracking", "ffi", "uniffi", "format")
+SUITES = ("host", "xtask", "protocols", "proofs", "cache", "tracking", "ffi", "uniffi", "format")
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
@@ -129,7 +129,7 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
         directory = f"sdk/{name}"
         return Rule(
             closure(graph, [directory])
-            + ["Cargo.toml", "LICENSE", "nix/sdk.nix", "nix/xwin.nix", ".github/actions/push-cache"],
+            + ["Cargo.toml", "clippy.toml", "LICENSE", "nix/sdk.nix", "nix/xwin.nix", ".github/actions/push-cache"],
             skip=tuple(f"{directory}/{entry}" for entry in sdk_skip),
         )
 
@@ -147,6 +147,10 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
         "host": Rule(
             closure(graph, members)
             + [*HOST_DATA, "Cargo.toml", "Cargo.lock", "clippy.toml", "nix/host.nix", f"{workflow}host-ci.yml"]
+        ),
+        "protocols": Rule(
+            closure(graph, ["crates/odyssey-protocol"])
+            + ["firmware/better-ota", "Cargo.toml", "Cargo.lock", "clippy.toml", "nix/host.nix", "nix/firmware.nix", f"{workflow}host-ci.yml"]
         ),
         "tracking": Rule(
             closure(graph, ["crates/odyssey-hub-server", "crates/odyssey-sim"])
@@ -167,6 +171,7 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
                 "crates/odyssey-autocalib",
                 "crates/odyssey-desktop/orbbec-sdk.json",
                 "nix/host.nix",
+                "clippy.toml",
                 f"{workflow}host-ci.yml",
             ],
             match=lockfile,
@@ -239,7 +244,7 @@ def select(environment: dict[str, str]) -> tuple[dict[str, str | None], str]:
 
 def render(result: dict[str, str | None]) -> dict[str, bool]:
     flags = {suite: result[suite] is not None for suite in SUITES}
-    flags["host_ci"] = any(flags[suite] for suite in ("host", "xtask", "proofs", "cache"))
+    flags["host_ci"] = any(flags[suite] for suite in ("host", "xtask", "protocols", "proofs", "cache"))
     return flags
 
 

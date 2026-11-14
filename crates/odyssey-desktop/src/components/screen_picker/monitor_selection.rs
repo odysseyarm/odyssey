@@ -73,7 +73,7 @@ impl MonitorSelection {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let this = cx.weak_entity();
         let displays = cx.observe_displays(move |_, cx| {
-            this.update(cx, Self::refresh).ok();
+            let _ = this.update(cx, Self::refresh);
         });
 
         let remembered =
@@ -86,14 +86,13 @@ impl MonitorSelection {
                     return;
                 }
             };
-            this.update(cx, |selection, cx| {
+            let _ = this.update(cx, |selection, cx| {
                 // A click that lands before the file loads wins over the stale value.
                 if selection.chosen.is_none() && remembered.is_some() {
                     selection.chosen = remembered;
                     cx.notify();
                 }
-            })
-            .ok();
+            });
         })
         .detach();
 

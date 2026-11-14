@@ -3,10 +3,16 @@ use std::collections::HashMap;
 use eros::Context as _;
 use odyssey_hub_server::firmware::{self, FileEntry, FirmwareEntry, UpdateStep};
 
-/// An image whose release is versioned separately from the application.
+/// A net-core image, whose release remains a counter.
 pub(super) struct ReleaseImage {
     pub(super) data: Vec<u8>,
     pub(super) release: u16,
+}
+
+/// A bootloader image with its independent `SemVer` identity.
+pub(super) struct BootloaderImage {
+    pub(super) data: Vec<u8>,
+    pub(super) version: semver::Version,
 }
 
 /// Everything an update writes, fetched before the device is touched.
@@ -14,11 +20,10 @@ pub(super) struct Downloads {
     pub(super) netcore: Option<ReleaseImage>,
     /// Application images by manifest file name (`app` or `app-a` and `app-b`).
     pub(super) applications: HashMap<&'static str, Vec<u8>>,
-    pub(super) bootloader: Option<ReleaseImage>,
+    pub(super) bootloader: Option<BootloaderImage>,
 }
 
-/// The file of `entry` named `name` together with the release it carries, for
-/// the files (`net-core`, `stage2-bootloader`) that are versioned on their own.
+/// Net-core file and release counter.
 pub(super) fn published_release<'a>(
     entry: &'a FirmwareEntry,
     name: &str,
@@ -66,6 +71,7 @@ impl Downloads {
         device_type: &str,
         entry: &FirmwareEntry,
         steps: &[UpdateStep],
+        include_netcore: bool,
     ) -> eros::Result<Self> {
         let application_files = entry.application_files().ok_or_else(|| {
             eros::error!(
@@ -73,7 +79,8 @@ impl Downloads {
             )
         })?;
         let netcore = match published_release(entry, "net-core") {
-            Some((file, release)) if steps.contains(&UpdateStep::FlashNetCore) => {
+            Some((file, release))
+                if include_netcore || steps.contains(&UpdateStep::FlashNetCore) => {
                 tracing::info!("Downloading net-core release {}", release);
                 let data = download_image(
                     device_type,
@@ -102,20 +109,24 @@ impl Downloads {
             applications.insert(slot_file, data);
         }
 
-        // The stage2 bootloader is versioned separately and republished unchanged
-        // across application releases, so it is only worth downloading when the
-        // release says which bootloader release it carries.
-        let bootloader = match published_release(entry, "stage2-bootloader") {
-            Some((file, release)) => {
-                tracing::info!("Release carries stage2 bootloader release {}", release);
+        let bootloader = entry
+            .files
+            .get("stage2-bootloader")
+            .and_then(|file| file.version.as_ref().map(|version| (file, version)));
+        let bootloader = match bootloader {
+            Some((file, version)) => {
+                tracing::info!("Release carries stage2 bootloader version {}", version);
                 let data = download_image(
                     device_type,
-                    firmware::ReleaseSource::Bootloader { release },
+                    firmware::ReleaseSource::Bootloader { version },
                     "stage2-bootloader",
                     file,
                 )
                 .await?;
-                Some(ReleaseImage { data, release })
+                Some(BootloaderImage {
+                    data,
+                    version: version.clone(),
+                })
             }
             None => None,
         };
@@ -137,7 +148,7 @@ mod tests {
         assert!(validate_image_size("app-a", 0, 0).is_err());
         assert!(validate_image_size("app-a", 2, 3).is_err());
         assert!(validate_image_size("app-a", 4, 3).is_err());
-        assert!(validate_image_size("app-a", 3, 3).is_ok());
+        validate_image_size("app-a", 3, 3).unwrap();
     }
 
     #[test]
@@ -145,7 +156,7 @@ mod tests {
         for present in ["app-a", "app-b"] {
             let entry = FirmwareEntry {
                 version: "1.0.0".into(),
-                requires_bootloader: 0,
+                requires_bootloader: semver::Version::new(0, 0, 0),
                 requires_netcore: 0,
                 min_desktop: "0.6.0".into(),
                 files: HashMap::from([(
@@ -153,6 +164,7 @@ mod tests {
                     FileEntry {
                         sha256: "unused".into(),
                         size: 1,
+                        version: None,
                         release: None,
                     },
                 )]),

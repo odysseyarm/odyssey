@@ -17,8 +17,8 @@ use crate::device_tasks::{DeviceTaskMessage, DongleInfo, DongleTaskMessage};
 use crate::dongle_list::DongleList;
 use crate::screen_watch::Calibrations;
 
-/// Capacity of the channel that feeds one streaming RPC; a client that falls
-/// further behind makes the producing task wait.
+/// Capacity of the channel that feeds one streaming RPC. A client that falls further
+/// behind makes the producing task wait.
 pub(super) const SUBSCRIPTION_BUFFER: usize = 16;
 
 /// The gRPC service and the hub state it shares with the device tasks.
@@ -36,7 +36,7 @@ pub(crate) struct HubServer {
 
     pub screen_calibrations: Arc<ArcSwap<Calibrations>>,
 
-    /// Shot delay per uuid, and the per-uuid watches behind SubscribeShotDelay.
+    /// Shot delay per uuid, and the per-uuid watches behind `SubscribeShotDelay`.
     pub device_shot_delays: Arc<RwLock<HashMap<[u8; 6], u16>>>,
     pub shot_delay_watch: Arc<RwLock<HashMap<[u8; 6], watch::Sender<u32>>>>,
 
@@ -158,8 +158,8 @@ impl HubServer {
         self.lock_accessory_map().clone()
     }
 
-    /// Takes new accessory info into the shared map. A changed accessory type
-    /// requires a new notification subscription and cannot retain a connected flag.
+    /// Takes new accessory info into the shared map. A changed accessory type needs a
+    /// new notification subscription, so it does not keep its connected flag.
     pub(super) fn merge_accessory_info(&self, info: AccessoryInfoMap) {
         let mut map = self.lock_accessory_map();
         map.retain(|id, _| info.contains_key(id));
@@ -195,9 +195,9 @@ fn stream_replies<Reply: Send + 'static>(
             };
             match change {
                 Ok(()) => {}
-                // Lagging only means notifications were dropped while this task was
-                // busy. The next reply is rebuilt from the live list, so it is still
-                // current; ending the subscription would freeze the client on a stale list.
+                // Lagging means notifications were dropped while this task was busy.
+                // The next reply is rebuilt from the live list and is current anyway.
+                // Ending the subscription would freeze the client on a stale list.
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::debug!("{list_name} subscriber lagged {n} notifications");
                 }
@@ -218,14 +218,17 @@ fn device_list_reply_from(device_list: &DeviceList) -> DeviceListReply {
 }
 
 /// The version as the protocol carries it: all zeros means the device never said.
-fn reported_version(version: [u16; 3]) -> Option<FirmwareVersion> {
-    if version == [0, 0, 0] {
+fn reported_version<T>(version: [T; 3]) -> Option<FirmwareVersion>
+where
+    T: Copy + Default + PartialEq + Into<u32>,
+{
+    if version == [T::default(); 3] {
         return None;
     }
     Some(FirmwareVersion {
-        major: u32::from(version[0]),
-        minor: u32::from(version[1]),
-        patch: u32::from(version[2]),
+        major: version[0].into(),
+        minor: version[1].into(),
+        patch: version[2].into(),
     })
 }
 
@@ -255,18 +258,18 @@ mod tests {
 
     fn server() -> HubServer {
         HubServer {
-            device_list: Default::default(),
+            device_list: DeviceList::default(),
             event_sender: broadcast::channel(1).0,
-            marker_demand: Default::default(),
+            marker_demand: crate::accessories::MarkerDemand::default(),
             device_list_change_sender: broadcast::channel(1).0,
             screen_calibrations: Arc::new(ArcSwap::from_pointee(Calibrations::default())),
-            device_shot_delays: Default::default(),
-            shot_delay_watch: Default::default(),
-            accessory_map: Default::default(),
+            device_shot_delays: Arc::default(),
+            shot_delay_watch: Arc::default(),
+            accessory_map: Arc::default(),
             accessory_map_sender: broadcast::channel(1).0,
             accessory_radios: crate::accessories::AccessoryRadios::new().0,
-            accessory_config_lock: Default::default(),
-            dongle_list: Default::default(),
+            accessory_config_lock: Arc::default(),
+            dongle_list: DongleList::default(),
             dongle_list_change_sender: broadcast::channel(1).0,
             app_message_sender: mpsc::unbounded_channel().0,
             accessory_info_sender: watch::channel(AccessoryInfoMap::new()).0,

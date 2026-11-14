@@ -11,12 +11,12 @@ use crate::components::ui;
 use crate::theme::Palette;
 
 impl HomeView {
-    pub(super) fn dongle_updates(&self, p: Palette, cx: &Context<'_, Self>) -> Vec<AnyElement> {
+    pub(super) fn dongle_updates(&self, p: &Palette, cx: &Context<'_, Self>) -> Vec<AnyElement> {
         let manifest = self.manifest.read(cx).manifest.clone();
         dongle_update_cards(&self.manager, manifest.as_ref(), p)
     }
 
-    pub(super) fn connected_devices(&self, p: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn connected_devices(&self, p: &Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let devices = self.hub.read(cx).devices.clone();
         let updating = self.manager.get_visible_updates();
         if devices.is_empty() && updating.is_empty() {

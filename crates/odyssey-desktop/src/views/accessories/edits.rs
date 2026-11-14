@@ -34,7 +34,7 @@ impl AccessoriesView {
         }
         if info.ty == AccessoryType::MarkerControlBoard
             && pairing_window(
-                pairing_expiry(&self.hub.read(cx).accessory_radios, &info.radio, &id),
+                pairing_expiry(&self.hub.read(cx).accessory_radios, &info.radio, id),
                 unix_time_ms(),
             ) != PairingWindow::Open
         {
@@ -117,6 +117,37 @@ impl AccessoriesView {
                 }
                 this.edit_pending = false;
                 this.resetting = None;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn update_marker_ota(&mut self, id: [u8; 6], cx: &mut Context<'_, Self>) {
+        if self.marker_ota_busy.is_some() {
+            return;
+        }
+        let Some(client) = self.hub.read(cx).client() else {
+            self.marker_ota_result = Some((id, Err("Hub is disconnected.".into())));
+            cx.notify();
+            return;
+        };
+        self.marker_ota_busy = Some(id);
+        self.marker_ota_result = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = runtime::spawn(async move {
+                client
+                    .update_marker_ota(id, env!("ODYSSEY_BUILD_VERSION"))
+                    .await
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(std::convert::identity);
+            let _ = this.update(cx, |this, cx| {
+                this.marker_ota_result = Some((id, outcome));
+                this.marker_ota_busy = None;
                 cx.notify();
             });
         })

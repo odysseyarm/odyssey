@@ -4,16 +4,16 @@ name: Net Core Release
 # pushed, e.g. atslite1-netcore-v1. N is the net core's release counter, the
 # literal in its src/main.rs, and the tag has to agree with it.
 #
-# Releases made with `cargo xtask firmware <board> release-netcore` already exist by the time the tag
-# does, so this workflow stands down for them rather than overwrite assets the
-# manifest may already hash. It only builds for tags pushed by hand.
+# Releases made with `cargo xtask firmware <board> release-netcore` already exist by the
+# time the tag does, so this workflow stands down for them instead of overwriting assets
+# the manifest may already hash. It only builds for tags pushed by hand.
 #
-# The build runs `cargo xtask firmware <board> dist-netcore`, the command a local release runs, so the
-# two cannot drift.
+# The build runs `cargo xtask firmware <board> dist-netcore`, the command a local
+# release runs, so the two cannot drift.
 
 #
-# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
-# as if that tag had been pushed: a run from a branch builds and uploads the artifacts but
+# Run it by hand from the Actions tab (or `gh workflow run`) to test the build as if
+# that tag had been pushed. A run from a branch builds and uploads the artifacts but
 # publishes nothing.
 
 on:

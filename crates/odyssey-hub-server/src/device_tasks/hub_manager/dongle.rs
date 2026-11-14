@@ -20,7 +20,7 @@ pub(super) struct DongleIdentity {
     protocol_version: [u16; 3],
     /// Control endpoint protocol version
     control_protocol_version: [u16; 3],
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
 }
 
 impl DongleIdentity {

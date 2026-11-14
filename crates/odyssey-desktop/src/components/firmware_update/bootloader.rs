@@ -4,7 +4,7 @@ use eros::Context as _;
 use odyssey_hub_server::firmware;
 
 use super::dfu_session::DfuSession;
-use super::downloads::ReleaseImage;
+use super::downloads::BootloaderImage;
 use super::update_state::FirmwareUpdateState;
 
 /// How long the old bootloader gets to stop enumerating after it was written.
@@ -25,29 +25,30 @@ impl DfuSession<'_> {
     /// bootloader is current changes nothing.
     pub(super) async fn ensure_bootloader(
         &self,
-        bootloader_image: Option<&ReleaseImage>,
-        requires_bootloader: u16,
-    ) -> eros::Result<()> {
+        bootloader_image: Option<&BootloaderImage>,
+        requires_bootloader: &semver::Version,
+    ) -> eros::Result<Option<semver::Version>> {
         self.enter_dfu().await?;
 
         let running = firmware::read_bootloader_release_for_device(&self.uuid, self.vid, self.pid)
+            .await
             .context("Could not read the bootloader release")?;
         let flash_bootloader = firmware::plan_bootloader(
-            running,
-            bootloader_image.map(|image| image.release),
+            running.as_ref(),
+            bootloader_image.map(|image| &image.version),
             requires_bootloader,
         )?;
         let Some(image) = bootloader_image.filter(|_| flash_bootloader) else {
             tracing::info!("Bootloader {:?} stays as it is", running);
-            return Ok(());
+            return Ok(running);
         };
 
         let alt = firmware::find_bootloader_alt_for_device(&self.uuid, self.vid, self.pid)
             .context("Bootloader cannot be updated over DFU")?;
         tracing::info!(
-            "Updating bootloader {:?} -> release {} on alt {}",
+            "Updating bootloader {:?} -> version {} on alt {}",
             running,
-            image.release,
+            image.version,
             alt
         );
         self.flash_with_progress(
@@ -78,14 +79,15 @@ impl DfuSession<'_> {
         // image is the one running. Nothing may go onto a bootloader that
         // never took the update, so read it back.
         let now = firmware::read_bootloader_release_for_device(&self.uuid, self.vid, self.pid)
+            .await
             .context("Could not read the bootloader after updating it")?;
-        if !firmware::bootloader_took_update(now, image.release) {
+        if !firmware::bootloader_took_update(now.as_ref(), &image.version) {
             eros::bail!(
-                "Bootloader reports {now:?} after updating to release {}",
-                image.release
+                "Bootloader reports {now:?} after updating to version {}",
+                image.version
             );
         }
         tracing::info!("Bootloader now reports {:?}", now);
-        Ok(())
+        Ok(now)
     }
 }

@@ -21,25 +21,25 @@ use crate::{cmd, dongle};
 const DESKTOP: &str = "odyssey-desktop";
 const RELEASE_POLL: Duration = Duration::from_secs(20);
 /// The slowest workflow a later step waits on is a firmware Nix build from a cold cache.
-const RELEASE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const RELEASE_TIMEOUT: Duration = Duration::from_mins(45);
 
 #[derive(clap::Subcommand)]
 pub(crate) enum Cmd {
     /// List every released component: its newest tag, the version in the source,
     /// what changed since, and the Desktop floor its manifest entry would get.
     Plan,
-    /// Raise the version or release counter of each component that changed since
-    /// its tag, and of each application that delivers a raised net core.
+    /// Patch-bump Cargo versions and raise net-core source counters for components
+    /// that changed since their tag, plus applications delivering a raised net core.
     ///
     /// Without names, every changed component except bootloaders. A bootloader is
     /// raised only by name: releasing one reflashes every unit's bootloader.
-    /// Cargo versions are raised by cargo-release; review minor or major changes separately.
+    /// Cargo versions are raised by cargo-release. Review minor or major changes separately.
     Bump { components: Vec<String> },
     /// Publish each component whose source is ahead of its tag: net cores and
     /// bootloaders first, then the applications that deliver them, then the rest.
     ///
     /// Needs a clean tree on a commit merged into master. Firmware entries
-    /// are added to the nightly manifest in the working tree; merge them through a PR.
+    /// are added to the nightly manifest in the working tree. Merge them through a PR.
     Publish {
         components: Vec<String>,
         /// Print what would be published and stop.
@@ -86,12 +86,12 @@ impl AtsLite {
 enum Role {
     /// Pushing the tag is the release: a workflow builds and publishes.
     Workflow,
-    /// A workflow publishes the packages; the nightly manifest entry is added here.
+    /// A workflow publishes the packages. The nightly manifest entry is added here.
     Dongle,
     /// Built and published here, with its nightly manifest entry.
     App(AtsLite),
-    /// A net core or bootloader: released by counter and delivered as `file` of
-    /// `app`'s manifest entries.
+    /// A bootloader `SemVer` release or net-core counter release delivered through
+    /// `file` in its carrier application's manifest entry.
     Part {
         app: &'static str,
         file: &'static str,
@@ -115,7 +115,7 @@ const MUX_WIRE: Wire = Wire {
 };
 
 struct Component {
-    /// Releases are tagged `<name>-v<version>`; firmware uses it as its manifest device key.
+    /// Releases are tagged `<name>-v<version>`. Firmware uses it as its manifest device key.
     name: &'static str,
     dir: &'static str,
     /// Files outside the crate and its path dependencies that shape the image.
@@ -242,7 +242,7 @@ struct Tag {
     commit: String,
 }
 
-/// Stdout of `program`, or `None` when it fails; stderr is dropped.
+/// Stdout of `program`, or `None` when it fails. Stderr is dropped.
 fn quiet(program: &str, args: &[&str]) -> Option<String> {
     let output = cmd::at(".", program)
         .args(args)
@@ -255,7 +255,7 @@ fn quiet(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Every tag on GitHub as `(name, commit)`; a local tag list can be stale.
+/// Every tag on GitHub as `(name, commit)`. A local tag list can be stale.
 fn remote_tags() -> eros::Result<Vec<(String, String)>> {
     let listing = cmd::output(cmd::at(".", "gh").args([
         "api",
@@ -274,21 +274,44 @@ fn remote_tags() -> eros::Result<Vec<(String, String)>> {
     Ok(tags)
 }
 
-fn newest_tag(tags: &[(String, String)], name: &str) -> Option<Tag> {
-    let prefix = format!("{name}-v");
+fn newest_tag(tags: &[(String, String)], component: &Component) -> eros::Result<Option<Tag>> {
+    let prefix = format!("{}-v", component.name);
+    let bootloader = matches!(
+        component.role,
+        Role::Part {
+            file: "stage2-bootloader",
+            ..
+        }
+    );
     let mut newest: Option<Tag> = None;
     for (tag, commit) in tags {
-        let Some(version) = tag.strip_prefix(&prefix).and_then(parse_version) else {
+        let Some(text) = tag.strip_prefix(&prefix) else {
             continue;
         };
-        if newest.as_ref().is_none_or(|tag| version > tag.version) {
+        let version = if bootloader {
+            if let Ok(version) = semver::Version::parse(text) {
+                vec![version.major, version.minor, version.patch]
+            } else if let Ok(counter) = text.parse::<u16>() {
+                let Some(version) = odyssey_version::legacy_bootloader_version(counter) else {
+                    eros::bail!("unknown legacy bootloader release counter {counter} in tag {tag}");
+                };
+                version.into_iter().map(u64::from).collect()
+            } else {
+                continue;
+            }
+        } else if let Some(version) = parse_version(text) {
+            version
+        } else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|old| version > old.version) {
             newest = Some(Tag {
                 version,
                 commit: commit.clone(),
             });
         }
     }
-    newest
+    Ok(newest)
 }
 
 struct Closure {
@@ -396,18 +419,20 @@ fn changed_since(commit: &str, paths: &[String]) -> eros::Result<Vec<String>> {
 }
 
 fn source_version(component: &Component) -> eros::Result<Vec<u64>> {
-    let text = if matches!(component.role, Role::Part { .. }) {
+    if let Role::Part {
+        file: "net-core", ..
+    } = component.role
+    {
         let main_rs = cmd::root().join(component.dir).join("src/main.rs");
         let source = fs::read_to_string(&main_rs)
             .with_context(|| format!("could not read {}", main_rs.display()))?;
-        firmware::counter(&source)
-            .with_context(|| format!("no release counter in {}", main_rs.display()))?
-    } else {
-        cmd::package_version(component.dir)?
-    };
-    let version = parse_version(&text)
-        .with_context(|| format!("{} has an unreadable version '{text}'", component.name))?;
-    Ok(version)
+        let text = firmware::counter(&source)
+            .with_context(|| format!("no release counter in {}", main_rs.display()))?;
+        return Ok(parse_version(&text)
+            .with_context(|| format!("{} has unreadable counter '{text}'", component.name))?);
+    }
+    Ok(parse_version(&cmd::package_version(component.dir)?)
+        .with_context(|| format!("{} has an unreadable source version", component.name))?)
 }
 
 struct Row {
@@ -487,7 +512,7 @@ fn plan() -> eros::Result<Plan> {
     for component in &COMPONENTS {
         let closure = closure(component)?;
         let source = source_version(component)?;
-        let tag = newest_tag(&tags, component.name);
+        let tag = newest_tag(&tags, component)?;
         let changed = match &tag {
             Some(tag) => changed_since(&tag.commit, &closure.paths)?,
             None => Vec::new(),
@@ -501,10 +526,24 @@ fn plan() -> eros::Result<Plan> {
             );
         };
         if let Role::Part { app, file } = component.role {
-            let carried = firmware::nightly_head(app)?
-                .and_then(|entry| entry["files"][file]["release"].as_u64())
-                .unwrap_or(0);
-            behind[rows.len()] = carried < source.first().copied().unwrap_or(0);
+            let entry = firmware::nightly_head(app)?;
+            behind[rows.len()] = if file == "stage2-bootloader" {
+                let carried = entry
+                    .and_then(|entry| {
+                        entry["files"][file]["version"]
+                            .as_str()
+                            .and_then(|text| semver::Version::parse(text).ok())
+                    })
+                    .map_or([0; 3], |version| {
+                        [version.major, version.minor, version.patch]
+                    });
+                carried.as_slice() < source.as_slice()
+            } else {
+                let carried = entry
+                    .and_then(|entry| entry["files"][file]["release"].as_u64())
+                    .unwrap_or(0);
+                carried < source.first().copied().unwrap_or(0)
+            };
         }
         let why = match (&tag, changed.as_slice()) {
             (None, _) => "never released".to_owned(),
@@ -615,6 +654,16 @@ fn print(plan: &Plan) -> eros::Result<()> {
     Ok(())
 }
 
+fn is_netcore(row: &Row) -> bool {
+    matches!(
+        row.component.role,
+        Role::Part {
+            file: "net-core",
+            ..
+        }
+    )
+}
+
 fn bump(names: &[String]) -> eros::Result<()> {
     let plan = plan()?;
     let named = Plan::named(names)?;
@@ -629,10 +678,7 @@ fn bump(names: &[String]) -> eros::Result<()> {
         println!("Nothing to bump");
         return Ok(());
     }
-    if targets
-        .iter()
-        .any(|row| !matches!(row.component.role, Role::Part { .. }))
-    {
+    if targets.iter().any(|row| !is_netcore(row)) {
         cmd::output(cmd::at(".", "cargo").args(["release", "--version"]))
             .context("cargo-release is required; enter the default Nix development shell")?;
     }
@@ -653,7 +699,7 @@ fn bump(names: &[String]) -> eros::Result<()> {
 
 fn raise(row: &Row) -> eros::Result<Vec<u64>> {
     let dir = cmd::root().join(row.component.dir);
-    if !matches!(row.component.role, Role::Part { .. }) {
+    if !is_netcore(row) {
         cmd::run(cmd::at(".", "cargo").args([
             "release",
             "version",
@@ -672,16 +718,7 @@ fn raise(row: &Row) -> eros::Result<Vec<u64>> {
             .context("cargo-release produced an unsupported package version")?);
     }
     let mut next = row.source.clone();
-    let maximum = match row.component.role {
-        Role::Part {
-            file: "net-core", ..
-        } => u64::from(u16::MAX),
-        Role::Part {
-            file: "stage2-bootloader",
-            ..
-        } => 0x0FFF,
-        _ => u64::MAX,
-    };
+    let maximum = u64::from(u16::MAX);
     let last = next
         .last_mut()
         .with_context(|| format!("{} has no version components", row.component.name))?;
@@ -707,7 +744,7 @@ fn edit(path: &Path, change: impl FnOnce(&str) -> Option<String>) -> eros::Resul
 }
 
 /// `source` with its release counter set to `release`. Only the layout rustfmt
-/// gives the macro is rewritten; any other is refused rather than guessed at.
+/// gives the macro is rewritten. Any other layout is refused, no guessing.
 fn raise_counter(source: &str, release: &str) -> Option<String> {
     let old = firmware::counter(source)?;
     let declared = source.rfind("macro_rules! release")?;
@@ -821,18 +858,26 @@ fn publish_app(
         );
     }
     // A floor is a compatibility claim nothing here can derive, so it carries
-    // over from the previous entry; raise one with `gen-release` by hand.
-    let floor = |key: &str| {
-        previous
-            .as_ref()
-            .and_then(|entry| entry[key].as_u64())
-            .and_then(|floor| u32::try_from(floor).ok())
-            .unwrap_or(0)
-    };
+    // over from the previous entry. Raise one with `gen-release` by hand.
+    let bootloader_floor = previous
+        .as_ref()
+        .and_then(|entry| entry["requires_bootloader"].as_str())
+        .unwrap_or("0.0.0")
+        .parse::<semver::Version>()
+        .context("nightly entry has invalid requires_bootloader SemVer")?;
+    let bootloader_floor = firmware::with_ats_ota_bootloader_floor(
+        matches!(board, AtsLite::Lite1 | AtsLite::Legacy),
+        bootloader_floor,
+    );
+    let netcore_floor = previous
+        .as_ref()
+        .and_then(|entry| entry["requires_netcore"].as_u64())
+        .and_then(|floor| u32::try_from(floor).ok())
+        .unwrap_or(0);
     firmware::run(board.cmd(Task::Build))?;
     firmware::run(board.cmd(Task::GenRelease {
-        requires_bootloader: floor("requires_bootloader"),
-        requires_netcore: floor("requires_netcore"),
+        requires_bootloader: bootloader_floor,
+        requires_netcore: netcore_floor,
         min_desktop,
     }))?;
     let title = format!("{device} v{version}");
@@ -913,6 +958,7 @@ fn wait_for_release(tag: &str) -> eros::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
     use serde_json::json;
 
     use super::*;
@@ -929,11 +975,41 @@ mod tests {
         .iter()
         .map(|tag| ((*tag).to_owned(), format!("commit-of-{tag}")))
         .collect();
-        let newest = newest_tag(&tags, "atslite1").unwrap();
+        let app = COMPONENTS
+            .iter()
+            .find(|component| component.name == "atslite1")
+            .unwrap();
+        let newest = newest_tag(&tags, app).unwrap().unwrap();
         assert_eq!(newest.version, [0, 1, 22]);
         assert_eq!(newest.commit, "commit-of-atslite1-v0.1.22");
-        assert_eq!(newest_tag(&tags, "atslite1-netcore").unwrap().version, [2]);
-        assert!(newest_tag(&tags, "dongle").is_none());
+        let netcore = COMPONENTS
+            .iter()
+            .find(|component| component.name == "atslite1-netcore")
+            .unwrap();
+        assert_eq!(newest_tag(&tags, netcore).unwrap().unwrap().version, [2]);
+        let dongle = COMPONENTS
+            .iter()
+            .find(|component| component.name == "dongle")
+            .unwrap();
+        assert!(newest_tag(&tags, dongle).unwrap().is_none());
+    }
+
+    #[test]
+    fn historical_bootloader_tags_normalize_to_reserved_semver() {
+        let component = COMPONENTS
+            .iter()
+            .find(|component| component.name == "atslite1-bootloader")
+            .unwrap();
+        let tags = vec![
+            ("atslite1-bootloader-v5".to_owned(), "old".to_owned()),
+            ("atslite1-bootloader-v0.2.1".to_owned(), "new".to_owned()),
+        ];
+        assert_eq!(
+            newest_tag(&tags, component).unwrap().unwrap().version,
+            [0, 2, 1]
+        );
+        let tags = vec![("atslite1-bootloader-v6".to_owned(), "unknown".to_owned())];
+        assert!(newest_tag(&tags, component).is_err());
     }
 
     #[test]
@@ -1001,7 +1077,10 @@ mod tests {
                 "firmware/app/Cargo.lock"
             ]
         );
-        assert!(local_closure(&metadata, Path::new("/repo"), "firmware/missing").is_err());
+        assert!(
+            local_closure(&metadata, Path::new("/repo"), "firmware/missing").is_err(),
+            "missing package is rejected"
+        );
     }
 
     #[test]

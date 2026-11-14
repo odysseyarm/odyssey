@@ -1,6 +1,9 @@
 /// A bounded list. A newtype because pyo3 cannot convert `heapless::Vec`.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(odyssey_protocol_macros::PostcardSchema))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 #[cfg_attr(
     feature = "serde",
@@ -9,8 +12,14 @@
         deserialize = "T: serde::Deserialize<'de>"
     ))
 )]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct List<T, const N: usize>(pub heapless::Vec<T, N>);
+
+impl<T, const N: usize> Default for List<T, N> {
+    fn default() -> Self {
+        Self(heapless::Vec::new())
+    }
+}
 
 impl<T, const N: usize> core::ops::Deref for List<T, N> {
     type Target = [T];

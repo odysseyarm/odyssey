@@ -1,19 +1,18 @@
 name: Bootloader Release
 
-# Build and publish a stage2 bootloader when a <device>-bootloader-vN tag is
-# pushed, e.g. atslite1-bootloader-v1. N is the bootloader's release counter, the
-# literal in its src/main.rs, and the tag has to agree with it.
+# Build and publish a stage2 bootloader when a <device>-bootloader-v<semver> tag
+# is pushed. The full tag version must match bootloader Cargo.toml version.
 #
-# Releases made with `cargo xtask firmware <board> release-bootloader` already exist by the time the tag
-# does, so this workflow stands down for them rather than overwrite assets the
-# manifest may already hash. It only builds for tags pushed by hand.
+# Releases made with `cargo xtask firmware <board> release-bootloader` already exist by
+# the time the tag does, so this workflow stands down instead of overwriting assets the
+# manifest may already hash.
 #
-# The build runs `cargo xtask firmware <board> dist-bootloader`, the command a local release runs, so the
-# two cannot drift.
+# The build runs `cargo xtask firmware <board> dist-bootloader`, the command a local
+# release runs, so the two cannot drift.
 
 #
-# Run it by hand from the Actions tab (or `gh workflow run`) to test the build
-# as if that tag had been pushed: a run from a branch builds and uploads the artifacts but
+# Run it by hand from the Actions tab (or `gh workflow run`) to test the build as if
+# that tag had been pushed. A run from a branch builds and uploads the artifacts but
 # publishes nothing.
 
 on:
@@ -73,16 +72,15 @@ jobs:
             marker-control-board) board=marker-control-board ;;
             *) echo "Unknown device '$device' in tag $RELEASE_TAG" >&2; exit 1 ;;
           esac
-          case "$release" in
-            ''|*[!0-9]*) echo "Release '$release' is not a number" >&2; exit 1 ;;
-          esac
           crate_dir="firmware/$board-bootloader"
-          xtask=$(nix build --no-link --print-out-paths .#xtask)/bin/xtask
-          source_release=$("$xtask" firmware release-counter "$crate_dir/src/main.rs")
-          if [ "$release" != "$source_release" ]; then
-            echo "Tag release ($release) does not match $crate_dir/src/main.rs ($source_release)" >&2
+          source_version=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' "$crate_dir/Cargo.toml")
+          if [ "$release" != "$source_version" ]; then
+            echo "Tag version ($release) does not match $crate_dir Cargo.toml ($source_version)" >&2
             exit 1
           fi
+          case "$release" in
+            0.0.[1-5]) echo "Version $release is reserved for a historical counter release" >&2; exit 1 ;;
+          esac
           {
             echo "device=$device"
             echo "release=$release"
@@ -90,13 +88,6 @@ jobs:
             echo "board_dir=firmware/$board"
             echo "crate_dir=$crate_dir"
           } >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/push-cache
-        if: github.event_name != 'pull_request' && steps.exists.outputs.skip != 'true'
-        with:
-          public-builds: '.#xtask'
-          signing-key: ${{ secrets.NIX_SIGNING_KEY }}
-          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
   build:
     name: Build bootloader
@@ -152,13 +143,12 @@ jobs:
             echo "Release $GITHUB_REF_NAME appeared during the build; leaving it alone."
             exit 0
           fi
-          bcd=$(printf '0x%04X' $((0xF000 | RELEASE)))
           stem=stage2-bootloader
-          notes="Stage2 bootloader release $RELEASE (bcdDevice $bcd). Installed by desktop updater when firmware release names this release. Do not delete."
+          notes="Stage2 bootloader release $RELEASE. Installed by desktop updater when firmware release names this release. Do not delete."
           case "$GITHUB_REF_NAME" in
             marker-control-board-bootloader-v*)
               stem=bootloader
-              notes="Factory USB DFU bootloader release $RELEASE (bcdDevice $bcd). SWD installation only; application DFU cannot update bootloader."
+              notes="Factory USB DFU bootloader release $RELEASE. SWD installation only; application DFU cannot update bootloader."
               ;;
           esac
           gh release create "$GITHUB_REF_NAME" \

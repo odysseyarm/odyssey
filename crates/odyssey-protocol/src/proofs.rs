@@ -30,6 +30,76 @@ fn marker_writes_follow_frozen_gatt_layout() {
     assert_eq!(marker_control::parse_pairing_state(data), pairing);
 }
 
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(10)]
+fn ota_decode_never_accepts_noncanonical_frames_or_out_of_bounds_data() {
+    let bytes: [u8; 100] = kani::any();
+    let length: usize = kani::any();
+    kani::assume(length <= bytes.len());
+    let result = crate::ota::Request::decode(&bytes[..length]);
+    if let Ok(crate::ota::Request::Data { data, .. }) = result {
+        assert!(!data.is_empty());
+        assert!(length <= crate::ota::MAX_FRAME);
+        assert_eq!(data.len() + 5, length);
+    }
+    if let Ok(crate::ota::Request::Begin { .. }) = result {
+        assert_eq!(length, 10);
+    }
+    if let Ok(crate::ota::Request::Query | crate::ota::Request::Commit | crate::ota::Request::Abort) = result {
+        assert_eq!(length, 1);
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(4)]
+fn ota_status_keeps_frozen_flags_and_little_endian_fields() {
+    let offset: u32 = kani::any();
+    let version: [u32; 3] = kani::any();
+    let status = crate::ota::Status {
+        error: crate::ota::Code::Ok,
+        app_slot: 2,
+        supported: 3,
+        staged: 2,
+        receiving: Some(crate::ota::Image::Application),
+        offset,
+        firmware_version: version,
+        netcore_release: 0xabcd,
+    };
+    let bytes = status.encode();
+    assert_eq!(bytes[0], crate::ota::PROTOCOL_VERSION);
+    assert_eq!(bytes[1], 0);
+    assert_eq!(bytes[2], 2);
+    assert_eq!(bytes[3], 0b01_1011);
+    assert_eq!(bytes[4], offset as u8);
+    assert_eq!(bytes[5], (offset >> 8) as u8);
+    assert_eq!(bytes[6], (offset >> 16) as u8);
+    assert_eq!(bytes[7], (offset >> 24) as u8);
+    for index in 0..3 {
+        let start = 8 + index * 4;
+        assert_eq!(bytes[start], version[index] as u8);
+        assert_eq!(bytes[start + 1], (version[index] >> 8) as u8);
+        assert_eq!(bytes[start + 2], (version[index] >> 16) as u8);
+        assert_eq!(bytes[start + 3], (version[index] >> 24) as u8);
+    }
+    assert_eq!(bytes[20], 0xcd);
+    assert_eq!(bytes[21], 0xab);
+    let decoded = crate::ota::Status::decode(&bytes);
+    assert!(decoded.is_ok());
+    let decoded = decoded.unwrap_or(status);
+    assert_eq!(decoded.error, status.error);
+    assert_eq!(decoded.app_slot, status.app_slot);
+    assert_eq!(decoded.supported, status.supported);
+    assert_eq!(decoded.staged, status.staged);
+    assert_eq!(decoded.receiving, status.receiving);
+    assert_eq!(decoded.offset, offset);
+    for index in 0..3 {
+        assert_eq!(decoded.firmware_version[index], version[index]);
+    }
+    assert_eq!(decoded.netcore_release, status.netcore_release);
+}
+
 #[cfg(feature = "minicbor")]
 #[kani::proof]
 #[kani::unwind(32)]
@@ -38,7 +108,7 @@ fn device_version_cbor_keeps_frozen_field_order_and_unsigned_encoding() {
     let protocol_semver: [u16; 3] = kani::any();
     let version = crate::Version {
         protocol_semver,
-        firmware_semver,
+        firmware_semver: firmware_semver.map(u32::from),
     };
     let mut actual = [0u8; 21];
     let mut encoder = minicbor::Encoder::new(&mut actual[..]);
@@ -87,7 +157,7 @@ fn device_version_decodes_frozen_unsigned_16_bit_fields() {
         );
         assert_eq!(
             decoded.firmware_semver[field],
-            u16::from(raw[6 + field * 2]) * 256 + u16::from(raw[7 + field * 2])
+            u32::from(raw[6 + field * 2]) * 256 + u32::from(raw[7 + field * 2])
         );
     }
 }

@@ -16,8 +16,23 @@ fn main() {
     let app = &flash["app_flash"];
     let settings = &flash["settings"];
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets output directory"));
-    fs::write(out.join("dongle_layout.rs"), format!(
-        "pub(super) const APP_ORIGIN: u32 = {};\npub(super) const APPLICATION_SIZE: u32 = {};\npub(super) const SETTINGS_ORIGIN: u32 = {};\npub(super) const FLASH_END: u32 = {};\n",
-        app.origin(), app.length(), settings.origin(), flash.end(),
-    )).expect("write generated dongle layout");
+    let layout = |name: &str, value: u64| {
+        let digits = value.to_string();
+        let mut grouped = String::new();
+        for (index, digit) in digits.chars().enumerate() {
+            if index > 0 && (digits.len() - index) % 3 == 0 {
+                grouped.push('_');
+            }
+            grouped.push(digit);
+        }
+        format!("pub(super) const {name}: u32 = {grouped};\n")
+    };
+    let layout_source = [
+        layout("APP_ORIGIN", app.origin()),
+        layout("APPLICATION_SIZE", app.length()),
+        layout("SETTINGS_ORIGIN", settings.origin()),
+        layout("FLASH_END", flash.end()),
+    ]
+    .concat();
+    fs::write(out.join("dongle_layout.rs"), layout_source).expect("write generated dongle layout");
 }

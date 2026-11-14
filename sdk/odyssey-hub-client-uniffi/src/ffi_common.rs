@@ -1,6 +1,7 @@
 use odyssey_hub_common as common;
 use odyssey_usb::packets::vm::VendorData;
 
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
 #[macro_export]
 macro_rules! impl_from_simple {
     ($from:path => $to:ty, $($field:ident),+) => {
@@ -16,176 +17,284 @@ macro_rules! impl_from_simple {
     };
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct Device {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub uuid: Vec<u8>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub transport: common::device::Transport,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub capabilities: u8,
-    pub firmware_version: Option<Vec<u16>>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+    pub firmware_version: Option<Vec<u32>>,
+    /// Since: UniFFI SDK (unreleased).
+    pub firmware_version_string: Option<String>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub events_transport: common::device::EventsTransport,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub events_connected: bool,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub product_id: Option<u16>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub name: String,
 }
 
-#[derive(uniffi::Enum, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Enum, Clone, Debug)]
 pub enum Event {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     AccessoryEvent(AccessoryEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     DeviceEvent(DeviceEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     DonglePairingResult(DonglePairingResult),
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct DonglePairingResult {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub dongle_id: String,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub success: bool,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub paired_address: Vec<u8>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub paired_name: String,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub error: String,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct DeviceEvent {
     device: Device,
     kind: DeviceEventKind,
 }
 
-#[derive(uniffi::Enum, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Enum, Clone, Debug)]
 pub enum DeviceEventKind {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     AccelerometerEvent(AccelerometerEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     TrackingEvent(TrackingEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     ImpactEvent(ImpactEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     ZeroResult(bool),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     SaveZeroResult(bool),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     PacketEvent(PacketEvent),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     CapabilitiesChanged,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     PairingResult(PairingResult),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     BatteryEvent(BatteryEvent),
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct PairingResult {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub success: bool,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub paired_address: Vec<u8>,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub paired_name: String,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub error: String,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct BatteryEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub percent: u8,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub charging: bool,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccessoryEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub info: AccessoryInfo,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub kind: AccessoryEventKind,
 }
 
-#[derive(uniffi::Enum, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Enum, Clone, Debug)]
 pub enum AccessoryEventKind {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     Connect(Option<u64>),
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     Disconnect,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     AssignmentChange(Option<u64>),
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccelerometerEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub timestamp: u32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub accel: crate::funny::Vector3f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub gyro: crate::funny::Vector3f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub euler_angles: crate::funny::Vector3f32,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct TrackingEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub timestamp: u32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub aimpoint: crate::funny::Vector2f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub pose: Pose,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub distance: f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub screen_id: u32,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct ImpactEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub timestamp: u32,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct PacketEvent {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub ty: u8,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub data: PacketData,
 }
 
-#[derive(uniffi::Enum, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Enum, Clone, Debug)]
 pub enum PacketData {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     Unsupported,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     VendorEvent(VendorEventPacketData),
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct VendorEventPacketData {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub len: u8,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub data: Vec<u8>,
 }
 
-#[derive(uniffi::Record, Clone, Default)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug, Default)]
 pub struct Pose {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub rotation: crate::funny::Matrix3f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub translation: crate::funny::Matrix3x1f32,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct ScreenInfo {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub id: u8,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub tl: crate::funny::Vector2f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub tr: crate::funny::Vector2f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub bl: crate::funny::Vector2f32,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub br: crate::funny::Vector2f32,
 }
 
-#[derive(uniffi::Enum, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Enum, Clone, Debug)]
 pub enum AccessoryType {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     DryFireMag,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     MantisX,
+    /// Since: UniFFI SDK (unreleased).
     MarkerControlBoard,
 }
 
+/// Since: UniFFI SDK (unreleased).
 #[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
 pub enum AccessoryRadio {
-    Native { id: String },
-    Dongle { id: String },
+    /// Since: UniFFI SDK (unreleased).
+    Native {
+        #[doc = "Since: UniFFI SDK (unreleased)."]
+        id: String,
+    },
+    /// Since: UniFFI SDK (unreleased).
+    Dongle {
+        #[doc = "Since: UniFFI SDK (unreleased)."]
+        id: String,
+    },
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccessoryInfo {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub name: String,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub ty: AccessoryType,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub assignment: Option<u64>,
     /// Zero-based screen index; `None` leaves a marker board unassigned.
+    ///
+    /// Since: UniFFI SDK (unreleased).
     #[uniffi(default = None)]
     pub screen_id: Option<u8>,
     /// `None` selects the system Bluetooth radio.
+    ///
+    /// Since: UniFFI SDK (unreleased).
     #[uniffi(default = None)]
     pub radio: Option<AccessoryRadio>,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccessoryStatus {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub info: AccessoryInfo,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub connected: bool,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccessoryMapEntry {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub key: u64,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub status: AccessoryStatus,
 }
 
-#[derive(uniffi::Record, Clone)]
+/// Since: UniFFI SDK 0.2.1 (earliest tagged release).
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct AccessoryInfoMapEntry {
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub key: u64,
+    /// Since: UniFFI SDK 0.2.1 (earliest tagged release).
     pub info: AccessoryInfo,
 }
 
@@ -206,10 +315,10 @@ impl From<common::accessory::AccessoryType> for AccessoryType {
 
 impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
     fn from(info: common::accessory::AccessoryInfo) -> Self {
-        AccessoryInfo {
+        Self {
             name: info.name,
             ty: info.ty.into(),
-            assignment: info.assignment.map(|nz| nz.get()),
+            assignment: info.assignment.map(std::num::NonZero::get),
             screen_id: info.screen_id,
             radio: match info.radio {
                 common::accessory::AccessoryRadio::System => None,
@@ -227,10 +336,10 @@ impl From<common::accessory::AccessoryInfo> for AccessoryInfo {
 impl From<AccessoryType> for common::accessory::AccessoryType {
     fn from(accessory_type: AccessoryType) -> Self {
         match accessory_type {
-            AccessoryType::DryFireMag => common::accessory::AccessoryType::DryFireMag,
-            AccessoryType::MantisX => common::accessory::AccessoryType::MantisX,
+            AccessoryType::DryFireMag => Self::DryFireMag,
+            AccessoryType::MantisX => Self::MantisX,
             AccessoryType::MarkerControlBoard => {
-                common::accessory::AccessoryType::MarkerControlBoard
+                Self::MarkerControlBoard
             }
         }
     }
@@ -277,7 +386,7 @@ impl TryFrom<AccessoryInfo> for common::accessory::AccessoryInfo {
 
 impl From<common::ScreenInfo> for ScreenInfo {
     fn from(screen_info: common::ScreenInfo) -> Self {
-        ScreenInfo {
+        Self {
             id: screen_info.id,
             tl: screen_info.bounds[0].into(),
             tr: screen_info.bounds[1].into(),
@@ -322,6 +431,10 @@ impl From<common::device::Device> for Device {
             } else {
                 Some(device.firmware_version.to_vec())
             },
+            firmware_version_string: device
+                .firmware_identity
+                .known()
+                .map(|version| version.to_string()),
             events_transport: device.events_transport,
             events_connected: device.events_connected,
             product_id: if device.product_id == 0 {
@@ -341,7 +454,7 @@ impl TryFrom<Device> for common::device::Device {
         let uuid = device
             .uuid
             .try_into()
-            .map_err(|_| Self::Error::InvalidArgument {
+            .map_err(|_length| Self::Error::InvalidArgument {
                 message: "device UUID must contain exactly 6 bytes".to_string(),
             })?;
         let firmware_version = device
@@ -349,7 +462,7 @@ impl TryFrom<Device> for common::device::Device {
             .map(|version| {
                 version
                     .try_into()
-                    .map_err(|_| Self::Error::InvalidArgument {
+                    .map_err(|_length| Self::Error::InvalidArgument {
                         message: "firmware version must contain exactly 3 components".to_string(),
                     })
             })
@@ -360,27 +473,33 @@ impl TryFrom<Device> for common::device::Device {
             transport: device.transport,
             capabilities: common::device::DeviceCapabilities::new(device.capabilities),
             firmware_version,
+            firmware_identity: device
+                .firmware_version_string
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .map_err(|_parse_error| Self::Error::InvalidArgument {
+                    message: "firmware version is not an Odyssey release".to_owned(),
+                })?
+                .unwrap_or_default(),
             events_transport: device.events_transport,
             events_connected: device.events_connected,
             product_id: device.product_id.unwrap_or(0),
             name: Self::name_bytes(&device.name),
-            // The bindings do not carry the net core release; the server resolves a
-            // device by uuid, so a reconstructed device does not need it.
             netcore_release: 0,
         })
     }
 }
-
 impl From<odyssey_usb::packets::vm::PacketData> for PacketData {
     fn from(packet_data: odyssey_usb::packets::vm::PacketData) -> Self {
         match packet_data {
             odyssey_usb::packets::vm::PacketData::Vendor(_, VendorData { len, data }) => {
-                PacketData::VendorEvent(VendorEventPacketData {
+                Self::VendorEvent(VendorEventPacketData {
                     len,
                     data: data.to_vec(),
                 })
             }
-            _ => PacketData::Unsupported,
+            _ => Self::Unsupported,
         }
     }
 }
@@ -389,7 +508,7 @@ impl From<common::events::Event> for Event {
     fn from(event: common::events::Event) -> Self {
         match event {
             common::events::Event::DeviceEvent(common::events::DeviceEvent(d, evt)) => {
-                Event::DeviceEvent(DeviceEvent {
+                Self::DeviceEvent(DeviceEvent {
                     device: d.into(),
                     kind: match evt {
                         common::events::DeviceEventKind::AccelerometerEvent(e) => {
@@ -448,7 +567,7 @@ impl From<common::events::Event> for Event {
                 paired_address,
                 paired_name,
                 error,
-            } => Event::DonglePairingResult(DonglePairingResult {
+            } => Self::DonglePairingResult(DonglePairingResult {
                 dongle_id,
                 success,
                 paired_address: paired_address.to_vec(),
@@ -470,6 +589,7 @@ mod tests {
             transport: common::device::Transport::Usb,
             capabilities: 0,
             firmware_version: Some(vec![1, 2, 3]),
+            firmware_version_string: None,
             events_transport: common::device::EventsTransport::Wired,
             events_connected: false,
             product_id: None,

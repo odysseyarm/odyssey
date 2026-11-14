@@ -1,54 +1,51 @@
 use std::env;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Usage: cs_bindgen [library path] [output dir]
-    let lib_path = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        if cfg!(debug_assertions) {
-            PathBuf::from("target/debug/ohc_uniffi.dll")
-        } else {
-            PathBuf::from("target/release/ohc_uniffi.dll")
-        }
-    });
+    let lib_path = env::args().nth(1).map_or_else(
+        || {
+            if cfg!(debug_assertions) {
+                PathBuf::from("target/debug/ohc_uniffi.dll")
+            } else {
+                PathBuf::from("target/release/ohc_uniffi.dll")
+            }
+        },
+        PathBuf::from,
+    );
 
     // Output dir must be the one the csproj compiles (OdysseyHubClient/generated)
     let output_dir = env::args()
         .nth(2)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("generated"));
+        .map_or_else(|| PathBuf::from("generated"), PathBuf::from);
     let output_dir: &Path = &output_dir;
 
-    fs::create_dir_all(output_dir).unwrap();
+    fs::create_dir_all(output_dir)?;
 
     let status = Command::new("uniffi-bindgen-cs")
         .args([
             "--no-format",
             "--out-dir",
-            output_dir.to_str().unwrap(),
+            output_dir.to_str().ok_or("output directory path is not UTF-8")?,
             "--library",
-            lib_path.to_str().unwrap(),
+            lib_path.to_str().ok_or("library path is not UTF-8")?,
         ])
-        .status()
-        .expect("Failed to run uniffi-bindgen-cs");
+        .status()?;
 
-    if !status.success() {
-        panic!(
-            "uniffi-bindgen-cs failed with exit code: {:?}",
-            status.code()
-        );
-    }
+    assert!(
+        status.success(),
+        "uniffi-bindgen-cs failed with exit code: {:?}",
+        status.code()
+    );
 
     let target_file = output_dir.join("ohc_uniffi.cs");
 
     if target_file.exists() {
         let mut contents = String::new();
-        File::open(&target_file)
-            .unwrap()
-            .read_to_string(&mut contents)
-            .unwrap();
+        File::open(&target_file)?.read_to_string(&mut contents)?;
 
         let mut patched = contents
             .replace(
@@ -112,8 +109,8 @@ fn main() {
             );
         }
 
-        // Rename the local BigEndianStream so the alias above resolves to the common one; two
-        // distinct BigEndianStream types do not match across the two binding files.
+        // Rename the local BigEndianStream so the alias above resolves to the common one.
+        // Two distinct BigEndianStream types would not match across the two binding files.
         patched = patched.replace(
             "static class BigEndianStreamExtensions",
             "static class LocalBigEndianStreamExtensions",
@@ -124,31 +121,23 @@ fn main() {
             "public LocalBigEndianStream(Stream stream)",
         );
 
-        File::create(&target_file)
-            .unwrap()
-            .write_all(patched.as_bytes())
-            .unwrap();
+        File::create(&target_file)?.write_all(patched.as_bytes())?;
     } else {
-        panic!("Generated C# file not found: {:?}", target_file);
+        return Err(format!("Generated C# file not found: {}", target_file.display()).into());
     }
 
-    // uniffi-bindgen-cs emits Transport and EventsTransport as internal; the SDK exposes them.
+    // uniffi-bindgen-cs emits Transport and EventsTransport as internal, but the SDK exposes them.
     let common_file = output_dir.join("odyssey_hub_common.cs");
     if common_file.exists() {
         let mut contents = String::new();
-        File::open(&common_file)
-            .unwrap()
-            .read_to_string(&mut contents)
-            .unwrap();
+        File::open(&common_file)?.read_to_string(&mut contents)?;
         let patched = contents
             .replace("internal enum Transport", "public enum Transport")
             .replace(
                 "internal enum EventsTransport",
                 "public enum EventsTransport",
             );
-        File::create(&common_file)
-            .unwrap()
-            .write_all(patched.as_bytes())
-            .unwrap();
+        File::create(&common_file)?.write_all(patched.as_bytes())?;
     }
+    Ok(())
 }

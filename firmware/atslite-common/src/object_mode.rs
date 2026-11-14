@@ -1,11 +1,12 @@
 //! Tracking and reversible USB image capture for the main firmware.
-//! Reports use USB while configured, otherwise BLE; image capture is USB-only and
+//! Reports use USB while configured, otherwise BLE. Image capture is USB-only and
 //! retains Image mode for the session without acquiring object snapshots.
 
 use core::future::Future;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use donger_common::usb_device;
+/// Since: Odyssey Desktop 0.7.0.
 pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transfer};
 use embassy_futures::join::{join, join5};
 use embassy_futures::select::{Either, Either3, select, select3};
@@ -50,9 +51,9 @@ const IMAGE_WIDTH: u16 = 320;
 const IMAGE_HEIGHT: u16 = 240;
 const IMAGE_PIXELS: usize = IMAGE_WIDTH as usize * IMAGE_HEIGHT as usize;
 const IMAGE_QUEUE: usize = 2;
-// Preserve live (not merely flashed) settings, including ROI and sensor-size selection.
-// The meaning of SENSOR_SIZE_SEL (0x12) is not documented in this repository. Preserve it
-// verbatim rather than guessing a 320×240 selector; capture follows the existing driver API.
+// Keep the live settings, flashed or not, including ROI and sensor-size selection.
+// The meaning of SENSOR_SIZE_SEL (0x12) is not documented in this repository, so keep it
+// verbatim instead of guessing a 320×240 selector. Capture follows the existing driver API.
 const IMAGE_SAVED_REGISTERS: [u8; 18] = [
     0x67, 0x68, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x23, 0x24, 0x77, 0x78, 0x13, 0x12, 0x72, 0x73, 0x74,
     0x75, 0x76,
@@ -96,6 +97,7 @@ impl ImageRequest {
 struct ImageState {
     ownership: ImageOwnership,
     abort: Signal<NoopRawMutex, ()>,
+    restore_complete: Signal<NoopRawMutex, ()>,
 }
 
 impl ImageState {
@@ -103,6 +105,7 @@ impl ImageState {
         Self {
             ownership: ImageOwnership::new(),
             abort: Signal::new(),
+            restore_complete: Signal::new(),
         }
     }
 }
@@ -178,55 +181,95 @@ impl StreamInfos {
 }
 
 /// PAG7665QN vision sensor as seen by object mode.
-#[allow(async_fn_in_trait)]
+///
+/// Since: Odyssey Desktop 0.7.0.
+#[expect(
+    async_fn_in_trait,
+    reason = "Sensor and interrupt implementations borrow hardware across async operations"
+)]
 pub trait PagSensor {
+    /// Since: Odyssey Desktop 0.7.0.
     type Error: defmt::Format;
 
+    /// Since: Odyssey Desktop 0.7.0.
     async fn read_register(&mut self, bank: u8, address: u8) -> Result<u8, Self::Error>;
 
+    /// Since: Odyssey Desktop 0.7.0.
     async fn write_register(&mut self, bank: u8, address: u8, data: u8) -> Result<(), Self::Error>;
 
     /// Puts the sensor in object mode and reads the detected objects into `objs`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn get_objects(
         &mut self,
         objs: &mut [pag7665qn::types::Object; 16],
     ) -> Result<Option<u8>, Self::Error>;
 
+    /// Since: Odyssey Desktop 0.7.0.
     async fn switch_to_idle(&mut self) -> Result<(), Self::Error>;
 
-    /// Enters Image with ROI temporarily disabled; `restore_object` reinstates the live ROI.
+    /// Enters Image with ROI temporarily disabled. `restore_object` reinstates the live ROI.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn switch_to_image(&mut self) -> Result<(), Self::Error>;
 
-    /// Polls one full-resolution native-orientation frame; never waits for a future frame.
+    /// Polls one full-resolution native-orientation frame. Never waits for a future frame.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn try_get_image(&mut self, image: &mut [u8; IMAGE_PIXELS]) -> Result<bool, Self::Error>;
 
     /// Releases a report-buffer lock and restores Object even after a failed transition.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn restore_object(&mut self) -> Result<(), Self::Error>;
 }
 
-#[allow(async_fn_in_trait)]
+/// Since: Odyssey Desktop 0.7.0.
+#[expect(
+    async_fn_in_trait,
+    reason = "Sensor and interrupt implementations borrow hardware across async operations"
+)]
 pub trait ImuSensor {
+    /// Since: Odyssey Desktop 0.7.0.
     type Error: defmt::Format;
 
     /// Reads one accel/gyro sample with its timestamp.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn read_data(&mut self) -> Result<ImuData, Self::Error>;
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ImuData {
+    /// Since: Odyssey Desktop 0.7.0.
     pub accel: [i32; 3],
+    /// Since: Odyssey Desktop 0.7.0.
     pub gyro: [i32; 3],
+    /// Since: Odyssey Desktop 0.7.0.
     pub timestamp_micros: u32,
 }
 
-#[allow(async_fn_in_trait)]
+/// Since: Odyssey Desktop 0.7.0.
+#[expect(
+    async_fn_in_trait,
+    reason = "Sensor and interrupt implementations borrow hardware across async operations"
+)]
 pub trait ImuInterrupt {
     /// Waits for the IMU data-ready interrupt.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn wait(&mut self);
 }
 
-#[allow(async_fn_in_trait)]
+/// Since: Odyssey Desktop 0.7.0.
+#[expect(
+    async_fn_in_trait,
+    reason = "Sensor and interrupt implementations borrow hardware across async operations"
+)]
 pub trait PagInterrupt {
     /// Waits for the PAG data-ready interrupt.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     async fn wait(&mut self);
 }
 
@@ -260,6 +303,8 @@ async fn read_pag_settings<P: PagSensor>(pag: &mut P) -> Result<PagSettings, P::
 }
 
 /// Hardware handed to [`run`]. Settings are borrowed synchronously through `with_settings`.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ObjectModeContext<'a, P, I, PI, II>
 where
     P: PagSensor,
@@ -267,24 +312,41 @@ where
     PI: PagInterrupt,
     II: ImuInterrupt,
 {
+    /// Since: Odyssey Desktop 0.7.0.
     pub pag: &'a AsyncMutex<NoopRawMutex, P>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub pag_int: PI,
+    /// Since: Odyssey Desktop 0.7.0.
     pub imu: I,
+    /// Since: Odyssey Desktop 0.7.0.
     pub imu_int: II,
+    /// Since: Odyssey Desktop 0.7.0.
     pub device_id: [u8; 6],
+    /// Since: Odyssey Desktop 0.7.0.
     pub product_id: u16,
     /// `[major, minor, patch]`
-    pub firmware_version: [u16; 3],
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
+    pub firmware_version: [u32; 3],
     /// USB bulk IN: reports and responses to the host.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_snd: Endpoint<'static, In>,
     /// USB bulk OUT: commands from the host.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_rcv: Endpoint<'static, Out>,
+    /// Since: Odyssey Desktop 0.7.0.
     pub usb_configured: UsbConfigHandle,
+    /// Since: Unreleased.
+    pub ota: crate::ota::OtaHandle,
 }
 
 /// Runs object mode forever: the USB reader and the receive, IMU, marker, battery and send
 /// loops run concurrently. Which streams are enabled is one set for the whole device, so a
 /// stream enabled over either transport keeps flowing when reports move to the other.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn run<P, I, PI, II>(mut ctx: ObjectModeContext<'_, P, I, PI, II>)
 where
     P: PagSensor,
@@ -317,6 +379,7 @@ where
         ctx.device_id,
         ctx.product_id,
         ctx.firmware_version,
+        ctx.ota,
         usb_requests.receiver(),
         usb_replies.sender(),
         image_requests.sender(),
@@ -419,7 +482,8 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
     l2cap: &L2capChannels,
     device_id: [u8; 6],
     product_id: u16,
-    firmware_version: [u16; 3],
+    firmware_version: [u32; 3],
+    ota: crate::ota::OtaHandle,
     usb_requests: Receiver<'_, UsbPacket, Q>,
     usb_replies: Sender<'_, UsbPacket, R>,
     image_requests: Sender<'_, ImageRequest, 2>,
@@ -446,6 +510,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             TransportMode::Ble => l2cap_bridge::session_generation(),
         };
 
+        let mut reset_after_reply = false;
         let response = match pkt.data {
             PacketData::WriteRegister(_) if !image_state.ownership.settings_writable() => {
                 Some(image_status(
@@ -554,7 +619,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                     defmt::Debug2Format(&config)
                 );
                 let wire_config: GeneralConfig = config.into();
-                // Shared by USB control and object mode; imu_loop reads the same live settings.
+                // Shared by USB control and object mode, and imu_loop reads the same live settings.
                 // Persisted on the next FlashSettings.
                 crate::settings::with_settings(|s| s.general.set_general_config(&wire_config));
                 Some(Packet {
@@ -705,6 +770,33 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
+            PacketData::Vendor(tag, data)
+                if tag == odyssey_protocol::ota::VENDOR_TAG
+                    && request_transport == TransportMode::Ble =>
+            {
+                let len = usize::from(data.len);
+                let Some(payload) = data.data.get(..len) else {
+                    continue;
+                };
+                if let Some(reply) = ota.request(payload).await {
+                    reset_after_reply = reply.reset;
+                    if reply.reset {
+                        image_state.abort.signal(());
+                    }
+                    let mut body = odyssey_protocol::VendorData {
+                        len: odyssey_protocol::ota::STATUS_LEN as u8,
+                        data: [0; odyssey_protocol::VendorData::CAPACITY],
+                    };
+                    body.data[..odyssey_protocol::ota::STATUS_LEN]
+                        .copy_from_slice(&reply.status);
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Vendor(tag, body),
+                    })
+                } else {
+                    None
+                }
+            }
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,
@@ -730,7 +822,16 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                     })
                     .is_ok(),
                 Some(TransportMode::Ble) if ble_session == l2cap_bridge::session_generation() => {
-                    l2cap.try_send(r).is_ok()
+                    if reset_after_reply {
+                        if r.is_control() {
+                            l2cap.control_tx.send(r).await;
+                        } else {
+                            l2cap.data_tx.send(r).await;
+                        }
+                        true
+                    } else {
+                        l2cap.try_send(r).is_ok()
+                    }
                 }
                 Some(TransportMode::Ble) => {
                     // The handler awaited sensor I/O across a disconnect. Its reply belongs to
@@ -748,6 +849,14 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 "[object_mode] Dropped {:?} reply - queue full",
                 request_transport
             );
+        }
+        if reset_after_reply && queued {
+            while !image_state.ownership.settings_writable() {
+                image_state.restore_complete.wait().await;
+            }
+            Timer::after_millis(100).await;
+            crate::settings::settings_wait_settled(Duration::from_millis(500)).await;
+            cortex_m::peripheral::SCB::sys_reset();
         }
     }
 }
@@ -775,7 +884,7 @@ async fn battery_loop<const N: usize>(
 }
 
 /// Owns the outgoing side. Reports go over USB while a USB host is using the device and to the
-/// L2CAP queues otherwise; replies to USB requests go over USB or nowhere. A USB write in
+/// L2CAP queues otherwise. Replies to USB requests go over USB or nowhere. A USB write in
 /// progress is abandoned the moment USB goes away, so reports move to BLE without waiting for
 /// a stalled transfer.
 async fn stream_loop<const N: usize, const R: usize>(
@@ -913,7 +1022,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         let ts_micros = imu_data.timestamp_micros;
 
         // The ICM on lite1 is rotated 90° CW relative to legacy atslite. Legacy maps
-        // raw axes as [raw[0], -raw[1], -raw[2]]; with legacy_x = new_y and legacy_y = -new_x
+        // raw axes as [raw[0], -raw[1], -raw[2]]. With legacy_x = new_y and legacy_y = -new_x
         // that becomes [raw[1], raw[0], -raw[2]].
         let (ax, ay, az) = (acc[1], acc[0], -acc[2]);
         let (gx, gy, gz) = (gyr[1], gyr[0], -gyr[2]);
@@ -945,7 +1054,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             }
         }
 
-        // The threshold is in m/s²; impacts closer together than suppress_ms are dropped.
+        // The threshold is in m/s². Impacts closer together than suppress_ms are dropped.
         if stream_infos.impact.enabled() {
             let accel_magnitude_ms2 = accel.magnitude();
             let (threshold, suppress_ms) = crate::settings::with_settings(|s| {
@@ -1006,6 +1115,9 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                 .await
                 .is_err();
             image_state.ownership.finish_restore(!restore_pending);
+            if !restore_pending {
+                image_state.restore_complete.signal(());
+            }
         }
         let request = match select(image_requests.receive(), async {
             if stream_infos.marker.enabled() && !restore_pending {
@@ -1051,6 +1163,7 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                     }
                     image_state.abort.reset();
                     image_data.clear();
+                    image_state.restore_complete.reset();
                     image_state
                         .ownership
                         .begin(generation, request.usb_generation);
@@ -1066,6 +1179,7 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                     if let Err(e) = snapshot {
                         image_state.ownership.finish_capture();
                         image_state.ownership.finish_restore(true);
+                        image_state.restore_complete.signal(());
                         defmt::error!("[image] Cannot snapshot live settings: {:?}", e);
                         let _ = usb_replies.try_send(image_status(
                             request.id,
@@ -1094,6 +1208,9 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
                     let restored = restore_image_settings(pag, &saved_image_settings).await;
                     restore_pending = restored.is_err();
                     image_state.ownership.finish_restore(!restore_pending);
+                    if !restore_pending {
+                        image_state.restore_complete.signal(());
+                    }
                     if let Err(e) = &restored {
                         defmt::error!("[obj_loop] Failed to restore Object: {:?}", e);
                     }

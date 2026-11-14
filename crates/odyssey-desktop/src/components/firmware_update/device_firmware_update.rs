@@ -1,9 +1,10 @@
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
+use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_server::firmware::FirmwareManifest;
 
 use super::update_available::{Offer, update_available};
-use super::update_check::{check_for_update, format_version};
+use super::update_check::{check_for_update_with_proof, format_version};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_notes::{held_back_note, net_core_blocked_note};
 use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
@@ -19,20 +20,30 @@ pub(crate) fn device_firmware_update(
     device: &Device,
     manifest: Option<&FirmwareManifest>,
     manager: &FirmwareUpdateManager,
-    p: Palette,
+    client: Option<Client>,
+    p: &Palette,
     expanded: bool,
 ) -> AnyElement {
     let device_uuid = device.uuid;
-    let current_state = manager.get_state(&device_uuid);
+    let current_state = manager.get_state(device_uuid);
     if current_state.is_before_update() {
         let next_state = match manifest {
-            Some(manifest) => check_for_update(manifest, device, &current_state),
+            Some(manifest) => check_for_update_with_proof(
+                manifest,
+                device,
+                &current_state,
+                manager.radio_ota_bootloader_version(
+                    device_uuid,
+                    device.firmware_identity.known(),
+                    device.firmware_version,
+                ),
+            ),
             None => FirmwareUpdateState::Idle,
         };
         manager.set_before_update_state(device_uuid, next_state);
     }
 
-    let state = manager.get_state(&device_uuid);
+    let state = manager.get_state(device_uuid);
     if !expanded
         && matches!(state, FirmwareUpdateState::Available { .. })
         && device
@@ -79,7 +90,8 @@ pub(crate) fn device_firmware_update(
             device,
             manifest,
             manager,
-            Offer {
+            client,
+            &Offer {
                 current: *current,
                 available,
                 device_type,
@@ -136,7 +148,7 @@ pub(crate) fn device_firmware_update(
                 .text_color(p.danger_ink)
                 .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(state.status_text()))
                 .child(error.clone())
-                .child("Reconnect USB and check power. If the tracker remains in recovery mode, retry the firmware update.")
+                .child("Reconnect this same device by USB, then check update again. If it remains in recovery mode, retry firmware update.")
                 .child(ui::button(
                     gpui::SharedString::from(format!("retry-firmware-{}", hex::encode(device_uuid))),
                     "Check update again",
@@ -149,7 +161,12 @@ pub(crate) fn device_firmware_update(
 }
 
 /// A label, a progress bar and the byte counts of an image being written.
-pub(super) fn flash_progress(label: &str, progress: usize, total: usize, p: Palette) -> AnyElement {
+pub(super) fn flash_progress(
+    label: &str,
+    progress: usize,
+    total: usize,
+    p: &Palette,
+) -> AnyElement {
     let percent = percent_complete(progress, total);
     div()
         .flex()

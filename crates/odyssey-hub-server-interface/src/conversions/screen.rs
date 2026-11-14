@@ -45,18 +45,17 @@ mod tests {
 
     #[test]
     fn incomplete_screen_bounds_are_errors() {
-        assert!(common::ScreenInfo::try_from(ScreenInfoReply::default()).is_err());
-        assert!(
-            common::ScreenInfo::try_from(ScreenInfoReply {
-                id: 1,
-                bounds: Some(ScreenBounds {
-                    tl: Some(Vector2::default()),
-                    tr: Some(Vector2::default()),
-                    bl: Some(Vector2::default()),
-                    br: None,
-                }),
-            })
-            .is_err()
-        );
+        common::ScreenInfo::try_from(ScreenInfoReply::default())
+            .expect_err("missing bounds must be rejected");
+        common::ScreenInfo::try_from(ScreenInfoReply {
+            id: 1,
+            bounds: Some(ScreenBounds {
+                tl: Some(Vector2::default()),
+                tr: Some(Vector2::default()),
+                bl: Some(Vector2::default()),
+                br: None,
+            }),
+        })
+        .expect_err("incomplete bounds must be rejected");
     }
 }

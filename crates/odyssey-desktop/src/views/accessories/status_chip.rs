@@ -15,7 +15,7 @@ use crate::theme::Palette;
 pub(super) fn status_chip(
     id: impl Into<ElementId>,
     state: &AccessoryConnectionState,
-    p: Palette,
+    p: &Palette,
 ) -> impl IntoElement {
     let connected = *state == AccessoryConnectionState::Connected;
     let (label, bg, ink) = match state {

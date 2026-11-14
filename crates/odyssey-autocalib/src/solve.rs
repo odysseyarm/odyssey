@@ -30,16 +30,23 @@ use crate::plane::{
     ransac_homography, ransac_plane,
 };
 
-/// Color and depth frames merged per measurement. Nine frames is about
-/// two-thirds of a second at the camera's 15 fps: enough for a median to reject
-/// flicker and speckle without making the user hold still for long.
+/// Color and depth frames merged per measurement.
+///
+/// Nine frames take about two-thirds of a second at 15 fps, letting the median
+/// reject flicker and speckle without a long hold.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const BURST_FRAMES: usize = 9;
 
 /// Depth readings outside this range (meters) are discarded.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const DEPTH_RANGE_M: (f64, f64) = (0.1, 10.0);
 
 /// The part of the screen, in unit coordinates, whose depth feeds the plane
 /// fit. Staying off the edge keeps the bezel and its shadows out.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const SCREEN_INSET: (f64, f64) = (0.05, 0.95);
 
 /// Dots must agree with the dot homography to within this many meters in the
@@ -49,12 +56,12 @@ const DOT_INLIER_M: f64 = 0.006;
 /// Trials the dot homography's RANSAC may spend.
 const DOT_RANSAC_TRIALS: usize = 300;
 
-/// Salt XORed into [`SolveOptions::seed`] for the screen plane's RANSAC, so
-/// that the default seed `0` gives [`RansacParams`]' own default seed.
-const PLANE_SEED_SALT: u64 = 0x0D155EA;
+/// Salt `XORed` into [`SolveOptions::seed`] for screen-plane RANSAC, so the
+/// default seed `0` gives [`RansacParams`] its default seed.
+const PLANE_SEED_SALT: u64 = 0x00D1_55EA;
 
-/// Salt XORed into [`SolveOptions::seed`] for the dot homography's RANSAC, so
-/// the two searches draw different samples.
+/// Salt `XORed` into [`SolveOptions::seed`] for dot-homography RANSAC, so the
+/// searches draw different samples.
 const DOT_SEED_SALT: u64 = 0xD075;
 
 /// Fewest depth samples the screen plane may be fitted to, and fewest of them
@@ -67,7 +74,7 @@ const MIN_DOTS: usize = 12;
 
 /// Smallest cosine of the angle between the screen's normal and the ray to
 /// it. `0.1` means the line of sight meets the screen at more than about
-/// 6 degrees; a flatter view leaves the dot positions too ill-determined.
+/// 6 degrees. A flatter view leaves the dot positions too ill-determined.
 const MIN_PLANE_INCIDENCE_COS: f64 = 0.1;
 
 /// Smallest norm of `gravity x normal`, which is the sine of the angle
@@ -80,23 +87,46 @@ pub(crate) const METERS_PER_INCH: f64 = 0.0254;
 
 /// A screen size the user or the display itself declares, used as the scale
 /// anchor instead of the depth camera's measurement.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KnownSize {
-    /// Diagonal of the displayed image in inches; the aspect ratio comes from
+    /// Diagonal of the displayed image in inches. The aspect ratio comes from
     /// the pattern.
-    Diagonal { inches: f64 },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    Diagonal {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        inches: f64,
+    },
     /// Width and height of the displayed image in meters. Anchors both axes.
-    Dimensions { width_m: f64, height_m: f64 },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    Dimensions {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        width_m: f64,
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        height_m: f64,
+    },
 }
 
-/// How far a declared width-to-height ratio may sit from the pattern's before
-/// the declaration is refused. A stretched or letterboxed desktop shows up
-/// here: scaling such a size onto the pattern would silently distort the
-/// screen.
+/// Maximum ratio difference between declared size and pattern before refusal.
+///
+/// A stretched or letterboxed desktop would otherwise distort the screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const KNOWN_ASPECT_TOLERANCE: f64 = 0.015;
 
 impl KnownSize {
     /// Width and height in meters for a pattern of the given aspect ratio.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SolveError::KnownSizeInvalid`] for a non-finite or
+    /// non-positive aspect or size. Returns
+    /// [`SolveError::KnownSizeAspectMismatch`] when dimensions disagree
+    /// with pattern aspect beyond [`KNOWN_ASPECT_TOLERANCE`].
     pub fn size_for_aspect(&self, aspect: f64) -> Result<[f64; 2], SolveError> {
         if !aspect.is_finite() || aspect <= 0.0 {
             return Err(SolveError::KnownSizeInvalid);
@@ -137,34 +167,52 @@ impl KnownSize {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SizeSource {
     /// The depth camera's measurement.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Measured,
+    /// Since: Odyssey Desktop 0.6.5.
     KnownDiagonal,
+    /// Since: Odyssey Desktop 0.6.5.
     KnownDimensions,
 }
 
-/// Relative size difference above which the depth measurement and the
-/// declared size count as disagreeing. Depth scale error at room distances is
-/// well under this; overscan (typically 2-5%), a wrong EDID and a wrong
-/// diagonal usually exceed it.
+/// Relative size difference above which depth and declared size disagree.
+///
+/// Depth scale error at room distances is lower. Overscan, wrong EDID or a
+/// wrong diagonal usually exceed this value.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const SIZE_DISAGREEMENT: f64 = 0.02;
 
 /// The size measured from depth next to the size declared for the screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SizeCheck {
     /// Width and height from the depth-derived fit, before rectification.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub measured_m: [f64; 2],
     /// Width and height that rectification imposed.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub known_m: [f64; 2],
     /// `measured / known` along the width.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ratio_w: f64,
     /// `measured / known` along the height.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ratio_h: f64,
 }
 
 impl SizeCheck {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(measured_m: [f64; 2], known_m: [f64; 2]) -> Self {
         Self {
             measured_m,
@@ -176,22 +224,31 @@ impl SizeCheck {
 
     /// Whether either axis differs from the declared size by more than
     /// [`SIZE_DISAGREEMENT`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn disagrees(&self) -> bool {
         (self.ratio_w - 1.0).abs() > SIZE_DISAGREEMENT
             || (self.ratio_h - 1.0).abs() > SIZE_DISAGREEMENT
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolveOptions {
     /// Declared screen size. When set, the screen is rectified in 2D to this
     /// size, so depth scale error does not affect the result.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub known_size: Option<KnownSize>,
-    /// Seed for the plane and dot RANSAC searches; fixed so a measurement is
+    /// Seed for the plane and dot RANSAC searches. Fixed, so a measurement is
     /// reproducible.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub seed: u64,
     /// Locate dots by the perspective-corrected center instead of the raw
     /// centroid. Only turn this off to measure what the correction buys.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub perspective_correction: bool,
 }
 
@@ -205,93 +262,150 @@ impl Default for SolveOptions {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, thiserror::Error)]
 pub enum SolveError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error(transparent)]
     Camera(#[from] CameraError),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the dot pattern was not found in the color image ({0})")]
     PatternNotFound(DetectFailure),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("only {found} depth samples lie on the screen")]
-    TooFewDepthPoints { found: usize },
+    TooFewDepthPoints {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        found: usize,
+    },
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("no plane fits the depth measurements on the screen")]
     NoPlane,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the screen plane is seen edge-on")]
     DegeneratePose,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the measured screen is mirrored; the camera must look at the front of the screen")]
     Mirrored,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("dot positions do not agree with a flat screen")]
     DotsInconsistent,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("the solved calibration is invalid: {0}")]
     InvalidCalibration(#[from] ScreenCalibrationError),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the declared screen size must be positive")]
     KnownSizeInvalid,
     /// The declared width-to-height ratio differs from the displayed image's
     /// by more than [`KNOWN_ASPECT_TOLERANCE`]. Rectifying anyway would
     /// stretch the screen, so the measurement is refused.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     #[error(
         "the declared screen is {known_aspect:.3} wide per unit of height but the picture is {screen_aspect:.3}"
     )]
     KnownSizeAspectMismatch {
+        /// Since: Odyssey Desktop 0.6.5.
         known_aspect: f64,
+        /// Since: Odyssey Desktop 0.6.5.
         screen_aspect: f64,
     },
 }
 
 /// Everything measured about the screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct ScreenFit {
     /// Screen plane in the depth camera's frame, normal pointing away from the camera.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_depth: Plane,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_color: Plane,
+    /// Since: Odyssey Desktop 0.6.5.
     pub camera_to_aligned: Matrix3<f64>,
     /// Takes gravity-aligned coordinates to the screen frame: origin at the
     /// screen's top-left corner, `x` right along the top edge, `y` down, `z`
     /// away from the viewer.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_from_aligned: Extrinsics,
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_from_color: Extrinsics,
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_from_depth: Extrinsics,
     /// Maps pattern unit coordinates to meters in the screen frame, including
     /// the optional rectification.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub unit_to_screen: Matrix3<f64>,
     /// 2D projective correction that took measured screen coordinates to the
-    /// declared size; identity without a known size.
+    /// declared size. Identity without a known size.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub rectification: Matrix3<f64>,
     /// Screen corners in meters (top left, top right, bottom right, bottom
     /// left) in the screen frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub corners_m: [Point2<f64>; 4],
     /// Width and height in meters before rectification.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub measured_size_m: [f64; 2],
     /// Width and height in meters of the final screen model.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_m: [f64; 2],
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_rmse_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_max_error_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_inliers: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_samples: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_used: usize,
     /// Where `size_m` comes from.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_source: SizeSource,
-    /// The depth-measured size against the declared one; present exactly when
+    /// The depth-measured size against the declared one. Present exactly when
     /// a known size was given.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_check: Option<SizeCheck>,
     /// Maps pattern unit coordinates to undistorted color pixels, as fitted to
     /// the averaged dot centers.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub unit_to_pixel: Matrix3<f64>,
     /// Root-mean-square distance of the dots from the fitted homography, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub dot_rmse_m: f64,
     /// Screen corners (top left, top right, bottom right, bottom left) in the
     /// raw color image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub quad_px: [Point2<f64>; 4],
     /// Color intrinsics, kept so the fit can project screen points to pixels.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub camera_color: Intrinsics,
 }
 
 impl ScreenFit {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn diagonal_in(&self) -> f64 {
         self.size_m[0].hypot(self.size_m[1]) / METERS_PER_INCH
     }
 
     /// Where a point on the screen, given in final screen coordinates (meters),
     /// appears in the raw color image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn screen_to_color_px(&self, xy: Point2<f64>) -> Option<Point2<f64>> {
         let measured = apply_homography(&self.rectification.try_inverse()?, xy)?;
         let p = self
@@ -303,6 +417,8 @@ impl ScreenFit {
 }
 
 /// `a` after `b`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn compose(a: &Extrinsics, b: &Extrinsics) -> Extrinsics {
     Extrinsics {
         rotation: a.rotation * b.rotation,
@@ -318,10 +434,19 @@ pub(crate) fn is_at_least_half(count: usize, total: usize) -> bool {
 
 /// Measures the screen from a burst of frames.
 ///
-/// `camera_to_aligned` is the gravity alignment from [`crate::imu`]; pass the
+/// `camera_to_aligned` is the gravity alignment from [`crate::imu`]. Pass the
 /// identity for a camera assumed upright.
 /// Every frame must match the geometry's image dimensions and use a positive,
 /// finite depth unit. Invalid camera data is returned before attempting a fit.
+///
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns [`SolveError::Camera`] for invalid geometry or frames,
+/// [`SolveError::PatternNotFound`] when too few dots are detected,
+/// [`SolveError::TooFewDepthPoints`] or [`SolveError::NoPlane`] when depth
+/// cannot fit the screen, and other variants when pose, dot consistency or
+/// declared size cannot be resolved.
 pub fn solve_screen(
     geometry: &CameraGeometry,
     pattern: &Pattern,
@@ -484,7 +609,7 @@ impl PlaneFrames {
         let x_axis = if across.norm() > MIN_HORIZONTAL_ACROSS_NORM {
             across.normalize()
         } else {
-            // A horizontal screen has no gravity-defined "across"; fall back to
+            // A horizontal screen has no gravity-defined "across", so fall back to
             // the camera's own right axis.
             (Vector3::x() - z_axis * z_axis.x).normalize()
         };
@@ -502,7 +627,7 @@ impl PlaneFrames {
     }
 
     /// Each dot's pattern position paired with where its color ray meets the
-    /// plane, in in-plane coordinates (meters); the two lists are parallel.
+    /// plane, in in-plane coordinates (meters). The two lists are parallel.
     /// Dots whose ray misses the plane are left out.
     fn dot_positions(
         &self,
@@ -638,8 +763,8 @@ fn unit_corners(h: &Matrix3<f64>) -> Option<[Point2<f64>; 4]> {
 /// Width and height of a quadrilateral as the mean of its opposite sides.
 fn rect_size(c: &[Point2<f64>; 4]) -> [f64; 2] {
     [
-        ((c[1] - c[0]).norm() + (c[2] - c[3]).norm()) / 2.0,
-        ((c[3] - c[0]).norm() + (c[2] - c[1]).norm()) / 2.0,
+        f64::midpoint((c[1] - c[0]).norm(), (c[2] - c[3]).norm()),
+        f64::midpoint((c[3] - c[0]).norm(), (c[2] - c[1]).norm()),
     ]
 }
 
@@ -656,7 +781,7 @@ struct DotSum {
 
 /// Detects the pattern in every frame and sums each dot's centers over the
 /// frames that saw it. Returns the per-dot sums and the number of frames in
-/// which the pattern was found; fails when that is under half the burst.
+/// which the pattern was found. Fails when that is under half the burst.
 fn detect_burst(
     geometry: &CameraGeometry,
     pattern: &Pattern,
@@ -818,10 +943,18 @@ pub(crate) fn screen_depth_points(
     points
 }
 
-/// Builds the hub's calibration from the screen fit and the six marker
-/// positions, in the screen frame (meters, `z = 0`).
-/// Fails instead of exporting a singular map or values that are invalid after
-/// conversion to the hub's `f32` representation.
+/// Builds hub calibration from the screen fit and six marker positions.
+///
+/// Marker positions use screen-frame meters with `z = 0`. Singular maps and
+/// values invalid after conversion to hub `f32` representation are rejected.
+///
+/// Since: Odyssey Desktop 0.6.5.
+/// # Errors
+///
+/// Returns [`SolveError::DegeneratePose`] for an invalid rotation,
+/// [`SolveError::DotsInconsistent`] for a singular homography, or
+/// [`SolveError::InvalidCalibration`] when the resulting calibration fails
+/// validation.
 pub fn build_calibration(
     fit: &ScreenFit,
     markers: &[Point2<f64>; 6],
@@ -868,7 +1001,7 @@ mod tests {
                 ));
             }
         }
-        // Squaring this finite aspect overflows `f64`; a naive diagonal split
+        // Squaring this finite aspect overflows `f64`, and a naive diagonal split
         // would give a zero height.
         let size = diagonal.size_for_aspect(1e200).unwrap();
         assert!(size[0] > 0.0 && size[0].is_finite());

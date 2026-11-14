@@ -25,16 +25,13 @@ pub(crate) mod heapless_str32 {
         Ok(())
     }
 
-    pub(crate) fn decode<'b, Ctx>(
-        d: &mut Decoder<'b>,
-        _ctx: &mut Ctx,
-    ) -> Result<DeviceName, Error> {
+    pub(crate) fn decode<Ctx>(d: &mut Decoder<'_>, _ctx: &mut Ctx) -> Result<DeviceName, Error> {
         Ok(DeviceName::from_str_lossy(d.str()?))
     }
 
     pub(crate) fn cbor_len<Ctx>(s: &DeviceName, _ctx: &mut Ctx) -> usize {
-        // A text string's length shares its header byte up to 23; a 1-byte
-        // length follows up to 255, and a device name is at most 32 bytes.
+        // A text string's length shares its header byte up to 23, and a 1-byte
+        // length follows up to 255. A device name is at most 32 bytes.
         const INLINE_LENGTH_MAX: usize = 23;
         let n = s.as_str().len();
         let header = if n <= INLINE_LENGTH_MAX { 1 } else { 2 };
@@ -61,12 +58,12 @@ pub(crate) mod serde_with {
             .map_err(|_serde_error| minicbor::encode::Error::message("serde encode error"))
     }
 
-    pub(crate) fn decode<'b, C, T>(
-        d: &mut Decoder<'b>,
+    pub(crate) fn decode<C, T>(
+        d: &mut Decoder<'_>,
         _ctx: &mut C,
     ) -> Result<T, minicbor::decode::Error>
     where
-        T: serde::de::DeserializeOwned, // owns its data; no borrows from input
+        T: serde::de::DeserializeOwned, // owns its data, no borrows from input
     {
         let start = d.position();
         let rest = &d.input()[start..];
@@ -99,8 +96,8 @@ pub(crate) mod serde_with {
         {
             let mut encoder = Encoder::new(&mut writer);
             let mut ser = Serializer::new(encoder.writer_mut());
-            v.serialize(&mut ser).unwrap_or(());
-        }
+            let _ = v.serialize(&mut ser);
+        };
         writer.0
     }
 }

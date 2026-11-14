@@ -10,7 +10,7 @@ type Entry = (Device, mpsc::Sender<DeviceTaskMessage>);
 
 /// The connected devices, each with the channel that reaches its device task.
 ///
-/// Cloning shares the list. Devices are identified by UUID alone; the transport
+/// Cloning shares the list. Devices are identified by UUID alone, the transport
 /// is only a property of the entry. No method holds the lock across an await.
 #[derive(Clone, Default)]
 pub(crate) struct DeviceList(Arc<Mutex<Vec<Entry>>>);
@@ -106,6 +106,7 @@ impl DeviceList {
 #[cfg(test)]
 mod tests {
     use odyssey_hub_common::device::{DeviceCapabilities, EventsTransport, Transport};
+    use odyssey_hub_common::firmware_version::FirmwareVersion;
 
     use super::*;
 
@@ -114,6 +115,7 @@ mod tests {
             uuid: [0, 0, 0, 0, 0, uuid_tail],
             transport: Transport::Usb,
             capabilities: DeviceCapabilities::empty(),
+            firmware_identity: FirmwareVersion::default(),
             firmware_version: [0; 3],
             events_transport: EventsTransport::Wired,
             events_connected: false,
@@ -144,7 +146,7 @@ mod tests {
         sender
             .try_send(DeviceTaskMessage::ClearZero)
             .expect("original channel is kept");
-        assert!(received.try_recv().is_ok());
+        received.try_recv().expect("the clear was forwarded");
     }
 
     #[test]

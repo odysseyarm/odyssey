@@ -28,7 +28,10 @@ pub(crate) fn init() {
     let file = paths::log_dir().and_then(|dir| match open_log_file(&dir) {
         Ok(file) => Some(file),
         Err(e) => {
-            eprintln!("odyssey-desktop: could not open a log file in {dir:?}: {e}");
+            eprintln!(
+                "odyssey-desktop: could not open a log file in {}: {e}",
+                dir.display()
+            );
             None
         }
     });
@@ -47,8 +50,8 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt as _;
-        folder.mode(0o700);
-    }
+        folder.mode(0o700)
+    };
     folder.create(dir)?;
 
     let latest = dir.join(LATEST);
@@ -61,8 +64,8 @@ fn open_log_file(dir: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
+        options.mode(0o600)
+    };
     options.open(latest)
 }
 

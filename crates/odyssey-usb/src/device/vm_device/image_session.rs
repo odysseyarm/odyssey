@@ -70,15 +70,9 @@ pub(super) async fn supervise(
                 .map_err(|_closed| Error::Closed)?;
             loop {
                 match packets.recv().await {
-                    Some(PacketData::ImageStatus(status)) if status.generation != generation => {
-                        continue;
-                    }
-                    Some(PacketData::ImageChunk(chunk)) if chunk.generation != generation => {
-                        continue;
-                    }
-                    Some(PacketData::ImageObject(object)) if object.generation != generation => {
-                        continue;
-                    }
+                    Some(PacketData::ImageStatus(status)) if status.generation != generation => {}
+                    Some(PacketData::ImageChunk(chunk)) if chunk.generation != generation => {}
+                    Some(PacketData::ImageObject(object)) if object.generation != generation => {}
                     Some(PacketData::ImageStatus(status)) => {
                         return match status.status {
                             ImageStatusCode::Started => Ok(()),
@@ -138,7 +132,7 @@ pub(super) async fn supervise(
                         if transport.send(renew).await.is_err() { frames.send(Err(Error::Closed)); break; }
                     },
                     packet = packets.recv() => match packet {
-                        Some(PacketData::ImageChunk(chunk)) => match assembler.chunk(chunk) {
+                        Some(PacketData::ImageChunk(chunk)) => match assembler.chunk(&chunk) {
                             Ok(Some(frame)) => frames.send(Ok(frame)),
                             Ok(None) => {},
                             Err(error) => { frames.send(Err(error)); break; },

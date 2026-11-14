@@ -13,7 +13,7 @@ use super::DeviceHandler;
 use crate::device_tasks::image_stream::{ImageDelivery, ImageResponseStream};
 
 // Start can need both a status wait and cleanup Stop before reporting old
-// firmware as unsupported; keep that bounded handshake intact.
+// firmware as unsupported. Keep that bounded handshake intact.
 const IMAGE_SESSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 pub(super) struct ImageSession {
@@ -44,20 +44,16 @@ pub(super) async fn next_image_event(
 
 fn image_error(error: odyssey_usb::Error) -> Status {
     match error {
-        odyssey_usb::Error::ImageUsbRequired => {
+        odyssey_usb::Error::ImageUsbRequired
+        | odyssey_usb::Error::ImageStatus(ImageStatusCode::UsbRequired) => {
             Status::failed_precondition("image capture requires USB events transport")
         }
-        odyssey_usb::Error::ImageUnsupported => {
+        odyssey_usb::Error::ImageUnsupported
+        | odyssey_usb::Error::ImageStatus(ImageStatusCode::Unsupported) => {
             Status::unimplemented("device firmware does not support live images")
-        }
-        odyssey_usb::Error::ImageStatus(ImageStatusCode::UsbRequired) => {
-            Status::failed_precondition("image capture requires USB events transport")
         }
         odyssey_usb::Error::ImageStatus(ImageStatusCode::UnsupportedCamera) => {
             Status::invalid_argument("camera is not supported by this device")
-        }
-        odyssey_usb::Error::ImageStatus(ImageStatusCode::Unsupported) => {
-            Status::unimplemented("device firmware does not support live images")
         }
         odyssey_usb::Error::ImageStatus(ImageStatusCode::Busy) => {
             Status::resource_exhausted("device already has an active image session")
@@ -123,7 +119,7 @@ impl DeviceHandler {
             ));
         }
         // Control and event endpoints can differ. Only the active wired events link
-        // owns image packets; never select USB control merely because it exists.
+        // owns image packets. Never select USB control merely because it exists.
         let device = self
             .connections
             .events_device

@@ -27,7 +27,7 @@ const EXPOSURE_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(super) struct MarkersStep {
     wizard: Entity<Wizard>,
     exposure: Entity<SliderState>,
-    /// Bumped on every slider movement; a debounce that finds it changed gives up.
+    /// Bumped on every slider movement. A debounce that finds it changed gives up.
     generation: u64,
     frame: FrameSlot,
     _subscriptions: Vec<Subscription>,
@@ -54,13 +54,12 @@ impl MarkersStep {
                 let mine = this.generation;
                 cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(EXPOSURE_DEBOUNCE).await;
-                    this.update(cx, |this, cx| {
+                    let _ = this.update(cx, |this, cx| {
                         // A later movement of the slider supersedes this one.
                         if this.generation == mine {
                             this.wizard.update(cx, Wizard::apply_ir_exposure);
                         }
-                    })
-                    .ok();
+                    });
                 })
                 .detach();
             }),
@@ -77,7 +76,7 @@ impl MarkersStep {
 
 impl Render for MarkersStep {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let wizard = self.wizard.clone();
         let details_open = open_state("marker-details", window, cx);
         let rules_open = open_state("marker-rules", window, cx);
@@ -178,7 +177,7 @@ impl Render for MarkersStep {
     }
 }
 
-fn marker_banner(p: Palette, wizard: &Wizard) -> AnyElement {
+fn marker_banner(p: &Palette, wizard: &Wizard) -> AnyElement {
     let Some(frame) = wizard.markers.as_ref() else {
         return status_banner(
             p,
@@ -193,7 +192,7 @@ fn marker_banner(p: Palette, wizard: &Wizard) -> AnyElement {
     status_banner(p, message.tone, message.icon, message.title, message.detail).into_any_element()
 }
 
-fn marker_preview(p: Palette, wizard: &Wizard) -> AnyElement {
+fn marker_preview(p: &Palette, wizard: &Wizard) -> AnyElement {
     let Some(frame) = wizard.markers.as_ref() else {
         return camera_placeholder(p, "Waiting for the camera…").into_any_element();
     };

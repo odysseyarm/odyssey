@@ -8,7 +8,7 @@ use crate::theme::Palette;
 use crate::workspace::Alignment;
 
 impl HomeView {
-    pub(super) fn screen_actions(&self, p: Palette, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn screen_actions(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.selection.read(cx).selected_key();
         let workspace = self.workspace.read(cx);
         let selected_uuid = workspace.selected_device;
@@ -40,13 +40,12 @@ impl HomeView {
         } else {
             "Choose a display".to_owned()
         };
-        let alignment = selected_uuid.map_or("Choose a tracker", |uuid| {
-            match workspace.alignment(&uuid) {
+        let alignment =
+            selected_uuid.map_or("Choose a tracker", |uuid| match workspace.alignment(uuid) {
                 Alignment::NotVerified => "Not checked this session",
                 Alignment::Applied => "Applied · check aim and save",
                 Alignment::Saved => "Saved this session",
-            }
-        });
+            });
         let calibration_error = workspace.calibration_error.clone();
         let devices = hub.devices.clone();
         let mut tracker_choices = div().flex().flex_wrap().gap_2();

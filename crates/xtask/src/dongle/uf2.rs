@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn data_crossing_a_page_boundary_fills_two_numbered_blocks() {
-        // Extended segment 0x1000 << 4 = 0x10000; 4 bytes at 0x100FE..=0x10101.
+        // Extended segment 0x1000 << 4 = 0x10000. 4 bytes at 0x100FE..=0x10101.
         let hex = ":020000021000EC\n:0400FE00AABBCCDDF0\n:00000001FF\n";
         let uf2 = from_ihex(hex, FAMILY).expect("valid hex");
         assert_eq!(uf2.len(), 2 * BLOCK_LEN);
@@ -173,15 +173,9 @@ mod tests {
 
     #[test]
     fn corrupt_records_are_refused() {
-        assert!(
-            from_ihex(":0100000642B7\n", FAMILY).is_err(),
-            "unknown type"
-        );
-        assert!(from_ihex(":0200000042BC\n", FAMILY).is_err(), "short data");
-        assert!(from_ihex("0100000042BD\n", FAMILY).is_err(), "no colon");
-        assert!(
-            from_ihex(":0100000042BC\n", FAMILY).is_err(),
-            "bad checksum"
-        );
+        from_ihex(":0100000642B7\n", FAMILY).expect_err("unknown record type is rejected");
+        from_ihex(":0200000042BC\n", FAMILY).expect_err("short record is rejected");
+        from_ihex("0100000042BD\n", FAMILY).expect_err("record without colon is rejected");
+        from_ihex(":0100000042BC\n", FAMILY).expect_err("bad checksum is rejected");
     }
 }

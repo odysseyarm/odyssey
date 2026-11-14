@@ -80,7 +80,7 @@ impl Wizard {
             let Ok(Some(path)) = dialog.await else {
                 return;
             };
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 // The picker can outlive the review it was opened from.
                 if this.session != session || !matches!(this.stage, Stage::Review | Stage::Problem)
                 {
@@ -90,8 +90,7 @@ impl Wizard {
                 this.attempt_saving = true;
                 this.send(Command::SaveAttempt { path }, cx);
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -131,7 +130,7 @@ impl Wizard {
                 .await
                 .map_err(eros::ErrorUnion::from)
                 .and_then(|result| result);
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 // Leaving or restarting the wizard must not be undone by a late save.
                 if this.session != session || this.stage != Stage::Review {
                     return;
@@ -158,8 +157,7 @@ impl Wizard {
                         cx.notify();
                     }
                 }
-            })
-            .ok();
+            });
         }));
     }
 }

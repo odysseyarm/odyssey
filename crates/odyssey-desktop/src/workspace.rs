@@ -69,8 +69,8 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(crate) fn alignment(&self, uuid: &[u8; 6]) -> Alignment {
-        self.alignments.get(uuid).copied().unwrap_or_default()
+    pub(crate) fn alignment(&self, uuid: [u8; 6]) -> Alignment {
+        self.alignments.get(&uuid).copied().unwrap_or_default()
     }
 
     pub(crate) fn set_alignment(
@@ -104,7 +104,7 @@ impl Workspace {
         });
         self.calibration_task = Some(cx.spawn(async move |this, cx| {
             let result = load.await;
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok((calibrations, saved_calibration_ids, error)) => {
                         this.calibrations = calibrations;
@@ -118,8 +118,7 @@ impl Workspace {
                 }
                 this.calibration_loading = false;
                 cx.notify();
-            })
-            .ok();
+            });
         }));
     }
 }

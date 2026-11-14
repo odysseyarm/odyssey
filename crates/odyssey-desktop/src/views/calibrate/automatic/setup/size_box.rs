@@ -16,8 +16,8 @@ use crate::views::calibrate::automatic::wizard::Wizard;
 pub(super) struct SizeBox {
     wizard: Entity<Wizard>,
     input: Entity<InputState>,
-    /// A half-typed number such as the "4" of 40 is out of range for a moment;
-    /// that is reported once the tech leaves the box, not while they type.
+    /// A half-typed number such as the "4" of 40 is out of range for a moment.
+    /// That is reported once the tech leaves the box, not while they type.
     left_box: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -54,7 +54,7 @@ impl SizeBox {
 
 impl Render for SizeBox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let wizard = self.wizard.read(cx);
         let field = wizard.field();
         let label = match (wizard.kind(), field) {

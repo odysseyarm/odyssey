@@ -42,7 +42,7 @@ impl DeviceControls {
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace = cx.global::<WorkspaceHandle>().0.clone();
-        let state = DeviceState::new(workspace.read(cx).alignment(&device.uuid));
+        let state = DeviceState::new(workspace.read(cx).alignment(device.uuid));
         let (shot_delay_input, input_events) = Self::bind_input(state.shot_delay_ms(), window, cx);
         let mut controls = Self {
             device,
@@ -107,14 +107,14 @@ impl DeviceControls {
             self.ready = false;
             self.state
                 .cancel("Tracker disconnected. Waiting for shot cancelled.");
-            if !connected {
+            if connected {
+                self.disconnected = CancellationToken::new();
+                self.load_shot_delay(cx);
+            } else {
                 self.disconnected.cancel();
                 self.delay_loaded = false;
                 self.delay_error =
                     Some("Tracker disconnected. Reload shot delay after reconnecting.".to_owned());
-            } else {
-                self.disconnected = CancellationToken::new();
-                self.load_shot_delay(cx);
             }
             cx.notify();
         }
@@ -199,7 +199,7 @@ impl DeviceControls {
 
 impl Render for DeviceControls {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         self.show_shot_delay(window, cx);
         let busy = self.pending || self.state.pending.is_some();
         let mut body = div().flex().flex_col().gap_3();

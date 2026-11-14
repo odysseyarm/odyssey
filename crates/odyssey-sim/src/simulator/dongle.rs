@@ -79,8 +79,8 @@ impl Dongle {
         }
     }
 
-    pub(crate) fn has_room_for(&self, unit: &Uuid) -> bool {
-        self.bonds.len() < mux::MAX_DEVICES || self.bonds.contains_key(unit)
+    pub(crate) fn has_room_for(&self, unit: Uuid) -> bool {
+        self.bonds.len() < mux::MAX_DEVICES || self.bonds.contains_key(&unit)
     }
 
     fn list(&self, errors: &mut Errors) {
@@ -154,7 +154,7 @@ impl Dongle {
                 );
             }
             UsbMuxCtrlMsg::ListBonds() => {
-                let mut bonds = odyssey_protocol::List(Default::default());
+                let mut bonds = odyssey_protocol::List::default();
                 for uuid in self.bonds.keys() {
                     let _ = bonds.0.push(BondedDevice {
                         uuid: *uuid,
@@ -181,7 +181,7 @@ impl Dongle {
                 self.cancel_pairing(usb_mux::PairingError::Cancelled, errors);
             }
             UsbMuxCtrlMsg::AddBond(entry) => {
-                let result = if self.has_room_for(&entry.bd_addr) {
+                let result = if self.has_room_for(entry.bd_addr) {
                     self.bonds.insert(entry.bd_addr, entry);
                     AddBondResult::Ok()
                 } else {

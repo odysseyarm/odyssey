@@ -1675,15 +1675,12 @@ version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "syn",
 ]
 
 [[package]]
 name = "odyssey-version"
 version = "0.0.0"
-dependencies = [
- "arbitrary-int 1.3.0",
- "bitbybit",
-]
 
 [[package]]
 name = "once_cell"

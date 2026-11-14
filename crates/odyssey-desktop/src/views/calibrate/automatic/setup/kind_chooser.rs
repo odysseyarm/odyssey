@@ -37,7 +37,7 @@ fn kind_id(kind: DisplayKind) -> &'static str {
 /// Two big illustrated cards behind one radio group. Arrow keys move the
 /// choice, and only the chosen card is a tab stop, as for any radio group.
 pub(super) fn kind_chooser(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     focus: &[FocusHandle; 2],
     cx: &App,

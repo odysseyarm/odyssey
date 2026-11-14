@@ -1,20 +1,25 @@
 use core::cell::RefCell;
 
+use embassy_embedded_hal::flash::partition::Partition;
 use embassy_futures::select::{Either, select};
 use embassy_nrf::gpio::Input;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Instant, Timer};
-use embedded_storage_async::nor_flash::NorFlash;
+use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
 use marker_control_board::security::{BondStore, Enrollment, OwnerBond};
-use marker_control_board::{ButtonAction, Led, OutputState, PowerButton};
+use marker_control_board::{ButtonAction, Led, OutputState, PowerButton, valid_vectors};
+use nrf_sdc::mpsl;
 use odyssey_protocol::marker_control::{
-    DEMAND_UUID, MODE_UUID, Mode, PAIRING_STATE_VERSION, SERVICE_UUID, WriteError, parse_demand,
+    DEMAND_UUID, MODE_UUID, OTA_UUID, Mode, PAIRING_STATE_VERSION, SERVICE_UUID, WriteError,
+    parse_demand,
 };
+use odyssey_protocol::ota::{Code, Image};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-use trouble_host::att::{AttClient, AttReq};
+use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::{
     AdStructure, Address, Advertisement, AttErrorCode, BR_EDR_NOT_SUPPORTED, BleHostError,
     BondInformation, Controller, DefaultPacketPool, Error, FromGatt, GapConfig, GattConnection,
@@ -24,9 +29,13 @@ use trouble_host::prelude::{
 };
 
 use crate::hardware::{Markers, reset_safe};
+use better_ota::{Action, Receiver, Slots};
+
+include!(concat!(env!("OUT_DIR"), "/layout.rs"));
 
 static STATE: Mutex<CriticalSectionRawMutex, RefCell<OutputState>> =
     Mutex::new(RefCell::new(OutputState::new()));
+/// Since: Odyssey Desktop 0.7.4.
 pub static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ENROLLMENT: Mutex<CriticalSectionRawMutex, RefCell<Enrollment>> =
     Mutex::new(RefCell::new(Enrollment::new()));
@@ -93,6 +102,75 @@ struct MarkerService {
     demand: u8,
     #[characteristic(uuid = u128::from_be_bytes(MODE_UUID), read, write, value = 0)]
     mode: u8,
+    #[characteristic(uuid = u128::from_be_bytes(OTA_UUID), read, write, value = [0; 22])]
+    ota: [u8; 22],
+}
+
+struct MarkerSlots<'a, 'd> {
+    dfu: Partition<'a, NoopRawMutex, mpsl::Flash<'d>>,
+}
+
+impl Slots for MarkerSlots<'_, '_> {
+    fn capacity(&self, image: Image) -> u32 {
+        match image {
+            Image::Application => 220 * 1024,
+            Image::NetCore => 0,
+        }
+    }
+
+    async fn write(&mut self, image: Image, offset: u32, data: &[u8]) -> Result<(), Code> {
+        if image != Image::Application {
+            return Err(Code::Unsupported);
+        }
+        if offset == 0 {
+            self.dfu.erase(0, 220 * 1024).await.map_err(|_| Code::Flash)?;
+        }
+        self.dfu.write(offset, data).await.map_err(|_| Code::Flash)
+    }
+
+    async fn read(
+        &mut self,
+        image: Image,
+        offset: u32,
+        data: &mut [u8],
+    ) -> Result<(), Code> {
+        if image != Image::Application {
+            return Err(Code::Unsupported);
+        }
+        self.dfu.read(offset, data).await.map_err(|_| Code::Flash)
+    }
+
+    async fn valid(&mut self, image: Image, size: u32) -> Result<(), Code> {
+        if image != Image::Application || size < 8 {
+            return Err(Code::Image);
+        }
+        let mut vectors = [0; 8];
+        self.read(image, 0, &mut vectors).await?;
+        let sp = u32::from_le_bytes(vectors[..4].try_into().map_err(|_| Code::Image)?);
+        let reset = u32::from_le_bytes(vectors[4..].try_into().map_err(|_| Code::Image)?);
+        if valid_vectors(sp, reset, ACTIVE_START..ACTIVE_END, RAM_START..RAM_END) {
+            Ok(())
+        } else {
+            Err(Code::Image)
+        }
+    }
+
+    async fn commit(
+        &mut self,
+        app_size: Option<u32>,
+        netcore_size: Option<u32>,
+    ) -> Result<(), Code> {
+        if app_size.is_none() || netcore_size.is_some() {
+            return Err(Code::Unsupported);
+        }
+        crate::OTA_COMMITTING.store(true, core::sync::atomic::Ordering::Release);
+        crate::OTA_COMMIT_REQUEST.signal(());
+        if crate::OTA_COMMIT_RESULT.wait().await {
+            Ok(())
+        } else {
+            Err(Code::Flash)
+        }
+    }
 }
 
 fn state<R>(f: impl FnOnce(&mut OutputState) -> R) -> R {
@@ -103,18 +181,20 @@ fn state<R>(f: impl FnOnce(&mut OutputState) -> R) -> R {
     })
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub async fn outputs(mut markers: Markers<'_>) {
     let mut previous = false;
     let mut previous_led = Led::Off;
     loop {
         let now = Instant::now().as_millis();
         let pairing = enrollment_active();
-        let dfu = crate::DFU_PENDING.load(core::sync::atomic::Ordering::Relaxed);
+        let inhibited = crate::DFU_PENDING.load(core::sync::atomic::Ordering::Acquire)
+            || crate::OTA_ACTIVE.load(core::sync::atomic::Ordering::Acquire);
         let (on, lease, led) = state(|s| {
             (
-                s.on() && !dfu,
+                s.on() && !inhibited,
                 s.deadline(),
-                if dfu { Led::Off } else { s.led(pairing) },
+                if inhibited { Led::Off } else { s.led(pairing) },
             )
         });
         if on != previous {
@@ -141,6 +221,7 @@ pub async fn outputs(mut markers: Markers<'_>) {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.4.
 pub async fn button(button: Input<'_>) {
     let mut clicks = PowerButton::default();
     loop {
@@ -165,7 +246,13 @@ pub async fn button(button: Input<'_>) {
     }
 }
 
-pub async fn run<C: Controller, F: NorFlash>(controller: C, flash: F, seed: [u8; 32]) {
+/// Since: Odyssey Desktop 0.7.4.
+pub async fn run<C: Controller, F: NorFlash>(
+    controller: C,
+    flash: F,
+    ota_flash: &AsyncMutex<NoopRawMutex, mpsl::Flash<'_>>,
+    seed: [u8; 32],
+) {
     let low = embassy_nrf::pac::FICR.deviceid(0).read().to_le_bytes();
     let high = embassy_nrf::pac::FICR.deviceid(1).read().to_le_bytes();
     let address = Address::random([low[0], low[1], low[2], low[3], high[0], high[1] | 0xc0]);
@@ -207,15 +294,23 @@ pub async fn run<C: Controller, F: NorFlash>(controller: C, flash: F, seed: [u8;
                     Err(_) => reset_safe(),
                 };
                 if conn.raw().set_bondable(enrollment_active()).is_ok() {
-                    let _ = session(&server, &conn, &mut bonds, || {
-                        stack
-                            .get_bond_information()
-                            .iter()
-                            .find(|bond| bond.identity.match_identity(&conn.raw().peer_identity()))
-                            .and_then(stored_bond)
-                    })
+                    let _ = session(
+                        &server,
+                        &conn,
+                        &mut bonds,
+                        || {
+                            stack
+                                .get_bond_information()
+                                .iter()
+                                .find(|bond| bond.identity.match_identity(&conn.raw().peer_identity()))
+                                .and_then(stored_bond)
+                        },
+                        ota_flash,
+                    )
                     .await;
                 }
+                crate::OTA_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+                CHANGED.signal(());
                 state(OutputState::disconnect);
                 CHANGED.signal(());
                 conn.raw().disconnect();
@@ -306,7 +401,16 @@ async fn session<F: NorFlash>(
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     bonds: &mut BondStore<F>,
     current_bond: impl Fn() -> Option<OwnerBond>,
+    ota_flash: &AsyncMutex<NoopRawMutex, mpsl::Flash<'_>>,
 ) -> Result<(), Error> {
+    let mut receiver = Receiver::new();
+    let mut slots = MarkerSlots {
+        dfu: Partition::new(ota_flash, 0x48000, 224 * 1024),
+    };
+    let initial_status = receiver
+        .status(0, 1, odyssey_version::cargo_version!(), 0)
+        .encode();
+    server.set(&server.markers.ota, &initial_status)?;
     loop {
         let event = match select(conn.next(), ENROLLMENT_CHANGED.wait()).await {
             Either::First(event) => event,
@@ -319,7 +423,12 @@ async fn session<F: NorFlash>(
             }
         };
         match event {
-            GattConnectionEvent::Disconnected { .. } => return Ok(()),
+            GattConnectionEvent::Disconnected { .. } => {
+                receiver.abort();
+                crate::OTA_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+                CHANGED.signal(());
+                return Ok(());
+            }
             GattConnectionEvent::PairingComplete {
                 security_level,
                 bond: Some(bond),
@@ -339,7 +448,27 @@ async fn session<F: NorFlash>(
             GattConnectionEvent::PairingFailed(_) => return Ok(()),
             GattConnectionEvent::Gatt { event } => {
                 let mut update = None;
+                let mut ota_action = Action::Continue;
+                let mut ota_write = false;
                 let error = match &event {
+                    GattEvent::Read(read) if read.handle() == server.markers.ota.handle => {
+                        let encrypted = conn.raw().security_level()?.encrypted();
+                        let current = current_bond();
+                        if !encrypted {
+                            Some(AttErrorCode::INSUFFICIENT_ENCRYPTION)
+                        } else if !bonds
+                            .owner()
+                            .is_some_and(|owner| owner.permits(encrypted, current.as_ref()))
+                        {
+                            Some(AttErrorCode::INSUFFICIENT_AUTHORISATION)
+                        } else {
+                            let status = receiver
+                                .status(0, 1, odyssey_version::cargo_version!(), 0)
+                                .encode();
+                            server.set(&server.markers.ota, &status)?;
+                            None
+                        }
+                    }
                     GattEvent::Write(write) => {
                         let encrypted = conn.raw().security_level()?.encrypted();
                         let current = current_bond();
@@ -353,11 +482,18 @@ async fn session<F: NorFlash>(
                         } else if !matches!(
                             write.payload().incoming(),
                             AttClient::Request(AttReq::Write { .. })
-                        ) || (write.handle() != server.markers.demand.handle
-                            && write.handle() != server.markers.mode.handle)
-                        {
+                        ) {
                             Some(AttErrorCode::WRITE_NOT_PERMITTED)
-                        } else {
+                        } else if write.handle() == server.markers.ota.handle {
+                            if write.data().len() > 20 {
+                                Some(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
+                            } else {
+                                ota_write = true;
+                                None
+                            }
+                        } else if write.handle() == server.markers.demand.handle
+                            || write.handle() == server.markers.mode.handle
+                        {
                             let parsed = if write.handle() == server.markers.demand.handle {
                                 parse_demand(write.data()).map(|active| (false, u8::from(active)))
                             } else {
@@ -373,7 +509,18 @@ async fn session<F: NorFlash>(
                                 }
                                 Err(WriteError::Value) => Some(AttErrorCode::VALUE_NOT_ALLOWED),
                             }
+                        } else {
+                            Some(AttErrorCode::WRITE_NOT_PERMITTED)
                         }
+                    }
+                    GattEvent::Other(other)
+                        if matches!(
+                            other.payload().incoming(),
+                            AttClient::Command(AttCmd::Write { handle, .. })
+                                if handle == server.markers.ota.handle
+                        ) =>
+                    {
+                        Some(AttErrorCode::WRITE_NOT_PERMITTED)
                     }
                     GattEvent::Other(other)
                         if matches!(
@@ -387,6 +534,22 @@ async fn session<F: NorFlash>(
                     }
                     _ => None,
                 };
+                if error.is_none() && ota_write {
+                    if let GattEvent::Write(write) = &event {
+                        ota_action = receiver
+                            .handle(&mut slots, write.data())
+                            .await
+                            .unwrap_or(Action::Continue);
+                    }
+                    let status = receiver
+                        .status(0, 1, odyssey_version::cargo_version!(), 0)
+                        .encode();
+                    server.set(&server.markers.ota, &status)?;
+                    let active = receiver.status(0, 1, [0; 3], 0).staged != 0
+                        || receiver.status(0, 1, [0; 3], 0).receiving.is_some();
+                    crate::OTA_ACTIVE.store(active, core::sync::atomic::Ordering::Release);
+                    CHANGED.signal(());
+                }
                 let (mode, demand) = state(|s| (s.mode() as u8, u8::from(s.deadline().is_some())));
                 server.set(&server.markers.mode, &mode)?;
                 server.set(&server.markers.demand, &demand)?;
@@ -408,6 +571,15 @@ async fn session<F: NorFlash>(
                     CHANGED.signal(());
                 }
                 reply.send().await;
+                if ota_write {
+                    let status = receiver
+                        .status(0, 1, odyssey_version::cargo_version!(), 0)
+                        .encode();
+                    server.set(&server.markers.ota, &status)?;
+                }
+                if ota_write && ota_action == Action::Reset {
+                    crate::OTA_RESET_REQUEST.signal(());
+                }
             }
             _ => {}
         }

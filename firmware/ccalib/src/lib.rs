@@ -13,6 +13,7 @@ use nalgebra::{
 use num_dual::{DualNum, DualVec};
 use num_traits::{One, Zero};
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod utils;
 
 /// Projects the centre of a circle on the target into the image, which is not the centre
@@ -21,6 +22,8 @@ pub mod utils;
 /// `e` is the extrinsic matrix `[r_1, r_2, t]` and `q_inv` the inverse of the circle's
 /// characteristic (conic) matrix in target coordinates. Only the radial terms k1, k2, k3 of
 /// `intrinsics.distortion` are applied.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn estimate_center<D: DualNum<f64> + RealField>(
     intrinsics: &CameraIntrinsics<D>,
     e: Matrix3<D>,
@@ -45,6 +48,7 @@ pub fn estimate_center<D: DualNum<f64> + RealField>(
     .into()
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn make_extrinsics<D: DualNum<f64> + RealField>(r: Vector3<D>, t: Vector3<D>) -> Matrix3<D> {
     let r = rotation_from_scaled_axis(r);
     let mut e = Matrix3::identity();
@@ -54,6 +58,7 @@ pub fn make_extrinsics<D: DualNum<f64> + RealField>(r: Vector3<D>, t: Vector3<D>
     e
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn make_extrinsics_from_mat4<D: DualNum<f64> + RealField>(m: &Matrix4<D>) -> Matrix3<D> {
     let mut e = Matrix3::identity();
     e.fixed_view_mut::<3, 2>(0, 0)
@@ -63,6 +68,7 @@ pub fn make_extrinsics_from_mat4<D: DualNum<f64> + RealField>(m: &Matrix4<D>) ->
     e
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn reproject<D: DualNum<f64> + RealField>(
     intrinsics: &CameraIntrinsics<D>,
     r: Vector3<D>,
@@ -83,6 +89,7 @@ pub fn reproject<D: DualNum<f64> + RealField>(
     estimate_center(intrinsics, e, q_inv.cast())
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn reprojection_error<D: DualNum<f64> + RealField>(
     intrinsics: &CameraIntrinsics<D>,
     r: Vector3<D>,
@@ -95,6 +102,7 @@ pub fn reprojection_error<D: DualNum<f64> + RealField>(
     reproj - image_point.cast()
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn angular_reprojection_error<D: DualNum<f64> + RealField>(
     intrinsics: &CameraIntrinsics<D>,
     r: Vector3<D>,
@@ -108,34 +116,60 @@ pub fn angular_reprojection_error<D: DualNum<f64> + RealField>(
 }
 
 /// A rejected calibration input or failed optimization.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, thiserror::Error)]
 pub enum CalibrationError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("calibration requires at least one object point")]
     EmptyObjectPoints,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("calibration requires at least one image")]
     EmptyImages,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("image {image} has {actual} points, expected {expected}")]
     PointCountMismatch {
+        /// Since: Odyssey Desktop 0.7.0.
         image: usize,
+        /// Since: Odyssey Desktop 0.7.0.
         expected: usize,
+        /// Since: Odyssey Desktop 0.7.0.
         actual: usize,
     },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("{field} must contain only finite values")]
-    NonFiniteInput { field: &'static str },
+    NonFiniteInput {
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        field: &'static str,
+    },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("{field} must be positive")]
-    NonPositiveInput { field: &'static str },
+    NonPositiveInput {
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        field: &'static str,
+    },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("calibration residual count exceeds the supported size")]
     TooManyPoints,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("{stage} optimization failed")]
     Optimization {
+        /// Since: Odyssey Desktop 0.7.0.
         stage: &'static str,
+        /// Since: Odyssey Desktop 0.7.0.
         #[source]
         source: argmin::core::Error,
     },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("{stage} optimization returned no best parameters")]
-    MissingParameters { stage: &'static str },
+    MissingParameters {
+        #[doc = "Since: Odyssey Desktop 0.7.0."]
+        stage: &'static str,
+    },
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("optimization produced nonfinite parameters, residuals, or derivatives")]
     NonFiniteEvaluation,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("optimization returned an invalid calibration result")]
     InvalidResult,
 }
@@ -152,6 +186,9 @@ pub enum CalibrationError {
 /// Returns [`CalibrationError`] for invalid inputs, failed or nonfinite optimizer
 /// evaluations, missing best parameters, or a nonfinite final calibration. Solver
 /// failures preserve the underlying argmin error as their source.
+///
+/// # Since
+/// Odyssey Desktop 0.6.0.
 pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
     object_points: &[Vector3<f64>],
     images_points: &[Matrix<f64, Const<2>, D, S>],
@@ -265,7 +302,7 @@ pub fn calibrate<D: Dim, S: Storage<f64, Const<2>, D>>(
         });
     }
     // Steihaug seems better at dealing with bad initial guesses.
-    // TODO: better initial guess; every image starts from zero rotation at `initial_target_pos`.
+    // TODO: better initial guess. Every image starts from zero rotation at `initial_target_pos`.
     let trust_region = TrustRegion::new(Steihaug::new().with_max_iters(20));
     let result = Executor::new(problem, trust_region)
         .configure(|state| {
@@ -348,8 +385,7 @@ where
     M: Dim,
     N: Dim,
     G: Fn(CalibrationResult<DualVec<f64, f64, N>>) -> OVector<DualVec<f64, f64, N>, M>,
-    DefaultAllocator:
-        Allocator<M> + Allocator<N> + Allocator<N, N> + Allocator<nalgebra::Const<1>, N>,
+    DefaultAllocator: Allocator<M> + Allocator<N> + Allocator<N, N> + Allocator<Const<1>, N>,
 {
     f: G,
     flags: Flags,
@@ -475,6 +511,8 @@ where
 
 /// Like `Rotation3::from_scaled_axis`, but at zero angle returns the first-order form
 /// `I + [axisangle]×` instead of the identity, so dual-number derivatives survive at 0.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn rotation_from_scaled_axis<T, SB>(axisangle: Vector<T, U3, SB>) -> Rotation3<T>
 where
     T: nalgebra::SimdRealField,
@@ -495,29 +533,43 @@ where
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Default, Debug)]
 pub struct CalibrationResult<D: Scalar> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub intrinsics: CameraIntrinsics<D>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub extrinsics: Vec<Extrinsic<D>>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub rmse: f64,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct CameraIntrinsics<D: Scalar> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fx: D,
+    /// Since: Odyssey Desktop 0.6.0.
     pub fy: D,
+    /// Since: Odyssey Desktop 0.6.0.
     pub cx: D,
+    /// Since: Odyssey Desktop 0.6.0.
     pub cy: D,
-    pub distortion: Option<[D; 5]>, // OpenCV order (k1, k2, p1, p2, k3); p1, p2 are never fitted
+    /// Since: Odyssey Desktop 0.6.0.
+    pub distortion: Option<[D; 5]>, // OpenCV order (k1, k2, p1, p2, k3). p1, p2 are never fitted
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Extrinsic<D: Scalar> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub r: Vector3<D>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub t: Vector3<D>,
 }
 
 impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn matrix(&self) -> Matrix3<D> {
         matrix![
             self.fx.clone(), D::zero(), self.cx.clone();
@@ -526,6 +578,7 @@ impl<D: Scalar + Zero + One> CameraIntrinsics<D> {
         ]
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn distortion(&self) -> [D; 5] {
         self.distortion
             .clone()

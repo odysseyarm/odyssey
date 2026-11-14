@@ -9,15 +9,21 @@ use opencv::imgproc::{INTER_CUBIC, resize};
 
 use crate::ViewerError;
 
-#[derive(Clone)]
+/// Since: Odyssey Desktop 0.6.0.
+#[derive(Clone, Debug)]
 pub struct AprilGridConfig {
+    /// Since: Odyssey Desktop 0.6.0.
     pub rows: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     pub cols: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     pub tag_size: f64,
+    /// Since: Odyssey Desktop 0.6.0.
     pub tag_spacing: f64,
 }
 
 impl AprilGridConfig {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(rows: u16, cols: u16, tag_size: f64, tag_spacing: f64) -> Self {
         Self {
             rows,
@@ -28,12 +34,22 @@ impl AprilGridConfig {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub struct AprilGrid {
     detector: TagDetector,
     config: AprilGridConfig,
 }
 
+impl std::fmt::Debug for AprilGrid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AprilGrid")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AprilGrid {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(config: AprilGridConfig) -> Self {
         let detector_params = DetectorParams {
             tag_spacing_ratio: (config.tag_spacing / config.tag_size) as f32,
@@ -47,6 +63,7 @@ impl AprilGrid {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn get_corner_and_object_points(
         &self,
         image: &[u8],

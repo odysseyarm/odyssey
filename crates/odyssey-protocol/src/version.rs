@@ -1,37 +1,54 @@
 use odyssey_protocol_macros::protocol_type;
 
 /// Version of the device wire format, reported by a device in
-/// [`Props::Version`] and over the control endpoint. Bump it when the packets
-/// in this module change shape.
+/// [`Props::Version`] and over the control endpoint. Bump when packet shape or
+/// accepted value ranges change.
 ///
 /// This is a separate axis from the crate version in `Cargo.toml`. The crate
 /// version follows semver for the Rust API: a change that breaks callers (a
 /// new variant on an exhaustive enum, a removed item) bumps it even when no
-/// packet changed. This constant moves only when the bytes on the wire do, so
-/// a refactor-only release does not tell every device in the field that the
-/// protocol moved. Host-side `semver_at_least` gates read this value.
+/// packet changed. Version 0.2.0 widens firmware version components from `u16`
+/// to `u32`. CBOR arrays keep the same shape, but large values need new consumers.
 ///
-/// 0.1.6: the device picks its transport itself (USB while a USB host is
-/// attached, BLE otherwise) and `SetTransportMode` no longer reboots or
-/// persists anything. The packets are unchanged; their meaning is not.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 1, 6];
+/// Since: Odyssey Desktop 0.6.0.
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 2, 0];
 
+/// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]
 #[cfg_attr(feature = "pyo3", pyo3::pyclass(get_all))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Version {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub protocol_semver: [u16; 3],
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
-    pub firmware_semver: [u16; 3],
+    pub firmware_semver: [u32; 3],
 }
 
 impl Version {
-    pub fn new(firmware_semver: [u16; 3]) -> Self {
+    /// Since: Odyssey Desktop 0.6.0.
+    pub fn new(firmware_semver: [u32; 3]) -> Self {
         Self {
             protocol_semver: DEVICE_PROTOCOL,
             firmware_semver,
         }
+    }
+}
+
+#[cfg(all(test, feature = "minicbor"))]
+mod tests {
+    use super::Version;
+
+    #[test]
+    fn firmware_version_roundtrips_components_above_u16() {
+        let version = Version::new([u32::MAX, 65_536, 1]);
+        let mut bytes = [0; 40];
+        let mut encoder = minicbor::Encoder::new(&mut bytes[..]);
+        encoder.encode(version).unwrap();
+        let encoded_len = 40 - encoder.writer().len();
+        let decoded: Version = minicbor::decode(&bytes[..encoded_len]).unwrap();
+        assert_eq!(decoded.firmware_semver, [u32::MAX, 65_536, 1]);
     }
 }

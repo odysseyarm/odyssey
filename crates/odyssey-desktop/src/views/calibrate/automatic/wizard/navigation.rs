@@ -46,7 +46,7 @@ impl Wizard {
         self.attempt_status = None;
         self.save_error = None;
         self.set_stage(Stage::Setup, cx);
-        self.refresh_saved_screens(cx);
+        Self::refresh_saved_screens(cx);
     }
 
     /// Calibrate another screen: back to Setup with the screen number chosen afresh and
@@ -59,7 +59,7 @@ impl Wizard {
     }
 
     /// Returns to the workspace after any unfinished measurement is confirmed.
-    pub(crate) fn exit(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn exit(cx: &mut Context<Self>) {
         cx.defer(crate::shell::finish_calibration);
     }
 
@@ -98,7 +98,7 @@ impl Wizard {
                 }
                 self.enter_markers(cx);
             }
-            // The size lives in Setup; trying again would meet the same error.
+            // The size lives in Setup. Trying again would meet the same error.
             FailureKind::Internal | FailureKind::SizeInvalid | FailureKind::SizeShape => {
                 self.back_to_setup(cx);
             }

@@ -25,7 +25,7 @@ pub(crate) fn saved_screens(screens_dir: &Path) -> [bool; SCREEN_COUNT] {
 /// The screen id to preselect: the one last calibrated for this monitor, else
 /// the first without a calibration, else the first (everything is taken, so the
 /// tech is replacing something either way and Review asks before it does).
-pub(crate) fn default_screen(remembered: Option<u8>, saved: &[bool; SCREEN_COUNT]) -> u8 {
+pub(crate) fn default_screen(remembered: Option<u8>, saved: [bool; SCREEN_COUNT]) -> u8 {
     remembered
         .filter(|&id| usize::from(id) < SCREEN_COUNT)
         .or_else(|| saved.iter().position(|&taken| !taken).map(|id| id as u8))
@@ -48,23 +48,23 @@ mod tests {
 
     #[test]
     fn remembered_screen_wins_even_when_it_is_already_calibrated() {
-        assert_eq!(default_screen(Some(2), &saved(&[0, 1, 2])), 2);
+        assert_eq!(default_screen(Some(2), saved(&[0, 1, 2])), 2);
     }
 
     #[test]
     fn without_a_memory_the_first_free_screen_is_used() {
-        assert_eq!(default_screen(None, &saved(&[])), 0);
-        assert_eq!(default_screen(None, &saved(&[0, 1, 3])), 2);
+        assert_eq!(default_screen(None, saved(&[])), 0);
+        assert_eq!(default_screen(None, saved(&[0, 1, 3])), 2);
     }
 
     #[test]
     fn full_screens_fall_back_to_the_first() {
-        assert_eq!(default_screen(None, &saved(&[0, 1, 2, 3, 4, 5])), 0);
+        assert_eq!(default_screen(None, saved(&[0, 1, 2, 3, 4, 5])), 0);
     }
 
     #[test]
     fn a_remembered_screen_that_no_longer_exists_is_ignored() {
-        assert_eq!(default_screen(Some(200), &saved(&[0])), 1);
+        assert_eq!(default_screen(Some(200), saved(&[0])), 1);
     }
 
     #[test]

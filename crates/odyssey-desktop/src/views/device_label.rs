@@ -21,7 +21,7 @@ pub(crate) fn device_type(device: &Device) -> &'static str {
 }
 
 /// An address as colon-separated uppercase hex bytes.
-pub(crate) fn format_address(address: &[u8; 6]) -> String {
+pub(crate) fn format_address(address: [u8; 6]) -> String {
     format!(
         "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
         address[0], address[1], address[2], address[3], address[4], address[5]
@@ -31,7 +31,7 @@ pub(crate) fn format_address(address: &[u8; 6]) -> String {
 /// The device's product, name and address, with a DFU mark for a device that
 /// can only be flashed.
 pub(crate) fn device_label(device: &Device) -> String {
-    let addr = format_address(&device.uuid);
+    let addr = format_address(device.uuid);
     let device_type = device_type(device);
     let is_dfu = device.capabilities.contains(DeviceCapabilities::DFU)
         && !device.capabilities.contains(DeviceCapabilities::CONTROL);
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn addresses_are_uppercase_and_colon_separated() {
         assert_eq!(
-            format_address(&[0, 1, 0xAB, 0xCD, 0xEF, 0xFF]),
+            format_address([0, 1, 0xAB, 0xCD, 0xEF, 0xFF]),
             "00:01:AB:CD:EF:FF"
         );
     }

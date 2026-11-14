@@ -1,5 +1,5 @@
 //! Form widgets of the settings panels. The `SettingsForm` strings stay the
-//! source of truth; each widget mirrors one of them, writing edits back and
+//! source of truth. Each widget mirrors one of them, writing edits back and
 //! being refilled by `push_*` after the form changes underneath it.
 
 use gpui::component::input::{Input, InputEvent, InputState};
@@ -93,7 +93,7 @@ pub(super) fn push_select(select: &OptionSelect, value: &str, window: &mut Windo
     select.update(cx, |state, cx| state.set_selected_index(index, window, cx));
 }
 
-fn row(label: &str, field: impl IntoElement, palette: Palette) -> impl IntoElement {
+fn row(label: &str, field: impl IntoElement, palette: &Palette) -> impl IntoElement {
     div()
         .flex()
         .items_start()
@@ -112,7 +112,7 @@ fn row(label: &str, field: impl IntoElement, palette: Palette) -> impl IntoEleme
 }
 
 /// Marks a widget with a red outline while it has an issue.
-fn outlined(invalid: bool, palette: Palette, widget: impl IntoElement) -> impl IntoElement {
+fn outlined(invalid: bool, palette: &Palette, widget: impl IntoElement) -> impl IntoElement {
     div()
         .flex_1()
         .rounded(px(RADIUS_SM))
@@ -125,7 +125,7 @@ fn outlined(invalid: bool, palette: Palette, widget: impl IntoElement) -> impl I
         .child(widget)
 }
 
-fn issue_line(issue: Option<String>, palette: Palette) -> Option<impl IntoElement> {
+fn issue_line(issue: Option<String>, palette: &Palette) -> Option<impl IntoElement> {
     issue.map(|message| {
         div()
             .text_xs()
@@ -143,7 +143,7 @@ pub(super) fn number_row(
     input: &Entity<InputState>,
     hint: Option<String>,
     issue: Option<String>,
-    palette: Palette,
+    palette: &Palette,
 ) -> impl IntoElement {
     let field = div()
         .flex()
@@ -176,7 +176,7 @@ pub(super) fn select_row(
     label: &str,
     select: &OptionSelect,
     issue: Option<String>,
-    palette: Palette,
+    palette: &Palette,
 ) -> impl IntoElement {
     let field = div()
         .flex()

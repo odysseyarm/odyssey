@@ -5,10 +5,12 @@
 //! [`Session::measure_screen`] once the pattern is on screen,
 //! [`Session::preview_markers`] and [`Session::measure_markers`] with the
 //! tracker markers switched on, and [`Session::finish`] for the result and the
-//! data a review screen needs. The core returns data and enums only; the UI
+//! data a review screen needs. The core returns data and enums only. The UI
 //! turns [`Hint`]s and [`Step`]s into words.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use image::{GrayImage, RgbImage};
@@ -18,23 +20,29 @@ use odyssey_common::ScreenCalibration;
 use crate::camera::{CameraError, CameraGeometry, CameraStream, Frames};
 use crate::imu::{GravityEstimator, Tilt};
 use crate::markers::{self, MarkerBlob, MarkerError, MarkerFit};
+/// Since: Odyssey Desktop 0.6.5.
 pub use crate::pattern::{EdgeCheck, SideSet};
 use crate::pattern::{Pattern, check_edges, detect};
+/// Since: Odyssey Desktop 0.6.7.
 pub use crate::placement::Circle;
 use crate::solve::{
     self, BURST_FRAMES, ScreenFit, SolveError, SolveOptions, build_calibration, solve_screen,
 };
+/// Since: Odyssey Desktop 0.6.5.
 pub use crate::solve::{KnownSize, SizeCheck, SizeSource};
 
 mod analysis;
 mod storage;
 
+/// Since: Odyssey Desktop 0.6.5.
 pub use storage::{
     calibration_from_json, calibration_to_json, load_calibration, save_calibration,
     screen_file_name,
 };
 
 /// Infrared frames averaged when measuring markers.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const MARKER_FRAMES: usize = 5;
 
 /// Frames discarded after changing infrared exposure so the sensor has
@@ -47,23 +55,34 @@ const MARKER_COUNT: usize = 6;
 /// Least time between two logged accounts of a failing marker search.
 const MARKER_REPORT_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionOptions {
     /// Color and depth frames merged by [`Session::measure_screen`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub burst_frames: usize,
     /// Infrared exposure for marker detection, microseconds. Short enough that
     /// only the marker LEDs stay bright.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir_exposure_us: u32,
     /// Declared screen size, from the display's EDID or the user. The result
     /// is rectified to it, which removes depth scale error. Leave unset for a
     /// projector, whose size only the depth camera can tell.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub known_size: Option<KnownSize>,
     /// Refuse to call the screen ready, and to measure it, while the display
     /// crops the pattern's border. Set it together with a `known_size` taken
     /// from the panel: an overscanned image is larger than the panel, so the
     /// panel size is no scale anchor for it.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub require_visible_edges: bool,
     /// How long to wait for each frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub frame_timeout: Duration,
 }
 
@@ -79,168 +98,286 @@ impl Default for SessionOptions {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    /// Since: Odyssey Desktop 0.6.5.
     #[error(transparent)]
     Camera(#[from] CameraError),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error(transparent)]
     Solve(#[from] SolveError),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error(transparent)]
     Markers(#[from] MarkerError),
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the screen has not been measured yet")]
     ScreenNotMeasured,
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the markers have not been measured yet")]
     MarkersNotMeasured,
     /// The display crops the pattern's border on these sides and the options
     /// ask for the whole image to be visible.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("the screen does not show the whole picture; its border is cut off")]
     EdgesCropped(SideSet),
+    /// An owner requested that ongoing frame capture stop.
+    #[error("calibration capture cancelled")]
+    Cancelled,
 }
 
 /// The most important thing the user should change, or `Ready`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hint {
+    /// Since: Odyssey Desktop 0.6.5.
     Ready,
     /// The dot pattern is not visible.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     ScreenNotFound,
     /// Part of the screen is outside the image or hidden.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     ScreenPartlyVisible,
+    /// Since: Odyssey Desktop 0.6.5.
     TooDark,
+    /// Since: Odyssey Desktop 0.6.5.
     TooBright,
+    /// Since: Odyssey Desktop 0.6.5.
     TooClose,
+    /// Since: Odyssey Desktop 0.6.5.
     TooFar,
     /// The depth sensor returns too little usable data on the screen.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     DepthPoor,
+    /// Since: Odyssey Desktop 0.6.5.
     CameraTiltedTooMuch,
     /// The camera looks at the screen from too steep an angle.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     ScreenTooOblique,
     /// The display cuts off the picture's border (overscan), so its panel
     /// size does not match the pattern. Reported only when
     /// [`SessionOptions::require_visible_edges`] is set.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     EdgesCropped,
 }
 
 /// One live frame with what the detector made of it.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Preview {
+    /// Since: Odyssey Desktop 0.6.5.
     pub color: RgbImage,
     /// Centers of the detected dots in the color image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots: Vec<Point2<f32>>,
     /// Screen corners (top left, top right, bottom right, bottom left) in the
     /// color image, when the pattern was found.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_quad: Option<[Point2<f32>; 4]>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_matched: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_expected: usize,
     /// Share of the screen region with usable depth, `0..=1`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub depth_coverage: Option<f32>,
     /// Distance from the camera to the screen in meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub distance_m: Option<f32>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub tilt: Option<Tilt>,
     /// Whether the pattern's border ring is visible: `Cropped` means the
     /// display shows less than the whole image (overscan). Only blocks
     /// [`Hint::Ready`] when [`SessionOptions::require_visible_edges`] is set.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub edges: EdgeCheck,
+    /// Since: Odyssey Desktop 0.6.5.
     pub hint: Hint,
 }
 
 impl Preview {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn is_ready(&self) -> bool {
         self.hint == Hint::Ready
     }
 }
 
 /// Progress of a measurement, for a progress display.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    Capturing { frame: usize, total: usize },
+    /// Since: Odyssey Desktop 0.6.5.
+    Capturing {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        frame: usize,
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        total: usize,
+    },
+    /// Since: Odyssey Desktop 0.6.5.
     Solving,
+    /// Since: Odyssey Desktop 0.6.5.
     Done,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenSummary {
     /// Width and height in meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_m: [f64; 2],
+    /// Since: Odyssey Desktop 0.6.5.
     pub diagonal_in: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_source: SizeSource,
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_check: Option<SizeCheck>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub edges: EdgeCheck,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_rmse_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_max_error_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_used: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub quad_px: [Point2<f32>; 4],
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerHint {
+    /// Since: Odyssey Desktop 0.6.5.
     Ready,
     /// No bright spots at all: markers off, or the infrared view is blocked.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     NoMarkers,
+    /// Since: Odyssey Desktop 0.6.5.
     TooFewMarkers {
+        /// Since: Odyssey Desktop 0.6.5.
         found: usize,
     },
-    /// Not six spots on or near the screen; the markers cannot be told from other lights.
+    /// Not six spots on or near the screen. The markers cannot be told from other lights.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     WrongCount {
+        /// Since: Odyssey Desktop 0.6.7.
         near_screen: usize,
     },
     /// Six spots on the screen, but no three of them make the row the tracker needs.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     NoRow,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct MarkerPreview {
+    /// Since: Odyssey Desktop 0.6.5.
     pub ir: GrayImage,
     /// Bright spots in the infrared image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub blobs: Vec<Point2<f32>>,
     /// Index into `blobs` for each of the six markers when they were matched.
-    /// Matching needs a measured screen; without one `Ready` only means that
+    /// Matching needs a measured screen. Without one, `Ready` only means that
     /// at least six spots are visible.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub matched: Option<[usize; 6]>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub hint: MarkerHint,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerSummary {
     /// Marker positions in meters in the screen frame, in the order of
     /// `ScreenCalibration::object_points`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub points_m: [Point2<f64>; 6],
     /// See [`Review::seed_circle`].
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub seed_circle: Option<Circle>,
 }
 
 /// Data for the review screen.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Review {
     /// Color frame the pattern was measured in.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub color: RgbImage,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_rmse_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_max_error_m: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane_inliers: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub screen_quad_px: [Point2<f32>; 4],
     /// Marker positions in the color image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub marker_px: [Point2<f32>; 6],
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_m: [f64; 2],
+    /// Since: Odyssey Desktop 0.6.5.
     pub diagonal_in: f64,
     /// Where `size_m` comes from.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_source: SizeSource,
     /// The depth-measured size against the declared one, when one was declared.
     /// Check [`SizeCheck::disagrees`] to warn about overscan or a wrong size.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub size_check: Option<SizeCheck>,
     /// Whether the pattern's border was visible when the screen was measured.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub edges: EdgeCheck,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_used: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub dots_expected: usize,
     /// The circle through the first three markers, where the tracker's seed solve is
     /// ill-conditioned for a camera whose position, projected onto the screen's plane, is on
     /// it. `None` when the three are collinear.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub seed_circle: Option<Circle>,
     /// Whether IMU data aligned the result to gravity.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub gravity_aligned: bool,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Calibration {
+    /// Since: Odyssey Desktop 0.6.5.
     pub calibration: ScreenCalibration<f32>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub review: Review,
 }
 
@@ -304,11 +441,7 @@ fn average_markers(
         ));
     }
     let points_m = sums.map(|s| Point2::from(s / successes as f64));
-    let marker_px = points_m.map(|p| {
-        fit.screen_to_color_px(p)
-            .map(pt32)
-            .unwrap_or_else(Point2::origin)
-    });
+    let marker_px = points_m.map(|p| fit.screen_to_color_px(p).map_or_else(Point2::origin, pt32));
     Ok((
         MarkerSummary {
             points_m,
@@ -319,17 +452,27 @@ fn average_markers(
 }
 
 /// What an attempt looked at: the frames the solver and the marker search used.
+///
+/// Since: Odyssey Desktop 0.6.7.
 #[derive(Debug, Clone)]
 pub struct AttemptFrames {
+    /// Since: Odyssey Desktop 0.6.7.
     pub geometry: CameraGeometry,
     /// Color, depth and infrared of every frame in the screen burst.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub screen_burst: Vec<Frames>,
     /// The infrared frames of the latest marker measurement.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub marker_burst_ir: Vec<GrayImage>,
     /// The latest infrared frame shown while positioning for the markers.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub marker_preview_ir: Option<GrayImage>,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 pub struct Session {
     stream: Box<dyn CameraStream>,
     geometry: CameraGeometry,
@@ -340,6 +483,7 @@ pub struct Session {
     screen: Option<ScreenMeasurement>,
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
+    cancellation: Option<Arc<AtomicBool>>,
     /// Exposure transitions must finish discarding old frames even after a timeout.
     settle_remaining: usize,
     /// The burst the last failed screen measurement was made from.
@@ -420,6 +564,8 @@ fn best_effort<T>(what: &str, result: Result<T, CameraError>) {
 impl Session {
     /// Starts a session on an open camera. `aspect` is the screen's width over
     /// height, which fixes the pattern.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn start(mut stream: Box<dyn CameraStream>, aspect: f64, options: SessionOptions) -> Self {
         let geometry = *stream.geometry();
         // Depth quality depends on the projector, and a previous session may
@@ -436,6 +582,7 @@ impl Session {
             screen: None,
             markers: None,
             marker_mode: false,
+            cancellation: None,
             settle_remaining: 0,
             failed_burst: None,
             marker_burst_ir: Vec::new(),
@@ -443,8 +590,27 @@ impl Session {
             marker_report_at: None,
         }
     }
+    /// Installs owner-controlled cancellation checked between camera frames.
+    /// An active camera read ends at its configured frame timeout.
+    pub fn set_cancellation_flag(&mut self, cancellation: Arc<AtomicBool>) {
+        self.cancellation = Some(cancellation);
+    }
+
+    fn check_cancellation(&self) -> Result<(), SessionError> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
+            Err(SessionError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
 
     /// The pattern the screen must display.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn pattern(&self) -> &Pattern {
         &self.pattern
     }
@@ -452,6 +618,8 @@ impl Session {
     /// Everything the attempt looked at, for a diagnostic bundle: the screen burst
     /// (the one that failed, else the one the screen was measured from) and the
     /// infrared frames of the latest marker measurement and preview.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub fn attempt_frames(&self) -> AttemptFrames {
         AttemptFrames {
             geometry: self.geometry,
@@ -465,24 +633,36 @@ impl Session {
         }
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn geometry(&self) -> &CameraGeometry {
         &self.geometry
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn screen_fit(&self) -> Option<&ScreenFit> {
         self.screen.as_ref().map(|s| &s.fit)
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn tilt(&self) -> Option<Tilt> {
         self.gravity.tilt()
     }
 
     fn grab(&mut self) -> Result<Frames, SessionError> {
+        self.check_cancellation()?;
         if !self.geometry_checked {
             self.geometry.validate()?;
             self.geometry_checked = true;
         }
-        let frames = self.stream.next_frames(self.options.frame_timeout)?;
+        // shortcut: an in-progress read waits for frame timeout; upgrade when camera backends expose interruptible reads.
+        let frames = match self.stream.next_frames(self.options.frame_timeout) {
+            Ok(frames) => frames,
+            Err(error) => {
+                self.check_cancellation()?;
+                return Err(error.into());
+            }
+        };
+        self.check_cancellation()?;
         frames.validate(&self.geometry)?;
         let imu = self.stream.drain_imu();
         self.gravity.extend(&imu);
@@ -536,6 +716,7 @@ impl Session {
     }
 
     fn enter_marker_mode(&mut self) -> Result<(), SessionError> {
+        self.check_cancellation()?;
         if self.marker_mode {
             return self.settle();
         }
@@ -544,7 +725,7 @@ impl Session {
         // The exposure is already short, so leaving marker mode has to undo it
         // even if the projector switch fails.
         self.marker_mode = true;
-        // Cameras without a switchable projector report `Ok(false)`; the
+        // Cameras without a switchable projector report `Ok(false)`. The
         // projector's dots then stay below the relative threshold anyway.
         if let Err(error) = self.stream.set_projector_enabled(false) {
             self.leave_marker_mode();
@@ -558,6 +739,12 @@ impl Session {
     /// at once while the camera is in marker mode and at the next entry
     /// otherwise, so a UI can offer an exposure slider next to the live marker
     /// preview.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Camera`] if the camera refuses exposure or
+    /// cannot provide settling frames.
     pub fn set_ir_exposure_us(&mut self, exposure_us: u32) -> Result<(), SessionError> {
         // Do not retain a requested setting that the camera refused.
         if self.marker_mode {
@@ -572,6 +759,11 @@ impl Session {
     }
 
     /// Grabs one frame and reports whether the screen is ready to measure.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Camera`] if frame capture fails.
     pub fn preview(&mut self) -> Result<Preview, SessionError> {
         self.enter_depth_mode()?;
         let frames = self.grab()?;
@@ -648,17 +840,27 @@ impl Session {
     }
 
     /// Captures a burst while the pattern is shown and measures the screen.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Camera`] for capture or camera-data failures,
+    /// [`SessionError::EdgesCropped`] when required borders are missing, or
+    /// [`SessionError::Solve`] when screen fitting fails.
     pub fn measure_screen(
         &mut self,
         progress: &mut dyn FnMut(Step),
     ) -> Result<ScreenSummary, SessionError> {
+        self.check_cancellation()?;
         self.enter_depth_mode()?;
         let total = self.options.burst_frames.max(1);
         let frames = self.grab_burst(total, progress, |frames| frames)?;
+        self.check_cancellation()?;
 
         // The declared size is only a valid scale anchor if the screen shows
         // its whole image, so check the ring before spending time on the solve.
         let edges = self.burst_edges(&frames);
+        self.check_cancellation()?;
         if self.options.require_visible_edges
             && let EdgeCheck::Cropped { sides } = edges
         {
@@ -667,12 +869,15 @@ impl Session {
         }
 
         progress(Step::Solving);
+        self.check_cancellation()?;
         let alignment = self.gravity.camera_to_aligned();
         let options = SolveOptions {
             known_size: self.options.known_size,
             ..SolveOptions::default()
         };
-        let fit = match solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options) {
+        let fit = solve_screen(&self.geometry, &self.pattern, &frames, &alignment, &options);
+        self.check_cancellation()?;
+        let fit = match fit {
             Ok(fit) => fit,
             Err(error) => {
                 self.failed_burst = Some(frames);
@@ -682,8 +887,7 @@ impl Session {
         let summary = screen_summary(&fit, edges);
         let color = frames
             .last()
-            .map(|f| f.color.clone())
-            .unwrap_or_else(|| RgbImage::new(0, 0));
+            .map_or_else(|| RgbImage::new(0, 0), |f| f.color.clone());
         self.failed_burst = None;
         self.screen = Some(ScreenMeasurement {
             fit,
@@ -699,6 +903,12 @@ impl Session {
     }
 
     /// Switches the camera to marker detection and reports what it sees.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Camera`] if switching modes or frame capture
+    /// fails.
     pub fn preview_markers(&mut self) -> Result<MarkerPreview, SessionError> {
         self.enter_marker_mode()?;
         let frames = self.grab()?;
@@ -739,10 +949,18 @@ impl Session {
 
     /// Measures the six markers from a short burst of infrared frames. Needs
     /// [`measure_screen`](Self::measure_screen) first.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::ScreenNotMeasured`] when no screen fit exists,
+    /// [`SessionError::Camera`] for camera failures, or
+    /// [`SessionError::Markers`] when marker detection fails.
     pub fn measure_markers(
         &mut self,
         progress: &mut dyn FnMut(Step),
     ) -> Result<MarkerSummary, SessionError> {
+        self.check_cancellation()?;
         if self.screen.is_none() {
             return Err(SessionError::ScreenNotMeasured);
         }
@@ -750,6 +968,7 @@ impl Session {
         let captured = self.grab_burst(MARKER_FRAMES, progress, |frames| {
             (markers::detect_blobs(&frames.ir), frames.ir)
         })?;
+        self.check_cancellation()?;
         let (bursts, ir_frames): (Vec<_>, Vec<_>) = captured.into_iter().unzip();
         // Kept even when the solve below fails: these are the frames it used.
         self.marker_burst_ir = ir_frames;
@@ -759,6 +978,7 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::ScreenNotMeasured)?;
         let (summary, marker_px) = average_markers(&self.geometry, &screen.fit, &bursts)?;
+        self.check_cancellation()?;
         self.markers = Some(MarkerMeasurement {
             summary,
             marker_px,
@@ -782,6 +1002,13 @@ impl Session {
     }
 
     /// The calibration and review data, once the screen and markers are measured.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::ScreenNotMeasured`] or
+    /// [`SessionError::MarkersNotMeasured`] if either measurement is missing,
+    /// or [`SessionError::Solve`] if calibration construction fails.
     pub fn finish(&self) -> Result<Calibration, SessionError> {
         let (screen, markers) = self.measurements()?;
         self.assemble(screen, &screen.fit, markers.summary, markers.marker_px)
@@ -793,6 +1020,14 @@ impl Session {
     /// review screen can offer it after the stream has stopped. Reuses the
     /// gravity frame captured with the screen, not later marker-phase IMU
     /// readings. Equals `finish` when no size was declared.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    /// # Errors
+    ///
+    /// Returns [`SessionError::ScreenNotMeasured`] or
+    /// [`SessionError::MarkersNotMeasured`] if either measurement is missing,
+    /// or [`SessionError::Solve`] if re-solving or calibration construction
+    /// fails.
     pub fn finish_measured(&self) -> Result<Calibration, SessionError> {
         let (screen, markers) = self.measurements()?;
         if self.options.known_size.is_none() {
@@ -850,8 +1085,7 @@ impl Drop for Session {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::atomic::AtomicU8;
 
     use image::{Luma, Rgb};
 
@@ -863,6 +1097,7 @@ mod tests {
         geometry: CameraGeometry,
         next_frame: u8,
         fail_at: Arc<AtomicU8>,
+        cancel_at: Option<(Arc<AtomicBool>, u8)>,
     }
 
     impl CameraStream for InterruptedStream {
@@ -877,6 +1112,11 @@ mod tests {
             }
             let frame = self.next_frame;
             self.next_frame += 1;
+            if let Some((cancelled, at)) = &self.cancel_at
+                && *at == frame
+            {
+                cancelled.store(true, Ordering::Release);
+            }
             Ok(Frames {
                 color: RgbImage::from_pixel(1, 1, Rgb([frame; 3])),
                 depth: DepthImage::from_pixel(1, 1, Luma([1000])),
@@ -925,6 +1165,7 @@ mod tests {
             },
             next_frame: 0,
             fail_at: Arc::clone(&fail_at),
+            cancel_at: None,
         };
         let mut session = Session::start(Box::new(stream), 16.0 / 9.0, SessionOptions::default());
         assert!(matches!(
@@ -939,5 +1180,41 @@ mod tests {
             Err(SessionError::Camera(CameraError::Timeout))
         ));
         assert_eq!(session.preview().unwrap().color.get_pixel(0, 0)[0], 9);
+    }
+
+    #[test]
+    fn screen_burst_stops_between_frames_after_cancellation() {
+        let intrinsics = Intrinsics {
+            width: 1,
+            height: 1,
+            fx: 1.0,
+            fy: 1.0,
+            cx: 0.0,
+            cy: 0.0,
+            k: [0.0; 6],
+            p: [0.0; 2],
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stream = InterruptedStream {
+            geometry: CameraGeometry {
+                color: intrinsics,
+                depth: intrinsics,
+                ir: intrinsics,
+                color_to_depth: Extrinsics::identity(),
+                ir_to_depth: Extrinsics::identity(),
+            },
+            next_frame: 0,
+            fail_at: Arc::new(AtomicU8::new(u8::MAX)),
+            cancel_at: Some((Arc::clone(&cancelled), 2)),
+        };
+        let mut session = Session::start(Box::new(stream), 16.0 / 9.0, SessionOptions::default());
+        session.set_cancellation_flag(Arc::clone(&cancelled));
+        let mut progress = Vec::new();
+
+        assert!(matches!(
+            session.measure_screen(&mut |step| progress.push(step)),
+            Err(SessionError::Cancelled)
+        ));
+        assert_eq!(progress.len(), 3);
     }
 }

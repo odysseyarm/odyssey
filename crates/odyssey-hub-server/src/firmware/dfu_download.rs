@@ -167,6 +167,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "dfu-core declares these methods `async fn`; the test device answers at once"
+    )]
     impl DfuAsyncIo for Device {
         type Read = usize;
         type Write = usize;

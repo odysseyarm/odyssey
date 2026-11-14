@@ -238,7 +238,7 @@ impl ZeroView {
 
 impl Render for ZeroView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let target_width =
             TARGET_MAX_WIDTH.min(window.viewport_size().width.as_f32() * TARGET_MAX_WIDTH_FRACTION);
         let target_height = target_width * TARGET_IMAGE_SIZE.1 / TARGET_IMAGE_SIZE.0;

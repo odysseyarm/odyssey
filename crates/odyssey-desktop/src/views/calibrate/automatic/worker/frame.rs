@@ -57,7 +57,7 @@ pub(crate) struct Outcome {
     pub size_m: [f64; 2],
     pub diagonal_in: f64,
     pub size_source: SizeSource,
-    /// The depth measurement against the declared size; present when a size
+    /// The depth measurement against the declared size. Present when a size
     /// was declared.
     pub size_check: Option<SizeCheck>,
     pub measures: Measures,
@@ -65,7 +65,7 @@ pub(crate) struct Outcome {
     /// Whether the display showed the whole picture. `Cropped` is only
     /// possible when the edges were not required, i.e. the camera sized it.
     pub edges: EdgeCheck,
-    /// The circle through markers 1, 2 and 3; see `Review::seed_circle`.
+    /// The circle through markers 1, 2 and 3. See `Review::seed_circle`.
     pub seed_circle: Option<odyssey_autocalib::session::Circle>,
 }
 
@@ -115,7 +115,7 @@ fn xy(p: nalgebra::Point2<f32>) -> [f32; 2] {
 }
 
 pub(super) fn preview_frame(
-    preview: Preview,
+    preview: &Preview,
     ready_for: Duration,
     require_edges: bool,
 ) -> PreviewFrame {
@@ -140,7 +140,7 @@ pub(super) fn preview_frame(
     }
 }
 
-pub(super) fn marker_frame(preview: MarkerPreview) -> MarkerFrame {
+pub(super) fn marker_frame(preview: &MarkerPreview) -> MarkerFrame {
     let (image, width, height) = encode_gray(&preview.ir);
     MarkerFrame {
         image,

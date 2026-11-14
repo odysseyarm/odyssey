@@ -235,7 +235,7 @@ impl PairingControls {
 
 impl Render for PairingControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let id = cx.entity_id();
         let pending = self.state.command_pending;
         let row = div().flex().flex_shrink_0().items_center().gap_1();

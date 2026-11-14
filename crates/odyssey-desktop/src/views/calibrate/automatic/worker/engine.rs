@@ -49,7 +49,7 @@ enum Turn {
     Command(Command),
     /// No command is waiting and the camera is streaming: serve one frame.
     Frame,
-    /// The [`super::Worker`] is gone; nobody is left to report to.
+    /// The [`super::Worker`] is gone. Nobody is left to report to.
     Stop,
 }
 
@@ -57,6 +57,7 @@ pub(super) struct Engine {
     backend: Backend,
     events: UnboundedSender<Event>,
     in_flight: Arc<AtomicBool>,
+    cancellation: Arc<AtomicBool>,
     live: Option<Live>,
     mode: Mode,
     session: u64,
@@ -81,11 +82,13 @@ impl Engine {
         backend: Backend,
         events: UnboundedSender<Event>,
         in_flight: Arc<AtomicBool>,
+        cancellation: Arc<AtomicBool>,
     ) -> Self {
         Self {
             backend,
             events,
             in_flight,
+            cancellation,
             live: None,
             mode: Mode::Hold,
             session: 0,
@@ -97,8 +100,8 @@ impl Engine {
         }
     }
 
-    pub(super) fn run(mut self, receiver: Receiver<Command>) {
-        let outcome = catch_unwind(AssertUnwindSafe(|| self.serve(&receiver)));
+    pub(super) fn run(mut self, receiver: &Receiver<Command>) {
+        let outcome = catch_unwind(AssertUnwindSafe(|| self.serve(receiver)));
         if outcome.is_err() {
             tracing::error!("camera thread panicked");
             // A listing has no session ID. Complete it even if the UI has
@@ -173,6 +176,7 @@ impl Engine {
     fn open(&mut self, session: u64, request: &OpenRequest) {
         self.close_quietly();
         self.session = session;
+        self.cancellation.store(false, Ordering::Release);
         self.timeouts = 0;
         self.size_origin = request.size_origin;
         self.require_edges = request.options.require_visible_edges;
@@ -184,8 +188,10 @@ impl Engine {
                     "camera opened: {} (calibration session {session})",
                     request.camera.name
                 );
+                let mut session = opened;
+                session.set_cancellation_flag(Arc::clone(&self.cancellation));
                 self.live = Some(Live {
-                    session: opened,
+                    session,
                     ready: Stability::default(),
                 });
                 self.mode = Mode::Preview;
@@ -203,7 +209,7 @@ impl Engine {
         }
     }
 
-    /// Releases the camera without an event; returns whether one was open.
+    /// Releases the camera without an event. Returns whether one was open.
     fn close_quietly(&mut self) -> bool {
         let was_open = self.live.take().is_some();
         if was_open {
@@ -241,9 +247,9 @@ impl Engine {
         }));
     }
 
-    fn session_failed(&mut self, error: SessionError) {
-        let kind = FailureKind::of_session(&error);
-        // A measurement that found nothing usable leaves the camera fine; a
+    fn session_failed(&mut self, error: &SessionError) {
+        let kind = FailureKind::of_session(error);
+        // A measurement that found nothing usable leaves the camera fine. A
         // camera error means the stream is gone.
         let keep = kind != FailureKind::CameraLost;
         self.fail(kind, error.to_string(), keep);
@@ -264,7 +270,8 @@ impl Engine {
         });
         match result {
             Ok(()) => self.emit(done),
-            Err(e) => self.session_failed(e),
+            Err(SessionError::Cancelled) => {}
+            Err(e) => self.session_failed(&e),
         }
     }
 
@@ -273,7 +280,7 @@ impl Engine {
         let solved = solve_declared_and_measured(&live.session);
         let (declared, measured) = match solved {
             Ok(solved) => solved,
-            Err(e) => return self.session_failed(e),
+            Err(e) => return self.session_failed(&e),
         };
         let (image, width, height) = encode::encode_rgb(&declared.review.color, u32::MAX);
         // Kept so the user can save it after `close` below releases the camera.
@@ -304,12 +311,12 @@ impl Engine {
         let now = Instant::now();
         let preview = match live.session.preview() {
             Ok(preview) => preview,
-            Err(e) => return self.stream_error(e),
+            Err(e) => return self.stream_error(&e),
         };
         self.timeouts = 0;
         let ready_for = live.ready.observe(preview.is_ready(), now);
         if self.claim_frame() {
-            let frame = frame::preview_frame(preview, ready_for, self.require_edges);
+            let frame = frame::preview_frame(&preview, ready_for, self.require_edges);
             self.emit(SessionEvent::Preview(Box::new(frame)));
         }
     }
@@ -318,11 +325,11 @@ impl Engine {
         let Some(live) = &mut self.live else { return };
         let preview = match live.session.preview_markers() {
             Ok(preview) => preview,
-            Err(e) => return self.stream_error(e),
+            Err(e) => return self.stream_error(&e),
         };
         self.timeouts = 0;
         if self.claim_frame() {
-            let frame = frame::marker_frame(preview);
+            let frame = frame::marker_frame(&preview);
             self.emit(SessionEvent::Markers(Box::new(frame)));
         }
     }
@@ -335,7 +342,10 @@ impl Engine {
             .is_ok()
     }
 
-    fn stream_error(&mut self, error: SessionError) {
+    fn stream_error(&mut self, error: &SessionError) {
+        if matches!(error, SessionError::Cancelled) {
+            return;
+        }
         // A missed frame interrupts the observed ready run even when the
         // camera recovers before the timeout limit closes it.
         if let Some(live) = &mut self.live {
@@ -347,7 +357,7 @@ impl Engine {
                 return;
             }
         }
-        self.fail(FailureKind::of_session(&error), error.to_string(), false);
+        self.fail(FailureKind::of_session(error), error.to_string(), false);
     }
 
     /// Keeps what the attempt looked at and how it ended, so the user can save it
@@ -365,7 +375,7 @@ impl Engine {
         });
     }
 
-    /// Writes the remembered attempt to `path`; here, not on the UI thread, because
+    /// Writes the remembered attempt to `path`. This runs here, not on the UI thread, because
     /// encoding the frames takes a moment.
     fn save_attempt(&mut self, path: PathBuf) {
         let result = match &self.attempt {
@@ -429,7 +439,12 @@ mod tests {
         };
         let camera = backend.list().unwrap().remove(0);
         let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let mut engine = Engine::new(backend, events, Arc::new(AtomicBool::new(false)));
+        let mut engine = Engine::new(
+            backend,
+            events,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
         engine.open(
             1,
             &OpenRequest {
@@ -441,13 +456,11 @@ mod tests {
                 size_origin: None,
             },
         );
-        engine
-            .live
-            .as_mut()
-            .unwrap()
-            .ready
-            .observe(true, Instant::now() - Duration::from_secs(1));
-        engine.stream_error(SessionError::Camera(CameraError::Timeout));
+        engine.live.as_mut().unwrap().ready.observe(
+            true,
+            Instant::now().checked_sub(Duration::from_secs(1)).unwrap(),
+        );
+        engine.stream_error(&SessionError::Camera(CameraError::Timeout));
         engine.stream_preview();
 
         assert!(matches!(

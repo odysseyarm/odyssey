@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "better-ota"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }

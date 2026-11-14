@@ -104,18 +104,18 @@ pub(super) fn watch_dongles(manager: FirmwareUpdateManager) {
     });
 }
 
-fn offered(manifest: &FirmwareManifest, installed: [u16; 3]) -> Option<&FirmwareEntry> {
+fn offered(manifest: &FirmwareManifest, installed: [u32; 3]) -> Option<&FirmwareEntry> {
     if installed == [0; 3] {
         return None;
     }
-    let entry = firmware::select_firmware(manifest, "dongle", desktop_version(), 0).offered?;
+    let entry = firmware::select_firmware(manifest, "dongle", &desktop_version(), 0).offered?;
     firmware::version_newer(installed, entry.version_parts()?).then_some(entry)
 }
 
 pub(crate) fn dongle_update_cards(
     manager: &FirmwareUpdateManager,
     manifest: Option<&FirmwareManifest>,
-    p: Palette,
+    p: &Palette,
 ) -> Vec<AnyElement> {
     let updates = manager.dongles.lock();
     let mut rows: Vec<_> = updates
@@ -145,7 +145,7 @@ pub(crate) fn dongle_update_cards(
         let entry = job.as_ref().map(|job| &job.entry).or_else(|| {
             let manifest = manifest?;
             if target.in_bootloader {
-                firmware::select_firmware(manifest, "dongle", desktop_version(), 0).offered
+                firmware::select_firmware(manifest, "dongle", &desktop_version(), 0).offered
             } else {
                 let installed = versions
                     .iter()
@@ -240,9 +240,9 @@ mod tests {
 
     fn manifest(entries: &[(&str, &str)]) -> FirmwareManifest {
         let firmwares: Vec<_> = entries.iter().map(|(version, min_desktop)| {
-            serde_json::json!({ "version": version, "requires_bootloader": 0, "requires_netcore": 0, "min_desktop": min_desktop, "files": {} })
+            serde_json::json!({ "version": version, "requires_bootloader": "0.0.0", "requires_netcore": 0, "min_desktop": min_desktop, "files": {} })
         }).collect();
-        serde_json::from_value(serde_json::json!({ "version": 1, "devices": { "dongle": { "firmwares": firmwares } } })).unwrap()
+        serde_json::from_value(serde_json::json!({ "version": 2, "devices": { "dongle": { "firmwares": firmwares } } })).unwrap()
     }
 
     #[test]

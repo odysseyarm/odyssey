@@ -13,7 +13,7 @@ use crate::theme::Palette;
 /// is for.
 pub(crate) fn page(
     id: &'static str,
-    p: Palette,
+    p: &Palette,
     title: impl Into<SharedString>,
     description: Option<SharedString>,
     children: impl IntoIterator<Item = AnyElement>,

@@ -12,7 +12,7 @@ use crate::theme::Palette;
 
 /// `what` is what is being measured, for the progress sentence: "the screen".
 pub(super) fn measuring_step(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     state: &Wizard,
     title: &'static str,

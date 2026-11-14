@@ -39,7 +39,7 @@ pub(crate) struct SizePlan {
 }
 
 /// The size and edge rule for a display of `kind`. A typed size wins, then a
-/// size measured by hand (`reference`), then the display's own; a projector
+/// size measured by hand (`reference`), then the display's own. A projector
 /// never uses the display's. `aspect` is the picture's width over height,
 /// which turns a typed width into a full size. `prefer_camera` skips the
 /// display's own size, which leaves a flat screen exactly as if its EDID had
@@ -93,12 +93,11 @@ pub(crate) fn plan(
 /// Where the size on the review screen came from, in words.
 pub(crate) fn source_label(source: SizeSource, origin: Option<SizeOrigin>) -> &'static str {
     match (source, origin) {
-        (SizeSource::Measured, _) => "Measured by the camera",
+        (SizeSource::Measured, _) | (_, None) => "Measured by the camera",
         (_, Some(SizeOrigin::Entered)) => "From the size you entered",
         (_, Some(SizeOrigin::Reference)) => "From your tape or card measurement",
         (_, Some(SizeOrigin::Panel)) => "From the TV's own information",
-        // A declared size always has an origin; the camera's number is the
+        // A declared size always has an origin. The camera's number is the
         // honest fallback if that ever breaks.
-        (_, None) => "Measured by the camera",
     }
 }
