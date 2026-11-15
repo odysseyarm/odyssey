@@ -98,6 +98,12 @@ class SelectionTests(unittest.TestCase):
     def test_rust_sources_are_always_formatted(self):
         self.assertEqual(select("firmware/x/src/main.rs"), {"format", "xtask"})
 
+    def test_every_formatted_language_runs_the_format_suite(self):
+        for path in ("nix/sdk.nix", "tools/tracking_scene/x.py", "nix/update.sh"):
+            self.assertIn("format", select(path))
+        self.assertEqual(select("treefmt.nix"), {"format"})
+        self.assertNotIn("format", select("docs/README.md"))
+
     def test_the_toolchain_reaches_every_suite(self):
         self.assertEqual(select("rust-toolchain.toml"), set(impact.SUITES))
 

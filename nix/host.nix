@@ -102,11 +102,5 @@ in {
       cargoArtifacts = xtaskArtifacts;
       cargoClippyExtraArgs = "--bins -- -D warnings";
     });
-    format = pkgs.runCommand "odyssey-format" {
-      nativeBuildInputs = [ craneLib.rustfmt ];
-    } ''
-      find ${common.source} -type f -name '*.rs' -print0 | xargs -0 rustfmt --check
-      touch "$out"
-    '';
   };
 }

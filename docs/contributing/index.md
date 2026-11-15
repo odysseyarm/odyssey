@@ -31,6 +31,12 @@ Firmware artifacts and SDK platform outputs are listed by `nix flake show`.
 Release workflows consume those outputs; Windows WiX assembly and macOS builds
 still need their respective operating systems.
 
+`nix fmt` formats the repository with [treefmt-nix](https://github.com/numtide/treefmt-nix),
+configured in `treefmt.nix`: rustfmt on the pinned nightly (options in
+`rustfmt.toml`), nixfmt, ruff and shfmt. The `rustfmt` check runs
+`nix build .#checks.x86_64-linux.format` and fails on any tracked file a formatter
+would change. Add a formatter in `treefmt.nix`, not as a separate CI step.
+
 The default shell includes `cargo-release` for package-version and dependency
 updates. Release patches and generated firmware manifests go through pull
 requests: review, passing `host`, `rustfmt` and `tracking` checks, then squash

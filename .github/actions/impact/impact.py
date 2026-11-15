@@ -140,8 +140,9 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
     def lockfile(path: str) -> bool:
         return posixpath.basename(path) in ("Cargo.toml", "Cargo.lock")
 
-    def rust(path: str) -> bool:
-        return path.endswith(".rs")
+    def formatted(path: str) -> bool:
+        # The languages treefmt.nix formats; keep in step with that file.
+        return path.endswith((".rs", ".nix", ".py", ".pyi", ".sh", ".bash", ".envrc"))
 
     return {
         "host": Rule(
@@ -187,7 +188,7 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
             ]
         ),
         "cache": Rule([".github/actions/push-cache", f"{workflow}host-ci.yml"]),
-        "format": Rule(["rustfmt.toml", "nix/host.nix", f"{workflow}fmt.yml"], match=rust),
+        "format": Rule(["rustfmt.toml", "treefmt.nix", f"{workflow}fmt.yml"], match=formatted),
         "ffi": ffi,
         "uniffi": uniffi,
     }
