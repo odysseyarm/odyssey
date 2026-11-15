@@ -17,11 +17,24 @@ import posixpath
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Any
 
-SUITES = ("host", "xtask", "protocols", "proofs", "cache", "tracking", "ffi", "uniffi", "format")
+SUITES = (
+    "host",
+    "xtask",
+    "protocols",
+    "proofs",
+    "cache",
+    "tracking",
+    "ffi",
+    "uniffi",
+    "format",
+    "python",
+)
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
@@ -54,7 +67,7 @@ HOST_DATA = (
 class Rule:
     paths: list[str]
     skip: tuple[str, ...] = ()
-    match: object = None
+    match: Callable[[str], bool] | None = None
     reasons: dict[str, str] = field(default_factory=dict)
 
 
@@ -63,7 +76,9 @@ def inside(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
-def dependency_paths(directory: str, data: dict, shared: dict[str, str]) -> set[str]:
+def dependency_paths(
+    directory: str, data: dict[str, Any], shared: dict[str, str]
+) -> set[str]:
     tables = [data.get(key, {}) for key in DEPENDENCY_TABLES]
     for target in data.get("target", {}).values():
         tables.extend(target.get(key, {}) for key in DEPENDENCY_TABLES)
@@ -74,15 +89,21 @@ def dependency_paths(directory: str, data: dict, shared: dict[str, str]) -> set[
             if not isinstance(dependency, dict):
                 continue
             if "path" in dependency:
-                found.add(posixpath.normpath(posixpath.join(directory, dependency["path"])))
+                found.add(
+                    posixpath.normpath(posixpath.join(directory, dependency["path"]))
+                )
             elif dependency.get("workspace") and name in shared:
                 found.add(posixpath.normpath(shared[name]))
     return found
 
 
-def load_graph(root: Path, manifests: list[str]) -> tuple[dict[str, set[str]], dict]:
+def load_graph(
+    root: Path, manifests: list[str]
+) -> tuple[dict[str, set[str]], dict[str, Any]]:
     parsed = {
-        posixpath.dirname(manifest) or ".": tomllib.loads((root / manifest).read_text(encoding="utf-8-sig"))
+        posixpath.dirname(manifest) or ".": tomllib.loads(
+            (root / manifest).read_text(encoding="utf-8-sig")
+        )
         for manifest in manifests
     }
     workspace = parsed.get(".", {}).get("workspace", {})
@@ -96,7 +117,9 @@ def load_graph(root: Path, manifests: list[str]) -> tuple[dict[str, set[str]], d
         for directory, data in parsed.items()
         if directory != "."
     }
-    return {d: {e for e in edges if e in graph} for d, edges in graph.items()}, workspace
+    return {
+        d: {e for e in edges if e in graph} for d, edges in graph.items()
+    }, workspace
 
 
 def closure(graph: dict[str, set[str]], roots: list[str]) -> list[str]:
@@ -113,12 +136,18 @@ def closure(graph: dict[str, set[str]], roots: list[str]) -> list[str]:
     return sorted(seen)
 
 
-def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
+def build_rules(
+    graph: dict[str, set[str]], workspace: dict[str, Any]
+) -> dict[str, Rule]:
     members = [
         directory
         for directory in graph
-        if any(fnmatchcase(directory, pattern) for pattern in workspace.get("members", []))
-        and not any(inside(directory, excluded) for excluded in workspace.get("exclude", []))
+        if any(
+            fnmatchcase(directory, pattern) for pattern in workspace.get("members", [])
+        )
+        and not any(
+            inside(directory, excluded) for excluded in workspace.get("exclude", [])
+        )
     ]
     if not members:
         raise LookupError("the root workspace lists no members")
@@ -129,7 +158,14 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
         directory = f"sdk/{name}"
         return Rule(
             closure(graph, [directory])
-            + ["Cargo.toml", "clippy.toml", "LICENSE", "nix/sdk.nix", "nix/xwin.nix", ".github/actions/push-cache"],
+            + [
+                "Cargo.toml",
+                "clippy.toml",
+                "LICENSE",
+                "nix/sdk.nix",
+                "nix/xwin.nix",
+                ".github/actions/push-cache",
+            ],
             skip=tuple(f"{directory}/{entry}" for entry in sdk_skip),
         )
 
@@ -140,17 +176,33 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
     def lockfile(path: str) -> bool:
         return posixpath.basename(path) in ("Cargo.toml", "Cargo.lock")
 
-    def rust(path: str) -> bool:
-        return path.endswith(".rs")
+    def formatted(path: str) -> bool:
+        # The languages treefmt.nix formats; keep in step with that file.
+        return path.endswith((".rs", ".nix", ".py", ".pyi", ".sh", ".bash", ".envrc"))
 
     return {
         "host": Rule(
             closure(graph, members)
-            + [*HOST_DATA, "Cargo.toml", "Cargo.lock", "clippy.toml", "nix/host.nix", f"{workflow}host-ci.yml"]
+            + [
+                *HOST_DATA,
+                "Cargo.toml",
+                "Cargo.lock",
+                "clippy.toml",
+                "nix/host.nix",
+                f"{workflow}host-ci.yml",
+            ]
         ),
         "protocols": Rule(
             closure(graph, ["crates/odyssey-protocol"])
-            + ["firmware/better-ota", "Cargo.toml", "Cargo.lock", "clippy.toml", "nix/host.nix", "nix/firmware.nix", f"{workflow}host-ci.yml"]
+            + [
+                "firmware/better-ota",
+                "Cargo.toml",
+                "Cargo.lock",
+                "clippy.toml",
+                "nix/host.nix",
+                "nix/firmware.nix",
+                f"{workflow}host-ci.yml",
+            ]
         ),
         "tracking": Rule(
             closure(graph, ["crates/odyssey-hub-server", "crates/odyssey-sim"])
@@ -187,7 +239,13 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
             ]
         ),
         "cache": Rule([".github/actions/push-cache", f"{workflow}host-ci.yml"]),
-        "format": Rule(["rustfmt.toml", "nix/host.nix", f"{workflow}fmt.yml"], match=rust),
+        "format": Rule(
+            ["rustfmt.toml", "treefmt.nix", f"{workflow}fmt.yml"], match=formatted
+        ),
+        "python": Rule(
+            ["mypy.ini", f"{workflow}python-types.yml"],
+            match=lambda path: path.endswith(".py"),
+        ),
         "ffi": ffi,
         "uniffi": uniffi,
     }
@@ -218,7 +276,11 @@ def comparison(environment: dict[str, str]) -> tuple[str, str] | None:
     if event in ("pull_request", "merge_group"):
         return environment["BASE"], environment["HEAD"]
     default = environment.get("DEFAULT_BRANCH", "")
-    if event == "workflow_dispatch" and default and environment.get("REF_NAME") != default:
+    if (
+        event == "workflow_dispatch"
+        and default
+        and environment.get("REF_NAME") != default
+    ):
         return f"origin/{default}", "HEAD"
     return None
 
@@ -229,22 +291,31 @@ def changed_files(base: str, head: str) -> list[str]:
 
 
 def select(environment: dict[str, str]) -> tuple[dict[str, str | None], str]:
-    everything = {suite: "run everything" for suite in SUITES}
+    everything: dict[str, str | None] = {suite: "run everything" for suite in SUITES}
     compared = comparison(environment)
     if compared is None:
         return everything, f"{environment.get('EVENT', 'unknown')} runs every suite"
     try:
-        manifests = [p for p in git("ls-files", "-z", "--", "*Cargo.toml").split("\0") if p]
+        manifests = [
+            p for p in git("ls-files", "-z", "--", "*Cargo.toml").split("\0") if p
+        ]
         graph, workspace = load_graph(Path("."), manifests)
         changed = changed_files(*compared)
-        return affected(changed, build_rules(graph, workspace)), f"{len(changed)} changed files"
+        return affected(
+            changed, build_rules(graph, workspace)
+        ), f"{len(changed)} changed files"
     except Exception as error:  # noqa: BLE001 - a selector failure must never skip tests
-        return everything, f"selection failed ({type(error).__name__}: {error}); running every suite"
+        return (
+            everything,
+            f"selection failed ({type(error).__name__}: {error}); running every suite",
+        )
 
 
 def render(result: dict[str, str | None]) -> dict[str, bool]:
     flags = {suite: result[suite] is not None for suite in SUITES}
-    flags["host_ci"] = any(flags[suite] for suite in ("host", "xtask", "protocols", "proofs", "cache"))
+    flags["host_ci"] = any(
+        flags[suite] for suite in ("host", "xtask", "protocols", "proofs", "cache")
+    )
     return flags
 
 

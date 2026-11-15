@@ -1,0 +1,32 @@
+name: Python types
+
+# Every tracked Python script must pass `mypy --strict` (mypy.ini), which
+# rejects any missing annotation.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-types:
+    name: python-types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/impact
+        id: impact
+      - uses: ./.github/actions/setup-nix
+        if: steps.impact.outputs.python == 'true'
+      - name: Check types
+        if: steps.impact.outputs.python == 'true'
+        run: nix build -L --no-link .#checks.x86_64-linux.python-types

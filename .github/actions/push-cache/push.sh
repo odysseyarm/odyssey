@@ -53,8 +53,8 @@ while IFS= read -r line; do
     uri="git+file://${repo}?rev=${revision}"
     bash "$cache_action_path/local.sh" --register "$uri"
     registered[$revision]=1
-  done <<< "$outgoing"
-done <<< "$push_plan"
+  done <<<"$outgoing"
+done <<<"$push_plan"
 if ! "$saw_change"; then
   echo 'Unrecognized jj push plan; refusing unchecked push.' >&2
   exit 1

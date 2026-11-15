@@ -12,25 +12,56 @@
       url = "github:NixOS/flake-compat/5edf11c44bc78a0d334f6334cdaf7d60d732daab";
       flake = false;
     };
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix/0d6d739a833ba9a9c93034862e4a7b061a062a1c";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     odyssey-cv = {
       url = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git?rev=9a60fa4b19c24f13c461d6ea65ac734acdca82ca";
       flake = false;
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, rust-overlay, crane, ... }:
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      rust-overlay,
+      crane,
+      ...
+    }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      projects = forAllSystems (system: import ./nix {
-        inherit inputs system;
-        src = self;
-      });
-    in {
+      treefmt = forAllSystems (
+        system: inputs.treefmt-nix.lib.evalModule projects.${system}.pkgs ./treefmt.nix
+      );
+      projects = forAllSystems (
+        system:
+        import ./nix {
+          inherit inputs system;
+          src = self;
+        }
+      );
+    in
+    {
       devShells = forAllSystems (system: projects.${system}.devShells);
       packages = forAllSystems (system: projects.${system}.packages);
-      checks = forAllSystems (system: projects.${system}.checks);
-      legacyPackages = forAllSystems (system: { inherit (projects.${system}) publicCache; });
-      formatter = forAllSystems (system: projects.${system}.pkgs.nixfmt);
+      checks = forAllSystems (
+        system:
+        projects.${system}.checks
+        // {
+          format = treefmt.${system}.config.build.check self;
+        }
+      );
+      legacyPackages = forAllSystems (system: {
+        inherit (projects.${system}) publicCache;
+      });
+      formatter = forAllSystems (system: treefmt.${system}.config.build.wrapper);
     };
 }

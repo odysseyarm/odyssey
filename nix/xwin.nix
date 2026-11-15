@@ -49,12 +49,18 @@ let
     makeWrapper ${clang}/bin/clang-cl $out/bin/clang-cl \
       --add-flags "-resource-dir ${clang.lib}/lib/clang/${lib.versions.major clang.version}"
   '';
-in rec {
+in
+rec {
   inherit sysroot channelManifest clangCl;
   target = "x86_64-pc-windows-msvc";
   # llvm provides llvm-lib/llvm-dlltool (cc-rs archives with llvm-lib). lld
   # provides lld-link.
-  tools = [ clangCl pkgs.llvmPackages.lld pkgs.llvmPackages.llvm pkgs.cargo-xwin ];
+  tools = [
+    clangCl
+    pkgs.llvmPackages.lld
+    pkgs.llvmPackages.llvm
+    pkgs.cargo-xwin
+  ];
   # Shell snippet: build a writable cargo-xwin cache at `dir` around the
   # read-only sysroot. DONE tells cargo-xwin the requested arch is already
   # splatted, so it never downloads.
