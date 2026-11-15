@@ -19,7 +19,9 @@ from typing import IO
 MAX_ARCHIVE_DEPTH = 8
 
 
-def private_sources(paths: Iterable[Path | str], explicit_sources: Iterable[Path | str]) -> set[bytes]:
+def private_sources(
+    paths: Iterable[Path | str], explicit_sources: Iterable[Path | str]
+) -> set[bytes]:
     fingerprints: set[bytes] = set()
     roots = set(map(Path, explicit_sources))
     for root in paths:
@@ -42,35 +44,80 @@ def private_sources(paths: Iterable[Path | str], explicit_sources: Iterable[Path
     return fingerprints
 
 
-def scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Collection[bytes] = (), depth: int = 0, public_graph: bool = False) -> bool:
+def scan_file(
+    path: str | Path,
+    fingerprints: set[bytes],
+    forbidden_paths: Collection[bytes] = (),
+    depth: int = 0,
+    public_graph: bool = False,
+) -> bool:
     try:
         return _scan_file(path, fingerprints, forbidden_paths, depth, public_graph)
-    except (ValueError, NotImplementedError, EOFError, OSError, tarfile.TarError, zipfile.BadZipFile, lzma.LZMAError, zlib.error) as error:
+    except (
+        ValueError,
+        NotImplementedError,
+        EOFError,
+        OSError,
+        tarfile.TarError,
+        zipfile.BadZipFile,
+        lzma.LZMAError,
+        zlib.error,
+    ) as error:
         if not public_graph or (isinstance(error, OSError) and error.errno is not None):
             raise
         with open(path, "rb") as stream:
             return hash_stream(stream, fingerprints, forbidden_paths)
 
 
-def _scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Collection[bytes], depth: int, public_graph: bool) -> bool:
+def _scan_file(
+    path: str | Path,
+    fingerprints: set[bytes],
+    forbidden_paths: Collection[bytes],
+    depth: int,
+    public_graph: bool,
+) -> bool:
     if depth >= MAX_ARCHIVE_DEPTH:
         raise ValueError(f"Archive nesting exceeds {MAX_ARCHIVE_DEPTH}: {path}")
     with open(path, "rb") as stream:
         magic = stream.read(8)
         stream.seek(257)
         tar_magic = stream.read(5)
-    if magic.startswith((b"7z\xbc\xaf\x27\x1c", b"Rar!\x1a\x07", b"\x1f\x9d", b"LZIP", b"\x04\x22\x4d\x18")):
+    if magic.startswith(
+        (
+            b"7z\xbc\xaf\x27\x1c",
+            b"Rar!\x1a\x07",
+            b"\x1f\x9d",
+            b"LZIP",
+            b"\x04\x22\x4d\x18",
+        )
+    ):
         raise ValueError(f"Unsupported archive format: {path}")
     if magic.startswith(b"\x28\xb5\x2f\xfd"):
         with tempfile.NamedTemporaryFile() as expanded:
-            result = subprocess.run(["zstd", "-q", "-d", "-c", str(path)], stdout=expanded, stderr=subprocess.PIPE)
+            result = subprocess.run(
+                ["zstd", "-q", "-d", "-c", str(path)],
+                stdout=expanded,
+                stderr=subprocess.PIPE,
+            )
             if result.returncode:
-                raise ValueError(f"Cannot decompress zstd payload {path}: {result.stderr.decode(errors='replace')}")
-            return scan_file(expanded.name, fingerprints, forbidden_paths, depth + 1, public_graph)
+                raise ValueError(
+                    f"Cannot decompress zstd payload {path}: {result.stderr.decode(errors='replace')}"
+                )
+            return scan_file(
+                expanded.name, fingerprints, forbidden_paths, depth + 1, public_graph
+            )
     if magic.startswith((b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00")):
-        opener = gzip.open if magic.startswith(b"\x1f\x8b") else bz2.open if magic.startswith(b"BZh") else lzma.open
+        opener = (
+            gzip.open
+            if magic.startswith(b"\x1f\x8b")
+            else bz2.open
+            if magic.startswith(b"BZh")
+            else lzma.open
+        )
         with opener(path, "rb") as source:
-            return scan_stream(source, fingerprints, forbidden_paths, depth + 1, public_graph)
+            return scan_stream(
+                source, fingerprints, forbidden_paths, depth + 1, public_graph
+            )
     if magic.startswith(b"PK\x03\x04"):
         with zipfile.ZipFile(path) as archive:
             for item in archive.infolist():
@@ -79,7 +126,9 @@ def _scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Coll
                 if item.flag_bits & 1:
                     raise ValueError(f"Encrypted ZIP payload: {path}")
                 with archive.open(item) as source:
-                    if scan_stream(source, fingerprints, forbidden_paths, depth + 1, public_graph):
+                    if scan_stream(
+                        source, fingerprints, forbidden_paths, depth + 1, public_graph
+                    ):
                         return True
         return False
     try:
@@ -91,7 +140,9 @@ def _scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Coll
                 if extracted is None:
                     return True
                 with extracted as source:
-                    if scan_stream(source, fingerprints, forbidden_paths, depth + 1, public_graph):
+                    if scan_stream(
+                        source, fingerprints, forbidden_paths, depth + 1, public_graph
+                    ):
                         return True
         return False
     except tarfile.ReadError:
@@ -101,7 +152,11 @@ def _scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Coll
             return hash_stream(stream, fingerprints, forbidden_paths)
 
 
-def hash_stream(stream: IO[bytes] | BufferedIOBase, fingerprints: set[bytes], forbidden_paths: Collection[bytes]) -> bool:
+def hash_stream(
+    stream: IO[bytes] | BufferedIOBase,
+    fingerprints: set[bytes],
+    forbidden_paths: Collection[bytes],
+) -> bool:
     digest = hashlib.sha256()
     carry = b""
     carry_size = max((len(path) for path in forbidden_paths), default=1) - 1
@@ -114,16 +169,25 @@ def hash_stream(stream: IO[bytes] | BufferedIOBase, fingerprints: set[bytes], fo
     return digest.digest() in fingerprints
 
 
-def scan_stream(stream: IO[bytes] | BufferedIOBase, fingerprints: set[bytes], forbidden_paths: Collection[bytes] = (), depth: int = 0, public_graph: bool = False) -> bool:
+def scan_stream(
+    stream: IO[bytes] | BufferedIOBase,
+    fingerprints: set[bytes],
+    forbidden_paths: Collection[bytes] = (),
+    depth: int = 0,
+    public_graph: bool = False,
+) -> bool:
     with tempfile.NamedTemporaryFile() as payload:
         shutil.copyfileobj(stream, payload)
         payload.flush()
-        return scan_file(payload.name, fingerprints, forbidden_paths, depth, public_graph)
-
+        return scan_file(
+            payload.name, fingerprints, forbidden_paths, depth, public_graph
+        )
 
 
 def main() -> int:
-    payloads, provenance, explicit_source_text, public_text, _end = sys.stdin.read().split("\0")
+    payloads, provenance, explicit_source_text, public_text, _end = (
+        sys.stdin.read().split("\0")
+    )
     roots = [Path(item) for item in provenance.splitlines() if item]
     explicit_sources = [Path(item) for item in explicit_source_text.split()]
     public_paths = set(public_text.splitlines())
@@ -131,15 +195,24 @@ def main() -> int:
         print("Private source path selected; refusing cache upload", file=sys.stderr)
         return 1
     try:
-        fingerprints = private_sources(roots, [source for source in explicit_sources if source.exists()])
+        fingerprints = private_sources(
+            roots, [source for source in explicit_sources if source.exists()]
+        )
     except (OSError, ValueError) as error:
         print(f"Cannot inspect private source provenance: {error}", file=sys.stderr)
         return 1
     for item in payloads.splitlines():
         path = Path(item)
         try:
-            if not fingerprints and item not in public_paths and not (path.is_file() and path.stat().st_size == 0):
-                print(f"Private source fingerprints unavailable for non-public payload {path}; refusing cache upload", file=sys.stderr)
+            if (
+                not fingerprints
+                and item not in public_paths
+                and not (path.is_file() and path.stat().st_size == 0)
+            ):
+                print(
+                    f"Private source fingerprints unavailable for non-public payload {path}; refusing cache upload",
+                    file=sys.stderr,
+                )
                 return 1
             if path.is_file():
                 files: Iterable[Path] = [path]
@@ -150,14 +223,24 @@ def main() -> int:
             forbidden = tuple(str(source).encode() for source in explicit_sources)
             for file in files:
                 if any(file == source for source in explicit_sources):
-                    print(f"Private odyssey-cv source path selected for cache: {file}", file=sys.stderr)
+                    print(
+                        f"Private odyssey-cv source path selected for cache: {file}",
+                        file=sys.stderr,
+                    )
                     return 1
                 try:
-                    if scan_file(file, fingerprints, forbidden, public_graph=item in public_paths):
-                        print(f"Private odyssey-cv source payload found in {file}; refusing cache upload", file=sys.stderr)
+                    if scan_file(
+                        file, fingerprints, forbidden, public_graph=item in public_paths
+                    ):
+                        print(
+                            f"Private odyssey-cv source payload found in {file}; refusing cache upload",
+                            file=sys.stderr,
+                        )
                         return 1
                 except Exception as error:
-                    print(f"Cannot inspect cache payload {file}: {error}", file=sys.stderr)
+                    print(
+                        f"Cannot inspect cache payload {file}: {error}", file=sys.stderr
+                    )
                     return 1
         except OSError as error:
             print(f"Cannot inspect cache path {path}: {error}", file=sys.stderr)

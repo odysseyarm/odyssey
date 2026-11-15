@@ -1,19 +1,54 @@
-{ pkgs, craneLib, src, privateSource }:
+{
+  pkgs,
+  craneLib,
+  src,
+  privateSource,
+}:
 let
   inherit (pkgs) lib;
   source = lib.cleanSourceWith {
     src = src;
-    filter = path: type:
+    filter =
+      path: type:
       let
         name = baseNameOf path;
         relative = lib.removePrefix "${src}/" path;
         top = builtins.head (lib.splitString "/" relative);
-        rustInput = path == toString src || builtins.elem top [
-          "crates" "firmware" "sdk" "tools" ".cargo"
-          "Cargo.toml" "Cargo.lock" "rust-toolchain.toml" "rustfmt.toml" "clippy.toml" "LICENSE"
-        ];
-      in rustInput && !(builtins.elem name [ ".git" ".jj" "target" "graphify-out" "result" ])
-        && !(type == "directory" && builtins.elem name [ "build" "dist" "dist-bootloader" "dist-netcore" "target-bank-a" "target-bank-b" ]);
+        rustInput =
+          path == toString src
+          || builtins.elem top [
+            "crates"
+            "firmware"
+            "sdk"
+            "tools"
+            ".cargo"
+            "Cargo.toml"
+            "Cargo.lock"
+            "rust-toolchain.toml"
+            "rustfmt.toml"
+            "clippy.toml"
+            "LICENSE"
+          ];
+      in
+      rustInput
+      && !(builtins.elem name [
+        ".git"
+        ".jj"
+        "target"
+        "graphify-out"
+        "result"
+      ])
+      && !(
+        type == "directory"
+        && builtins.elem name [
+          "build"
+          "dist"
+          "dist-bootloader"
+          "dist-netcore"
+          "target-bank-a"
+          "target-bank-b"
+        ]
+      );
   };
   # Private-source boundary. Every vendored copy of odyssey-cv (and the eskf it
   # carries) is a stub: the real manifests, so features and the dependency graph
@@ -29,51 +64,84 @@ let
   privateManifests = builtins.path {
     name = "odyssey-cv-manifests";
     path = privateSource;
-    filter = path: type:
-      type == "directory" || builtins.elem (baseNameOf path) [ "Cargo.toml" "Cargo.lock" ];
+    filter =
+      path: type:
+      type == "directory"
+      || builtins.elem (baseNameOf path) [
+        "Cargo.toml"
+        "Cargo.lock"
+      ];
   };
-  privateCrates = { odyssey-cv = "crates/odyssey-cv"; eskf = "third_party/eskf"; };
-  withPrivateSource = args: args // {
-    postConfigure = (args.postConfigure or "") + ''
-      stub=""
-      for dir in $(sed -n 's/^directory = "\(.*\)"$/\1/p' "$CARGO_HOME/config.toml"); do
-        for crate in "$dir"/odyssey-cv-*; do [ -e "$crate" ] && stub=$dir; done
-      done
-      if [ -z "$stub" ]; then echo "withPrivateSource: no vendored odyssey-cv" >&2; exit 1; fi
-      private="$NIX_BUILD_TOP/private-vendor"
-      cp -rL "$stub" "$private"
-      chmod -R u+w "$private"
-      ${lib.concatStrings (lib.mapAttrsToList (name: dir: ''
-        crate=$(echo "$private"/${name}-*)
-        cp -r --no-preserve=mode ${privateSource}/${dir}/. "$crate.real"
-        cp "$crate/Cargo.toml" "$crate/.cargo-checksum.json" "$crate.real/"
-        rm -rf "$crate"
-        mv "$crate.real" "$crate"
-      '') privateCrates)}
-      sed -i "s|^directory = \"$stub\"$|directory = \"$private\"|" "$CARGO_HOME/config.toml"
-    '';
+  privateCrates = {
+    odyssey-cv = "crates/odyssey-cv";
+    eskf = "third_party/eskf";
   };
-  vendor = workspace: overrides: craneLib.vendorCargoDeps ({
-    cargoLock = source + "/${workspace}/Cargo.lock";
-    overrideVendorGitCheckout = packages: drv:
-      if lib.any (package: lib.hasInfix "github.com/odysseyarm/odyssey-cv.git" package.source) packages
-      then
-        assert lib.assertMsg
-          (!(privateSource ? rev) || lib.all (package: lib.hasSuffix "#${privateSource.rev}" package.source) packages)
-          "odyssey-cv flake input must match its Cargo.lock revision";
-        drv.overrideAttrs (old: {
-          src = privateManifests;
-          postPatch = (old.postPatch or "") + ''
-            # Upstream eskf names a README that does not exist, and Cargo packaging validates it.
-            substituteInPlace third_party/eskf/Cargo.toml \
-              --replace-fail 'readme = "README.md"' 'readme = false'
-            find . -mindepth 2 -name Cargo.toml -execdir sh -c 'mkdir -p src && : > src/lib.rs' \;
-          '';
-        })
-      else drv;
-  } // overrides);
-  mkArgs = { workspace ? ".", pname, cargoExtraArgs ? "--locked --offline", vendorOverrides ? {}, ... }@args:
-    (builtins.removeAttrs args [ "workspace" "vendorOverrides" ]) // {
+  withPrivateSource =
+    args:
+    args
+    // {
+      postConfigure = (args.postConfigure or "") + ''
+        stub=""
+        for dir in $(sed -n 's/^directory = "\(.*\)"$/\1/p' "$CARGO_HOME/config.toml"); do
+          for crate in "$dir"/odyssey-cv-*; do [ -e "$crate" ] && stub=$dir; done
+        done
+        if [ -z "$stub" ]; then echo "withPrivateSource: no vendored odyssey-cv" >&2; exit 1; fi
+        private="$NIX_BUILD_TOP/private-vendor"
+        cp -rL "$stub" "$private"
+        chmod -R u+w "$private"
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: dir: ''
+            crate=$(echo "$private"/${name}-*)
+            cp -r --no-preserve=mode ${privateSource}/${dir}/. "$crate.real"
+            cp "$crate/Cargo.toml" "$crate/.cargo-checksum.json" "$crate.real/"
+            rm -rf "$crate"
+            mv "$crate.real" "$crate"
+          '') privateCrates
+        )}
+        sed -i "s|^directory = \"$stub\"$|directory = \"$private\"|" "$CARGO_HOME/config.toml"
+      '';
+    };
+  vendor =
+    workspace: overrides:
+    craneLib.vendorCargoDeps (
+      {
+        cargoLock = source + "/${workspace}/Cargo.lock";
+        overrideVendorGitCheckout =
+          packages: drv:
+          if
+            lib.any (package: lib.hasInfix "github.com/odysseyarm/odyssey-cv.git" package.source) packages
+          then
+            assert lib.assertMsg (
+              !(privateSource ? rev)
+              || lib.all (package: lib.hasSuffix "#${privateSource.rev}" package.source) packages
+            ) "odyssey-cv flake input must match its Cargo.lock revision";
+            drv.overrideAttrs (old: {
+              src = privateManifests;
+              postPatch = (old.postPatch or "") + ''
+                # Upstream eskf names a README that does not exist, and Cargo packaging validates it.
+                substituteInPlace third_party/eskf/Cargo.toml \
+                  --replace-fail 'readme = "README.md"' 'readme = false'
+                find . -mindepth 2 -name Cargo.toml -execdir sh -c 'mkdir -p src && : > src/lib.rs' \;
+              '';
+            })
+          else
+            drv;
+      }
+      // overrides
+    );
+  mkArgs =
+    {
+      workspace ? ".",
+      pname,
+      cargoExtraArgs ? "--locked --offline",
+      vendorOverrides ? { },
+      ...
+    }@args:
+    (builtins.removeAttrs args [
+      "workspace"
+      "vendorOverrides"
+    ])
+    // {
       inherit pname cargoExtraArgs;
       version = "0.0.0";
       src = source;
@@ -83,9 +151,13 @@ let
         sourceRoot="$sourceRoot/${workspace}"
       '';
       strictDeps = true;
-      nativeBuildInputs = [ pkgs.pkg-config pkgs.protobuf ];
+      nativeBuildInputs = [
+        pkgs.pkg-config
+        pkgs.protobuf
+      ];
       PROTOC = "${pkgs.protobuf}/bin/protoc";
-    } // lib.optionalAttrs (workspace == ".") {
+    }
+    // lib.optionalAttrs (workspace == ".") {
       # Cargo artifact archives of the root workspace hold compiled private
       # code, so only dependency layers (which force this on) may install one.
       doInstallCargoArtifacts = false;
@@ -105,6 +177,13 @@ let
     [ "$found" = 1 ] || { echo "no vendored private crates found" >&2; exit 1; }
     touch $out
   '';
-in {
-  inherit source vendor mkArgs withPrivateSource privateBoundaryCheck;
+in
+{
+  inherit
+    source
+    vendor
+    mkArgs
+    withPrivateSource
+    privateBoundaryCheck
+    ;
 }

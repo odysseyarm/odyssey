@@ -16,4 +16,4 @@ cat firmware/*/Cargo.lock | grep -o '^source = "git+[^"]*"' | sed 's/^source = "
     hash=$(nix run nixpkgs#nix-prefetch-git -- --url "$url" --rev "$rev" --fetch-submodules --quiet | jq -r .hash)
     printf '%s\t%s\n' "$source" "$hash"
   done |
-  jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries' > nix/firmware-git-hashes.json
+  jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries' >nix/firmware-git-hashes.json

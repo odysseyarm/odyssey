@@ -7,7 +7,9 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", type=str, help="Path to directory containing calibration")
+    parser.add_argument(
+        "path", type=str, help="Path to directory containing calibration"
+    )
     args = parser.parse_args()
     path = Path(args.path)
 
@@ -26,12 +28,17 @@ def main() -> None:
     print("file://" + str(Path(os.getcwd()) / outpath))
 
 
-def run(nf_calib: dict[str, Any], wf_calib: dict[str, Any], stereo_calib: dict[str, Any], outfile: TextIOWrapper) -> None:
-    nf_calib_images = ['/'.join(p.split('/')[2:]) for p in nf_calib["image_files"]]
-    wf_calib_images = ['/'.join(p.split('/')[2:]) for p in wf_calib["image_files"]]
+def run(
+    nf_calib: dict[str, Any],
+    wf_calib: dict[str, Any],
+    stereo_calib: dict[str, Any],
+    outfile: TextIOWrapper,
+) -> None:
+    nf_calib_images = ["/".join(p.split("/")[2:]) for p in nf_calib["image_files"]]
+    wf_calib_images = ["/".join(p.split("/")[2:]) for p in wf_calib["image_files"]]
     stereo_calib_images = {
-        "wf": ['/'.join(p.split('/')[2:]) for p in stereo_calib["wf_image_files"]],
-        "nf": ['/'.join(p.split('/')[2:]) for p in stereo_calib["nf_image_files"]],
+        "wf": ["/".join(p.split("/")[2:]) for p in stereo_calib["wf_image_files"]],
+        "nf": ["/".join(p.split("/")[2:]) for p in stereo_calib["nf_image_files"]],
     }
 
     outfile.write("<!DOCTYPE html><html><body>")

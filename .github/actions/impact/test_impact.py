@@ -79,7 +79,9 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("protocols", select("firmware/better-ota/src/receiver.rs"))
 
     def test_an_sdk_change_stays_inside_that_sdk(self) -> None:
-        self.assertEqual(select("sdk/odyssey-hub-client-uniffi/uniffi.toml"), {"uniffi"})
+        self.assertEqual(
+            select("sdk/odyssey-hub-client-uniffi/uniffi.toml"), {"uniffi"}
+        )
 
     def test_samples_are_not_built(self) -> None:
         self.assertEqual(select("sdk/odyssey-hub-client-ffi/samples/a.c"), set())
@@ -92,7 +94,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_the_sdk_ignores_the_root_lock_file(self) -> None:
         affected = select("Cargo.lock")
-        self.assertTrue({"host", "tracking", "protocols", "proofs", "xtask"} <= affected)
+        self.assertTrue(
+            {"host", "tracking", "protocols", "proofs", "xtask"} <= affected
+        )
         self.assertFalse({"ffi", "uniffi"} & affected)
 
     def test_rust_sources_are_always_formatted(self) -> None:
@@ -113,7 +117,9 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(select("rust-toolchain.toml"), set(impact.SUITES))
 
     def test_clippy_config_reaches_linted_workspaces_without_tracking(self) -> None:
-        self.assertEqual(select("clippy.toml"), {"host", "xtask", "protocols", "ffi", "uniffi"})
+        self.assertEqual(
+            select("clippy.toml"), {"host", "xtask", "protocols", "ffi", "uniffi"}
+        )
 
     def test_a_workflow_runs_only_its_own_suite(self) -> None:
         self.assertEqual(select(".github/workflows/fmt.yml"), {"format"})
@@ -126,9 +132,17 @@ class SelectionTests(unittest.TestCase):
 
     def test_events_without_a_base_run_everything(self) -> None:
         for event in ("push", "schedule", "workflow_dispatch"):
-            environment = {"EVENT": event, "REF_NAME": "master", "DEFAULT_BRANCH": "master"}
+            environment = {
+                "EVENT": event,
+                "REF_NAME": "master",
+                "DEFAULT_BRANCH": "master",
+            }
             self.assertIsNone(impact.comparison(environment), event)
-        branch = {"EVENT": "workflow_dispatch", "REF_NAME": "topic", "DEFAULT_BRANCH": "master"}
+        branch = {
+            "EVENT": "workflow_dispatch",
+            "REF_NAME": "topic",
+            "DEFAULT_BRANCH": "master",
+        }
         self.assertEqual(impact.comparison(branch), ("origin/master", "HEAD"))
 
 

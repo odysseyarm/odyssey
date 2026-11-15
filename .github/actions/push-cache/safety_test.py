@@ -34,14 +34,18 @@ class SafetyTest(unittest.TestCase):
         eskf.parent.mkdir(parents=True)
         eskf.write_bytes(b"fn private_filter() {}\n")
         fingerprints = safety.private_sources([], [self.private])
-        self.assertTrue(safety.hash_stream(io.BytesIO(eskf.read_bytes()), fingerprints, ()))
+        self.assertTrue(
+            safety.hash_stream(io.BytesIO(eskf.read_bytes()), fingerprints, ())
+        )
 
     def test_gzip_and_zstd_private_source_rejected(self) -> None:
         self.assertTrue(self.scan(gzip.compress(self.source)))
         compressed = subprocess.check_output(["zstd", "-q", "-c"], input=self.source)
         self.assertTrue(self.scan(compressed))
 
-    def test_nested_archives_and_traversal_name_rejected_without_extraction(self) -> None:
+    def test_nested_archives_and_traversal_name_rejected_without_extraction(
+        self,
+    ) -> None:
         inner = io.BytesIO()
         with zipfile.ZipFile(inner, "w") as archive:
             archive.writestr("../../outside/renamed.rs", self.source)
@@ -70,7 +74,9 @@ class SafetyTest(unittest.TestCase):
         payload.write_bytes(b"PK\x03\x04deliberately invalid test data")
         with self.assertRaises(zipfile.BadZipFile):
             safety.scan_file(payload, self.fingerprints)
-        self.assertFalse(safety.scan_file(payload, self.fingerprints, public_graph=True))
+        self.assertFalse(
+            safety.scan_file(payload, self.fingerprints, public_graph=True)
+        )
         archive_bytes = io.BytesIO()
         with zipfile.ZipFile(archive_bytes, "w") as archive:
             archive.writestr("bad-zip.fixture", payload.read_bytes())

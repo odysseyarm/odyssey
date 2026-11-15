@@ -22,29 +22,59 @@
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, rust-overlay, crane, ... }:
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      rust-overlay,
+      crane,
+      ...
+    }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      treefmt = forAllSystems (system: inputs.treefmt-nix.lib.evalModule projects.${system}.pkgs ./treefmt.nix);
-      projects = forAllSystems (system: import ./nix {
-        inherit inputs system;
-        src = self;
-      });
-    in {
+      treefmt = forAllSystems (
+        system: inputs.treefmt-nix.lib.evalModule projects.${system}.pkgs ./treefmt.nix
+      );
+      projects = forAllSystems (
+        system:
+        import ./nix {
+          inherit inputs system;
+          src = self;
+        }
+      );
+    in
+    {
       devShells = forAllSystems (system: projects.${system}.devShells);
       packages = forAllSystems (system: projects.${system}.packages);
-      checks = forAllSystems (system: projects.${system}.checks // {
-        format = treefmt.${system}.config.build.check self;
-        python-types = let pkgs = projects.${system}.pkgs; in pkgs.runCommand "odyssey-python-types" {
-          nativeBuildInputs = [ pkgs.mypy ];
-        } ''
-          cd ${self}
-          mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
-          touch "$out"
-        '';
+      checks = forAllSystems (
+        system:
+        projects.${system}.checks
+        // {
+          format = treefmt.${system}.config.build.check self;
+          python-types =
+            let
+              pkgs = projects.${system}.pkgs;
+            in
+            pkgs.runCommand "odyssey-python-types"
+              {
+                nativeBuildInputs = [ pkgs.mypy ];
+              }
+              ''
+                cd ${self}
+                mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
+                touch "$out"
+              '';
+        }
+      );
+      legacyPackages = forAllSystems (system: {
+        inherit (projects.${system}) publicCache;
       });
-      legacyPackages = forAllSystems (system: { inherit (projects.${system}) publicCache; });
       formatter = forAllSystems (system: treefmt.${system}.config.build.wrapper);
     };
 }

@@ -8,6 +8,7 @@ neither bundled nor allowed from the host, bundled host libraries, symbol
 versions above what the reference 0.7.4 AppImage required, /nix/store paths,
 and a malformed .desktop file or icon.
 """
+
 import argparse
 import fnmatch
 import json
@@ -25,7 +26,9 @@ def fail(msg: str) -> None:
 
 
 def readelf(flag: str, path: str) -> str:
-    return subprocess.run(["readelf", "-W", flag, path], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        ["readelf", "-W", flag, path], check=True, capture_output=True, text=True
+    ).stdout
 
 
 def is_elf(path: str) -> bool:
@@ -49,7 +52,11 @@ def interpreter(path: str) -> str | None:
 
 def needed_versions(path: str) -> list[str]:
     out = readelf("-V", path)
-    block = re.search(r"Version needs section.*?(?=\nVersion (?:definition|symbols) section|\Z)", out, re.S)
+    block = re.search(
+        r"Version needs section.*?(?=\nVersion (?:definition|symbols) section|\Z)",
+        out,
+        re.S,
+    )
     return re.findall(r"Name: (\S+)\s+Flags", block.group(0)) if block else []
 
 
@@ -62,8 +69,14 @@ def check_versions(path: str, rel: str, maxima: dict[str, str]) -> None:
         prefix, _, ver = name.partition("_")
         if name == "GLIBC_PRIVATE":
             fail(f"{rel}: binds to glibc internals ({name})")
-        elif prefix in maxima and re.fullmatch(r"\d+(\.\d+)*", ver) and parse_version(ver) > parse_version(maxima[prefix]):
-            fail(f"{rel}: needs {name}, above the {prefix}_{maxima[prefix]} the host must provide")
+        elif (
+            prefix in maxima
+            and re.fullmatch(r"\d+(\.\d+)*", ver)
+            and parse_version(ver) > parse_version(maxima[prefix])
+        ):
+            fail(
+                f"{rel}: needs {name}, above the {prefix}_{maxima[prefix]} the host must provide"
+            )
 
 
 def check_desktop(root: str, name: str, desktop_name: str, icon_name: str) -> None:
@@ -72,21 +85,35 @@ def check_desktop(root: str, name: str, desktop_name: str, icon_name: str) -> No
         if not os.path.isfile(path):
             fail(f"missing {rel}")
             continue
-        entry = dict(l.split("=", 1) for l in open(path).read().splitlines() if "=" in l)
+        entry = dict(
+            l.split("=", 1) for l in open(path).read().splitlines() if "=" in l
+        )
         if entry.get("Type") != "Application" or entry.get("Name") != desktop_name:
             fail(f"{rel}: Type/Name wrong: {entry.get('Type')!r} {entry.get('Name')!r}")
-        if entry.get("Exec", "").split()[:1] != [name] or entry.get("Icon") != icon_name:
-            fail(f"{rel}: Exec/Icon do not name {name}/{icon_name}: {entry.get('Exec')!r} {entry.get('Icon')!r}")
+        if (
+            entry.get("Exec", "").split()[:1] != [name]
+            or entry.get("Icon") != icon_name
+        ):
+            fail(
+                f"{rel}: Exec/Icon do not name {name}/{icon_name}: {entry.get('Exec')!r} {entry.get('Icon')!r}"
+            )
     icon = os.path.join(root, f"usr/share/icons/hicolor/256x256/apps/{icon_name}.png")
     if not os.path.isfile(icon):
         fail("missing 256x256 icon")
     else:
         head = open(icon, "rb").read(24)
-        if head[:8] != b"\x89PNG\r\n\x1a\n" or int.from_bytes(head[16:20], "big") != 256 or int.from_bytes(head[20:24], "big") != 256:
+        if (
+            head[:8] != b"\x89PNG\r\n\x1a\n"
+            or int.from_bytes(head[16:20], "big") != 256
+            or int.from_bytes(head[20:24], "big") != 256
+        ):
             fail("icon is not a 256x256 PNG")
         for rel in (f"{icon_name}.png", ".DirIcon"):
             top = os.path.join(root, rel)
-            if not os.path.exists(top) or open(top, "rb").read() != open(icon, "rb").read():
+            if (
+                not os.path.exists(top)
+                or open(top, "rb").read() != open(icon, "rb").read()
+            ):
                 fail(f"{rel} does not resolve to the icon")
 
 
@@ -121,7 +148,11 @@ def main() -> None:
         check_image(a.appimage, a.appimage_name)
 
     apprun = os.path.join(a.root, "AppRun")
-    if not (os.path.isfile(apprun) and os.access(apprun, os.X_OK) and open(apprun, "rb").read(9) == b"#!/bin/sh"):
+    if not (
+        os.path.isfile(apprun)
+        and os.access(apprun, os.X_OK)
+        and open(apprun, "rb").read(9) == b"#!/bin/sh"
+    ):
         fail("AppRun must be an executable #!/bin/sh script")
     check_desktop(a.root, name, policy["desktopName"], policy["iconName"])
 
@@ -130,7 +161,9 @@ def main() -> None:
         return report()
 
     bundled = sorted(os.listdir(lib_dir)) if os.path.isdir(lib_dir) else []
-    objects = [(os.path.join("usr/bin", name), exe)] + [(os.path.join("usr/lib", f), os.path.join(lib_dir, f)) for f in bundled]
+    objects = [(os.path.join("usr/bin", name), exe)] + [
+        (os.path.join("usr/lib", f), os.path.join(lib_dir, f)) for f in bundled
+    ]
     graph = {}
     for rel, path in objects:
         if not is_elf(path):
@@ -145,7 +178,9 @@ def main() -> None:
             fail(f"{rel}: RUNPATH is {dyn['runpath']}, expected [{want_runpath!r}]")
         interp = interpreter(path)
         if is_exe and interp != policy["interpreter"]:
-            fail(f"{rel}: interpreter is {interp!r}, expected {policy['interpreter']!r}")
+            fail(
+                f"{rel}: interpreter is {interp!r}, expected {policy['interpreter']!r}"
+            )
         if not is_exe and interp:
             fail(f"{rel}: bundled library has an interpreter {interp!r}")
         graph[rel] = dyn["needed"]
@@ -153,7 +188,9 @@ def main() -> None:
             bundled_here = soname in bundled
             host = any(fnmatch.fnmatchcase(soname, p) for p in policy["hostLibs"])
             if not (bundled_here or host):
-                fail(f"{rel}: needs {soname}, neither bundled nor an allowed host library")
+                fail(
+                    f"{rel}: needs {soname}, neither bundled nor an allowed host library"
+                )
         check_versions(path, rel, policy["maxVersions"])
 
     for f in bundled:
@@ -178,7 +215,9 @@ def main() -> None:
                 continue
             hit = LIVE_STORE_PATH.search(open(p, "rb").read())
             if hit:
-                fail(f"{os.path.relpath(p, a.root)}: live Nix store path {hit.group(0).decode()}")
+                fail(
+                    f"{os.path.relpath(p, a.root)}: live Nix store path {hit.group(0).decode()}"
+                )
     return report()
 
 

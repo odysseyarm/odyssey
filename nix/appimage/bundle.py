@@ -17,6 +17,7 @@ cargo-packager used to produce on a stock distro:
 
 verify.py is the independent check of the result.
 """
+
 import argparse
 import fnmatch
 import json
@@ -31,7 +32,9 @@ import sys
 LIVE_STORE_PATH = re.compile(rb"/nix/store/([0-9a-df-np-sv-z]{32})(?=-)")
 # OPENSSLDIR is compiled into libcrypto. The Nix one is meaningless elsewhere,
 # so point it at the conventional location (openssl-probe still overrides it).
-OPENSSL_DIR = re.compile(rb"/nix/store/[0-9a-df-np-sv-z]{32}-openssl[^/\x00\"\s]*/etc/ssl")
+OPENSSL_DIR = re.compile(
+    rb"/nix/store/[0-9a-df-np-sv-z]{32}-openssl[^/\x00\"\s]*/etc/ssl"
+)
 
 
 def run(*cmd: str) -> str:
@@ -50,14 +53,20 @@ def needed(path: str) -> list[str]:
 def rpath_dirs(path: str) -> list[str]:
     origin = os.path.dirname(os.path.realpath(path))
     raw = run("patchelf", "--print-rpath", path).strip()
-    return [d.replace("${ORIGIN}", origin).replace("$ORIGIN", origin) for d in raw.split(":") if d]
+    return [
+        d.replace("${ORIGIN}", origin).replace("$ORIGIN", origin)
+        for d in raw.split(":")
+        if d
+    ]
 
 
 def is_host(soname: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(soname, p) for p in patterns)
 
 
-def resolve(soname: str, requester: str, root_dirs: list[str], search: list[str]) -> str:
+def resolve(
+    soname: str, requester: str, root_dirs: list[str], search: list[str]
+) -> str:
     for d in rpath_dirs(requester) + root_dirs + search:
         candidate = os.path.join(d, soname)
         if os.path.isfile(candidate):
@@ -122,7 +131,14 @@ def main() -> None:
 
     for soname in bundled:
         run("patchelf", "--set-rpath", "$ORIGIN", os.path.join(lib_dir, soname))
-    run("patchelf", "--set-interpreter", policy["interpreter"], "--set-rpath", "$ORIGIN/../lib", exe)
+    run(
+        "patchelf",
+        "--set-interpreter",
+        policy["interpreter"],
+        "--set-rpath",
+        "$ORIGIN/../lib",
+        exe,
+    )
 
     for root, _, files in os.walk(os.path.join(a.appdir, "usr")):
         for f in files:
@@ -130,7 +146,9 @@ def main() -> None:
             if not os.path.islink(p) and is_elf(p):
                 sanitize(p)
 
-    print(f"bundle: {len(bundled)} librar{'y' if len(bundled) == 1 else 'ies'} bundled: {' '.join(sorted(bundled))}")
+    print(
+        f"bundle: {len(bundled)} librar{'y' if len(bundled) == 1 else 'ies'} bundled: {' '.join(sorted(bundled))}"
+    )
 
 
 if __name__ == "__main__":
