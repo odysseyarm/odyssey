@@ -30,8 +30,11 @@ outputs:
     description: Python and C# UniFFI builds
     value: ${{ steps.select.outputs.uniffi }}
   format:
-    description: rustfmt over every Rust file
+    description: treefmt over every file it formats
     value: ${{ steps.select.outputs.format }}
+  python:
+    description: mypy --strict over every Python file
+    value: ${{ steps.select.outputs.python }}
 
 runs:
   using: composite

@@ -262,6 +262,22 @@ in
     // windows.checks
     // {
       private-source-boundary = common.privateBoundaryCheck;
+      python-types =
+        let
+          root = ../.;
+          pythonSource = lib.fileset.toSource {
+            inherit root;
+            fileset = lib.fileset.unions [
+              (lib.fileset.fileFilter (file: file.hasExt "py") root)
+              (root + "/mypy.ini")
+            ];
+          };
+        in
+        pkgs.runCommand "odyssey-python-types" { nativeBuildInputs = [ pkgs.mypy ]; } ''
+          cd ${pythonSource}
+          mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
+          touch "$out"
+        '';
     }
     // lib.optionalAttrs (system == "x86_64-linux") {
       release-proofs = releaseProofs;

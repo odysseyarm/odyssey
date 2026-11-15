@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -112,6 +113,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(select("mypy.ini"), {"python"})
         self.assertIn("python", select("tools/tracking_scene/x.py"))
         self.assertNotIn("python", select("firmware/x/src/main.rs"))
+
+    def test_every_suite_is_a_declared_action_output(self) -> None:
+        declared = set(
+            re.findall(
+                r"^  (\w+):\n    description:",
+                (Path(__file__).parent / "action.yml").read_text(),
+                re.M,
+            )
+        )
+        self.assertLessEqual(set(impact.SUITES), declared)
 
     def test_the_toolchain_reaches_every_suite(self) -> None:
         self.assertEqual(select("rust-toolchain.toml"), set(impact.SUITES))
