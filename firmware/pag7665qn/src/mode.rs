@@ -1,46 +1,69 @@
 use core::convert::Infallible;
 
 mod sealed {
+    /// Since: Odyssey Desktop 0.6.0.
     pub trait Sealed {}
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, defmt::Format)]
 #[repr(u8)]
 pub enum Mode {
+    /// Since: Odyssey Desktop 0.6.0.
     Idle,
+    /// Since: Odyssey Desktop 0.6.0.
     Image,
+    /// Since: Odyssey Desktop 0.6.0.
     Object,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug, Copy, Clone)]
 pub struct ModeError {
+    /// Since: Odyssey Desktop 0.6.0.
     pub expected: Mode,
+    /// Since: Odyssey Desktop 0.6.0.
     pub actual: Mode,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Copy, Clone)]
 pub struct Idle;
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Copy, Clone)]
 pub struct Image;
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Copy, Clone)]
 pub struct Object;
 
+/// Since: Odyssey Desktop 0.6.0.
 pub trait ModeT: sealed::Sealed + Clone + Copy {
+    /// Since: Odyssey Desktop 0.6.0.
     fn mode(self) -> Mode;
 }
+/// Since: Odyssey Desktop 0.6.0.
 pub trait IsIdle: ModeT + Clone + Copy {
+    /// Since: Odyssey Desktop 0.6.0.
     type Error: ModeErrorT;
+    /// Since: Odyssey Desktop 0.6.0.
     fn is_idle(self) -> Result<(), Self::Error>;
 }
+/// Since: Odyssey Desktop 0.6.0.
 pub trait IsImage: ModeT + Clone + Copy {
+    /// Since: Odyssey Desktop 0.6.0.
     type Error: ModeErrorT;
+    /// Since: Odyssey Desktop 0.6.0.
     fn is_image(self) -> Result<(), Self::Error>;
 }
+/// Since: Odyssey Desktop 0.6.0.
 pub trait IsObject: ModeT + Clone + Copy {
+    /// Since: Odyssey Desktop 0.6.0.
     type Error: ModeErrorT;
+    /// Since: Odyssey Desktop 0.6.0.
     fn is_object(self) -> Result<(), Self::Error>;
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 pub trait ModeErrorT: sealed::Sealed {}
 impl sealed::Sealed for Infallible {}
 impl ModeErrorT for Infallible {}

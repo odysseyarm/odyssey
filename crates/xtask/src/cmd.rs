@@ -4,7 +4,7 @@ use std::process::Command;
 
 use eros::Context as _;
 
-/// The repository root; ODYSSEY_REPO selects the checkout for a prebuilt xtask.
+/// The repository root. `ODYSSEY_REPO` selects the checkout for a prebuilt xtask.
 pub(crate) fn root() -> PathBuf {
     if let Some(root) = std::env::var_os("ODYSSEY_REPO") {
         return PathBuf::from(root);
@@ -59,7 +59,7 @@ pub(crate) fn run(command: &mut Command) -> eros::Result<()> {
     Ok(())
 }
 
-/// Run the command and return its trimmed stdout; stderr passes through.
+/// Run the command and return its trimmed stdout. Stderr passes through.
 pub(crate) fn output(command: &mut Command) -> eros::Result<String> {
     let output = command
         .stderr(std::process::Stdio::inherit())

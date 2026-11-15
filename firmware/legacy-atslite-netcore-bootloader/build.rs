@@ -31,7 +31,7 @@ fn main() {
     let dfu_region = &regions["flash"]["dfu"];
     let netcore_ram = &regions["netcore_ram"];
 
-    // The memory map names ICMSG regions from the app core's side; the net
+    // The memory map names ICMSG regions from the app core's side. The net
     // core sends on the app's RX region, which also holds the PCD (DFU metadata).
     let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"];
     let pcd_region = icmsg_tx;

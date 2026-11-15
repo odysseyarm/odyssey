@@ -3,7 +3,7 @@
 //! screen calibration.
 //!
 //! [`open`] starts the guided task in the main workspace. Only the measurement
-//! pattern opens on the selected display; the workspace retains its selections.
+//! pattern opens on the selected display. The workspace retains its selections.
 
 mod attempt_bundle;
 mod attempt_button;

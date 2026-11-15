@@ -11,6 +11,8 @@ use crate::packets::vm::{Packet, PacketData, PacketType, StreamUpdate, StreamUpd
 
 /// The reports of one stream type. Dropping it tells the device to stop
 /// sending them.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
 pub struct PacketStream {
     pub(super) slot: Option<ResponseSlot>,
@@ -61,7 +63,7 @@ impl Drop for PacketStream {
             return;
         };
         // Retain the slot until Disable has a place in the queue. A global
-        // reset may supersede it during the wait; recheck the generation before
+        // reset may supersede it during the wait. Recheck the generation before
         // enqueueing so this cleanup cannot disable a replacement.
         runtime.spawn(async move {
             match sender.reserve().await {

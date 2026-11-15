@@ -5,11 +5,14 @@ use tonic::transport::server::Connected;
 
 /// Wrapper around interprocess's `LocalSocketStream` to implement the `Connected` trait and
 /// override `poll_flush`.
+///
+/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub struct LocalSocketStream(#[pin] interprocess::local_socket::tokio::Stream);
 
 impl LocalSocketStream {
+    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     pub fn new(inner: interprocess::local_socket::tokio::Stream) -> Self {
         Self(inner)
     }

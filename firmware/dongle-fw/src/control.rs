@@ -40,6 +40,7 @@ pub fn register(
 pub fn try_send_event(evt: UsbMuxCtrlMsg) {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
+        // SAFETY: EVT_PTR contains only the &'static channel installed by register.
         let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
         match ch.try_send(evt) {
             Ok(()) => defmt::trace!("Control event queued successfully"),
@@ -54,6 +55,7 @@ pub fn try_send_event(evt: UsbMuxCtrlMsg) {
 pub fn try_recv_event() -> Option<UsbMuxCtrlMsg> {
     let p = EVT_PTR.load(Ordering::Acquire);
     if !p.is_null() {
+        // SAFETY: EVT_PTR contains only the &'static channel installed by register.
         let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
         if let Ok(m) = ch.try_receive() {
             return Some(m);
@@ -68,11 +70,12 @@ pub fn clear_events() {
     while try_recv_event().is_some() {}
 }
 
-/// Queues a host command without blocking. Used by EP0 control_out; drops the
+/// Queues a host command without blocking. Used by EP0 control_out. Drops the
 /// command when the channel is full or not yet registered.
 pub fn try_send_cmd(cmd: UsbMuxCtrlMsg) {
     let p = CMD_PTR.load(Ordering::Acquire);
     if !p.is_null() {
+        // SAFETY: CMD_PTR contains only the &'static channel installed by register.
         let ch: &Channel<ThreadModeRawMutex, UsbMuxCtrlMsg, 4> = unsafe { &*p };
         match ch.try_send(cmd) {
             Ok(()) => defmt::info!("Control cmd queued successfully"),

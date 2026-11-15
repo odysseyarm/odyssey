@@ -5,7 +5,7 @@ use super::gain_table::{GAIN_TABLE, gain_index_from_reg};
 use super::registers::{Register, RegisterRun, Registers};
 
 // PAJ sensor register map. Exposure and gain are read back from different
-// addresses than they are written to; both are kept as the device defines them.
+// addresses than they are written to. Both are kept as the device defines them.
 const BRIGHTNESS_THRESHOLD: Register = Register::new(0x0C, 0x47);
 const NOISE_THRESHOLD: Register = Register::new(0x00, 0x0F);
 const AREA_THRESHOLD_MIN: Register = Register::new(0x0C, 0x46);
@@ -22,7 +22,7 @@ const GAIN_GLOBAL_WRITE: Register = Register::new(0x0C, 0x0B);
 const GAIN_GGH_WRITE: Register = Register::new(0x0C, 0x0C);
 const RESOLUTION_X: RegisterRun<2> = RegisterRun::new(0x0C, [0x60, 0x61]);
 const RESOLUTION_Y: RegisterRun<2> = RegisterRun::new(0x0C, [0x62, 0x63]);
-/// Latch registers; writing 1 to both applies the staged values.
+/// Latch registers. Writing 1 to both applies the staged values.
 const SYNC_BANK_1: Register = Register::new(0x01, 0x01);
 const SYNC_BANK_0: Register = Register::new(0x00, 0x01);
 

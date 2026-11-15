@@ -1,22 +1,38 @@
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MotData {
+    /// Since: Odyssey Desktop 0.6.0.
     pub area: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     pub cx: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     pub cy: u16,
+    /// Since: Odyssey Desktop 0.6.0.
     pub avg_brightness: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub max_brightness: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub range: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub radius: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub boundary_left: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub boundary_right: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub boundary_up: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub boundary_down: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub aspect_ratio: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub vx: u8,
+    /// Since: Odyssey Desktop 0.6.0.
     pub vy: u8,
 }
 
 impl MotData {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn parse(bytes: &mut &[u8]) -> Self {
         let mot_data = MotData {
             area: bytes[0] as u16 | ((bytes[1] as u16) << 8),
@@ -38,6 +54,7 @@ impl MotData {
         mot_data
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         buf.extend_from_slice(&[
             self.area as u8,

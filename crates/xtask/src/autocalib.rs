@@ -19,11 +19,11 @@ pub(crate) enum Cmd {
     /// the first thing to print: scale-board-paper-letter.
     Artwork(artwork::Args),
     /// Regenerates crates/odyssey-autocalib/src/orbbec/ffi.rs, the checked-in
-    /// function table for OrbbecSDK v2.
+    /// function table for `OrbbecSDK` v2.
     ///
     /// Needs, on the machine that runs it and nowhere in the normal build:
     /// bindgen-cli 0.72.x (`cargo install bindgen-cli --version 0.72.1 --locked`),
-    /// libclang (set LIBCLANG_PATH if bindgen cannot find it) and rustfmt.
+    /// libclang (set `LIBCLANG_PATH` if bindgen cannot find it) and rustfmt.
     ///
     /// What gets emitted follows the backend source, so adding an SDK call to
     /// src/orbbec.rs or src/orbbec/runtime.rs and rerunning this is the whole
@@ -33,9 +33,9 @@ pub(crate) enum Cmd {
     /// variants, so it emits each reached enum in full and the constants nothing
     /// references are then dropped.
     OrbbecFfi {
-        /// The `include/` directory of the official OrbbecSDK v2.10.6 release
-        /// archive (or of a CMake install of that tag). The raw source tree is not
-        /// enough: `libobsensor/h/Export.h` only exists after the SDK's CMake step.
+        /// The `include/` directory of the official `OrbbecSDK` v2.10.6 release
+        /// archive (or of a `CMake` install of that tag). The raw source tree is not
+        /// enough: `libobsensor/h/Export.h` only exists after the SDK's `CMake` step.
         include: PathBuf,
     },
 }

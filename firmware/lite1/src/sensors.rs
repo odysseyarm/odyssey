@@ -14,6 +14,8 @@ use static_cell::ConstStaticCell;
 use crate::object_mode::{ImuData, ImuInterrupt, ImuSensor, PagInterrupt, PagSensor};
 
 /// PAG7665QN driver on its own SPIM bus.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub type PagDriver<M> = Pag7665Qn<
     Pag7665QnSpi<
         ExclusiveDevice<
@@ -27,19 +29,27 @@ pub type PagDriver<M> = Pag7665Qn<
 >;
 
 /// Sensor failure, kept field-less so defmt can print it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Format)]
 pub enum SensorError {
+    /// Since: Odyssey Desktop 0.6.0.
     Spi,
+    /// Since: Odyssey Desktop 0.6.0.
     InvalidData,
 }
 
 /// The PAG7665QN as an object_mode [`PagSensor`].
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665QnSensor {
+    /// Since: Odyssey Desktop 0.6.0.
     pub driver: PagDriver<mode::Mode>,
     image_roi: Option<u8>,
 }
 
 impl Pag7665QnSensor {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(driver: PagDriver<mode::Mode>) -> Self {
         Self {
             driver,
@@ -98,9 +108,9 @@ impl PagSensor for Pag7665QnSensor {
 
     async fn switch_to_image(&mut self) -> Result<(), Self::Error> {
         self.switch_to_idle().await?;
-        // ROI_CTRL bit 0 is the documented ROI enable. Disable that known restriction and
-        // restore the exact byte before the next object snapshot. SENSOR_SIZE_SEL's mapping
-        // is undocumented here, so it is not guessed or changed.
+        // ROI_CTRL bit 0 is the documented ROI enable. Clear it, remembering the original byte
+        // so the next object snapshot can restore it. SENSOR_SIZE_SEL's mapping is
+        // undocumented here, so it is left alone.
         let roi = match self.image_roi {
             Some(roi) => roi,
             None => {
@@ -143,8 +153,11 @@ impl PagSensor for Pag7665QnSensor {
     }
 }
 
-/// The PAG7665QN INT_O line as an object_mode [`PagInterrupt`]; waits for it to go high.
+/// The PAG7665QN INT_O line as an object_mode [`PagInterrupt`]. Waits for it to go high.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665QnInterrupt {
+    /// Since: Odyssey Desktop 0.6.0.
     pub int_o: Input<'static>,
 }
 
@@ -155,19 +168,25 @@ impl PagInterrupt for Pag7665QnInterrupt {
 }
 
 /// The ready ICM-42688-P on its own SPI bus.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub type ImuDriver = icm426xx::ICM42688<
     ExclusiveDevice<embassy_nrf::spim::Spim<'static>, embassy_nrf::gpio::Output<'static>, Delay>,
     icm426xx::Ready,
 >;
 
 /// The ICM-42688-P as an object_mode [`ImuSensor`], timestamped from its FIFO.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Icm42688Sensor {
+    /// Since: Odyssey Desktop 0.6.0.
     pub driver: ImuDriver,
     buffer: &'static mut [u32; 521],
     ts_micros: u32,
 }
 
 impl Icm42688Sensor {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(driver: ImuDriver) -> Self {
         static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
         Self {
@@ -203,7 +222,10 @@ impl ImuSensor for Icm42688Sensor {
 }
 
 /// The ICM-42688-P INT1 line as an object_mode [`ImuInterrupt`].
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Icm42688Interrupt {
+    /// Since: Odyssey Desktop 0.6.0.
     pub int1: Input<'static>,
 }
 

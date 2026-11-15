@@ -12,7 +12,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", memory_file);
     println!("cargo:rerun-if-env-changed=BOARD");
-    // Reruns on source or HEAD changes only; a dirty edit elsewhere can leave a stale string.
+    // Reruns on source or HEAD changes only. A dirty edit elsewhere can leave a stale string.
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=../../.git/HEAD");

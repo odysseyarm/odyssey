@@ -206,7 +206,7 @@ impl PajSensorSettingsForm {
                 if !errors.is_empty() {
                     return
                 }
-                // Every field was parsed successfully above; rebind the parsed values
+                // Every field was parsed successfully above. Rebind the parsed values
                 // for the checks. Fields without a check are only referenced here.
                 $( let Ok($reg) = $reg else { return }; )*
                 let _ = ($(&$reg,)*);
@@ -383,7 +383,7 @@ pub(super) static GAIN_TABLE: [(&str, Gain); 16 * 3 + 1] = {
     let mut table = [("", Gain::new(0, 0)); 16 * 3 + 1];
     let mut i = 0;
     while i < 16 * 3 {
-        // `n_to_bstr` yields ASCII digits, so this cannot fail; if it ever did,
+        // `n_to_bstr` yields ASCII digits, so this cannot fail. If it ever did,
         // evaluating the table would be a compile error, not a runtime one.
         table[i].0 = match std::str::from_utf8(&BACKING[i]) {
             Ok(text) => text,
@@ -458,7 +458,7 @@ mod tests {
         assert!(errors.iter().any(|error| error.starts_with("gain")));
         errors.clear();
         // A valid custom pair that a table lookup can mistake for a different
-        // entry; it must validate as-is, without the registers being normalized.
+        // entry. It must validate as-is, without the registers being normalized.
         form.gain = Gain::new(16, 0);
         form.validate(&mut errors);
         assert!(errors.is_empty(), "{errors:?}");

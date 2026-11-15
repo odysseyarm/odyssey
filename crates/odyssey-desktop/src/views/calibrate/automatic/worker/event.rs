@@ -12,7 +12,7 @@ use super::frame::{Finished, MarkerFrame, PreviewFrame};
 #[derive(Debug)]
 pub(crate) enum Event {
     Cameras(Result<Vec<CameraInfo>, ListError>),
-    /// Something about the camera session `session`; the UI drops events of
+    /// Something about the camera session `session`. The UI drops events of
     /// sessions it has already abandoned.
     Session {
         session: u64,

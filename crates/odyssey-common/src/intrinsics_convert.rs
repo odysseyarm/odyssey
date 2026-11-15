@@ -5,6 +5,8 @@ use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 /// Re-expresses camera intrinsics in another scalar type, e.g. `f32` -> `f64`.
 ///
 /// Preserves the pinhole parameters, including skew, and distortion.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn ros_opencv_intrinsics_type_convert<A, B>(
     intrinsics: &RosOpenCvIntrinsics<A>,
 ) -> RosOpenCvIntrinsics<B>

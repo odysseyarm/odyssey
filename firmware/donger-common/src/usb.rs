@@ -5,6 +5,8 @@ use embassy_usb::driver::EndpointError;
 
 /// Writes `data` to `snd` in max-packet-size chunks. Logs and stops at the
 /// first write error.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     snd: &mut cdc_acm::Sender<'d, D>,
     data: &[u8],
@@ -25,6 +27,8 @@ pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
 
 /// Returns the first byte of the next non-empty packet; the rest of that packet
 /// is dropped. While the endpoint is disabled, waits for the host to reconnect.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
     rcv: &mut cdc_acm::Receiver<'d, D>,
 ) -> u8 {

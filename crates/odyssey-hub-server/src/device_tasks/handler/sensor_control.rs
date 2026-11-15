@@ -9,13 +9,13 @@ use crate::device_tasks::sensor_streams::{DeviceStreamEvent, SensorStreams};
 impl DeviceHandler {
     /// Stop the sensor streams ahead of a register or config round trip.
     ///
-    /// The firmware's `obj_loop` holds the PAG mutex during `get_objects()`; if a register
+    /// The firmware's `obj_loop` holds the PAG mutex during `get_objects()`. If a register
     /// access arrives while that lock is held, `recv_loop` blocks for the whole call. So the
-    /// streams are cleared first (`clear_all_streams` sends DisableAll and waits for the Ack,
+    /// streams are cleared first (`clear_all_streams` sends `DisableAll` and waits for the `Ack`,
     /// which guarantees the firmware has processed it before the register access reaches it).
     /// The standby link's streams stop too: they are the same subscriptions on the unit.
     ///
-    /// Only the first access of a batch pauses; callers then
+    /// Only the first access of a batch pauses. Callers then
     /// [`arm_resume`](super::super::sensor_streams::StreamRestartTimers::arm_resume) so
     /// the streams restart once no access has arrived for a short while, instead of
     /// cycling around every individual access.
@@ -32,7 +32,7 @@ impl DeviceHandler {
         if let Some(link) = &mut self.standby {
             link.sensors.stop();
         }
-        // A cable pulled mid-batch fails the DisableAll over USB; the next link reaches
+        // A cable pulled mid-batch fails the DisableAll over USB. The next link reaches
         // the same subscriptions.
         for link in links {
             match link.clear_all_streams().await {
@@ -104,7 +104,7 @@ impl DeviceHandler {
     }
 
     /// Reports reach the standby link once the firmware has moved off USB, which can be
-    /// before the USB scan sees the cable go; they are forwarded like any other.
+    /// before the USB scan sees the cable go. They are forwarded like any other.
     pub(super) async fn on_standby_event(&mut self, event: Option<DeviceStreamEvent>) {
         let Some(event) = event else {
             info!(

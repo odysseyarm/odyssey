@@ -5,15 +5,21 @@ use core::future::Future;
 
 use legacy_common::odyssey_protocol::Packet;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy)]
 pub struct VmL2capChannels {
+    /// Since: Odyssey Desktop 0.7.0.
     pub control_rx: MockReceiver,
+    /// Since: Odyssey Desktop 0.7.0.
     pub data_rx: MockReceiver,
+    /// Since: Odyssey Desktop 0.7.0.
     pub control_tx: MockSender,
+    /// Since: Odyssey Desktop 0.7.0.
     pub data_tx: MockSender,
 }
 
 impl VmL2capChannels {
+    /// Since: Odyssey Desktop 0.7.0.
     pub const fn new() -> Self {
         Self {
             control_rx: MockReceiver,
@@ -24,9 +30,11 @@ impl VmL2capChannels {
     }
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy)]
 pub struct MockReceiver;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy)]
 pub struct MockSender;
 
@@ -65,12 +73,12 @@ impl legacy_common::platform::L2capReceiver for MockReceiver {
 impl legacy_common::platform::L2capSender for MockSender {
     fn send(&self, _pkt: Packet) -> impl Future<Output = ()> {
         async move {
-            // The packet is dropped; the VM has no BLE.
+            // The packet is dropped. The VM has no BLE.
         }
     }
 
     fn try_send(&self, _pkt: Packet) -> Result<(), ()> {
-        // The packet is dropped; the VM has no BLE.
+        // The packet is dropped. The VM has no BLE.
         Ok(())
     }
 }

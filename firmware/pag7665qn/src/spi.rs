@@ -4,11 +4,14 @@ use embedded_hal_async::spi::SpiDevice;
 use crate::Interface;
 
 /// Register access over SPI: one address byte, then data. Reads set bit 7 of the address.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665QnSpi<S> {
     spi: S,
 }
 
 impl<S> Pag7665QnSpi<S> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(spi: S) -> Self {
         Self { spi }
     }

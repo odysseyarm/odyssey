@@ -15,7 +15,7 @@ const PLOT_ROWS: usize = 6;
 /// Number of chart columns the plots window is divided into.
 const PLOT_COLUMNS: usize = 2;
 
-/// Charts are never squeezed below this height; the window scrolls instead.
+/// Charts never shrink below this height. The window scrolls instead.
 const MIN_CELL_HEIGHT: f32 = 150.0;
 
 /// Width of the y axis label area, so plots in a column line up.
@@ -196,7 +196,7 @@ const CHARTS: [&Chart; PLOT_ROWS * PLOT_COLUMNS] = [
 ];
 
 /// The samples of a telemetry series. A poisoned lock only means another
-/// thread panicked mid-update; the plots can still show what is there.
+/// thread panicked mid-update, and the plots can still show what is there.
 fn locked_values<T>(series: &Series<T>) -> MutexGuard<'_, VecDeque<(Instant, T)>> {
     series.values.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -293,6 +293,8 @@ impl ChartData {
 
 /// Live telemetry charts in a grid that fills the window. Space pauses and
 /// resumes them.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct PlotsWindow {
     /// While set, the charts keep showing the data they had when paused.
@@ -307,6 +309,7 @@ impl Default for PlotsWindow {
 }
 
 impl PlotsWindow {
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new() -> Self {
         Self {
             paused: false,
@@ -314,6 +317,7 @@ impl PlotsWindow {
         }
     }
 
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn show(&mut self, ui: &mut Ui) {
         if ui.input(|i| i.key_released(Key::Space)) {
             self.paused = !self.paused;

@@ -10,13 +10,19 @@ use crate::mot_runner::MotRunner;
 const BACKGROUND: Color32 = Color32::from_gray(24);
 
 /// What the host window should do after a frame of the test canvas.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
+    /// Since: Odyssey Desktop 0.7.0.
     Continue,
+    /// Since: Odyssey Desktop 0.7.0.
     Exit,
 }
 
-/// Aimpoint test view; fills the available space and handles its keyboard shortcuts.
+/// Aimpoint test view, filling the available space and handling its keyboard shortcuts.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn show(ui: &mut egui::Ui, runner: &Arc<Mutex<MotRunner>>) -> Outcome {
     let outcome = handle_keys(ui, runner);
 

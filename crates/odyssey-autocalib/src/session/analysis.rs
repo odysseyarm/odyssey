@@ -60,8 +60,8 @@ const SATURATED_LUMA: usize = 250;
 /// blown out.
 const MAX_SATURATED_SHARE: f64 = 0.15;
 
-/// The brightness is judged by this percentile of the luma, so that a few
-/// bright pixels do not hide a dark picture.
+/// The brightness is judged by this percentile of the luma, so a few
+/// bright pixels cannot hide a dark picture.
 const BRIGHTNESS_PERCENTILE: f64 = 0.995;
 
 /// [`Hint::TooDark`] when the [`BRIGHTNESS_PERCENTILE`] luma is below this.
@@ -81,7 +81,7 @@ fn inset_corners() -> [(f64, f64); 4] {
 /// What a frame showed of a found pattern.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Observation {
-    /// The inset screen region lies inside the color image; depth visibility
+    /// The inset screen region lies inside the color image. Depth visibility
     /// is accounted for by `depth.coverage`.
     pub(super) region_inside_images: bool,
     /// Share of the pattern's dots that were matched.
@@ -198,7 +198,7 @@ pub(super) fn hint_without_pattern(color: &RgbImage, failure: DetectFailure) -> 
 }
 
 /// Distance, depth coverage and plane quality of the screen region in one
-/// frame; `None` where the frame has no depth to say.
+/// frame. `None` where the frame has no depth to say.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct DepthStats {
     pub(super) coverage: Option<f32>,

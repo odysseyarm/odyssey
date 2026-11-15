@@ -17,8 +17,12 @@ use crate::consts::{
 ///
 /// Implemented for `BlockingFirmwareState<'d, STATE>`. Implement it directly when the DFU `Control` cannot own a
 /// `BlockingFirmwareState`, for example when other code also needs it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub trait DfuMarker {
     /// Signal to the bootloader that DFU mode should be used on the next boot.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     fn mark_dfu(&mut self);
 }
 
@@ -30,6 +34,8 @@ impl<'d, STATE: NorFlash> DfuMarker for BlockingFirmwareState<'d, STATE> {
 }
 
 /// DFU runtime state and USB control handler; [`usb_dfu`] registers it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct Control<MARK: DfuMarker, RST: Reset> {
     dfu_marker: MARK,
     attrs: DfuAttributes,
@@ -45,6 +51,8 @@ pub struct Control<MARK: DfuMarker, RST: Reset> {
 
 impl<MARK: DfuMarker, RST: Reset> Control<MARK, RST> {
     /// Starts in appIDLE. Pass it to [`usb_dfu`] to add the interface.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn new(dfu_marker: MARK, attrs: DfuAttributes, reset: RST) -> Self {
         Control {
             dfu_marker,
@@ -149,6 +157,8 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
 /// recognise that mark and expose a DFU-mode device to carry out the transfer with the host.
 ///
 /// `timeout` is advertised as wDetachTimeOut in the functional descriptor, in milliseconds truncated to `u16`.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn usb_dfu<'d, D: Driver<'d>, MARK: DfuMarker, RST: Reset>(
     builder: &mut Builder<'d, D>,
     handler: &'d mut Control<MARK, RST>,

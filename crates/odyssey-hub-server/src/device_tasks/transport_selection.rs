@@ -17,7 +17,7 @@ pub(crate) enum TransportSelection {
 
 impl TransportSelection {
     /// `protocol` is the device protocol version the unit reports, on either the control
-    /// endpoint or the packet interface; both carry the same value.
+    /// endpoint or the packet interface. Both carry the same value.
     pub(super) fn for_protocol(protocol: [u16; 3]) -> Self {
         if semver_at_least(protocol, AUTO_TRANSPORT_PROTOCOL) {
             Self::Automatic

@@ -18,8 +18,8 @@ pub(crate) enum Backend {
     /// The simulated camera, and nothing else. `overscan_fraction` is how much
     /// the simulated TV crops its picture.
     Demo { overscan_fraction: f64 },
-    /// Attached Orbbec cameras. Needs the Orbbec SDK installed on this machine;
-    /// without it listing fails with [`ListError::Runtime`].
+    /// Attached Orbbec cameras. Needs the Orbbec SDK installed on this machine.
+    /// Without it listing fails with [`ListError::Runtime`].
     Hardware,
 }
 
@@ -33,8 +33,8 @@ pub(crate) enum ListError {
 }
 
 fn list_hardware() -> Result<Vec<CameraInfo>, ListError> {
-    // The installer's copy of the SDK, or one the user downloaded, is found here;
-    // a copy elsewhere on the machine is still found by the loader on its own.
+    // The installer's copy of the SDK, or one the user downloaded, is found here.
+    // A copy elsewhere on the machine is still found by the loader on its own.
     let extra_dir = sdk_install::search_dir();
     match orbbec::runtime_status(extra_dir.as_deref()) {
         RuntimeStatus::Available { .. } => OrbbecBackend::with_extra_dir(extra_dir)

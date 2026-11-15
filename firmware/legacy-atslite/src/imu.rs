@@ -10,16 +10,19 @@ use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteImu {
     inner: ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>,
     // Sum of FIFO timestamp deltas, in microseconds.
     ts_micros: u32,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteImuInterrupt {
     int1: Input<'static>,
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct ImuError;
 
@@ -44,7 +47,7 @@ impl legacy_common::platform::Imu for AtsliteImu {
                 &bytemuck::cast_slice(&buffer)[4..24],
             );
 
-            // Raw axes; common applies the axis transforms via the Platform
+            // Raw axes. Common applies the axis transforms via the Platform
             // trait. i32 because the 20-bit samples do not fit an i16.
             let ax = pkt.accel_data_x();
             let ay = pkt.accel_data_y();
@@ -111,10 +114,12 @@ fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].1
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 pub fn round_accel_odr_hz(hz: u16) -> u16 {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].0
 }
 
+/// Since: Odyssey Desktop 0.7.0.
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     spim_instance: Peri<'static, SPIM4>,

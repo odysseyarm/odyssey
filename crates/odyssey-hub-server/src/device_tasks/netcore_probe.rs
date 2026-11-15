@@ -34,7 +34,7 @@ impl NetCoreLink {
 /// Gaps before each net core read.
 pub(super) const NETCORE_PROBE_DELAYS_S: [u64; 6] = [0, 1, 2, 4, 8, 15];
 
-/// Poll `read` for the net core release; returns the release to report to the
+/// Poll `read` for the net core release. Returns the release to report to the
 /// handler, or `None` to leave it unknown.
 ///
 /// The application asks the net core itself once its BLE host is running and
@@ -107,7 +107,7 @@ enum ProbeMiss {
 /// task. See [`probe_net_core`] for when a reading counts.
 ///
 /// Over the cable a settled 0 is real (the net core predates release
-/// reporting); over Bluetooth a 0 is also what an unanswered read looks like,
+/// reporting). Over Bluetooth a 0 is also what an unanswered read looks like,
 /// so only a positive release is reported there. A device protocol that cannot
 /// carry the property never starts a probe and stays unknown.
 pub(super) fn spawn_netcore_probe(
@@ -136,7 +136,7 @@ pub(super) fn spawn_netcore_probe(
 }
 
 /// Starts a probe over the packet stream for a unit whose only link is
-/// Bluetooth. The handler passes a weak sender so that holding it does not keep
+/// Bluetooth. The handler passes a weak sender so holding it does not keep
 /// its own channel open after every other owner has dropped theirs.
 pub(super) fn spawn_packet_netcore_probe(
     handler: &mpsc::WeakSender<DeviceTaskMessage>,
@@ -159,7 +159,7 @@ mod netcore_probe_tests {
 
     use super::*;
 
-    /// Runs the probe against a scripted unit; the script must cover every read.
+    /// Runs the probe against a scripted unit. The script must cover every read.
     async fn probe(script: Vec<Result<u16>>, settle_zero: bool) -> Option<u16> {
         let delays = vec![0u64; script.len()];
         let script = RefCell::new(VecDeque::from(script));

@@ -51,7 +51,7 @@ pub(super) struct HubManagerInit {
 /// Events from the hub manager's merged stream.
 enum HubEvent {
     Snapshot(Result<DeviceSnapshot>),
-    /// Timer tick; re-drives snapshot processing for devices that failed to connect.
+    /// Timer tick. Re-drives snapshot processing for devices that failed to connect.
     Retry,
     Command(ControlCommand),
 }
@@ -73,7 +73,7 @@ pub(super) struct HubManager {
     /// Unique to this manager incarnation, even when a dongle reconnects at the same address.
     events_owner: Arc<()>,
     /// Devices managed by this hub, for cleanup on exit. Keyed by BLE address (not UUID) so
-    /// snapshot diffs work even when a device's UUID differs from its BLE address; the
+    /// snapshot diffs work even when a device's UUID differs from its BLE address. The
     /// value retains the original handler so cleanup cannot detach a newer connection.
     managed_devices: HashMap<DeviceAddress, ManagedDevice>,
     last_snapshot: DeviceSnapshot,
@@ -82,7 +82,7 @@ pub(super) struct HubManager {
 }
 
 impl HubManager {
-    /// Run the manager on its own task. The task ends when the hub disconnects; the caller
+    /// Run the manager on its own task. The task ends when the hub disconnects. The caller
     /// watches for that (see `UsbDeviceManager::on_hub_device`).
     pub(super) fn spawn(init: HubManagerInit) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -251,7 +251,7 @@ impl HubManager {
     }
 
     /// A tick only matters while some device failed to connect and still has attempts
-    /// left; then re-run the last snapshot so the device is retried even though the
+    /// left. Then re-run the last snapshot so the device is retried even though the
     /// dongle sends no new snapshot.
     async fn on_retry_tick(&mut self) {
         if !self

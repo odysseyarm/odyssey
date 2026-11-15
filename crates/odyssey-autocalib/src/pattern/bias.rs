@@ -8,8 +8,8 @@ use super::{Match, Pattern, dot_positions, robust_fit};
 use crate::plane::apply_homography;
 
 /// Passes of [`remove_center_bias`]. Each pass refits the homography the next
-/// one linearizes around; the correction converges geometrically, so three
-/// passes reach well below the centroid noise.
+/// one linearizes around. The correction converges geometrically, so three
+/// passes get well below the centroid noise.
 const BIAS_PASSES: usize = 3;
 /// The correction has converged once no dot's offset moves by more than this.
 const BIAS_CONVERGED_PX: f64 = 0.01;
@@ -17,27 +17,28 @@ const BIAS_CONVERGED_PX: f64 = 0.01;
 /// center to correct.
 const MIN_POLE_W: f64 = 1e-12;
 
-/// Offset between the center of a dot's elliptical image and the image of the
-/// dot's true center, in pixels, for a pattern-to-pixel homography
-/// `unit_to_pixel`. `None` if `dot` is out of range or the projected circle has no finite
-/// center.
+/// Pixel offset between a dot's ellipse center and its true center's image
+/// under homography `unit_to_pixel`. Returns `None` for an invalid dot index
+/// or degenerate projected circle.
 ///
 /// A circle seen obliquely images to an ellipse, and perspective foreshortens
-/// its far half more than its near half, so the ellipse center (which is where
-/// a centroid lands) is not the image of the circle's center. The ellipse
+/// its far half more than its near half. So the ellipse center, which is where
+/// a centroid lands, is not the image of the circle's center. The ellipse
 /// center is the pole of the line at infinity with respect to the projected
 /// conic. With `M` mapping the unit circle to the image, that pole is
 /// `M diag(1, 1, -1) M^T (0, 0, 1)^T`.
 ///
 /// The circle lives in physical pattern coordinates (units of screen height,
-/// so the dot is round); the homography takes normalized `(u, v)`, which
+/// so the dot is round). The homography takes normalized `(u, v)`, which
 /// stretch `x` by the aspect ratio.
 ///
 /// Lens distortion is deliberately not part of this model. The centroids are
-/// undistorted point-wise before the correction, which treats a dot as a point
-/// for the lens even though its outline is bent slightly; at dot sizes of
+/// undistorted point-wise before the correction. That treats a dot as a point
+/// for the lens even though its outline is bent slightly. At dot sizes of
 /// 1-2% of the screen height that second-order term stays far below the
 /// perspective term.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn center_bias(
     pattern: &Pattern,
     dot: usize,
@@ -58,10 +59,11 @@ pub fn center_bias(
     Some(ellipse_center - image_of_center)
 }
 
-/// Estimates the image of each dot's true center from its measured centroid by
-/// subtracting [`center_bias`] under `unit_to_pixel`. `measured` pairs a dot
-/// index with its centroid in undistorted pixels. `None` if the homography
-/// leaves any dot degenerate.
+/// Estimates true image centers by subtracting [`center_bias`] from measured
+/// centroids in undistorted pixels. Each measurement pairs dot index and
+/// centroid. Returns `None` if any dot is degenerate.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn corrected_centers(
     pattern: &Pattern,
     unit_to_pixel: &Matrix3<f64>,

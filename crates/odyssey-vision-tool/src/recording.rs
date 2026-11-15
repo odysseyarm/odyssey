@@ -8,6 +8,12 @@ use odyssey_usb::device::GeneralSettings;
 use odyssey_usb::packets::vm::{Packet, PacketData};
 
 /// Serializes a recording: the device config, then every timestamped packet.
+///
+/// # Errors
+///
+/// Returns a `postcard::Error` if config or packet serialization fails.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub fn encode_recording(
     general_config: &GeneralSettings,
     packets: &[(u128, PacketData)],

@@ -1,4 +1,6 @@
 /// Reject erased/truncated vectors, non-Thumb entrypoints and addresses outside this image.
+///
+/// Since: Odyssey Desktop 0.7.4.
 pub fn valid_vectors(
     sp: u32,
     reset: u32,

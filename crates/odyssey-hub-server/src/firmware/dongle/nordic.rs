@@ -28,28 +28,39 @@ pub(super) struct Package {
     pub(super) image: Vec<u8>,
 }
 
+/// Since: Odyssey Desktop 0.7.5.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Cannot open dongle bootloader serial port: {0}")]
     Serial(#[from] serialport::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Dongle DFU I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "Dongle rejected DFU operation 0x{operation:02x}: result 0x{code:02x}, extended {extended:?}"
     )]
     Rejected {
+        /// Since: Odyssey Desktop 0.7.5.
         operation: u8,
+        /// Since: Odyssey Desktop 0.7.5.
         code: u8,
+        /// Since: Odyssey Desktop 0.7.5.
         extended: Option<u8>,
     },
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Invalid dongle DFU response: {0}")]
     Protocol(&'static str),
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "Dongle DFU checksum or byte offset does not match; reconnect in bootloader mode and retry"
     )]
     Checksum,
+    /// Since: Odyssey Desktop 0.7.5.
     #[error("Neither signed package was accepted by this dongle's bootloader")]
     NoMatchingSignature,
+    /// Since: Odyssey Desktop 0.7.5.
     #[error(
         "This package could overwrite saved pairings during bootloader staging. Update stopped before erase; use a newer dongle firmware release."
     )]

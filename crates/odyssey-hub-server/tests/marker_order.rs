@@ -142,8 +142,8 @@ fn the_original_pattern_in_its_own_order_is_identified_everywhere() {
 
 #[test]
 fn the_row_ends_come_first_and_third_in_the_tracker_s_order() {
-    // The order is the contract: [1] and [2] are the ends of the row, with one marker between;
-    // swapping them, or putting the middle marker first, is not identified.
+    // The order is the contract: [1] and [2] are the ends of the row, with one marker
+    // between. Swapping them, or putting the middle marker first, is not identified.
     let edge = meters(EDGE);
     let mut swapped = edge;
     swapped.swap(1, 2);
@@ -232,9 +232,9 @@ fn permute(items: &mut [usize; 6], from: usize, visit: &mut impl FnMut([usize; 6
 #[test]
 fn standing_on_the_seed_circle_is_a_weak_spot_not_a_limit() {
     // The seed solve uses markers 1, 2 and 3. A controller whose position straight in front of
-    // the screen is on the circle through them is on the "danger cylinder" of a three point
+    // the screen is on the circle through them sits on the "danger cylinder" of a three point
     // solve. The tracker checks every start against all six markers, so it usually still locks
-    // on, and only in a thin band around the circle; the guidance in the app says so, and this
+    // on, and only in a thin band around the circle. The guidance in the app says so, and this
     // holds it to that.
     let points = meters(EDGE);
     let circle = tracker_order(&points).unwrap().seed_circle.unwrap();

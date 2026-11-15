@@ -34,15 +34,16 @@ const REQUEST_DEVICES_ATTEMPTS: usize = 3;
 const REQUEST_DEVICES_BACKOFF: Duration = Duration::from_millis(200);
 /// How long `request_devices` waits for one snapshot.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(1);
-/// A stale snapshot is only drained if it is already queued; this is the most
+/// A stale snapshot is only drained if it is already queued. This is the most
 /// time spent checking for one.
 const STALE_SNAPSHOT_POLL: Duration = Duration::from_millis(10);
 /// Longest a pairing session can run before the dongle reports a timeout.
 const PAIRING_EVENT_TIMEOUT: Duration = Duration::from_secs(120);
-/// The dongle clears bonds synchronously and may drop the response when busy;
-/// after this long without one, the clear is assumed to have worked.
+/// The dongle clears bonds synchronously and may drop the response when busy.
+/// After this long without one, the clear is assumed to have worked.
 const CLEAR_BONDS_PATIENCE: Duration = Duration::from_secs(10);
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Clone, Debug)]
 pub struct MuxDevice {
     writer: mpsc::Sender<MuxMsg>,
@@ -58,10 +59,14 @@ pub struct MuxDevice {
     ctrl: Arc<tokio::sync::Mutex<Option<PairingOutcome>>>,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug, Clone)]
 pub enum PairingEvent {
+    /// Since: Odyssey Desktop 0.6.0.
     Result(BondedDevice),
+    /// Since: Odyssey Desktop 0.6.0.
     Timeout,
+    /// Since: Odyssey Desktop 0.6.0.
     Cancelled,
 }
 
@@ -89,6 +94,7 @@ impl MuxDevice {
         self.ctrl_if.send(&msg).await
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn from_transport(transport: MuxTransport, ctrl_if: Interface) -> Self {
         Self::from_control_link(transport, ControlLink::usb(ctrl_if))
     }
@@ -119,6 +125,8 @@ impl MuxDevice {
     }
 
     /// Opens an opt-in simulator link using bounded mux and control channels.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "sim")]
     pub fn from_simulated_channels(
         outgoing: mpsc::Sender<MuxMsg>,
@@ -132,6 +140,12 @@ impl MuxDevice {
         )
     }
 
+    /// Opens the mux USB interface and starts its packet transport.
+    ///
+    /// # Errors
+    /// Returns USB open errors or [`Error::NoMuxInterface`] when no interface exposes mux bulk endpoints.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn connect_usb(info: DeviceInfo) -> Result<Self> {
         let dev = info.open().await?;
 
@@ -156,6 +170,12 @@ impl MuxDevice {
         self.writer.send(msg).await.map_err(|_closed| Error::Closed)
     }
 
+    /// Receives the next control message.
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] when transport closes.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn receive_msg(&self) -> Result<MuxMsg> {
         let mut rx = self.msg_rx.lock().await;
         let msg = rx.next().await.ok_or(Error::Closed)?;
@@ -163,6 +183,12 @@ impl MuxDevice {
         Ok(msg)
     }
 
+    /// Receives the next device snapshot.
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] when transport closes.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn receive_snapshot(&self) -> Result<DeviceSnapshot> {
         let mut rx = self.snapshots_rx.lock().await;
         let devices = rx.next().await.ok_or(Error::Closed)?;
@@ -179,6 +205,12 @@ impl MuxDevice {
         }
     }
 
+    /// Requests current connected-device snapshot, retrying transient timeouts.
+    ///
+    /// # Errors
+    /// Returns transport errors or [`Error::Timeout`] after snapshot deadline.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn request_devices(&self) -> Result<DeviceSnapshot> {
         (async || {
             self.drain_stale_snapshots().await;
@@ -196,15 +228,32 @@ impl MuxDevice {
     }
 
     /// After this the dongle sends a `DevicesSnapshot` whenever a device
-    /// connects or disconnects; read them with [`Self::receive_snapshot`].
+    /// connects or disconnects. Read them with [`Self::receive_snapshot`].
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] when mux transport no longer accepts messages.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn subscribe_device_list(&self) -> Result<()> {
         self.send_msg(MuxMsg::SubscribeDeviceList()).await
     }
 
+    /// Stops device-list notifications.
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] when mux transport no longer accepts messages.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn unsubscribe_device_list(&self) -> Result<()> {
         self.send_msg(MuxMsg::UnsubscribeDeviceList()).await
     }
 
+    /// Sends packet to selected device address.
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] when mux transport no longer accepts messages.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn send_to(&self, dev: [u8; 6], pkt: Packet) -> Result<()> {
         let msg = MuxMsg::SendTo(SendTo { dev, pkt });
         self.send_msg(msg).await
@@ -232,7 +281,11 @@ impl MuxDevice {
         Ok(())
     }
 
-    /// Reads and caches mux versions across clones; concurrent callers share one request.
+    /// Reads and caches mux versions across clones. Concurrent callers share one request.
+    ///
+    /// # Errors
+    /// Returns [`Error::Closed`] if mux transport closes, or [`Error::Timeout`] if no version arrives.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn read_version(&self) -> Result<crate::packets::mux::Version> {
         let _read = self.version_read.lock().await;
         if self.accessories.cancel.is_cancelled() {
@@ -262,7 +315,11 @@ impl MuxDevice {
         .map_err(|_elapsed| Error::Timeout(REPLY_TIMEOUT))?
     }
 
-    /// Waits for actual BLE completion; at most eight requests may be in flight.
+    /// Waits for actual BLE completion. At most eight requests may be in flight.
+    ///
+    /// # Errors
+    /// Returns unsupported-command errors for firmware below required protocol versions, plus transport or completion errors.
+    /// Since: Odyssey Desktop 0.7.4.
     pub async fn accessory_request(&self, command: Command) -> Result<Reply> {
         let version = self.read_version().await?.protocol_semver;
         if version < MIN_MUX_PROTOCOL {
@@ -275,11 +332,18 @@ impl MuxDevice {
         self.accessories.request(&self.writer, command).await
     }
 
-    /// Subscribes without blocking USB reads; slow subscribers receive `RecvError::Lagged`.
+    /// Subscribes without blocking USB reads. Slow subscribers receive `RecvError::Lagged`.
+    ///
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn subscribe_accessory_events(&self) -> broadcast::Receiver<Event> {
         self.accessories.subscribe()
     }
 
+    /// Reads dongle control-endpoint version.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, decode, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn read_ctrl_version(&self) -> Result<odyssey_protocol::Version> {
         let mut pending = self.ctrl.lock().await;
         self.ctrl_send(UsbMuxCtrlMsg::ReadVersion()).await?;
@@ -295,6 +359,10 @@ impl MuxDevice {
     }
 
     /// Starts pairing mode on the dongle for `timeout_ms` milliseconds.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, decode, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<()> {
         let mut pending = self.ctrl.lock().await;
         *pending = None;
@@ -319,17 +387,30 @@ impl MuxDevice {
         }
     }
 
-    /// Resets the dongle into its vendor bootloader; it leaves the bus without replying.
+    /// Resets the dongle into its vendor bootloader and leaves the bus without replying.
     /// Firmware without the command rejects it, which fails the control transfer.
+    ///
+    /// # Errors
+    /// Returns control-transfer errors when bootloader command fails.
+    /// Since: Odyssey Desktop 0.7.5.
     pub async fn enter_bootloader(&self) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::EnterBootloader()).await
     }
 
+    /// Cancels dongle pairing mode.
+    ///
+    /// # Errors
+    /// Returns control-transfer errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn cancel_pairing(&self) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::CancelPairing()).await
     }
 
     /// Wait for a pairing event from the dongle.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, decode, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn wait_pairing_event(&self) -> Result<PairingEvent> {
         let mut pending = self.ctrl.lock().await;
         let outcome = match pending.take() {
@@ -351,6 +432,11 @@ impl MuxDevice {
         })
     }
 
+    /// Clears stored dongle bonds. Missing acknowledgments are tolerated for up to ten seconds.
+    ///
+    /// # Errors
+    /// Returns control-transfer errors, refusal, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn clear_bonds(&self) -> Result<()> {
         let mut pending = self.ctrl.lock().await;
         self.ctrl_send(UsbMuxCtrlMsg::ClearBonds()).await?;
@@ -380,6 +466,11 @@ impl MuxDevice {
         }
     }
 
+    /// Lists stored dongle bonds.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, decode, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn list_bonds(&self) -> Result<HVec<BondedDevice, MAX_DEVICES>> {
         let mut pending = self.ctrl.lock().await;
         self.ctrl_send(UsbMuxCtrlMsg::ListBonds()).await?;
@@ -394,6 +485,11 @@ impl MuxDevice {
         }
     }
 
+    /// Updates name for bond identified by UUID.
+    ///
+    /// # Errors
+    /// Returns control-transfer errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn update_bond_name(&self, uuid: [u8; 6], name: heapless::String<32>) -> Result<()> {
         self.ctrl_send(UsbMuxCtrlMsg::UpdateBondName {
             uuid,
@@ -402,6 +498,11 @@ impl MuxDevice {
         .await
     }
 
+    /// Adds bond and waits for flash-write acknowledgment.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, decode, rejection, or unexpected-reply errors.
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn add_bond(&self, entry: BondEntry) -> Result<()> {
         let mut pending = self.ctrl.lock().await;
         self.ctrl_send(UsbMuxCtrlMsg::AddBond(entry)).await?;

@@ -30,7 +30,7 @@ fn render_cropped(pattern: &Pattern, intr: &Intrinsics, h: &Matrix3<f64>, crop: 
     let inv = h.try_inverse().unwrap();
     let frame = pattern.frame_rects();
     let panel = crop..=1.0 - crop;
-    // Screen region is darker than the surround; fill it by inverse mapping.
+    // Screen region is darker than the surround. Fill it by inverse mapping.
     for y in 0..intr.height {
         for x in 0..intr.width {
             let Some(und) = undistort_pixel(intr, Point2::new(f64::from(x), f64::from(y))) else {
