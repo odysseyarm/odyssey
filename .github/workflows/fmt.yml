@@ -1,9 +1,8 @@
 name: Format
 
-# Check Rust formatting for every tracked .rs file: apps, crates, sdk and
-# firmware. rustfmt gets the files directly instead of going through cargo fmt.
-# The sdk and firmware crates are separate workspaces, and this needs no
-# dependency resolution.
+# Check every tracked file treefmt.nix formats: Rust, Nix, Python and shell.
+# Run `nix fmt` to fix. The job keeps the name `rustfmt` because the master
+# ruleset requires that check name.
 
 on:
   push:

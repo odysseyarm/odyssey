@@ -1,4 +1,11 @@
-{ lib, stdenv, fetchzip, autoPatchelfHook, makeWrapper, toolchain }:
+{
+  lib,
+  stdenv,
+  fetchzip,
+  autoPatchelfHook,
+  makeWrapper,
+  toolchain,
+}:
 # Verus's release bundle: rust_verify links against the librustc_driver of the
 # stable toolchain named in the bundle's version.json, so `toolchain` has to be
 # that release. The launcher looks for rust_verify, z3 and vstd beside itself.
@@ -9,8 +16,14 @@ stdenv.mkDerivation rec {
     url = "https://github.com/verus-lang/verus/releases/download/release/${version}/verus-${version}-x86-linux.zip";
     hash = "sha256-m7u6bXGFeis39gpBlD5o3z4Btl1/CpbYuog03tzmKQA=";
   };
-  nativeBuildInputs = [ autoPatchelfHook makeWrapper ];
-  buildInputs = [ stdenv.cc.cc.lib toolchain ];
+  nativeBuildInputs = [
+    autoPatchelfHook
+    makeWrapper
+  ];
+  buildInputs = [
+    stdenv.cc.cc.lib
+    toolchain
+  ];
   dontConfigure = true;
   dontBuild = true;
   installPhase = ''

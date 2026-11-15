@@ -5,4 +5,5 @@ let
     url = "https://github.com/NixOS/flake-compat/archive/${node.rev}.tar.gz";
     sha256 = node.narHash;
   };
-in import compat { src = ../.; }
+in
+import compat { src = ../.; }

@@ -17,14 +17,16 @@ d_x, d_y, d_z = [2.97791672, -2.96459055, 9.08387566]
 g = 9.79281
 
 # Each reading, once scaled and biased, must have magnitude g.
-eq1 = Eq((s_x * x_x + b_x)**2 + (s_y * x_y + b_y)**2 + (s_z * x_z + b_z)**2, g**2)
-eq2 = Eq((s_x * y_x + b_x)**2 + (s_y * y_y + b_y)**2 + (s_z * y_z + b_z)**2, g**2)
-eq3 = Eq((s_x * z_x + b_x)**2 + (s_y * z_y + b_y)**2 + (s_z * z_z + b_z)**2, g**2)
-eq4 = Eq((s_x * a_x + b_x)**2 + (s_y * a_y + b_y)**2 + (s_z * a_z + b_z)**2, g**2)
-eq5 = Eq((s_x * c_x + b_x)**2 + (s_y * c_y + b_y)**2 + (s_z * c_z + b_z)**2, g**2)
-eq6 = Eq((s_x * d_x + b_x)**2 + (s_y * d_y + b_y)**2 + (s_z * d_z + b_z)**2, g**2)
+eq1 = Eq((s_x * x_x + b_x) ** 2 + (s_y * x_y + b_y) ** 2 + (s_z * x_z + b_z) ** 2, g**2)
+eq2 = Eq((s_x * y_x + b_x) ** 2 + (s_y * y_y + b_y) ** 2 + (s_z * y_z + b_z) ** 2, g**2)
+eq3 = Eq((s_x * z_x + b_x) ** 2 + (s_y * z_y + b_y) ** 2 + (s_z * z_z + b_z) ** 2, g**2)
+eq4 = Eq((s_x * a_x + b_x) ** 2 + (s_y * a_y + b_y) ** 2 + (s_z * a_z + b_z) ** 2, g**2)
+eq5 = Eq((s_x * c_x + b_x) ** 2 + (s_y * c_y + b_y) ** 2 + (s_z * c_z + b_z) ** 2, g**2)
+eq6 = Eq((s_x * d_x + b_x) ** 2 + (s_y * d_y + b_y) ** 2 + (s_z * d_z + b_z) ** 2, g**2)
 
-solution = nsolve((eq1, eq2, eq3, eq4, eq5, eq6), (b_x, b_y, b_z, s_x, s_y, s_z), (0, 0, 0, 1, 1, 1))
+solution = nsolve(
+    (eq1, eq2, eq3, eq4, eq5, eq6), (b_x, b_y, b_z, s_x, s_y, s_z), (0, 0, 0, 1, 1, 1)
+)
 
 solution_dict = {
     "b_x": float(solution[0]),
@@ -32,14 +34,14 @@ solution_dict = {
     "b_z": float(solution[2]),
     "s_x": float(solution[3]),
     "s_y": float(solution[4]),
-    "s_z": float(solution[5])
+    "s_z": float(solution[5]),
 }
 
 pprint.pprint(solution_dict)
 
-parser = argparse.ArgumentParser(description='Save solution to a file.')
-parser.add_argument('output_file', type=str, help='Output file to save the solution')
+parser = argparse.ArgumentParser(description="Save solution to a file.")
+parser.add_argument("output_file", type=str, help="Output file to save the solution")
 args = parser.parse_args()
 
-with open(args.output_file, 'w') as f:
+with open(args.output_file, "w") as f:
     json.dump(solution_dict, f, indent=4)
