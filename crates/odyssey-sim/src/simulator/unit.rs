@@ -4,6 +4,7 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use odyssey_protocol::control::BondEntry;
 use odyssey_protocol::control::device::{self, DeviceMsg, TransportMode};
 use odyssey_protocol::image::{IMAGE_LEASE_TIMEOUT_MS, ImageCommand, ImageStatus, ImageStatusCode};
+use odyssey_protocol::marker_hint::{self, MarkerHint};
 use odyssey_protocol::mux::{DevicePacket, MuxMsg};
 use odyssey_protocol::{
     AccelReport, BatteryReport, ConfigKind, DeviceName, GeneralConfig, ImpactReport, Packet,
@@ -14,11 +15,12 @@ use tokio::sync::mpsc;
 
 use super::image_stream::ImageSession;
 use super::model::{Errors, send};
+use super::plant::Sensor;
 use super::world::World;
 use super::{SensorModel, SimError, Transport, UnitState, Uuid};
 use crate::dataset::ScenePose;
 
-type Registers = BTreeMap<(u8, u8), u8>;
+pub(crate) type Registers = BTreeMap<(u8, u8), u8>;
 
 const GRAVITY_M_S2: f64 = 9.80665;
 /// Untimed poses further apart than this are a series of stops: the unit
@@ -31,7 +33,7 @@ const MAX_POSES_AHEAD: usize = 256;
 const MAX_SPIN_RAD_S: f64 = 20.0;
 const MAX_SPEED_M_S: f64 = 10.0;
 
-fn reset_registers(sensor_model: SensorModel) -> Registers {
+pub(crate) fn reset_registers(sensor_model: SensorModel) -> Registers {
     if sensor_model == SensorModel::Paj7025 {
         // Valid PAJ object-mode configuration before entering image mode.
         return [
@@ -170,6 +172,8 @@ pub(crate) struct Unit {
     images: Option<ImageSession>,
     sensor_model: SensorModel,
     image_mode_generation: Option<u32>,
+    /// The PAG object-mode plant. PAJ units have none and report ideal points.
+    sensor: Option<Sensor>,
 }
 
 impl Unit {
@@ -226,6 +230,7 @@ impl Unit {
             images: None,
             sensor_model,
             image_mode_generation: None,
+            sensor: (sensor_model == SensorModel::Pag7665qn).then(|| Sensor::new(true)),
         };
         unit.accel = resting_accel(&unit.pose);
         unit.follow_screens(world);
@@ -489,6 +494,20 @@ impl Unit {
                     address: register.address,
                     data,
                 }))
+            }
+            PacketData::Vendor(marker_hint::VENDOR_TAG, data) if self.sensor.is_some() => {
+                let payload = &data.data[..usize::from(data.len).min(data.data.len())];
+                match MarkerHint::decode(payload) {
+                    Ok(hint) => {
+                        if let Some(sensor) = &mut self.sensor {
+                            sensor.hint(hint.points(), io.now_ms);
+                        }
+                    }
+                    Err(_) => io
+                        .errors
+                        .report(SimError::InvalidInput("malformed marker hint")),
+                }
+                None
             }
             PacketData::SetDeviceName(name) => {
                 name.as_str().clone_into(&mut self.name);
@@ -834,10 +853,18 @@ impl Unit {
         if self.images.is_some() || self.image_mode_generation.is_some() {
             return;
         }
-        let report = io.world.markers(
-            &self.pose,
-            &self.configs[ConfigKind::CameraModelNf as usize],
-        );
+        let camera = &self.configs[ConfigKind::CameraModelNf as usize];
+        let report = match &mut self.sensor {
+            Some(sensor) => {
+                let markers = io.world.targets(&self.pose, camera);
+                // The sensor drops frames while it re-enters Object mode after an exposure write.
+                let Some(frame) = sensor.frame(&mut self.registers, io.now_ms, &markers) else {
+                    return;
+                };
+                frame.report()
+            }
+            None => io.world.markers(&self.pose, camera),
+        };
         self.report(PacketData::MarkersReport(report), io);
     }
 
@@ -855,4 +882,112 @@ impl Unit {
 
 fn timestamp(now_ms: u64) -> u32 {
     now_ms.wrapping_mul(1000) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use odyssey_protocol::{StreamUpdate, VendorData};
+    use tokio::sync::broadcast;
+
+    use super::super::model::Model;
+    use super::super::plant::Distractor;
+    use super::super::{Command, Target, UNIT_UUID};
+    use super::*;
+
+    const EXPOSURE_REGISTER: (u8, u8) = (0, 0x67);
+
+    fn vendor(tag: u8, payload: &[u8]) -> Packet {
+        let mut data = [0; VendorData::CAPACITY];
+        data[..payload.len()].copy_from_slice(payload);
+        Packet {
+            id: 255,
+            data: PacketData::Vendor(
+                tag,
+                VendorData {
+                    len: payload.len() as u8,
+                    data,
+                },
+            ),
+        }
+    }
+
+    /// A unit streaming markers with a bright round lamp in view. With `hint` the
+    /// test plays the hub and names the markers back to it every 100 ms.
+    fn model_beside_a_lamp(
+        hint: bool,
+        errors: broadcast::Sender<SimError>,
+        duration_ms: u64,
+    ) -> Model {
+        let mut model = Model::new(errors, SensorModel::Pag7665qn);
+        model
+            .command(Target::default(), Command::UnitUsb { plugged: true })
+            .unwrap();
+        let (sender, mut packets) = mpsc::channel(1024);
+        let unit = model.units.get_mut(&UNIT_UUID).unwrap();
+        unit.usb = Some(sender);
+        unit.sensor
+            .as_mut()
+            .unwrap()
+            .distractors
+            .push(Distractor::Lamp {
+                px: [590.0, 40.0],
+                intensity: 1.0,
+            });
+        model.unit_packet(
+            UNIT_UUID,
+            Packet {
+                id: 1,
+                data: PacketData::StreamUpdate(StreamUpdate {
+                    packet_id: PacketType::MarkersReport(),
+                    action: StreamUpdateAction::Enable,
+                }),
+            },
+        );
+        let mut markers = Vec::new();
+        for time in (10..=duration_ms).step_by(10) {
+            model.tick(time);
+            while let Ok(packet) = packets.try_recv() {
+                if let PacketData::MarkersReport(report) = packet.data {
+                    // The lamp is the last point a frame reports.
+                    markers = report
+                        .points
+                        .iter()
+                        .filter(|point| **point != nalgebra::Point2::origin())
+                        .take(6)
+                        .map(|point| [point.x, point.y])
+                        .collect();
+                }
+            }
+            if hint && time % 100 == 0 && !markers.is_empty() {
+                let hint = MarkerHint::new(&markers).encode();
+                model.unit_packet(UNIT_UUID, vendor(marker_hint::VENDOR_TAG, &hint));
+            }
+        }
+        model
+    }
+
+    fn exposure(model: &Model) -> u8 {
+        model.units[&UNIT_UUID].registers[&EXPOSURE_REGISTER] & 0x7f
+    }
+
+    #[test]
+    fn a_hint_vendor_packet_keeps_the_unit_from_chasing_a_lamp() {
+        let stock = exposure(&Model::new(broadcast::channel(1).0, SensorModel::Pag7665qn));
+        let chased = exposure(&model_beside_a_lamp(false, broadcast::channel(16).0, 3000));
+        let hinted = exposure(&model_beside_a_lamp(true, broadcast::channel(16).0, 3000));
+        assert!(chased < stock, "{chased} vs {stock}");
+        // The first frame precedes any hint, so one step down is allowed.
+        assert!(hinted >= stock * 4 / 5, "{hinted} vs {stock}");
+    }
+
+    #[test]
+    fn a_malformed_hint_is_reported_and_ignored() {
+        let (errors, mut reported) = broadcast::channel(16);
+        let mut model = model_beside_a_lamp(false, errors, 10);
+        model.unit_packet(UNIT_UUID, vendor(marker_hint::VENDOR_TAG, &[1, 2, 3]));
+        assert!(matches!(
+            reported.try_recv(),
+            Ok(SimError::InvalidInput("malformed marker hint"))
+        ));
+    }
 }

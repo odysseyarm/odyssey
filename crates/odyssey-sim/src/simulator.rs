@@ -3,6 +3,7 @@
 mod dongle;
 mod image_stream;
 mod model;
+mod plant;
 mod runtime;
 mod unit;
 mod world;

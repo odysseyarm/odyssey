@@ -17,11 +17,13 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embassy_usb::driver::{Endpoint as _, EndpointError};
 use nalgebra::Vector3;
+use odyssey_cv::exposure::{ExposureController, Limits, Spot};
 use odyssey_protocol::control::device::TransportMode;
 use odyssey_protocol::image::{
     IMAGE_CHUNK_CAPACITY, IMAGE_LEASE_TIMEOUT_MS, ImageChunk, ImageCommand, ImageStatus,
     ImageStatusCode, ImageStreamConfig,
 };
+use odyssey_protocol::marker_hint::{self, MarkerHint};
 use odyssey_protocol::wire::GeneralConfig;
 use odyssey_protocol::{
     BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse,
@@ -58,6 +60,19 @@ const IMAGE_SAVED_REGISTERS: [u8; 18] = [
     0x67, 0x68, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x23, 0x24, 0x77, 0x78, 0x13, 0x12, 0x72, 0x73, 0x74,
     0x75, 0x76,
 ];
+
+/// PAG exposure register (bank 0): bit 7 is LED_Always_ON, bits 6:0 are exposure in 100 µs.
+const EXPOSURE_REGISTER: u8 = 0x67;
+const EXPOSURE_LED_ALWAYS_ON: u8 = 0x80;
+
+/// Latest register 0x67 value the user configured (stored settings, then host writes). The
+/// adaptive controller drifts the live register away from it, so FlashSettings persists this
+/// value instead of reading the register back.
+static USER_EXPOSURE: AtomicU8 = AtomicU8::new(0);
+
+/// Newest hub hint with the time it arrived. Hints are only useful fresh, so a newer one simply
+/// replaces an unread older one.
+static MARKER_HINT: Signal<ThreadModeRawMutex, (MarkerHint, u32)> = Signal::new();
 
 /// USB packets retain the connection that received/produced them across queue backpressure.
 struct UsbPacket {
@@ -367,6 +382,10 @@ where
         (&USB_REQUESTS, &USB_REPLIES, &IMAGE_REQUESTS, &IMAGE_DATA);
     let image_state = ImageState::new();
     let stream_infos = StreamInfos::new();
+    USER_EXPOSURE.store(
+        crate::settings::with_settings(|s| s.pag.exposure),
+        Ordering::Relaxed,
+    );
 
     let l2cap = l2cap_bridge::channels();
 
@@ -534,10 +553,15 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                         .write_register(register.bank, register.address, register.data)
                         .await
                     {
-                        Ok(()) => Some(Packet {
-                            id: pkt.id,
-                            data: PacketData::Ack(),
-                        }),
+                        Ok(()) => {
+                            if register.bank == 0 && register.address == EXPOSURE_REGISTER {
+                                USER_EXPOSURE.store(register.data, Ordering::Relaxed);
+                            }
+                            Some(Packet {
+                                id: pkt.id,
+                                data: PacketData::Ack(),
+                            })
+                        }
                         Err(e) => {
                             defmt::error!("[object_mode] WriteRegister failed: {:?}", e);
                             None
@@ -666,7 +690,8 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                 };
 
                 crate::settings::with_settings(|settings| {
-                    if let Ok(pag_settings) = pag_settings {
+                    if let Ok(mut pag_settings) = pag_settings {
+                        pag_settings.exposure = USER_EXPOSURE.load(Ordering::Relaxed);
                         settings.pag = pag_settings;
                         settings.pag_write();
                     } else {
@@ -770,6 +795,17 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
+            PacketData::Vendor(marker_hint::VENDOR_TAG, data) => {
+                match data
+                    .data
+                    .get(..usize::from(data.len))
+                    .map(MarkerHint::decode)
+                {
+                    Some(Ok(hint)) => MARKER_HINT.signal((hint, now_ms())),
+                    _ => defmt::warn!("[object_mode] Rejected malformed marker hint"),
+                }
+                None
+            }
             PacketData::Vendor(tag, data)
                 if tag == odyssey_protocol::ota::VENDOR_TAG
                     && request_transport == TransportMode::Ble =>
@@ -1107,6 +1143,8 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
     let mut frame_id = 0u32;
     let mut restore_pending = false;
     let mut saved_image_settings = [0; IMAGE_SAVED_REGISTERS.len()];
+    let mut user_exposure = USER_EXPOSURE.load(Ordering::Relaxed);
+    let mut exposure = exposure_controller(user_exposure);
 
     loop {
         if restore_pending {
@@ -1247,14 +1285,87 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
         if !stream_infos.marker.enabled() || restore_pending {
             continue;
         }
-        match pag.lock().await.get_objects(&mut objs).await {
-            Ok(Some(_)) => {
+        let user = USER_EXPOSURE.load(Ordering::Relaxed);
+        if user != user_exposure {
+            user_exposure = user;
+            exposure = exposure_controller(user);
+        }
+        // The guard must be gone before the exposure write locks the sensor again.
+        let objects = pag.lock().await.get_objects(&mut objs).await;
+        match objects {
+            Ok(Some(count)) => {
                 send_markers(pkt_snd, stream_infos, &objs);
+                let mut spots = [NO_SPOT; 16];
+                let count = usize::from(count).min(spots.len());
+                for (spot, obj) in spots.iter_mut().zip(&objs[..count]) {
+                    *spot = Spot {
+                        x: obj.x(),
+                        y: obj.y(),
+                        area: obj.area().value(),
+                        avg: obj.avg(),
+                        is_circle: obj.is_circle(),
+                    };
+                }
+                if let Some((hint, at_ms)) = MARKER_HINT.try_take() {
+                    exposure.set_hint(hint.points(), at_ms);
+                }
+                if let Some(new) = exposure.update(&spots[..count], now_ms()) {
+                    match write_exposure(pag, new).await {
+                        Ok(()) => defmt::info!(
+                            "[obj_loop] Exposure now {} x 100 us (user setting {})",
+                            new,
+                            user_exposure & 0x7f
+                        ),
+                        Err(e) => defmt::error!("[obj_loop] Exposure write failed: {:?}", e),
+                    }
+                }
             }
             Ok(None) => {}
             Err(e) => defmt::error!("[obj_loop] get_objects failed: {:?}", e),
         }
     }
+}
+
+const NO_SPOT: Spot = Spot {
+    x: 0,
+    y: 0,
+    area: 0,
+    avg: 0,
+    is_circle: false,
+};
+
+fn now_ms() -> u32 {
+    Instant::now().as_millis() as u32
+}
+
+/// Exposure may wander a factor of eight either side of the user's setting.
+fn exposure_controller(register: u8) -> ExposureController {
+    let start = register & !EXPOSURE_LED_ALWAYS_ON;
+    ExposureController::new(start, Limits::around(start))
+}
+
+/// Registers only accept writes in Idle, so this costs the sensor a frame gap. The Object
+/// restore runs even when the write fails.
+async fn write_exposure<P: PagSensor>(
+    pag: &AsyncMutex<NoopRawMutex, P>,
+    exposure: u8,
+) -> Result<(), P::Error> {
+    let mut sensor = pag.lock().await;
+    let write = async {
+        let live = sensor.read_register(0, EXPOSURE_REGISTER).await?;
+        sensor.switch_to_idle().await?;
+        sensor
+            .write_register(
+                0,
+                EXPOSURE_REGISTER,
+                (live & EXPOSURE_LED_ALWAYS_ON) | exposure,
+            )
+            .await
+    }
+    .await;
+    let object = sensor.restore_object().await;
+    write?;
+    object
 }
 
 /// Reapply the exact pre-session registers in Idle and attempt Object restoration even if

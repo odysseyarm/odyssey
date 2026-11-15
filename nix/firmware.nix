@@ -162,9 +162,11 @@ let
           '';
         })
       else
-        drv;
+        common.privateCheckout packages drv;
   };
   vendorOf = dir: craneLib.vendorCargoDeps (vendorArgs // { cargoLock = lockOf dir; });
+  # Firmware that compiles odyssey-cv: its final build overlays the private source.
+  usesPrivate = dir: lib.hasInfix "odyssey-cv.git" (builtins.readFile (lockOf dir));
   # -Z build-std compiles the standard library from the toolchain's rust-src, whose
   # own dependencies have to be vendored too.
   stdVendorOf =
@@ -248,7 +250,7 @@ let
           targetDir = if bank == null then "target" else "target-bank-${bank}";
         in
         craneLib.buildPackage (
-          args
+          (if usesPrivate dir then common.withPrivateSource args else args)
           // extraEnv
           // buildVersionEnv
           // lib.optionalAttrs (bank != null) {
@@ -602,6 +604,24 @@ let
     );
 in
 {
+  # Packages that compile odyssey-cv. Their ELFs keep DWARF for probe-rs, so none of
+  # them may reach the public binary cache.
+  privatePackages =
+    lib.concatMap
+      (board: [
+        "firmware-${board}-app-a"
+        "firmware-${board}-app-b"
+        "firmware-${board}-images"
+        "firmware-${board}-images-dual-bank"
+      ])
+      [
+        "lite1"
+        "legacy-atslite"
+      ];
+  privateVendors = [
+    (vendorOf "firmware/lite1")
+    (stdVendorOf "firmware/legacy-atslite")
+  ];
   packages =
     lib.mapAttrs' (name: drv: lib.nameValuePair "firmware-lite1-${name}" drv) lite1
     // lib.mapAttrs' (name: drv: lib.nameValuePair "firmware-legacy-atslite-${name}" drv) legacyAtslite

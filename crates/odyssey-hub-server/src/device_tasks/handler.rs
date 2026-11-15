@@ -125,7 +125,8 @@ impl DeviceHandler {
             // Replaced by the real models when AddEventsDevice delivers a config.
             info!("Device {uuid:02x?} starting in BLE mode with dummy camera models");
         }
-        let tracker = DeviceTracker::new(general_settings.as_ref());
+        let mut tracker = DeviceTracker::new(general_settings.as_ref());
+        tracker.set_hint_sink(self_tx.clone());
 
         info!("Starting sensor streams for device {uuid:02x?}");
         let sensors = if let Some(events_device) = connections.events_device.as_ref() {

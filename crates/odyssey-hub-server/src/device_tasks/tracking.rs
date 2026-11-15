@@ -1,11 +1,14 @@
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ahrs::Ahrs as _;
+use arrayvec::ArrayVec;
 use nalgebra::{
     Isometry3, Matrix3, Matrix3x1, Point2, Point3, Rotation3, Translation3, UnitQuaternion,
     UnitVector3, Vector2, Vector3,
 };
 use odyssey_common::ros_opencv_intrinsics_type_convert;
+use odyssey_cv::dynamic_calibration::{CalibrationEstimator, Intrinsics, MARKERS, Refinement};
 use odyssey_cv::foveated::{FoveatedAimpointState, Marker};
 use odyssey_cv::{helpers as ats_helpers, to_normalized_image_coordinates, undistort_points};
 use odyssey_hub_common::device::Device;
@@ -16,9 +19,12 @@ use odyssey_usb::device::GeneralSettings;
 use odyssey_usb::packets::vm::legacy::CombinedMarkersReport;
 use odyssey_usb::packets::vm::{AccelReport, MarkersReport};
 use opencv_ros_camera::RosOpenCvIntrinsics;
+use tokio::sync::mpsc;
 use tracing::{info, trace};
 
 use super::context::{DeviceTaskContext, ScreenCalibrationList};
+use super::marker_hint_sender::MarkerHintSender;
+use super::messages::DeviceTaskMessage;
 use super::sensor_streams::DeviceStreamEvent;
 
 /// Time step assumed for the first accelerometer sample, which has no predecessor.
@@ -64,6 +70,21 @@ pub(super) struct DeviceTracker {
     madgwick: ahrs::Madgwick<f32>,
     orientation: Rotation3<f32>,
     cameras: CameraModels,
+    /// The near-field camera as configured, restored when the refinement is discarded.
+    configured_near_field: RosOpenCvIntrinsics<f32>,
+    refinement: NearFieldRefinement,
+    hints: MarkerHintSender,
+}
+
+/// What this connection has learned about its near-field camera and the marker pattern.
+/// Never persisted: it ends with the connection or when the server swaps the calibrations.
+#[derive(Debug, Default)]
+struct NearFieldRefinement {
+    /// The server's list this state was built against, compared by pointer.
+    source: Option<Arc<ScreenCalibrationList>>,
+    /// `source` with the accepted marker positions.
+    calibrations: Option<Arc<ScreenCalibrationList>>,
+    estimator: Option<Box<(u8, CalibrationEstimator)>>,
 }
 
 /// Where the unit points on the screen, and how far away it is.
@@ -81,17 +102,28 @@ struct RaycastSolution {
 
 impl DeviceTracker {
     pub(super) fn new(settings: Option<&GeneralSettings>) -> Self {
+        let cameras = settings.map_or_else(CameraModels::placeholder, CameraModels::from_settings);
         Self {
             foveated: FoveatedAimpointState::new(),
             prev_accel_timestamp: None,
             madgwick: ahrs::Madgwick::<f32>::new(MADGWICK_INITIAL_SAMPLE_PERIOD_S, MADGWICK_BETA),
             orientation: Rotation3::identity(),
-            cameras: settings.map_or_else(CameraModels::placeholder, CameraModels::from_settings),
+            configured_near_field: cameras.near_field.clone(),
+            cameras,
+            refinement: NearFieldRefinement::default(),
+            hints: MarkerHintSender::default(),
         }
     }
 
+    /// Where marker hints go. Without one the tracker only tracks.
+    pub(super) fn set_hint_sink(&mut self, sink: mpsc::WeakSender<DeviceTaskMessage>) {
+        self.hints.set_sink(sink);
+    }
+
     pub(super) fn set_cameras(&mut self, cameras: CameraModels) {
+        self.configured_near_field = cameras.near_field.clone();
         self.cameras = cameras;
+        self.refinement = NearFieldRefinement::default();
     }
 
     /// Process one inbound sensor report and publish the resulting events.
@@ -211,14 +243,13 @@ impl DeviceTracker {
             near_points.len(),
             wide_points.len()
         );
-        let near_markers = build_markers_from_points(&near_points, &self.cameras.near_field, None);
         let wide_markers = build_markers_from_points(
             &wide_points,
             &self.cameras.wide_field,
             Some(&self.cameras.stereo_iso),
         );
 
-        self.observe_markers(&near_markers, &wide_markers, context);
+        self.observe_markers(&near_points, &wide_markers, context);
         let solution = self.raycast(device, context).await;
         Self::publish_marker_solution(device, solution, context);
     }
@@ -229,29 +260,161 @@ impl DeviceTracker {
         report: &MarkersReport,
         context: &DeviceTaskContext,
     ) {
-        let near_markers = build_markers_from_points(
-            &detected_points(&report.points),
-            &self.cameras.near_field,
-            None,
-        );
-
-        self.observe_markers(&near_markers, &[], context);
+        let near_points = detected_points(&report.points);
+        let matched = self.observe_markers(&near_points, &[], context);
+        self.hints.send(Instant::now(), &matched);
         let solution = self.raycast(device, context).await;
         Self::publish_marker_solution(device, solution, context);
     }
 
+    /// Feed one near-field frame to the filter, then, if the filter is tracking, give the
+    /// matched markers to the calibration estimator. Returns the report coordinates of the
+    /// markers the filter matched to the pattern.
     fn observe_markers(
         &mut self,
-        near_markers: &[Marker],
+        near_points: &[Point2<f32>],
         wide_markers: &[Marker],
         context: &DeviceTaskContext,
-    ) {
+    ) -> ArrayVec<[u16; 2], MARKERS> {
+        let calibrations = self.calibrations_for_frame(context);
+        self.observe_with(near_points, wide_markers, &calibrations)
+    }
+
+    fn observe_with(
+        &mut self,
+        near_points: &[Point2<f32>],
+        wide_markers: &[Marker],
+        calibrations: &ScreenCalibrationList,
+    ) -> ArrayVec<[u16; 2], MARKERS> {
+        let near_markers = build_markers_from_points(near_points, &self.cameras.near_field, None);
         let _observed = self.foveated.observe_markers(
-            near_markers,
+            &near_markers,
             wide_markers,
             gravity_in_sensor_frame(&self.orientation),
-            &context.screen_calibrations.load(),
+            calibrations,
         );
+        if !self.foveated.init() {
+            return ArrayVec::new();
+        }
+        let screen_id = self.foveated.screen_id;
+        let Some(calibration) = ats_helpers::get_screen_calibration(calibrations, screen_id) else {
+            return ArrayVec::new();
+        };
+        let matched = self
+            .foveated
+            .match_markers_from_eskf(&near_markers, &[], &calibration.object_points)
+            .nf;
+        self.collect_for_calibration(screen_id, &matched, &near_markers, calibrations);
+        matched_report_points(&matched, near_points)
+    }
+
+    /// The calibrations to track against: the server's, with this connection's refined marker
+    /// positions if an estimate was accepted. A new list from the server drops the refinement,
+    /// since it describes a pattern that has been measured again.
+    fn calibrations_for_frame(
+        &mut self,
+        context: &DeviceTaskContext,
+    ) -> Arc<ScreenCalibrationList> {
+        let loaded = context.screen_calibrations.load_full();
+        let current = self
+            .refinement
+            .source
+            .as_ref()
+            .is_some_and(|source| Arc::ptr_eq(source, &loaded));
+        if !current {
+            self.cameras.near_field = self.configured_near_field.clone();
+            self.refinement = NearFieldRefinement {
+                source: Some(Arc::clone(&loaded)),
+                ..NearFieldRefinement::default()
+            };
+        }
+        self.refinement.calibrations.clone().unwrap_or(loaded)
+    }
+
+    fn collect_for_calibration(
+        &mut self,
+        screen_id: u8,
+        matched: &[Option<usize>; MARKERS],
+        near_markers: &[Marker],
+        calibrations: &ScreenCalibrationList,
+    ) {
+        let near_field = &self.cameras.near_field;
+        let (fx, fy) = (near_field.p.m11, near_field.p.m22);
+        let (cx, cy) = (near_field.p.m13, near_field.p.m23);
+        if self
+            .refinement
+            .estimator
+            .as_ref()
+            .is_none_or(|boxed| boxed.0 != screen_id)
+        {
+            let Some(calibration) = ats_helpers::get_screen_calibration(calibrations, screen_id)
+            else {
+                return;
+            };
+            let base = Intrinsics {
+                fx: f64::from(fx),
+                fy: f64::from(fy),
+                cx: f64::from(cx),
+                cy: f64::from(cy),
+            };
+            let markers = calibration.object_points.map(nalgebra::OPoint::cast);
+            self.refinement.estimator = Some(Box::new((
+                screen_id,
+                CalibrationEstimator::new(base, markers),
+            )));
+        }
+        let Some((_, estimator)) = self.refinement.estimator.as_deref_mut() else {
+            return;
+        };
+        // The marker positions are normalized by the same projection matrix, so this restores
+        // the pixel the unit reported (after undistortion).
+        let observations = matched.map(|index| {
+            index.map(|i| {
+                let n = near_markers[i].position;
+                Vector2::new(f64::from(fx * n.x + cx), f64::from(fy * n.y + cy))
+            })
+        });
+        let pose = Isometry3::from_parts(
+            Translation3::from(self.foveated.filter.position.coords.cast::<f64>()),
+            self.foveated.filter.orientation.cast::<f64>(),
+        );
+        estimator.observe(&pose, observations);
+        if !estimator.ready() {
+            return;
+        }
+        if let Some(refinement) = estimator.solve() {
+            self.apply_refinement(screen_id, &refinement, calibrations);
+        }
+    }
+
+    /// In memory only: the unit's stored settings and the server's calibrations stay as they
+    /// were, so a reconnect starts from the configured values again.
+    fn apply_refinement(
+        &mut self,
+        screen_id: u8,
+        refinement: &Refinement,
+        calibrations: &ScreenCalibrationList,
+    ) {
+        let Some(near_field) = refined_near_field(&self.cameras.near_field, &refinement.intrinsics)
+        else {
+            return;
+        };
+        let mut refined = calibrations.clone();
+        for (id, calibration) in &mut refined {
+            if *id == screen_id {
+                calibration.object_points = refinement.markers.map(nalgebra::OPoint::cast);
+            }
+        }
+        info!(
+            "Refined near-field optics for screen {screen_id}: focal x{:.4} (sd {:.4}), held-out RMS {:.2} -> {:.2}",
+            refinement.intrinsics.fx / f64::from(self.cameras.near_field.p.m11),
+            refinement.focal_sd,
+            refinement.rms_before,
+            refinement.rms_after
+        );
+        self.cameras.near_field = near_field;
+        self.refinement.calibrations = Some(Arc::new(refined));
+        self.refinement.estimator = None;
     }
 
     /// Solve pose and aimpoint from the current foveated state, applying the device's stored
@@ -416,6 +579,42 @@ fn build_markers_from_points(
         .collect()
 }
 
+/// Report coordinates of the markers the filter matched, in pattern order.
+fn matched_report_points(
+    matched: &[Option<usize>; MARKERS],
+    raw_points: &[Point2<f32>],
+) -> ArrayVec<[u16; 2], MARKERS> {
+    matched
+        .iter()
+        .flatten()
+        .filter_map(|&index| raw_points.get(index))
+        .map(|p| [p.x.round() as u16, p.y.round() as u16])
+        .collect()
+}
+
+/// `current` with the focal length and principal point of `refined`. The pipeline normalizes
+/// by `P` after undistorting with `K`, so only `K` changes the result; both move together
+/// (`K` by the shift in its own pixel scale) to stay consistent.
+fn refined_near_field(
+    current: &RosOpenCvIntrinsics<f32>,
+    refined: &Intrinsics,
+) -> Option<RosOpenCvIntrinsics<f32>> {
+    let scale_x = (refined.fx / f64::from(current.p.m11)) as f32;
+    let scale_y = (refined.fy / f64::from(current.p.m22)) as f32;
+    let shift_x = (refined.cx - f64::from(current.p.m13)) as f32;
+    let shift_y = (refined.cy - f64::from(current.p.m23)) as f32;
+    let (mut p, mut k) = (current.p, current.k);
+    k.m13 += shift_x * current.k.m11 / current.p.m11;
+    k.m23 += shift_y * current.k.m22 / current.p.m22;
+    p.m13 += shift_x;
+    p.m23 += shift_y;
+    p.m11 *= scale_x;
+    p.m22 *= scale_y;
+    k.m11 *= scale_x;
+    k.m22 *= scale_y;
+    RosOpenCvIntrinsics::from_components(p, k, current.distortion.clone(), current.rect).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +709,124 @@ mod tests {
             detected_points(&points),
             vec![Point2::new(5.0, 0.0), Point2::new(0.0, 7.0)]
         );
+    }
+
+    /// The calibration wizard's edge pattern on a 55 inch screen (see `tests/marker_order.rs`).
+    fn edge_calibrations() -> Arc<ScreenCalibrationList> {
+        let mut calibrations = ScreenCalibrationList::new();
+        calibrations.push((
+            0,
+            odyssey_common::ScreenCalibration {
+                surface: None,
+                rotation: UnitQuaternion::identity(),
+                homography: Matrix3::identity(),
+                object_points: [
+                    [0.24, 0.68],
+                    [0.24, 0.0],
+                    [0.96, 0.0],
+                    [0.6, 0.0],
+                    [0.6, 0.68],
+                    [0.96, 0.68],
+                ]
+                .map(|[x, y]| Point3::new(x, y, 0.0)),
+            },
+        ));
+        Arc::new(calibrations)
+    }
+
+    fn lite1_tracker() -> DeviceTracker {
+        let mut tracker = DeviceTracker::new(None);
+        tracker.set_cameras(CameraModels {
+            near_field: RosOpenCvIntrinsics::from_params(12645.0, 0.0, 12645.0, 10240.0, 7680.0),
+            ..CameraModels::placeholder()
+        });
+        tracker
+    }
+
+    /// Report coordinates of the pattern as a level camera 2.5 m in front of the screen sees it,
+    /// listed out of pattern order.
+    fn seen_from_front(calibrations: &ScreenCalibrationList) -> Vec<Point2<f32>> {
+        let camera_at = Vector3::new(0.6, 0.612, -2.5);
+        [3, 0, 5, 1, 4, 2]
+            .map(|i| {
+                let at = calibrations[0].1.object_points[i].coords - camera_at;
+                Point2::new(
+                    12645.0 * at.x / at.z + 10240.0,
+                    12645.0 * at.y / at.z + 7680.0,
+                )
+            })
+            .to_vec()
+    }
+
+    #[test]
+    fn a_tracking_filter_reports_the_pattern_points_it_matched() {
+        let calibrations = edge_calibrations();
+        let seen = seen_from_front(&calibrations);
+        let mut tracker = lite1_tracker();
+        let matched = tracker.observe_with(&seen, &[], &calibrations);
+        assert!(tracker.foveated.init());
+        let mut expected: Vec<[u16; 2]> = seen
+            .iter()
+            .map(|p| [p.x.round() as u16, p.y.round() as u16])
+            .collect();
+        let mut got = matched.to_vec();
+        expected.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn hints_wait_for_an_initialized_filter() {
+        let calibrations = edge_calibrations();
+        let seen = seen_from_front(&calibrations);
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut tracker = lite1_tracker();
+        tracker.set_hint_sink(tx.downgrade());
+
+        // Three of the six points cannot start the filter, so nothing is matched or sent.
+        let matched = tracker.observe_with(&seen[..3], &[], &calibrations);
+        assert!(!tracker.foveated.init());
+        assert!(matched.is_empty());
+        assert!(!tracker.hints.send(Instant::now(), &matched));
+        rx.try_recv().unwrap_err();
+
+        let matched = tracker.observe_with(&seen, &[], &calibrations);
+        assert!(tracker.hints.send(Instant::now(), &matched));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(DeviceTaskMessage::WriteVendor(
+                odyssey_protocol::marker_hint::VENDOR_TAG,
+                _
+            ))
+        ));
+    }
+
+    #[test]
+    fn matched_points_skip_empty_slots_and_unknown_indices() {
+        let raw = [Point2::new(10.4, 20.6), Point2::new(30.0, 40.0)];
+        let matched = [Some(1), None, Some(0), Some(9), None, None];
+        assert_eq!(
+            matched_report_points(&matched, &raw).as_slice(),
+            &[[30, 40], [10, 21]]
+        );
+    }
+
+    #[test]
+    fn refined_optics_move_the_focal_length_and_principal_point_in_p_and_k() {
+        let current = RosOpenCvIntrinsics::from_params(12645.0_f32, 0.0, 12645.0, 10240.0, 7680.0);
+        let refined = refined_near_field(
+            &current,
+            &Intrinsics {
+                fx: 12898.0,
+                fy: 12898.0,
+                cx: 10250.0,
+                cy: 7670.0,
+            },
+        )
+        .expect("invertible");
+        for m in [refined.p.fixed_view::<3, 3>(0, 0).into_owned(), refined.k] {
+            assert!((m.m11 - 12898.0).abs() < 0.1 && (m.m22 - 12898.0).abs() < 0.1);
+            assert!((m.m13 - 10250.0).abs() < 0.1 && (m.m23 - 7670.0).abs() < 0.1);
+        }
     }
 }

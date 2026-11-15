@@ -1,4 +1,4 @@
-use nalgebra::{Matrix3, Point2, Point3, UnitQuaternion};
+use nalgebra::{Matrix3, Point2, Point3, UnitQuaternion, Vector3};
 use odyssey_common::ScreenCalibration;
 use odyssey_protocol::{GeneralConfig, MarkersReport};
 
@@ -17,7 +17,7 @@ const MARKERS: [[f32; 2]; 6] = [
     [0.8, 1.0],
 ];
 /// Marker coordinates the simulated sensor reports.
-const IMAGE_SIZE_PX: [u32; 2] = [640, 480];
+pub(crate) const IMAGE_SIZE_PX: [u32; 2] = [640, 480];
 const AIM_DISTANCE_M: f64 = 2.0;
 const MAX_SCREENS: usize = odyssey_common::MAX_SCREEN_ID as usize + 1;
 
@@ -32,6 +32,14 @@ pub fn synthetic_screen_calibration() -> ScreenCalibration<f32> {
         homography: Matrix3::new(1.0 / WIDTH, 0.0, 0.0, 0.0, 1.0 / HEIGHT, 0.0, 0.0, 0.0, 1.0),
         object_points: MARKERS.map(|[x, y]| Point3::new(x * WIDTH, y * HEIGHT, 0.0)),
     }
+}
+
+/// A marker the sensor can see.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Marker {
+    /// Marker-grid px.
+    pub(crate) px: [f64; 2],
+    pub(crate) distance_m: f64,
 }
 
 /// The displays the units look at.
@@ -83,25 +91,36 @@ impl World {
         })
     }
 
-    /// What the unit's near-field sensor reports from `pose`: the visible
-    /// markers, in no particular order, as the sensor reports its blobs.
-    pub(crate) fn markers(&self, pose: &ScenePose, config: &GeneralConfig) -> MarkersReport {
-        let mut points = [Point2::origin(); 16];
+    /// The markers `pose` sees through `config`, in no particular order, as the
+    /// sensor reports its blobs.
+    pub(crate) fn targets(&self, pose: &ScenePose, config: &GeneralConfig) -> Vec<Marker> {
         let GeneralConfig::CameraModelNf(camera) = config else {
-            return MarkersReport { points };
+            return Vec::new();
         };
         // The stored matrix is column-major.
         let k = camera.k.map(f64::from);
         let intrinsics = [[k[0], k[3], k[6]], [0.0, k[4], k[7]], [0.0, 0.0, 1.0]];
         let distortion = camera.distortion.map(f64::from);
-        let visible = self.markers.iter().filter_map(|marker| {
-            let [u, v] = project_world(IMAGE_SIZE_PX, &intrinsics, &distortion, pose, *marker)?;
-            ((1.0..=f64::from(IMAGE_SIZE_PX[0] - 1)).contains(&u)
-                && (1.0..=f64::from(IMAGE_SIZE_PX[1] - 1)).contains(&v))
-            .then(|| Point2::new(u.round() as u16, v.round() as u16))
-        });
-        for (slot, point) in points.iter_mut().zip(visible) {
-            *slot = point;
+        self.markers
+            .iter()
+            .filter_map(|marker| {
+                let [u, v] = project_world(IMAGE_SIZE_PX, &intrinsics, &distortion, pose, *marker)?;
+                ((1.0..=f64::from(IMAGE_SIZE_PX[0] - 1)).contains(&u)
+                    && (1.0..=f64::from(IMAGE_SIZE_PX[1] - 1)).contains(&v))
+                .then(|| Marker {
+                    px: [u, v],
+                    distance_m: (Vector3::from(*marker) - Vector3::from(pose.position_m)).norm(),
+                })
+            })
+            .collect()
+    }
+
+    /// What an ideal sensor reports from `pose`: every visible marker at its
+    /// rounded position.
+    pub(crate) fn markers(&self, pose: &ScenePose, config: &GeneralConfig) -> MarkersReport {
+        let mut points = [Point2::origin(); 16];
+        for (slot, marker) in points.iter_mut().zip(self.targets(pose, config)) {
+            *slot = Point2::new(marker.px[0].round() as u16, marker.px[1].round() as u16);
         }
         MarkersReport { points }
     }

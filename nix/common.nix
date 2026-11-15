@@ -91,41 +91,46 @@ let
         chmod -R u+w "$private"
         ${lib.concatStrings (
           lib.mapAttrsToList (name: dir: ''
-            crate=$(echo "$private"/${name}-*)
-            cp -r --no-preserve=mode ${privateSource}/${dir}/. "$crate.real"
-            cp "$crate/Cargo.toml" "$crate/.cargo-checksum.json" "$crate.real/"
-            rm -rf "$crate"
-            mv "$crate.real" "$crate"
+            for crate in "$private"/${name}-*; do
+              [ -e "$crate" ] || continue
+              cp -r --no-preserve=mode ${privateSource}/${dir}/. "$crate.real"
+              cp "$crate/Cargo.toml" "$crate/.cargo-checksum.json" "$crate.real/"
+              rm -rf "$crate"
+              mv "$crate.real" "$crate"
+            done
           '') privateCrates
         )}
         sed -i "s|^directory = \"$stub\"$|directory = \"$private\"|" "$CARGO_HOME/config.toml"
       '';
     };
+  # Vendors odyssey-cv (a git dependency) as the manifest-only stub.
+  privateCheckout =
+    packages: drv:
+    if
+      lib.any (package: lib.hasInfix "github.com/odysseyarm/odyssey-cv.git" package.source) packages
+    then
+      assert lib.assertMsg (
+        !(privateSource ? rev)
+        || lib.all (package: lib.hasSuffix "#${privateSource.rev}" package.source) packages
+      ) "odyssey-cv flake input must match its Cargo.lock revision";
+      drv.overrideAttrs (old: {
+        src = privateManifests;
+        postPatch = (old.postPatch or "") + ''
+          # Upstream eskf names a README that does not exist, and Cargo packaging validates it.
+          substituteInPlace third_party/eskf/Cargo.toml \
+            --replace-fail 'readme = "README.md"' 'readme = false'
+          # no_std so the stub also builds for firmware targets.
+          find . -mindepth 2 -name Cargo.toml -execdir sh -c 'mkdir -p src && echo "#![no_std]" > src/lib.rs' \;
+        '';
+      })
+    else
+      drv;
   vendor =
     workspace: overrides:
     craneLib.vendorCargoDeps (
       {
         cargoLock = source + "/${workspace}/Cargo.lock";
-        overrideVendorGitCheckout =
-          packages: drv:
-          if
-            lib.any (package: lib.hasInfix "github.com/odysseyarm/odyssey-cv.git" package.source) packages
-          then
-            assert lib.assertMsg (
-              !(privateSource ? rev)
-              || lib.all (package: lib.hasSuffix "#${privateSource.rev}" package.source) packages
-            ) "odyssey-cv flake input must match its Cargo.lock revision";
-            drv.overrideAttrs (old: {
-              src = privateManifests;
-              postPatch = (old.postPatch or "") + ''
-                # Upstream eskf names a README that does not exist, and Cargo packaging validates it.
-                substituteInPlace third_party/eskf/Cargo.toml \
-                  --replace-fail 'readme = "README.md"' 'readme = false'
-                find . -mindepth 2 -name Cargo.toml -execdir sh -c 'mkdir -p src && : > src/lib.rs' \;
-              '';
-            })
-          else
-            drv;
+        overrideVendorGitCheckout = privateCheckout;
       }
       // overrides
     );
@@ -165,18 +170,22 @@ let
       # fingerprint, so this applies to the dependency layer too.
       CARGO_PROFILE_RELEASE_STRIP = "symbols";
     };
-  # Fails if any vendored copy of the private crates carries real source.
-  privateBoundaryCheck = pkgs.runCommand "odyssey-private-source-boundary" { } ''
-    found=0
-    for crate in ${vendor "." { }}/*/odyssey-cv-* ${vendor "." { }}/*/eskf-*; do
-      [ -e "$crate" ] || continue
-      found=1
-      real=$(find -L "$crate" -name '*.rs' -size +0)
-      if [ -n "$real" ]; then echo "vendored stub has sources: $real" >&2; exit 1; fi
-    done
-    [ "$found" = 1 ] || { echo "no vendored private crates found" >&2; exit 1; }
-    touch $out
-  '';
+  # Fails if any vendored copy of the private crates in `vendors` carries real source.
+  privateBoundaryCheck =
+    name: vendors:
+    pkgs.runCommand name { } ''
+      for vendor in ${lib.escapeShellArgs vendors}; do
+        found=0
+        for crate in "$vendor"/*/odyssey-cv-* "$vendor"/*/eskf-*; do
+          [ -e "$crate" ] || continue
+          found=1
+          real=$(find -L "$crate" -name '*.rs' ! -empty -exec sh -c 'echo "#![no_std]" | cmp -s - "$1" || echo "$1"' _ {} \;)
+          if [ -n "$real" ]; then echo "vendored stub has sources: $real" >&2; exit 1; fi
+        done
+        [ "$found" = 1 ] || { echo "no vendored private crates in $vendor" >&2; exit 1; }
+      done
+      touch $out
+    '';
 in
 {
   inherit
@@ -184,6 +193,7 @@ in
     vendor
     mkArgs
     withPrivateSource
+    privateCheckout
     privateBoundaryCheck
     ;
 }
