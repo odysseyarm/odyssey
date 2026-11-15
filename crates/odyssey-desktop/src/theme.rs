@@ -1,6 +1,6 @@
 //! The brand palette from `docs/design/tokens.css`, for GPUI views.
 //!
-//! The token file stays the source of truth; the values below mirror it and
+//! The token file stays the source of truth. The values below mirror it and
 //! must change with it. The palette follows the system appearance, like the
 //! stylesheet's `prefers-color-scheme` rule.
 
@@ -57,67 +57,66 @@ pub(crate) const RADIUS_XL: f32 = 22.0;
 
 impl Palette {
     const LIGHT: Self = Self {
-        canvas: rgb(0xfaf8f7),
-        surface: rgb(0xffffff),
-        surface_alt: rgb(0xf1eeed),
-        surface_hover: rgb(0xe9e5e4),
-        line: rgb(0xe5e0df),
-        line_strong: rgb(0xcfc9c8),
-        fg: rgb(0x2b2727),
-        fg_strong: rgb(0x111111),
-        fg_muted: rgb(0x5f5957),
-        fg_faint: rgb(0x857f7e),
-        accent: rgb(0xffa44f),
-        accent_strong: rgb(0xffb36b),
-        accent_ink: rgb(0x994a00),
-        accent_soft: rgb(0xffe4c9),
-        on_accent: rgb(0x111111),
-        success: rgb(0x1a7f37),
-        success_ink: rgb(0x176f30),
-        success_soft: rgb(0xe3f6e8),
-        warning: rgb(0xfbbf24),
-        warning_ink: rgb(0x8a5a00),
-        warning_soft: rgb(0xfff4d6),
-        on_warning: rgb(0x1c1917),
-        danger: rgb(0xc4302b),
-        danger_ink: rgb(0xb42823),
-        danger_soft: rgb(0xfde8e7),
-        on_danger: rgb(0xffffff),
-        info: rgb(0x0b5cad),
-        info_ink: rgb(0x0b5cad),
-        info_soft: rgb(0xe5f1ff),
+        canvas: rgb(0x00fa_f8f7),
+        surface: rgb(0x00ff_ffff),
+        surface_alt: rgb(0x00f1_eeed),
+        surface_hover: rgb(0x00e9_e5e4),
+        line: rgb(0x00e5_e0df),
+        line_strong: rgb(0x00cf_c9c8),
+        fg: rgb(0x002b_2727),
+        fg_strong: rgb(0x0011_1111),
+        fg_muted: rgb(0x005f_5957),
+        fg_faint: rgb(0x0085_7f7e),
+        accent: rgb(0x00ff_a44f),
+        accent_strong: rgb(0x00ff_b36b),
+        accent_ink: rgb(0x0099_4a00),
+        accent_soft: rgb(0x00ff_e4c9),
+        on_accent: rgb(0x0011_1111),
+        success: rgb(0x001a_7f37),
+        success_ink: rgb(0x0017_6f30),
+        success_soft: rgb(0x00e3_f6e8),
+        warning: rgb(0x00fb_bf24),
+        warning_ink: rgb(0x008a_5a00),
+        warning_soft: rgb(0x00ff_f4d6),
+        on_warning: rgb(0x001c_1917),
+        danger: rgb(0x00c4_302b),
+        danger_ink: rgb(0x00b4_2823),
+        danger_soft: rgb(0x00fd_e8e7),
+        on_danger: rgb(0x00ff_ffff),
+        info: rgb(0x000b_5cad),
+        info_ink: rgb(0x000b_5cad),
+        info_soft: rgb(0x00e5_f1ff),
     };
-
     const DARK: Self = Self {
-        canvas: rgb(0x272525),
-        surface: rgb(0x2f2c2c),
-        surface_alt: rgb(0x1f1d1d),
-        surface_hover: rgb(0x3a3636),
-        line: rgb(0x45403f),
-        line_strong: rgb(0x5f5957),
-        fg: rgb(0xe5e0df),
-        fg_strong: rgb(0xffffff),
-        fg_muted: rgb(0xb5b0af),
-        fg_faint: rgb(0x857f7e),
-        accent: rgb(0xffa44f),
-        accent_strong: rgb(0xffb36b),
-        accent_ink: rgb(0xffa44f),
-        accent_soft: rgb(0x3d2510),
-        on_accent: rgb(0x111111),
-        success: rgb(0x2ea043),
-        success_ink: rgb(0x4ac26b),
-        success_soft: rgb(0x16301e),
-        warning: rgb(0xfbbf24),
-        warning_ink: rgb(0xfbbf24),
-        warning_soft: rgb(0x3a2e10),
-        on_warning: rgb(0x1c1917),
-        danger: rgb(0xc4302b),
-        danger_ink: rgb(0xff7b72),
-        danger_soft: rgb(0x3d1a19),
-        on_danger: rgb(0xffffff),
-        info: rgb(0x6cb6ff),
-        info_ink: rgb(0x6cb6ff),
-        info_soft: rgb(0x15263b),
+        canvas: rgb(0x0027_2525),
+        surface: rgb(0x002f_2c2c),
+        surface_alt: rgb(0x001f_1d1d),
+        surface_hover: rgb(0x003a_3636),
+        line: rgb(0x0045_403f),
+        line_strong: rgb(0x005f_5957),
+        fg: rgb(0x00e5_e0df),
+        fg_strong: rgb(0x00ff_ffff),
+        fg_muted: rgb(0x00b5_b0af),
+        fg_faint: rgb(0x0085_7f7e),
+        accent: rgb(0x00ff_a44f),
+        accent_strong: rgb(0x00ff_b36b),
+        accent_ink: rgb(0x00ff_a44f),
+        accent_soft: rgb(0x003d_2510),
+        on_accent: rgb(0x0011_1111),
+        success: rgb(0x002e_a043),
+        success_ink: rgb(0x004a_c26b),
+        success_soft: rgb(0x0016_301e),
+        warning: rgb(0x00fb_bf24),
+        warning_ink: rgb(0x00fb_bf24),
+        warning_soft: rgb(0x003a_2e10),
+        on_warning: rgb(0x001c_1917),
+        danger: rgb(0x00c4_302b),
+        danger_ink: rgb(0x00ff_7b72),
+        danger_soft: rgb(0x003d_1a19),
+        on_danger: rgb(0x00ff_ffff),
+        info: rgb(0x006c_b6ff),
+        info_ink: rgb(0x006c_b6ff),
+        info_soft: rgb(0x0015_263b),
     };
 
     pub(crate) fn for_appearance(appearance: WindowAppearance) -> Self {
@@ -129,12 +128,13 @@ impl Palette {
 }
 
 /// Holds the palette for the system appearance. Views read it with
-/// [`palette`]; the shell refreshes it when the appearance changes.
+/// [`palette`], and the shell refreshes it when the appearance changes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ActivePalette(pub Palette);
 
 impl Global for ActivePalette {}
 
+/// A copy of the active palette, so a view holding it can still use its context mutably.
 pub(crate) fn palette(cx: &App) -> Palette {
     cx.global::<ActivePalette>().0
 }

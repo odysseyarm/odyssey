@@ -1,23 +1,19 @@
 # Second-Stage Bootloader for ATSlite (nRF5340)
 
-This is the **second-stage bootloader** that provides DFU (Device Firmware Update) functionality via USB for the ATSlite board. It uses `embassy-boot` to interact with flash and `embassy-usb-dfu` for the USB DFU protocol.
+This is the second-stage bootloader for the ATSlite board. It provides DFU (Device Firmware Update) over USB, using `embassy-boot` to interact with flash and `embassy-usb-dfu` for the USB DFU protocol.
 
 ## Two-Stage Boot Architecture
 
-This bootloader is **stage 2** of a two-stage system:
+This bootloader is stage 2 of a two-stage system. Flash is divided like this:
 
-- **Stage 1** (8K @ 0x00000000): Validates and boots images using DirectXIP
-- **Stage 2** (16K @ 0x00002000): This bootloader - handles USB DFU updates
-- **Application** (340K @ 0x00007000): Main application firmware
-- **DFU Slot** (344K @ 0x0005C000): Download slot for new firmware
+- Stage 1 (8K @ 0x00000000) validates and boots images using DirectXIP.
+- Stage 2 (16K @ 0x00002000) is this bootloader. It handles USB DFU updates.
+- Application (340K @ 0x00007000) is the main application firmware.
+- DFU Slot (344K @ 0x0005C000) is the download slot for new firmware.
 
 ## DirectXIP Mode
 
-Unlike traditional bootloaders, this system uses **DirectXIP** (eXecute-In-Place):
-- Images run directly from their flash slot
-- No swap/copy operations between slots
-- First-stage bootloader handles boot selection
-- This stage primarily manages DFU download and validation
+The system uses DirectXIP (eXecute-In-Place). Images run directly from their flash slot, with no swap or copy operations between slots, which is where it departs from a traditional bootloader. The first-stage bootloader handles boot selection. This stage mostly manages DFU download and validation.
 
 ## Usage
 
@@ -42,41 +38,31 @@ Or use:
 cargo flash --release --chip nRF5340_xxAA
 ```
 
-**Note**: Make sure the first-stage bootloader is also flashed at 0x00000000.
+The first-stage bootloader has to be flashed as well, at 0x00000000.
 
 ## DFU Mode
 
-The bootloader enters DFU mode when:
-1. The application calls `embassy_boot::FirmwareUpdater::mark_dfu()` and resets
-2. There's no valid application image to boot
+The bootloader enters DFU mode when the application calls `embassy_boot::FirmwareUpdater::mark_dfu()` and resets. It also ends up there when no valid application image exists to boot.
 
-In DFU mode:
-- Exposes a USB DFU interface
-- Downloads new firmware to the DFU slot
-- Marks the image for boot
-- Resets, allowing stage 1 to boot the new firmware
+Once in DFU mode it exposes a USB DFU interface, downloads new firmware to the DFU slot and marks the image for boot. Then it resets, and stage 1 boots the new firmware.
 
 ## Network Core Updates
 
-**Important**: Network core updates are handled by the **application**, not the bootloader, due to DirectXIP constraints:
-
-- Application downloads NetCore firmware via its normal update mechanism
-- Application transfers NetCore image via IPC to the network core
-- Network core can be updated via RAM boot or direct flash write
+Network core updates are the application's job. DirectXIP constraints keep them out of the bootloader. The application downloads NetCore firmware through its normal update mechanism and transfers the image over IPC to the network core, which can then be updated via RAM boot or a direct flash write.
 
 See the main application documentation for NetCore update procedures.
 
 ## Watchdog Requirements
 
-**CRITICAL**: Stage 2 bootloader starts a hardware watchdog (WDT0) with a **60-second timeout**. This watchdog **cannot be stopped** once started and persists after booting into the application.
+Stage 2 starts a hardware watchdog (WDT0) with a **60-second timeout**. Once started it **cannot be stopped**, and it keeps running after the bootloader hands over to the application.
 
-**Why stage2 starts the watchdog**: Starting the watchdog in stage2 (instead of stage1) allows the watchdog configuration to be updated via stage2 bootloader updates, providing more flexibility for future changes.
+Stage 1 could have started it. Starting it in stage2 means the watchdog configuration can be changed through a stage2 bootloader update, which leaves more room for future changes.
 
 ### Application Requirements
 
-Your application **MUST** feed the watchdog to prevent system resets. The watchdog was started by the stage2 bootloader and you need to obtain a handle to it.
+Your application **must** feed the watchdog, or the system resets. The stage2 bootloader already started it, so what you need is a handle to the running watchdog.
 
-**Option 1**: Get a WatchdogHandle from the already-running watchdog:
+Option 1 is to get a WatchdogHandle from the already-running watchdog:
 
 ```rust
 // The watchdog is already running (started by bootloader)
@@ -95,7 +81,7 @@ let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
 wdt_handle.pet();
 ```
 
-**Option 2**: Use a background task (recommended):
+Option 2 is a background task. This is the recommended one:
 
 ```rust
 #[embassy_executor::task]
@@ -114,20 +100,19 @@ let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config)
 spawner.spawn(watchdog_feeder(wdt_handle).expect("Failed to spawn watchdog feeder"));
 ```
 
-**Note**: The stage2 bootloader automatically feeds the watchdog during operation. Your app continues this after boot.
+The stage2 bootloader feeds the watchdog on its own while it runs. Your app takes over after boot.
 
 ## Features
 
-- USB DFU 1.1 compatible with 3 alt interfaces:
-  - Alt 0: Inactive App Bank (for app updates)
-  - Alt 1: Network Core (for netcore updates)
-  - Alt 2: Bootloader (for bootloader self-updates via swap)
-- Automatic WinUSB driver assignment (Windows)
-- Image validation with magic numbers and CRC
-- Swap-based bootloader self-update with rollback protection
-- Calls `mark_booted()` on successful boot to prevent rollback
+The bootloader is USB DFU 1.1 compatible and exposes 3 alt interfaces:
+
+- Alt 0: Inactive App Bank (for app updates)
+- Alt 1: Network Core (for netcore updates)
+- Alt 2: Bootloader (for bootloader self-updates via swap)
+
+On Windows the WinUSB driver is assigned automatically. Images are validated with magic numbers and CRC. The bootloader updates itself by swap with rollback protection, and it calls `mark_booted()` on successful boot to prevent rollback.
 
 ## See Also
 
-- `firmware/lite1-stage1-bootloader/` - First-stage bootloader with DirectXIP logic
-- `firmware/memory/memory-lite1.kdl` - Complete memory layout specification
+- `firmware/lite1-stage1-bootloader/` holds the first-stage bootloader with the DirectXIP logic.
+- `firmware/memory/memory-lite1.kdl` is the complete memory layout specification.

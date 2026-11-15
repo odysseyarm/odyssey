@@ -385,8 +385,14 @@ fn cbor_traces_round_trip_canonically_and_stay_strict() {
     let decoded: Trace = read_cbor(bytes.as_slice()).unwrap();
     assert_eq!(to_cbor(&decoded).unwrap(), bytes);
     assert_eq!(hex::encode(Sha256::digest(&bytes)), trace.sha256().unwrap());
-    assert!(read_cbor::<Trace>(serde_json::to_vec(&trace).unwrap().as_slice()).is_err());
-    assert!(read_json::<Trace>(bytes.as_slice()).is_err());
+    assert!(matches!(
+        read_cbor::<Trace>(serde_json::to_vec(&trace).unwrap().as_slice()),
+        Err(Error::CborDecode(_))
+    ));
+    assert!(matches!(
+        read_json::<Trace>(bytes.as_slice()),
+        Err(Error::Json(_))
+    ));
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(
@@ -410,7 +416,7 @@ fn cbor_traces_round_trip_canonically_and_stay_strict() {
     let mut entry = vec![0x77];
     entry.extend_from_slice(b"misspelled_focal_length");
     entry.push(0x01);
-    unknown.splice(at + 1..at + 1, entry);
+    unknown.splice((at + 1)..=at, entry);
     let error = read_cbor::<Trace>(unknown.as_slice()).unwrap_err();
     assert!(error.to_string().contains("unknown field"), "{error}");
 

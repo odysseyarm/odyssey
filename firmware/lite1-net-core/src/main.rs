@@ -1,6 +1,10 @@
 #![no_std]
 #![no_main]
 #![recursion_limit = "256"]
+#![expect(
+    unsafe_code,
+    reason = "Network-core entrypoint owns linker-defined shared SRAM and NVMC access"
+)]
 
 mod cmd_dispatch;
 
@@ -44,7 +48,7 @@ const RELEASE: u16 = release!();
 const _: () = assert!(RELEASE != 0);
 
 /// Vendor-specific HCI command (OGF 0x3F, OCF 0x3F0) that returns [`RELEASE`]. The net core answers
-/// it itself; the SoftDevice Controller never sees it.
+/// it itself and the SoftDevice Controller never sees it.
 const OPCODE_READ_RELEASE: u16 = 0xFFF0;
 
 /// H4 Command Complete event for [`OPCODE_READ_RELEASE`]: indicator 0x04, event 0x0E, plen 6,
@@ -173,6 +177,7 @@ async fn main(spawner: Spawner) {
 
     let icmsg_config = icmsg_config::get_icmsg_config();
     defmt::info!("{:?}", Debug2Format(&icmsg_config));
+    // SAFETY: Linker-defined ICMSG regions are aligned shared-memory allocations owned by this core and peer.
     let icmsg = unsafe {
         IcMsg::<_, _, { icmsg_config::ALIGN }>::init(
             icmsg_config::get_icmsg_config(),
@@ -200,7 +205,8 @@ async fn main(spawner: Spawner) {
         p.RTC0, p.TIMER0, p.TIMER1, p.TEMP, p.PPI_CH0, p.PPI_CH1, p.PPI_CH2,
     );
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        // The BC40P module's 20 ppm crystal, started by the app core; 50 ppm leaves temperature and ageing margin.
+        // The BC40P module's 20 ppm crystal, started by the app core. 50 ppm leaves margin for
+        // temperature and ageing.
         source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
         rc_ctiv: 0,
         rc_temp_ctiv: 0,
@@ -313,9 +319,9 @@ async fn exec_h4_to_sdc(
             }
             match exec_cmd_by_opcode::<sdc::Error>(send, sdc, opcode, payload).await {
                 Err(cmd::Error::Hci(error)) => {
-                    // The dispatcher rejects unknown opcodes/invalid parameters before the SDC
-                    // can emit an event. Return the command credit and error instead of leaving
-                    // the application core waiting forever. Async success remains SDC-owned.
+                    // The dispatcher rejects unknown opcodes and invalid parameters before the SDC
+                    // can emit an event. Return the command credit and the error so the app core
+                    // is not left waiting forever. Async success stays SDC-owned.
                     let [lo, hi] = opcode.to_raw().to_le_bytes();
                     let status = error.to_status().into_inner();
                     let reply = if error == param::Error::UNKNOWN_CMD {
@@ -333,7 +339,7 @@ async fn exec_h4_to_sdc(
         }
         bt_hci::PacketKind::AclData | bt_hci::PacketKind::IsoData => {
             // The SDC methods assert these lengths before calling the controller. ICMSG input
-            // is fallible, so malformed data must be rejected here rather than panic the core.
+            // is fallible, so reject malformed data here instead of panicking the core.
             if rest.len() < 4
                 || usize::from(u16::from_le_bytes([rest[2], rest[3]])) > rest.len() - 4
             {
@@ -397,6 +403,7 @@ fn clear_boot_state(nvmc: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>) 
     unsafe extern "C" {
         static __bootloader_state_start: u32;
     }
+    // SAFETY: Linker script places this symbol at the start of the boot-state flash page.
     let state_base = unsafe { &__bootloader_state_start as *const u32 as u32 };
     let state_end = state_base + PAGE_SIZE as u32;
     nvmc.lock(|cell| {

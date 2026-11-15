@@ -43,12 +43,12 @@ let
 
   # Portability contract, shared by the bundler and the verifier.
   #  * The loader, glibc and libgcc_s come from the host (PT_INTERP is the
-  #    distro loader), so the host's graphics drivers keep loading against the
-  #    libc they were built for. maxVersions caps what the bundled objects may
-  #    demand from that host; the zig baseline above keeps the binary under it.
-  #  * Wayland/xkbcommon/Vulkan/EGL/GL come from the host, exactly as
-  #    package.metadata.packager.appimage.excludedLibs says. The rest of the
-  #    extras mirror what the 0.7.4 image also left to the host.
+  #    distro loader), so the host's graphics drivers load against the libc
+  #    they were built for. maxVersions caps what the bundled objects may
+  #    demand from that host. The zig baseline above keeps the binary under it.
+  #  * Wayland/xkbcommon/Vulkan/EGL/GL come from the host, as
+  #    package.metadata.packager.appimage.excludedLibs says. The other extras
+  #    mirror what the 0.7.4 image also left to the host.
   policyData = {
     binary = mainBinary;
     desktopName = packager.productName;
@@ -84,7 +84,7 @@ let
   '';
 
   # type2-runtime release 20251108: static, no libc, FUSE via the host's
-  # fusermount. Pinned by hash; nothing is fetched while building.
+  # fusermount. Pinned by hash, nothing is fetched while building.
   runtime = pkgs.fetchurl {
     url = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64";
     hash = "sha256-L8qLRDySUQ8Ug6iD9gBhrQm0a5eLJjHIB82HOkfsJg0=";

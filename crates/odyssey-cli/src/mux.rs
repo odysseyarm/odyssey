@@ -129,7 +129,7 @@ async fn cmd_list(device: &MuxDevice) -> eros::Result<()> {
     } else {
         println!("Connected devices ({}):", devices.len());
         for dev in &devices {
-            println!("  {}", format_bd_addr(dev));
+            println!("  {}", format_bd_addr(*dev));
         }
     }
     Ok(())
@@ -165,7 +165,7 @@ async fn cmd_pair(device: &MuxDevice, timeout: u32) -> eros::Result<()> {
         .context("Error waiting for pairing event")?
     {
         odyssey_usb::device::PairingEvent::Result(bond) => {
-            println!("Paired with device {}", format_bd_addr(&bond.uuid));
+            println!("Paired with device {}", format_bd_addr(bond.uuid));
             Ok(())
         }
         odyssey_usb::device::PairingEvent::Timeout => {

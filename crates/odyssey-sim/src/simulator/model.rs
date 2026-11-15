@@ -50,7 +50,7 @@ pub(crate) struct Model {
     pub(crate) units: BTreeMap<Uuid, Unit>,
     pub(crate) dongles: BTreeMap<Uuid, Dongle>,
     world: World,
-    sensor_model: SensorModel,
+    sensor: SensorModel,
     pub(crate) errors: Errors,
 }
 
@@ -62,7 +62,7 @@ impl Model {
             units: BTreeMap::from([(UNIT_UUID, Unit::new(UNIT_UUID, sensor_model, &world))]),
             dongles: BTreeMap::from([(DONGLE_UUID, Dongle::new(DONGLE_UUID))]),
             world,
-            sensor_model,
+            sensor: sensor_model,
             errors: Errors {
                 sender: errors,
                 last: None,
@@ -131,13 +131,13 @@ impl Model {
             .ok_or(SimError::InvalidInput("no such unit"))
     }
 
-    fn check_new(&self, uuid: &Uuid) -> Result<(), SimError> {
-        if !is_simulated(uuid) {
+    fn check_new(&self, uuid: Uuid) -> Result<(), SimError> {
+        if !is_simulated(&uuid) {
             return Err(SimError::InvalidInput(
                 "a simulated address starts with 53494d",
             ));
         }
-        if self.units.contains_key(uuid) || self.dongles.contains_key(uuid) {
+        if self.units.contains_key(&uuid) || self.dongles.contains_key(&uuid) {
             return Err(SimError::InvalidInput("the address is already in use"));
         }
         Ok(())
@@ -191,12 +191,12 @@ impl Model {
     fn apply(&mut self, target: Target, command: Command) -> Result<(), SimError> {
         match command {
             Command::AddUnit { uuid } => {
-                self.check_new(&uuid)?;
+                self.check_new(uuid)?;
                 if self.units.len() >= MAX_UNITS {
                     return Err(SimError::InvalidInput("too many units"));
                 }
                 self.units
-                    .insert(uuid, Unit::new(uuid, self.sensor_model, &self.world));
+                    .insert(uuid, Unit::new(uuid, self.sensor, &self.world));
             }
             Command::RemoveUnit { uuid } => {
                 self.units
@@ -204,7 +204,7 @@ impl Model {
                     .ok_or(SimError::InvalidInput("no such unit"))?;
             }
             Command::AddDongle { uuid } => {
-                self.check_new(&uuid)?;
+                self.check_new(uuid)?;
                 if self.dongles.len() >= MAX_DONGLES {
                     return Err(SimError::InvalidInput("too many dongles"));
                 }
@@ -311,7 +311,7 @@ impl Model {
                 .find(|unit| unit.in_range && unit.pairing_deadline.is_some()),
         ) {
             dongle.pairing_deadline = None;
-            if !dongle.has_room_for(&unit.uuid) {
+            if !dongle.has_room_for(unit.uuid) {
                 dongle.event(
                     UsbMuxCtrlMsg::BondStoreError(usb_mux::BondStoreError::Full),
                     &mut self.errors,
@@ -506,7 +506,7 @@ mod tests {
         assert_eq!(connected(&model, second_dongle), [second_unit]);
 
         run(&mut model, moved, Command::BleRange { in_range: false });
-        assert!(connected(&model, second_dongle).is_empty());
+        assert_eq!(connected(&model, second_dongle), &[] as &[Uuid]);
         assert!(model.units[&second_unit].bonded);
 
         run(
@@ -526,7 +526,7 @@ mod tests {
         assert!(add(&mut model, [1, 2, 3, 4, 5, 6]).is_err());
         assert!(add(&mut model, UNIT_UUID).is_err());
         assert!(add(&mut model, DONGLE_UUID).is_err());
-        assert!(add(&mut model, unit_uuid(7)).is_ok());
+        add(&mut model, unit_uuid(7)).unwrap();
         assert!(
             model
                 .command(Target::unit(unit_uuid(9)), Command::Shot)

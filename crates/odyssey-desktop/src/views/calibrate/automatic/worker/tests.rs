@@ -172,9 +172,9 @@ fn flat(known: Option<KnownSize>) -> SessionOptions {
     }
 }
 
-fn panel() -> Option<KnownSize> {
+fn panel() -> KnownSize {
     let [width_m, height_m] = demo_scene(16.0 / 9.0, DEMO_DIAGONAL_IN, true, 0.0).screen_size_m;
-    Some(KnownSize::Dimensions { width_m, height_m })
+    KnownSize::Dimensions { width_m, height_m }
 }
 
 #[test]
@@ -194,7 +194,8 @@ fn a_session_without_a_declared_size_measures_and_releases_the_camera() {
 
 #[test]
 fn the_panel_size_anchors_a_flat_screen_and_the_camera_agrees() {
-    let Ended::Finished(f) = run_session(demo(), flat(panel()), Some(SizeOrigin::Panel), false)
+    let Ended::Finished(f) =
+        run_session(demo(), flat(Some(panel())), Some(SizeOrigin::Panel), false)
     else {
         panic!("failed")
     };
@@ -238,7 +239,7 @@ fn an_overscanning_tv_cannot_be_measured_until_its_picture_is_fixed() {
     let backend = Backend::Demo {
         overscan_fraction: 0.03,
     };
-    let Ended::Failed(f) = run_session(backend, flat(panel()), Some(SizeOrigin::Panel), true)
+    let Ended::Failed(f) = run_session(backend, flat(Some(panel())), Some(SizeOrigin::Panel), true)
     else {
         panic!("finished")
     };

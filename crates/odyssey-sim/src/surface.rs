@@ -1,7 +1,7 @@
 //! World-space view of a scene screen's calibrated display.
 //!
 //! The display geometry lives in `ScreenCalibration` (the planar homography and
-//! the optional measured surface grid); this module adds the scene's world frame
+//! the optional measured surface grid). This module adds the scene's world frame
 //! and the marker identity checks a scene needs on top of calibration validity.
 
 use nalgebra::{Matrix3, Point2, UnitQuaternion, Vector3};
@@ -9,28 +9,40 @@ use odyssey_common::ScreenCalibrationError;
 
 use crate::dataset::SceneScreen;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SurfaceError {
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid screen calibration: {0}")]
     Calibration(#[from] ScreenCalibrationError),
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("invalid screen ID, marker IDs or canonical marker geometry")]
     Markers,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("UV must be finite and in [0,1]^2")]
     Uv,
+    /// Since: Odyssey Desktop 0.7.0.
     #[error("ray origin and nonzero direction must be finite")]
     Ray,
 }
 
 /// Nearest forward hit. Distance is meters regardless of input direction length.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceHit {
+    /// Since: Odyssey Desktop 0.7.0.
     pub uv: [f64; 2],
+    /// Since: Odyssey Desktop 0.7.0.
     pub position_world_m: [f64; 3],
+    /// Since: Odyssey Desktop 0.7.0.
     pub distance_m: f64,
 }
 
 /// Validated borrowed geometry. Construct once with [`SceneScreen::geometry`], then
-/// reuse for rays/UV samples; validation scans grids, queries do not allocate.
+/// reuse for rays/UV samples. Validation scans grids but queries do not allocate.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug)]
 pub struct ScreenGeometry<'a> {
     screen: &'a SceneScreen,
@@ -41,6 +53,12 @@ pub struct ScreenGeometry<'a> {
 impl SceneScreen {
     /// Validate untrusted calibration (including its surface) and marker identities.
     /// Markers live only in `calibration.object_points`, in physical-screen space.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when calibration geometry or marker identities are invalid.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn geometry(&self) -> Result<ScreenGeometry<'_>, SurfaceError> {
         self.calibration.validate()?;
         let points = &self.calibration.object_points;
@@ -82,6 +100,8 @@ impl SceneScreen {
 
 impl ScreenGeometry<'_> {
     /// Physical-screen meters to world meters. Calibration has rotation, no translation.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn screen_to_world(&self, point_m: [f64; 3]) -> [f64; 3] {
         self.world_to_screen
             .inverse_transform_vector(&Vector3::from(point_m))
@@ -89,13 +109,17 @@ impl ScreenGeometry<'_> {
     }
 
     /// World meters to physical-screen meters, using calibration's world->screen rotation.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn world_to_screen(&self, point_m: [f64; 3]) -> [f64; 3] {
         self.world_to_screen
             .transform_vector(&Vector3::from(point_m))
             .into()
     }
 
-    /// Canonical marker in world meters; index follows `marker_ids` / `object_points`.
+    /// Canonical marker in world meters. Index follows `marker_ids` / `object_points`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn marker_world(&self, index: usize) -> Option<[f64; 3]> {
         self.screen
             .calibration
@@ -105,26 +129,37 @@ impl ScreenGeometry<'_> {
     }
 
     /// Inverse display mapping. Plane uses inverse homography (projective, not
-    /// bilinear corner interpolation); a surface uses its prescribed triangles.
+    /// bilinear corner interpolation). A surface uses its prescribed triangles.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when UV lies outside [0, 1] or surface mapping fails.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn point_at_uv(&self, uv: [f64; 2]) -> Result<[f64; 3], SurfaceError> {
         if !uv.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) {
             return Err(SurfaceError::Uv);
         }
-        let point = match &self.screen.calibration.surface {
-            Some(surface) => surface
+        let point = if let Some(surface) = &self.screen.calibration.surface {
+            surface
                 .point_at_uv(Point2::from(uv))
-                .ok_or(SurfaceError::Uv)?,
-            None => {
-                let p = self.inverse_homography * Vector3::new(uv[0], uv[1], 1.0);
-                Vector3::new(p.x / p.z, p.y / p.z, 0.0)
-            }
+                .ok_or(SurfaceError::Uv)?
+        } else {
+            let p = self.inverse_homography * Vector3::new(uv[0], uv[1], 1.0);
+            Vector3::new(p.x / p.z, p.y / p.z, 0.0)
         };
         Ok(self.screen_to_world(point.into()))
     }
 
     /// Nearest two-sided forward display hit. Miss, parallel or behind returns
-    /// `Ok(None)`; nonfinite inputs / zero direction return `SurfaceError::Ray`.
+    /// `Ok(None)`. Nonfinite inputs / zero direction return `SurfaceError::Ray`.
     /// Hit UV always lies in [0,1]^2, including boundary edges and corners.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inputs are nonfinite or direction is zero.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn raycast(
         &self,
         origin_world_m: [f64; 3],
@@ -174,8 +209,8 @@ mod tests {
         }
     }
 
-    fn grid() -> Option<ScreenSurface> {
-        Some(ScreenSurface {
+    fn grid() -> ScreenSurface {
+        ScreenSurface {
             columns: 3,
             rows: 3,
             positions_m: vec![
@@ -189,7 +224,7 @@ mod tests {
                 [0.6, 0.675, -0.1],
                 [1.2, 0.675, 0.0],
             ],
-        })
+        }
     }
 
     fn surface_error(error: ScreenSurfaceError) -> SurfaceError {
@@ -235,7 +270,7 @@ mod tests {
 
     #[test]
     fn wavy_nonlinear_grid_roundtrips_both_triangles_edges_and_vertices() {
-        let screen = screen(grid());
+        let screen = screen(Some(grid()));
         let geometry = screen.geometry().unwrap();
         for uv in [
             [0.0, 0.0],
@@ -271,7 +306,7 @@ mod tests {
 
     #[test]
     fn invalid_rays_and_uv_are_errors_but_geometric_misses_are_not() {
-        for surface in [None, grid()] {
+        for surface in [None, Some(grid())] {
             let screen = screen(surface);
             let geometry = screen.geometry().unwrap();
             for (origin, direction) in [
@@ -302,7 +337,7 @@ mod tests {
 
     #[test]
     fn calibration_rotation_applies_to_surface_rays_and_canonical_markers() {
-        let mut screen = screen(grid());
+        let mut screen = screen(Some(grid()));
         screen.calibration.rotation = UnitQuaternion::from_euler_angles(0.2, -0.4, 0.3);
         screen.calibration.object_points = [
             [0.1, 0.0, 0.1],
@@ -352,11 +387,9 @@ mod tests {
             );
         }
         let mut surface = grid();
-        if let Some(ScreenSurface { positions_m, .. }) = &mut surface {
-            positions_m[4][2] = f64::NAN;
-        }
+        surface.positions_m[4][2] = f64::NAN;
         assert_eq!(
-            screen(surface).geometry().unwrap_err(),
+            screen(Some(surface)).geometry().unwrap_err(),
             surface_error(ScreenSurfaceError::NonFinite)
         );
     }

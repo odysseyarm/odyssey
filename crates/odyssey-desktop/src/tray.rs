@@ -4,7 +4,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _};
 use tokio_util::sync::CancellationToken;
 
 /// What the tray asks of the app. Tray callbacks run on foreign threads, so
-/// they only send these; the GPUI side acts on them.
+/// they only send these and the GPUI side acts on them.
 #[derive(Clone, Copy, Debug)]
 enum TrayCommand {
     Show,
@@ -63,11 +63,11 @@ pub(crate) fn start(cancellation_token: CancellationToken, window: AnyWindowHand
     .detach();
 }
 
-/// StatusNotifier hosts only offer a left click to items that implement
-/// Activate. tray-icon's Linux backend is libappindicator, which exports a menu
-/// and nothing else, so a click there can only ever raise the menu. Talking to
-/// the host directly is what buys the conventional behaviour: left click opens
-/// the window, right click opens the menu.
+/// `StatusNotifier` hosts only offer a left click to items that implement
+/// `Activate`. tray-icon's Linux backend is libappindicator, which exports a menu
+/// and nothing else, so a click there always raises the menu. Talking to the
+/// host directly gives the usual behaviour: left click opens the window, right
+/// click opens the menu.
 #[cfg(target_os = "linux")]
 mod platform {
     use ksni::menu::StandardItem;
@@ -126,7 +126,7 @@ mod platform {
 
     /// The wire format is ARGB32 in network byte order, not the RGBA the
     /// decoder hands back.
-    fn icon_from(image: TrayImage) -> Icon {
+    fn icon_from(image: &TrayImage) -> Icon {
         let mut data = Vec::with_capacity(image.rgba.len());
         for pixel in image.rgba.as_chunks::<4>().0 {
             data.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
@@ -144,7 +144,7 @@ mod platform {
         _cx: &mut gpui::App,
     ) {
         let tray = OdysseyTray {
-            icon: icon_from(tray_image()),
+            icon: icon_from(&tray_image()),
             commands,
         };
         runtime::spawn(async move {

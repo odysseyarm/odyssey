@@ -31,7 +31,7 @@ const TINY_SIDE_PX: f64 = 4.0;
 const BBOX_ASPECT: std::ops::RangeInclusive<f64> = 0.4..=2.5;
 /// The smallest minor-to-major axis ratio of a blob's pixel distribution.
 const MIN_AXIS_RATIO: f64 = 0.25;
-/// Allowed share of the bounding box a blob fills; a disc fills pi/4, about 0.79.
+/// Allowed share of the bounding box a blob fills. A disc fills pi/4, about 0.79.
 const FILL_RATIO: std::ops::RangeInclusive<f64> = 0.5..=0.95;
 
 /// Connected region of bright pixels.
@@ -99,6 +99,10 @@ impl RegionSums {
         self.max_y = self.max_y.max(y);
     }
 
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "Keep variance calculation's existing operation order."
+    )]
     fn finish(&self, width: usize, height: usize) -> Component {
         let n = f64::from(self.area);
         let (cx, cy) = (self.x / n, self.y / n);

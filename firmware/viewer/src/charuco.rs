@@ -9,8 +9,9 @@ use opencv::objdetect::{
     draw_detected_markers, get_predefined_dictionary,
 };
 
+/// Since: Odyssey Desktop 0.6.0.
 pub fn process_image(name: &str, image: &[u8], w: i32, h: i32) -> Result<(), crate::ViewerError> {
-    let im = Mat::new_rows_cols_with_data(h as i32, w as i32, image)?;
+    let im = Mat::new_rows_cols_with_data(h, w, image)?;
     let squares_x = 2;
     let squares_y = 2;
     let square_length = 1.0;

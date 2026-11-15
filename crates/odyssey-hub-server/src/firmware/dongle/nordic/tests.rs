@@ -121,9 +121,9 @@ impl Bootloader {
 }
 
 impl Read for Bootloader {
-    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
-        let count = output.len().min(self.replies.len());
-        for byte in &mut output[..count] {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let count = buf.len().min(self.replies.len());
+        for byte in &mut buf[..count] {
             *byte = self.replies.pop_front().unwrap();
         }
         Ok(count)
@@ -131,9 +131,9 @@ impl Read for Bootloader {
 }
 
 impl Write for Bootloader {
-    fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
-        assert!(input.len() <= 31);
-        self.incoming.extend_from_slice(input);
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        assert!(buf.len() <= 31);
+        self.incoming.extend_from_slice(buf);
         if self.incoming.last() == Some(&END) {
             let mut decoded = Vec::new();
             let mut escaped = false;
@@ -155,7 +155,7 @@ impl Write for Bootloader {
             self.incoming.clear();
             self.handle(&decoded);
         }
-        Ok(input.len())
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -201,7 +201,7 @@ fn unknown_vendor_never_erases_or_writes_application() {
         transfer(&mut device, &[package(1), package(2)], |_, _| {}),
         Err(Error::NoMatchingSignature)
     ));
-    assert!(device.image.is_empty());
+    assert_eq!(device.image, Vec::<u8>::new());
     assert_eq!(device.executed, 0);
 }
 
@@ -253,19 +253,19 @@ fn malformed_reply_and_rejected_execute_cannot_report_completion() {
 #[test]
 fn refuses_staging_over_bonds_before_any_init_or_image_write() {
     let mut device = Bootloader {
-        installed_size: 417592,
+        installed_size: 417_592,
         ..Default::default()
     };
     let package = Package {
         init: vec![1],
-        image: vec![0; 417592],
+        image: vec![0; 417_592],
     };
     assert!(matches!(
         transfer(&mut device, &[package], |_, _| {}),
         Err(Error::UnsafeLayout)
     ));
-    assert!(device.init.is_empty());
-    assert!(device.image.is_empty());
+    assert_eq!(device.init, Vec::<u8>::new());
+    assert_eq!(device.image, Vec::<u8>::new());
 }
 
 #[test]
@@ -275,18 +275,28 @@ fn missing_layout_query_stops_before_erase() {
         ..Default::default()
     };
     assert!(transfer(&mut device, &[package(1)], |_, _| {}).is_err());
-    assert!(device.init.is_empty());
-    assert!(device.image.is_empty());
+    assert_eq!(device.init, Vec::<u8>::new());
+    assert_eq!(device.image, Vec::<u8>::new());
 }
 
 #[test]
 fn permits_only_bond_safe_bank_or_single_bank_placement() {
     let maximum = super::super::layout::APPLICATION_SIZE as usize;
-    assert!(validate_placement(0xe0000, 300000, 417592).is_ok());
-    assert!(validate_placement(0xe0000, 417592, maximum).is_ok());
-    assert!(validate_placement(0xe0000, 417592, 417592).is_err());
-    assert!(validate_placement(0xe0000, 4096, maximum).is_err());
-    assert!(validate_placement(0xe0000, 0, maximum).is_ok());
-    assert!(validate_placement(0xe0000, 300000, maximum + 1).is_err());
-    assert!(validate_placement(u32::MAX, u32::MAX, maximum).is_err());
+    assert!(matches!(
+        validate_placement(0xe0000, 300_000, 417_592),
+        Ok(())
+    ));
+    assert!(matches!(
+        validate_placement(0xe0000, 417_592, maximum),
+        Ok(())
+    ));
+    validate_placement(0xe0000, 417_592, 417_592)
+        .expect_err("a placement that ends at the settings page is refused");
+    validate_placement(0xe0000, 4096, maximum)
+        .expect_err("a placement beyond the application area is refused");
+    assert!(matches!(validate_placement(0xe0000, 0, maximum), Ok(())));
+    validate_placement(0xe0000, 300_000, maximum + 1)
+        .expect_err("a placement one byte past the maximum is refused");
+    validate_placement(u32::MAX, u32::MAX, maximum)
+        .expect_err("an overflowing placement is refused");
 }

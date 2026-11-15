@@ -3,8 +3,8 @@
  * Data flow: GET /api/state fills S (stage, derived, presets, hub). A user edit calls edit(fn): fn mutates S.draft (a
  * clone of the last accepted stage), views update optimistically, and a throttled PUT /api/stage returns the accepted
  * stage + derived data (or a 400 message, shown next to the control while the last good stage stays on screen).
- * SSE: "frame" (~30 Hz) is kept as the latest string and painted once per animation frame into existing SVG nodes;
- * "hub" (~3 Hz) updates S.hub; "press" flashes a glyph.
+ * SSE: "frame" (~30 Hz) is kept as the latest string and painted once per animation frame into existing SVG nodes.
+ * "hub" (~3 Hz) updates S.hub, "press" flashes a glyph.
  * Panels are "zones": built once (or rebuilt only when their signature changes) plus sync functions that write values
  * in place and never touch the focused control. SVG views are rebuilt on stage changes by buildTop()/buildDisplay().
  */

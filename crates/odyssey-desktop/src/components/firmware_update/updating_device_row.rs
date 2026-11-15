@@ -25,9 +25,9 @@ fn state_display(state: &FirmwareUpdateState) -> String {
 pub(crate) fn updating_device_row(
     uuid: [u8; 6],
     manager: &FirmwareUpdateManager,
-    p: Palette,
+    p: &Palette,
 ) -> AnyElement {
-    let state = manager.get_state(&uuid);
+    let state = manager.get_state(uuid);
     let is_error = matches!(state, FirmwareUpdateState::Failed(_));
     let is_complete = matches!(state, FirmwareUpdateState::Complete);
     let (dot, ink) = if is_error {

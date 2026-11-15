@@ -110,7 +110,7 @@ impl ReferenceHelper {
 
 impl Render for ReferenceHelper {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let (helper, problem, reference, key, reading, finding, projected, panel) = {
             let wizard = self.wizard.read(cx);
             (
@@ -165,7 +165,7 @@ fn width_words(size_m: [f64; 2]) -> String {
     )
 }
 
-/// How a hand measurement compares with the size the display reported; the
+/// How a hand measurement compares with the size the display reported. The
 /// flag is set when the gap is large enough to warn about.
 fn agreement_note(panel_size_m: Option<[f64; 2]>, size_m: [f64; 2]) -> Option<(String, bool)> {
     let gap = reference::size_gap(size_m, panel_size_m?);
@@ -203,7 +203,7 @@ fn frame(border: Rgba, bg: Rgba) -> Div {
 }
 
 /// A numbered list of steps.
-fn steps(p: Palette, items: Vec<&'static str>) -> Div {
+fn steps(p: &Palette, items: Vec<&'static str>) -> Div {
     div()
         .flex()
         .flex_col()
@@ -226,7 +226,7 @@ fn steps(p: Palette, items: Vec<&'static str>) -> Div {
 
 /// The invitation: always there for a flat screen or a projector, louder for a
 /// projector or a display that reported no usable size.
-fn prompt(p: Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> AnyElement {
+fn prompt(p: &Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> AnyElement {
     let silent = projected || !found;
     let (title, detail) = if projected {
         (
@@ -312,7 +312,7 @@ fn prompt(p: Palette, wizard: &Entity<Wizard>, projected: bool, found: bool) -> 
 
 /// The result in use, with a way to redo or drop it.
 fn measured(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     reading: Reference,
     (width, height): (u32, u32),
@@ -380,7 +380,7 @@ fn measured(
 impl ReferenceHelper {
     fn open_helper(
         &self,
-        p: Palette,
+        p: &Palette,
         helper: &Helper,
         reading: Option<Result<Reference, ReferenceError>>,
         monitor: Option<(u32, u32)>,
@@ -488,7 +488,7 @@ impl ReferenceHelper {
             .into_any_element()
     }
 
-    fn tape_steps(&self, p: Palette, helper: &Helper) -> Div {
+    fn tape_steps(&self, p: &Palette, helper: &Helper) -> Div {
         let wizard = &self.wizard;
         let unit = helper.tape_unit;
         let list = if helper.covers {
@@ -553,7 +553,7 @@ impl ReferenceHelper {
             )
     }
 
-    fn card_steps(&self, p: Palette, helper: &Helper) -> Div {
+    fn card_steps(&self, p: &Palette, helper: &Helper) -> Div {
         let wizard = &self.wizard;
         let card_px = helper.card_px;
         let list = if helper.covers {

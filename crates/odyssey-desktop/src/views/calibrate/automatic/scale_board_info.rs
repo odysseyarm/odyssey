@@ -1,6 +1,6 @@
 //! The "scale board" explanation: what the printed board is for, which one to
 //! print and how, and the PDFs to print. Opened from Setup as a window over the
-//! page; nothing in the calibration depends on it.
+//! page. Nothing in the calibration depends on it.
 
 use std::path::PathBuf;
 
@@ -73,11 +73,11 @@ impl ScaleBoardInfo {
     }
 }
 
-fn body(p: Palette, text: &'static str) -> gpui::Div {
+fn body(p: &Palette, text: &'static str) -> gpui::Div {
     div().text_base().text_color(p.fg).child(text)
 }
 
-fn heading(p: Palette, text: &'static str) -> gpui::Div {
+fn heading(p: &Palette, text: &'static str) -> gpui::Div {
     div()
         .text_lg()
         .font_weight(FontWeight::SEMIBOLD)
@@ -85,7 +85,7 @@ fn heading(p: Palette, text: &'static str) -> gpui::Div {
         .child(text)
 }
 
-fn bullet(p: Palette, text: &'static str) -> gpui::Div {
+fn bullet(p: &Palette, text: &'static str) -> gpui::Div {
     div()
         .flex()
         .gap_2()
@@ -97,7 +97,7 @@ fn bullet(p: Palette, text: &'static str) -> gpui::Div {
 
 impl Render for ScaleBoardInfo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let link = link_button(
             "scale-board-open",
             p,
@@ -242,7 +242,7 @@ impl Render for ScaleBoardInfo {
                             .child(bullet(p, "At a print shop, ask for one copy at 100%, no scaling, and ask whether they mount prints on foam board."))
                             .child(bullet(p, "Glue it flat on 3/16 in foam board with spray adhesive or full-sheet double-sided tape, working from the middle out. Leave it flat under a weight for an hour. A wavy sheet spoils the measurement.")),
                     )
-                    .child(body(p, "For a rigid print, a shop such as foamcoreprint.com (Gator Board Printing) can print the 12 \u{d7} 8.5 in file directly: custom size, 3/16 in thick, one side, no holes. Check their proof shows exactly that size, black dots on white, nothing cropped or scaled.")),
+                    .child(body(p, "For a rigid print, a shop such as foamcoreprint.com (Gator Board Printing) can print the 12 \u{d7} 8.5 in file directly: custom size, 3/16 in thick, one side, no holes. Check their proof shows exactly that size, black dots on white, nothing cropped or scaled."))
             )
             .child(
                 div()

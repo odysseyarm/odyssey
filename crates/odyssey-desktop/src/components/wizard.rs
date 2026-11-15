@@ -1,6 +1,6 @@
 //! Building blocks for step-by-step flows: a stepper, a big status banner,
 //! labelled sliders and a live image with an overlay. They hold no flow logic,
-//! so any wizard can reuse them; the automatic calibration is the one that
+//! so any wizard can reuse them. The automatic calibration is the one that
 //! does.
 
 use std::sync::Arc;
@@ -74,7 +74,7 @@ pub(crate) enum Tone {
 
 impl Tone {
     /// Background, border and ink.
-    fn colors(self, p: Palette) -> (Rgba, Rgba, Rgba) {
+    fn colors(self, p: &Palette) -> (Rgba, Rgba, Rgba) {
         match self {
             Self::Good => (p.success_soft, with_alpha(p.success, 0.4), p.success_ink),
             Self::Attention => (p.warning_soft, with_alpha(p.warning, 0.5), p.warning_ink),
@@ -90,7 +90,7 @@ pub(crate) fn with_alpha(mut color: Rgba, alpha: f32) -> Rgba {
 
 /// A large status message: an icon, a headline and one sentence of advice.
 pub(crate) fn status_banner(
-    p: Palette,
+    p: &Palette,
     tone: Tone,
     glyph: Icon,
     title: impl Into<SharedString>,
@@ -125,7 +125,7 @@ pub(crate) fn status_banner(
 
 /// The steps of a flow with the current one highlighted and finished ones
 /// ticked. `current` may equal `steps.len()` once everything is done.
-pub(crate) fn stepper(p: Palette, steps: &[&'static str], current: usize) -> Div {
+pub(crate) fn stepper(p: &Palette, steps: &[&'static str], current: usize) -> Div {
     let last = steps.len().saturating_sub(1);
     let mut row = div().flex().items_center().w_full();
     for (i, label) in steps.iter().copied().enumerate() {
@@ -194,9 +194,9 @@ pub(crate) fn stepper(p: Palette, steps: &[&'static str], current: usize) -> Div
 }
 
 /// A labelled slider. The caller owns the [`SliderState`] and listens for its
-/// `SliderEvent::Change`; debouncing anything expensive is the caller's job.
+/// `SliderEvent::Change`. Debouncing anything expensive is the caller's job.
 pub(crate) fn slider(
-    p: Palette,
+    p: &Palette,
     state: &Entity<SliderState>,
     label: &'static str,
     value_text: impl Into<SharedString>,
@@ -305,7 +305,7 @@ impl OverlayCanvas {
 }
 
 /// A picture with a drawing layer on top. `draw` paints in the picture's own
-/// pixels (`width` by `height`), so callers place detections without scaling;
+/// pixels (`width` by `height`), so callers place detections without scaling.
 /// `labels` are text pieces placed with [`overlay_label`].
 pub(crate) fn overlay_image(
     image: Option<Arc<RenderImage>>,
@@ -372,8 +372,8 @@ pub(crate) fn overlay_label(
         .into_any_element()
 }
 
-/// Remembers the picture a view last drew so a replaced frame leaves the GPU
-/// atlas; a live stream would otherwise keep every frame's texture.
+/// Remembers the picture a view last drew, so a replaced frame leaves the GPU
+/// atlas. A live stream would otherwise keep every frame's texture.
 #[derive(Default)]
 pub(crate) struct FrameSlot(Option<Arc<RenderImage>>);
 

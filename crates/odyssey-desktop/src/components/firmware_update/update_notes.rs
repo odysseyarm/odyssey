@@ -16,7 +16,7 @@ pub(crate) struct HeldBack {
     pub min_desktop: String,
 }
 
-pub(super) fn held_back_note(held_back: &HeldBack, p: Palette) -> AnyElement {
+pub(super) fn held_back_note(held_back: &HeldBack, p: &Palette) -> AnyElement {
     // Offline mode forbids offering a link to the web.
     let offline = odyssey_hub_server::policy::offline();
     let mut note = div()
@@ -57,7 +57,7 @@ pub(crate) struct NetCoreBlocked {
 pub(super) fn net_core_blocked_note(
     blocked: &NetCoreBlocked,
     bridge: Option<&str>,
-    p: Palette,
+    p: &Palette,
 ) -> AnyElement {
     let text = match bridge {
         Some(bridge) => format!(

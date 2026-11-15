@@ -5,9 +5,13 @@ use num::traits::Float;
 #[cfg(feature = "std")]
 use crate::screen_surface::{ScreenSurface, ScreenSurfaceError, SurfaceHit, plane_hit};
 
-/// Highest screen id a hub tracks; ids run `0..=MAX_SCREEN_ID`.
+/// Highest screen id a hub tracks. Ids run `0..=MAX_SCREEN_ID`.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub const MAX_SCREEN_ID: u8 = 5;
 /// Number of markers in the pattern shown on a screen.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub const MARKER_PATTERN_LEN: usize = 6;
 
 /// `rotation` transforms coordinates from world space to physical screen space.
@@ -20,14 +24,20 @@ pub const MARKER_PATTERN_LEN: usize = 6;
 ///
 /// `surface`, when present, is the measured display: it replaces the plane and
 /// homography for aim mapping wherever the aim ray hits it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(not(feature = "std"), derive(Copy))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "serde", serde(default))]
     pub rotation: nalgebra::UnitQuaternion<F>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub homography: nalgebra::Matrix3<F>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub object_points: [nalgebra::Point3<F>; MARKER_PATTERN_LEN],
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "std")]
     #[cfg_attr(
         feature = "serde",
@@ -37,6 +47,7 @@ pub struct ScreenCalibration<F: Float + FromPrimitive + Scalar + RealField> {
 }
 
 impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn cast<G>(&self) -> ScreenCalibration<G>
     where
         G: Float + FromPrimitive + Scalar + RealField,
@@ -57,6 +68,8 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     /// when the ray misses it: the `z = 0` plane through `homography`, which may
     /// fall outside the unit square (off-screen aim). The distance is along the
     /// ray in units of `direction`'s length, matching the planar path.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "std")]
     pub fn aim_from_ray(
         &self,
@@ -82,6 +95,8 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     }
 
     /// Physical-screen point shown at `uv`, on the surface when present.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "std")]
     pub fn point_at_uv(&self, uv: Point2<F>) -> Option<nalgebra::Point3<F>> {
         if let Some(surface) = &self.surface {
@@ -95,7 +110,9 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     }
 
     /// Nearest display hit inside `[0, 1]^2`, with distance in meters. Unlike
-    /// [`Self::aim_from_ray`], a miss is `None`; used for reference labels.
+    /// [`Self::aim_from_ray`], a miss is `None`. Used for reference labels.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "std")]
     pub fn surface_hit(
         &self,
@@ -110,7 +127,7 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
 }
 
 #[cfg(feature = "std")]
-fn as_f64<F: num::ToPrimitive>(value: F) -> f64 {
+fn as_f64<F: num::ToPrimitive + Copy>(value: F) -> f64 {
     value.to_f64().unwrap_or(f64::NAN)
 }
 
@@ -119,6 +136,8 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
     ///
     /// Returns `None` for a singular homography, non-finite corners, or a
     /// projective horizon crossing the unit square.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn bounds(&self) -> Option<[Point2<F>; 4]> {
         let zero = <F as num::Zero>::zero();
         let one = <F as num::One>::one();
@@ -150,11 +169,17 @@ impl<F: Float + FromPrimitive + Scalar + RealField> ScreenCalibration<F> {
 }
 
 /// Invalid persisted screen calibration data.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenCalibrationError {
+    /// Since: Odyssey Desktop 0.7.0.
     NonFiniteCoordinates,
+    /// Since: Odyssey Desktop 0.7.0.
     InvalidBounds,
+    /// Since: Odyssey Desktop 0.7.0.
     InvalidRotation,
+    /// Since: Odyssey Desktop 0.7.0.
     #[cfg(feature = "std")]
     Surface(ScreenSurfaceError),
 }
@@ -176,6 +201,11 @@ impl core::error::Error for ScreenCalibrationError {}
 impl ScreenCalibration<f32> {
     /// Checks data loaded from an untrusted calibration file before use by the
     /// tracker. Deserialization alone does not enforce these numeric invariants.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
+    /// # Errors
+    /// Returns an error when coordinates, bounds, rotation, or surface are invalid.
+    ///
     pub fn validate(&self) -> Result<(), ScreenCalibrationError> {
         if !self.homography.iter().all(|v| v.is_finite())
             || !self

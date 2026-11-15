@@ -33,7 +33,7 @@ pub(crate) struct HubDevice {
     pub(crate) name: String,
     pub(crate) simulated: bool,
     pub(crate) product_id: u16,
-    pub(crate) firmware: [u16; 3],
+    pub(crate) firmware: [u32; 3],
     pub(crate) events_connected: bool,
     pub(crate) tracking: Option<Tracking>,
 }
@@ -49,6 +49,10 @@ pub(crate) struct HubView {
     pub(crate) screen: Option<HubScreen>,
 }
 
+#[expect(
+    clippy::struct_field_names,
+    reason = "the unit suffix is part of the serialized names the web front end reads"
+)]
 #[derive(Clone, Copy, Debug, Serialize)]
 pub(crate) struct HubScreen {
     pub(crate) width_m: f64,

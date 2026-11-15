@@ -8,11 +8,11 @@ use crate::components::wizard::{overlay_image, overlay_label};
 use crate::theme::Palette;
 use crate::views::calibrate::automatic::quality::Verdict;
 
-/// The width the overlay's stroke sizes are specified for; wider pictures
+/// The width the overlay's stroke sizes are specified for. Wider pictures
 /// scale them up to stay equally visible.
 const REFERENCE_WIDTH_PX: f32 = 640.0;
 
-pub(super) fn outline_color(p: Palette, verdict: Verdict) -> Rgba {
+pub(super) fn outline_color(p: &Palette, verdict: Verdict) -> Rgba {
     match verdict {
         Verdict::Good => p.success,
         Verdict::Fair => p.warning,
@@ -21,7 +21,7 @@ pub(super) fn outline_color(p: Palette, verdict: Verdict) -> Rgba {
 }
 
 pub(super) fn result_overlay(
-    p: Palette,
+    p: &Palette,
     image: Arc<RenderImage>,
     width: u32,
     height: u32,

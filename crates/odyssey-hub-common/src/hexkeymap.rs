@@ -96,19 +96,19 @@ where
         {
             type Value = HexKeyMapN<T, N>;
 
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(
-                    f,
+                    formatter,
                     "a map with {N}-byte hex string keys (\"0x…\") and T values"
                 )
             }
 
-            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
             where
                 M: MapAccess<'de>,
             {
-                let mut values = HashMap::with_capacity(access.size_hint().unwrap_or(0));
-                while let Some((key_str, value)) = access.next_entry::<String, T>()? {
+                let mut values = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((key_str, value)) = map.next_entry::<String, T>()? {
                     values.insert(parse_hex_key(&key_str)?, value);
                 }
                 Ok(HexKeyMapN(values))

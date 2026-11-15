@@ -112,7 +112,7 @@ impl HomeView {
 
 impl Render for HomeView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = theme::palette(cx);
+        let p = &theme::palette(cx);
         let error = self.manifest.read(cx).error.clone();
         let mut children = Vec::new();
         children.extend(offline_notice(error.as_deref(), p));

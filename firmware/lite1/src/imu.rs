@@ -14,14 +14,20 @@ use icm426xx::{ICM42688, Ready};
 use crate::Irqs;
 
 /// The ready ICM-42688-P on its own SPI bus.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub type Imu = ICM42688<ExclusiveDevice<Spim<'static>, Output<'static>, Delay>, Ready>;
 
 /// The IMU's INT1 line.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub struct ImuInterrupt {
+    /// Since: Odyssey Desktop 0.6.0.
     pub int1: Input<'static>,
 }
 
 impl ImuInterrupt {
+    /// Since: Odyssey Desktop 0.6.0.
     pub async fn wait(&mut self) {
         self.int1.wait_for_low().await;
     }
@@ -65,12 +71,19 @@ fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
 }
 
 /// Rounds `hz` to the nearest accelerometer ODR the ICM-42688-P supports.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn round_accel_odr_hz(hz: u16) -> u16 {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].0
 }
 
 /// Brings up the ICM-42688-P on SERIAL0 and starts its 32 kHz CLKIN.
-#[allow(clippy::too_many_arguments)]
+///
+/// Since: Odyssey Desktop 0.6.0.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each peripheral parameter owns a distinct IMU bus pin"
+)]
 pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     spim_instance: Peri<'static, SERIAL0>,
     cs: Peri<'static, AnyPin>,

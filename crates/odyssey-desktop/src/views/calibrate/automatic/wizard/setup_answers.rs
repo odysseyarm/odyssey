@@ -26,7 +26,7 @@ impl Wizard {
             .selected
             .as_ref()
             .and_then(|key| self.ui_state.calibration_screen(key));
-        default_screen(remembered, &self.saved)
+        default_screen(remembered, self.saved)
     }
 
     /// The camera Setup shows as chosen: the picked one if it is attached, or
@@ -128,15 +128,14 @@ impl Wizard {
             && self.finding.is_some()
     }
 
-    pub(super) fn refresh_saved_screens(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_saved_screens(cx: &mut Context<Self>) {
         let read = runtime::spawn(read_saved_screens());
         cx.spawn(async move |this, cx| {
             let found = read.await.ok().flatten().unwrap_or_default();
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.saved = found;
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -150,7 +149,7 @@ impl Wizard {
         }
     }
 
-    /// Looks for cameras while Setup is on screen; [`Wizard::set_stage`] drops
+    /// Looks for cameras while Setup is on screen. [`Wizard::set_stage`] drops
     /// the returned task when Setup is left, which is what stops the polling.
     pub(super) fn poll_cameras(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {

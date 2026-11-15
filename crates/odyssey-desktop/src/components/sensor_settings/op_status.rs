@@ -8,8 +8,8 @@ use crate::theme::Palette;
 
 /// Outcome of the most recent user-triggered operation in a panel.
 ///
-/// `Failed` keeps the customer-facing sentence separate from the raw error so
-/// the latter can stay collapsed; support still gets the exact text.
+/// `Failed` keeps the customer-facing sentence separate from the raw error, so
+/// the latter can stay collapsed. Support still gets the exact text.
 #[derive(Clone, PartialEq, Default)]
 pub(super) enum OpStatus {
     #[default]
@@ -24,7 +24,7 @@ pub(super) enum OpStatus {
 
 /// Turn a transport/RPC failure into something a customer can act on.
 ///
-/// Register access needs an active events connection; a USB control interface
+/// Register access needs an active events connection. A USB control interface
 /// alone does not imply that sensor data is connected.
 pub(super) fn rpc_failure(context: &str, err: &dyn std::fmt::Display) -> OpStatus {
     let raw = format!("{err:#}");
@@ -46,14 +46,14 @@ pub(super) fn rpc_failure(context: &str, err: &dyn std::fmt::Display) -> OpStatu
 }
 
 /// The status of the last operation. `id` must be unique among the status
-/// lines in the window; `details_open` and `on_toggle` drive the collapsed
+/// lines in the window. `details_open` and `on_toggle` drive the collapsed
 /// technical details of a failure.
 pub(super) fn status_line(
     status: &OpStatus,
     id: String,
     details_open: bool,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    palette: Palette,
+    palette: &Palette,
 ) -> AnyElement {
     match status {
         OpStatus::Idle => div().into_any_element(),

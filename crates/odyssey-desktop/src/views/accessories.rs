@@ -43,7 +43,7 @@ const MONO_FONT: &str = if cfg!(windows) {
     "monospace"
 };
 
-fn slot_color_dot(p: Palette, slot: usize) -> Rgba {
+fn slot_color_dot(p: &Palette, slot: usize) -> Rgba {
     match slot {
         0 => p.danger,
         1 => p.info,
@@ -54,22 +54,15 @@ fn slot_color_dot(p: Palette, slot: usize) -> Rgba {
     }
 }
 
-/// What the assignment dropdown reports: `None` for a value that is not a
-/// choice, `Some(None)` for "(Unassigned)", `Some(Some(uuid))` for a device.
-fn parse_assignment(selected: &str) -> Option<Option<NonZeroU64>> {
-    if selected.is_empty() {
-        return Some(None);
-    }
+/// Parses a selected UUID. `None` stands for unassigned or invalid.
+fn parse_assignment(selected: &str) -> Option<NonZeroU64> {
     let uuid = selected.parse::<u64>().ok()?;
-    NonZeroU64::new(uuid).map(Some)
+    NonZeroU64::new(uuid)
 }
 
-fn parse_screen(selected: &str) -> Option<Option<u8>> {
-    if selected.is_empty() {
-        return Some(None);
-    }
+fn parse_screen(selected: &str) -> Option<u8> {
     let id = selected.parse::<u8>().ok()?;
-    (usize::from(id) < SCREEN_COUNT).then_some(Some(id))
+    (usize::from(id) < SCREEN_COUNT).then_some(id)
 }
 
 /// A connected device an accessory can be assigned to: the uuid the hub
@@ -97,7 +90,7 @@ impl SearchableListItem for Choice {
 }
 
 fn assignment_value(assignment: Option<NonZeroU64>) -> String {
-    assignment.map(|uuid| uuid.to_string()).unwrap_or_default()
+    assignment.map_or_default(|uuid| uuid.to_string())
 }
 
 /// An accessory's assignment dropdown, and what it was last set to show.
@@ -169,16 +162,16 @@ fn pairing_window(expires_at_ms: Option<u64>, now_ms: u64) -> PairingWindow {
 fn pairing_expiry(
     radios: &[AccessoryRadioInfo],
     route: &AccessoryRadio,
-    id: &[u8; 6],
+    id: [u8; 6],
 ) -> Option<u64> {
     radios::find_radio(radios, route)?
         .nearby
         .iter()
-        .find(|accessory| &accessory.address == id)?
+        .find(|accessory| accessory.address == id)?
         .pairing_window_expires_at_ms
 }
 
-fn pairing_hint(expires_at_ms: Option<u64>, p: Palette) -> gpui::Div {
+fn pairing_hint(expires_at_ms: Option<u64>, p: &Palette) -> gpui::Div {
     let now = unix_time_ms();
     let (text, color) = match pairing_window(expires_at_ms, now) {
         PairingWindow::Open => (
@@ -214,6 +207,8 @@ pub(crate) struct AccessoriesView {
     edit_pending: bool,
     enrolling: Option<[u8; 6]>,
     resetting: Option<[u8; 6]>,
+    marker_ota_busy: Option<[u8; 6]>,
+    marker_ota_result: Option<([u8; 6], Result<String, String>)>,
     selects: HashMap<[u8; 6], AssignSelect>,
     _hub_sync: Task<()>,
     _pairing_clock: Task<()>,
@@ -263,6 +258,8 @@ impl AccessoriesView {
             edit_pending: false,
             enrolling: None,
             resetting: None,
+            marker_ota_busy: None,
+            marker_ota_result: None,
             selects: HashMap::new(),
             _hub_sync: hub_sync::follow(cx),
             _pairing_clock: pairing_clock,
@@ -280,8 +277,8 @@ impl AccessoriesView {
         cx.notify();
     }
 
-    fn is_connected(&self, id: &[u8; 6]) -> bool {
-        self.known.get(id).is_some_and(|(_, connected)| *connected)
+    fn is_connected(&self, id: [u8; 6]) -> bool {
+        self.known.get(&id).is_some_and(|(_, connected)| *connected)
     }
 
     /// After a rejected edit, so each dropdown goes back to what the hub has.
@@ -328,7 +325,7 @@ impl AccessoriesView {
                 choices.clone()
             };
             let wanted = if marker {
-                info.screen_id.map(|id| id.to_string()).unwrap_or_default()
+                info.screen_id.map_or_default(|id| id.to_string())
             } else {
                 assignment_value(info.assignment)
             };
@@ -355,9 +352,10 @@ impl AccessoriesView {
                             return;
                         };
                         if marker {
-                            let Some(screen) = parse_screen(value) else {
+                            let screen = parse_screen(value);
+                            if !value.is_empty() && screen.is_none() {
                                 return;
-                            };
+                            }
                             if this
                                 .infos
                                 .get(&id)
@@ -367,9 +365,10 @@ impl AccessoriesView {
                             }
                             return;
                         }
-                        let Some(assignment) = parse_assignment(value) else {
+                        let assignment = parse_assignment(value);
+                        if !value.is_empty() && assignment.is_none() {
                             return;
-                        };
+                        }
                         if this
                             .infos
                             .get(&id)
@@ -403,12 +402,12 @@ impl AccessoriesView {
         id: [u8; 6],
         device_choices: &[DeviceChoice],
         radios: &[AccessoryRadioInfo],
-        p: Palette,
+        p: &Palette,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let info = &self.infos[&id];
-        let mac = format_address(&id);
-        let connected = self.is_connected(&id);
+        let mac = format_address(id);
+        let connected = self.is_connected(id);
         let radio = radios::find_radio(radios, &info.radio);
         let connection = radio.and_then(|radio| {
             radio
@@ -425,9 +424,7 @@ impl AccessoriesView {
         } else {
             AccessoryConnectionState::Connecting
         };
-        let state = connection
-            .map(|connection| &connection.state)
-            .unwrap_or(&fallback);
+        let state = connection.map_or(&fallback, |connection| &connection.state);
         let assigned_uuid = info.assignment.map(NonZeroU64::get);
 
         let (assigned_slot, assigned_label) = match assigned_uuid {
@@ -502,6 +499,38 @@ impl AccessoriesView {
                 .on_click(cx.listener(move |this, _, _, cx| this.remove(id, cx))),
         );
         if marker {
+            let ota_enabled =
+                radio.is_some_and(|radio| radio.available && radio.accessory_supported);
+            actions = actions.child(
+                button(
+                    row_id("marker-ota"),
+                    if self.marker_ota_busy == Some(id) {
+                        "Updating…"
+                    } else {
+                        "Update over Bluetooth"
+                    },
+                    ButtonKind::Secondary,
+                    p,
+                )
+                .small()
+                .disabled(!ota_enabled || self.marker_ota_busy.is_some())
+                .on_click(cx.listener(move |this, _, _, cx| this.update_marker_ota(id, cx))),
+            );
+            if let Some((result_id, result)) = &self.marker_ota_result
+                && *result_id == id
+            {
+                actions = actions.child(
+                    div()
+                        .text_sm()
+                        .text_color(if result.is_ok() { p.success_ink } else { p.danger_ink })
+                        .child(match result {
+                            Ok(message) => message.clone(),
+                            Err(error) => format!(
+                                "Bluetooth update failed: {error}. Reconnect this same marker by USB, then use its firmware update row."
+                            ),
+                        }),
+                );
+            }
             actions = actions.child(
                 button(
                     row_id("reset-auto"),
@@ -577,13 +606,13 @@ impl AccessoriesView {
         &self,
         index: usize,
         nearby: &NearbyAccessory<'_>,
-        p: Palette,
+        p: &Palette,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let accessory = nearby.accessory;
         let id = accessory.address;
         let ty = accessory.ty;
-        let mac = format_address(&id);
+        let mac = format_address(id);
         let name = if accessory.name.is_empty() {
             ty.name().to_string()
         } else {
@@ -678,7 +707,7 @@ impl AccessoriesView {
 
 impl Render for AccessoriesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
 
         let device_choices: Vec<DeviceChoice> = self
             .hub
@@ -755,7 +784,7 @@ impl Render for AccessoriesView {
                 .filter(|(_, info)| info.ty.is_first_party() == first_party)
                 .map(|(id, _)| *id)
                 .collect();
-            added_ids.sort_by_key(|id| (!self.is_connected(id), *id));
+            added_ids.sort_by_key(|id| (!self.is_connected(*id), *id));
             if added_ids.is_empty() {
                 group = group.child(empty("None configured. Add an accessory from Nearby."));
             } else {
@@ -865,10 +894,10 @@ mod tests {
         assert_eq!(pairing_window(None, 0), PairingWindow::Unknown);
         assert_eq!(pairing_window(Some(0), 0), PairingWindow::Closed);
         assert_eq!(
-            pairing_window(pairing_expiry(&radios, &radios[0].radio, &[1; 6]), 1),
+            pairing_window(pairing_expiry(&radios, &radios[0].radio, [1; 6]), 1),
             PairingWindow::Closed,
         );
-        let expires = pairing_expiry(&radios, &radios[1].radio, &[1; 6]);
+        let expires = pairing_expiry(&radios, &radios[1].radio, [1; 6]);
         assert_eq!(pairing_window(expires, 29_999), PairingWindow::Open);
         assert_eq!(pairing_window(expires, 30_000), PairingWindow::Closed);
         assert_eq!(pairing_window(expires, u64::MAX), PairingWindow::Closed);
@@ -876,8 +905,8 @@ mod tests {
 
     #[test]
     fn the_dropdown_value_maps_to_an_assignment() {
-        assert_eq!(parse_assignment(""), Some(None));
-        assert_eq!(parse_assignment("42"), Some(NonZeroU64::new(42)));
+        assert_eq!(parse_assignment(""), None);
+        assert_eq!(parse_assignment("42"), NonZeroU64::new(42));
         // Zero is not a device and text is not a choice: the edit is ignored.
         assert_eq!(parse_assignment("0"), None);
         assert_eq!(parse_assignment("abc"), None);
@@ -885,9 +914,9 @@ mod tests {
 
     #[test]
     fn screen_assignment_accepts_all_six_screens_without_tracker_rules() {
-        assert_eq!(parse_screen(""), Some(None));
+        assert_eq!(parse_screen(""), None);
         for id in 0..6 {
-            assert_eq!(parse_screen(&id.to_string()), Some(Some(id)));
+            assert_eq!(parse_screen(&id.to_string()), Some(id));
         }
         assert_eq!(parse_screen("6"), None);
         assert_eq!(parse_screen("255"), None);

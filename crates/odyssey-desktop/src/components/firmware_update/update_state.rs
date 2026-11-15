@@ -6,11 +6,11 @@ pub(super) enum FirmwareUpdateState {
     Idle,
     /// An update is available but the device has no USB control connection.
     NeedsUsbConnection {
-        current: [u16; 3],
+        current: [u32; 3],
         available: String,
     },
     Available {
-        current: [u16; 3],
+        current: [u32; 3],
         available: String,
         device_type: String,
         vid: u16,
@@ -52,7 +52,7 @@ pub(super) enum FirmwareUpdateState {
 
 pub(super) const BYTES_PER_KB: usize = 1024;
 
-/// Whole percent of `total` that `progress` covers; an empty image counts as 0.
+/// Whole percent of `total` that `progress` covers. An empty image counts as 0.
 pub(super) fn percent_complete(progress: usize, total: usize) -> usize {
     (progress * 100).checked_div(total).unwrap_or(0)
 }

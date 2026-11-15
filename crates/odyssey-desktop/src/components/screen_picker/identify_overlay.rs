@@ -44,7 +44,7 @@ impl IdentifyOverlay {
         let timer = cx.background_executor().timer(IDENTIFY_DURATION);
         let close = cx.spawn_in(window, async move |_, cx| {
             timer.await;
-            cx.update(|window, _| window.remove_window()).ok();
+            let _ = cx.update(|window, _| window.remove_window());
         });
         Self {
             number,
@@ -56,7 +56,7 @@ impl IdentifyOverlay {
 
 impl Render for IdentifyOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         div()
             .size_full()
             .flex()

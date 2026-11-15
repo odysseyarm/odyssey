@@ -1,9 +1,9 @@
 name: Format
 
 # Check Rust formatting for every tracked .rs file: apps, crates, sdk and
-# firmware. rustfmt is handed the files directly rather than going through
-# cargo fmt, because the sdk and firmware crates are separate workspaces and
-# this needs no dependency resolution.
+# firmware. rustfmt gets the files directly instead of going through cargo fmt.
+# The sdk and firmware crates are separate workspaces, and this needs no
+# dependency resolution.
 
 on:
   push:

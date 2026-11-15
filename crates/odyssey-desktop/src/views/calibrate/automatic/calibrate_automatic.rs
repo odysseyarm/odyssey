@@ -116,7 +116,7 @@ impl CalibrateAutomaticView {
 
 impl Render for CalibrateAutomaticView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let wizard = self.wizard.clone();
         let (stage, step, demo, hidden) = {
             let state = wizard.read(cx);
@@ -174,7 +174,7 @@ impl Render for CalibrateAutomaticView {
 }
 
 impl CalibrateAutomaticView {
-    fn stage_view(&self, p: Palette, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
+    fn stage_view(&self, p: &Palette, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let wizard = &self.wizard;
         match stage {
             Stage::Setup => self.setup.clone().into_any_element(),
@@ -211,7 +211,7 @@ impl CalibrateAutomaticView {
     }
 }
 
-fn header(p: Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
+fn header(p: &Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
     let mut title = div().flex().items_center().gap_3().child(
         div()
             .text_xs()
@@ -249,6 +249,6 @@ fn header(p: Palette, wizard: &Entity<Wizard>, demo: bool) -> impl IntoElement {
         .child(
             button("exit", "Back to setup", ButtonKind::Ghost, p)
                 .small()
-                .on_click(super::ui::act(wizard, Wizard::exit)),
+                .on_click(super::ui::act(wizard, |_, cx| Wizard::exit(cx))),
         )
 }

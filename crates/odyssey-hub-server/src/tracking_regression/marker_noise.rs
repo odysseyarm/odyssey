@@ -18,28 +18,41 @@ const MATCH_GATE: f64 = 8.0;
 /// Variance of rounding to whole report units, already present in any report.
 const QUANTIZATION_VARIANCE: f64 = 1.0 / 12.0;
 
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MarkerNoise {
     /// Per-axis centroid standard deviation, rounding to whole units included.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub centroid_sigma: f64,
     /// Chance a marker present in the reports either side of this one is missing.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub dropout_probability: f64,
 }
 
 /// A measured model with the amount of evidence behind it.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct Measurement {
+    /// Since: Odyssey Desktop 0.7.0.
     pub model: MarkerNoise,
     /// Per-axis second differences behind `centroid_sigma`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub second_differences: usize,
     /// Markers seen in both neighbouring reports, behind `dropout_probability`.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub dropout_opportunities: usize,
 }
 
 impl MarkerNoise {
     fn validate(&self) -> Result<(), Error> {
-        if !(self.centroid_sigma.is_finite() && self.centroid_sigma >= 0.0)
+        if !self.centroid_sigma.is_finite()
+            || self.centroid_sigma < 0.0
             || !(0.0..=1.0).contains(&self.dropout_probability)
         {
             return Err(Error::Invalid(
@@ -99,7 +112,11 @@ fn nearest(points: &[[f64; 2]], to: [f64; 2], gate: f64) -> Option<[f64; 2]> {
 /// recording.
 ///
 /// # Errors
-/// A trace with too few repeated detections to estimate anything.
+/// Returns an error if no repeated detections provide both second-difference
+/// samples and dropout opportunities.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
 pub fn measure(trace: &Trace) -> Result<Measurement, Error> {
     let mut sum_squares = 0.0;
     let mut second_differences = 0;
@@ -146,6 +163,10 @@ pub fn measure(trace: &Trace) -> Result<Measurement, Error> {
 }
 
 /// Gaussian sample with standard deviation 1 (Box-Muller).
+#[expect(
+    clippy::manual_midpoint,
+    reason = "The generator is bounded to [-1, 1]; preserve seeded Gaussian samples"
+)]
 fn gaussian(random: &mut Perturbation) -> f64 {
     let u1 = ((random.next() + 1.0) / 2.0).max(f64::MIN_POSITIVE);
     let u2 = (random.next() + 1.0) / 2.0;
@@ -154,12 +175,20 @@ fn gaussian(random: &mut Perturbation) -> f64 {
 
 /// Copy of `trace` whose marker reports carry `noise`, deterministic in `seed`.
 ///
-/// Reports are already rounded to whole units, so only the variance beyond
-/// rounding is added: measuring the result gives back `centroid_sigma`. Truth,
-/// expectations and IMU samples are unchanged; provenance records the model.
+/// Reports are already rounded to whole units, so only the variance beyond rounding is
+/// added, and measuring the result gives back `centroid_sigma`. Truth, expectations
+/// and IMU samples are unchanged. Provenance records the model.
 ///
 /// # Errors
-/// An invalid model, or a result that fails trace validation.
+/// Returns an error if model parameters are invalid or applying them produces
+/// a trace that fails validation.
+///
+/// # Since
+/// Odyssey Desktop 0.7.0.
+#[expect(
+    clippy::manual_midpoint,
+    reason = "The generator is bounded to [-1, 1]; preserve seeded dropout samples"
+)]
 pub fn apply(trace: &Trace, noise: MarkerNoise, seed: u64) -> Result<Trace, Error> {
     noise.validate()?;
     let added_sigma = (noise.centroid_sigma.powi(2) - QUANTIZATION_VARIANCE)
@@ -262,6 +291,6 @@ mod tests {
         imu_only
             .samples
             .retain(|sample| matches!(sample.input, Input::Imu { .. }));
-        assert!(measure(&imu_only).is_err());
+        assert!(matches!(measure(&imu_only), Err(Error::Invalid(_))));
     }
 }
