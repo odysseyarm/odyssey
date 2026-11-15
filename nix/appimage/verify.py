@@ -17,23 +17,23 @@ import subprocess
 import sys
 
 LIVE_STORE_PATH = re.compile(rb"/nix/store/[0-9a-df-np-sv-z]{32}")
-errors = []
+errors: list[str] = []
 
 
-def fail(msg):
+def fail(msg: str) -> None:
     errors.append(msg)
 
 
-def readelf(flag, path):
+def readelf(flag: str, path: str) -> str:
     return subprocess.run(["readelf", "-W", flag, path], check=True, capture_output=True, text=True).stdout
 
 
-def is_elf(path):
+def is_elf(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(4) == b"\x7fELF"
 
 
-def dynamic(path):
+def dynamic(path: str) -> dict[str, list[str]]:
     out = readelf("-d", path)
     return {
         "needed": re.findall(r"\(NEEDED\)\s+Shared library: \[(.*?)\]", out),
@@ -42,22 +42,22 @@ def dynamic(path):
     }
 
 
-def interpreter(path):
+def interpreter(path: str) -> str | None:
     m = re.search(r"Requesting program interpreter: (\S+)\]", readelf("-l", path))
     return m.group(1) if m else None
 
 
-def needed_versions(path):
+def needed_versions(path: str) -> list[str]:
     out = readelf("-V", path)
     block = re.search(r"Version needs section.*?(?=\nVersion (?:definition|symbols) section|\Z)", out, re.S)
     return re.findall(r"Name: (\S+)\s+Flags", block.group(0)) if block else []
 
 
-def parse_version(text):
+def parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(p) for p in text.split("."))
 
 
-def check_versions(path, rel, maxima):
+def check_versions(path: str, rel: str, maxima: dict[str, str]) -> None:
     for name in needed_versions(path):
         prefix, _, ver = name.partition("_")
         if name == "GLIBC_PRIVATE":
@@ -66,7 +66,7 @@ def check_versions(path, rel, maxima):
             fail(f"{rel}: needs {name}, above the {prefix}_{maxima[prefix]} the host must provide")
 
 
-def check_desktop(root, name, desktop_name, icon_name):
+def check_desktop(root: str, name: str, desktop_name: str, icon_name: str) -> None:
     for rel in (f"{name}.desktop", f"usr/share/applications/{name}.desktop"):
         path = os.path.join(root, rel)
         if not os.path.isfile(path):
@@ -90,7 +90,7 @@ def check_desktop(root, name, desktop_name, icon_name):
                 fail(f"{rel} does not resolve to the icon")
 
 
-def check_image(path, expected_name):
+def check_image(path: str, expected_name: str) -> None:
     if os.path.basename(path) != expected_name:
         fail(f"AppImage is named {os.path.basename(path)}, expected {expected_name}")
     if not os.access(path, os.X_OK):
@@ -105,7 +105,7 @@ def check_image(path, expected_name):
         fail("AppImage runtime needs a dynamic loader; it must be static")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
     ap.add_argument("--policy", required=True)
@@ -182,7 +182,7 @@ def main():
     return report()
 
 
-def report():
+def report() -> None:
     if errors:
         print("AppImage contract violated:", file=sys.stderr)
         for e in errors:

@@ -12,7 +12,7 @@ import local
 SCRIPTS = Path(__file__).resolve().parent
 
 
-def check(shell, private):
+def check(shell: str, private: str) -> None:
     with tempfile.TemporaryDirectory() as work:
         root = Path(work)
         repo = root / "repo"
@@ -22,7 +22,7 @@ def check(shell, private):
         jj_config.write_text('[user]\nname = "Cache Test"\nemail = "cache-test@example.invalid"\n')
         env = os.environ | {"JJ_CONFIG": str(jj_config), "ODYSSEY_CACHE_STATE": str(state), "ODYSSEY_CACHE_EVENTS": str(root / "events"), "NIX_SIGNING_KEY_FILE": str(root / "missing-key")}
 
-        def run(*args, check=True):
+        def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
             result = subprocess.run(args, cwd=repo, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if check and result.returncode:
                 raise RuntimeError(f"{args}: {result.stdout}\n{result.stderr}")
@@ -33,7 +33,7 @@ def check(shell, private):
         run("jj", "git", "remote", "add", "origin", str(remote))
         system = run("nix", "eval", "--impure", "--raw", "--expr", "builtins.currentSystem").stdout
 
-        def write_flake(name, policy):
+        def write_flake(name: str, policy: bool) -> None:
             (repo / "flake.nix").write_text(f'''{{
   inputs.odyssey-cv = {{ url = "path:{private}"; flake = false; }};
   outputs = inputs: let drv = builtins.derivation {{
@@ -69,7 +69,7 @@ def check(shell, private):
         rows, _selection = local.pending_selection(db)
         assert len(rows) == 2, failed.stdout + failed.stderr
 
-        def copy(selection):
+        def copy(selection: dict[str, str]) -> None:
             selected = subprocess.check_output(["bash", str(SCRIPTS / "paths.sh")], cwd=repo, env=env | selection, text=True).split()
             run("nix", "copy", "--to", f"file://{root}/cache", *selected)
 

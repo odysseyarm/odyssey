@@ -11,13 +11,16 @@ import tempfile
 import tomllib
 import zipfile
 import zlib
+from collections.abc import Collection, Iterable
 from pathlib import Path
+from io import BufferedIOBase
+from typing import IO
 
 MAX_ARCHIVE_DEPTH = 8
 
 
-def private_sources(paths, explicit_sources):
-    fingerprints = set()
+def private_sources(paths: Iterable[Path | str], explicit_sources: Iterable[Path | str]) -> set[bytes]:
+    fingerprints: set[bytes] = set()
     roots = set(map(Path, explicit_sources))
     for root in paths:
         base = Path(root)
@@ -39,7 +42,7 @@ def private_sources(paths, explicit_sources):
     return fingerprints
 
 
-def scan_file(path, fingerprints, forbidden_paths=(), depth=0, public_graph=False):
+def scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Collection[bytes] = (), depth: int = 0, public_graph: bool = False) -> bool:
     try:
         return _scan_file(path, fingerprints, forbidden_paths, depth, public_graph)
     except (ValueError, NotImplementedError, EOFError, OSError, tarfile.TarError, zipfile.BadZipFile, lzma.LZMAError, zlib.error) as error:
@@ -49,7 +52,7 @@ def scan_file(path, fingerprints, forbidden_paths=(), depth=0, public_graph=Fals
             return hash_stream(stream, fingerprints, forbidden_paths)
 
 
-def _scan_file(path, fingerprints, forbidden_paths, depth, public_graph):
+def _scan_file(path: str | Path, fingerprints: set[bytes], forbidden_paths: Collection[bytes], depth: int, public_graph: bool) -> bool:
     if depth >= MAX_ARCHIVE_DEPTH:
         raise ValueError(f"Archive nesting exceeds {MAX_ARCHIVE_DEPTH}: {path}")
     with open(path, "rb") as stream:
@@ -81,10 +84,13 @@ def _scan_file(path, fingerprints, forbidden_paths, depth, public_graph):
         return False
     try:
         with tarfile.open(path, mode="r:*") as archive:
-            for item in archive.getmembers():
-                if not item.isfile():
+            for member in archive.getmembers():
+                if not member.isfile():
                     continue
-                with archive.extractfile(item) as source:
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    return True
+                with extracted as source:
                     if scan_stream(source, fingerprints, forbidden_paths, depth + 1, public_graph):
                         return True
         return False
@@ -95,7 +101,7 @@ def _scan_file(path, fingerprints, forbidden_paths, depth, public_graph):
             return hash_stream(stream, fingerprints, forbidden_paths)
 
 
-def hash_stream(stream, fingerprints, forbidden_paths):
+def hash_stream(stream: IO[bytes] | BufferedIOBase, fingerprints: set[bytes], forbidden_paths: Collection[bytes]) -> bool:
     digest = hashlib.sha256()
     carry = b""
     carry_size = max((len(path) for path in forbidden_paths), default=1) - 1
@@ -108,7 +114,7 @@ def hash_stream(stream, fingerprints, forbidden_paths):
     return digest.digest() in fingerprints
 
 
-def scan_stream(stream, fingerprints, forbidden_paths=(), depth=0, public_graph=False):
+def scan_stream(stream: IO[bytes] | BufferedIOBase, fingerprints: set[bytes], forbidden_paths: Collection[bytes] = (), depth: int = 0, public_graph: bool = False) -> bool:
     with tempfile.NamedTemporaryFile() as payload:
         shutil.copyfileobj(stream, payload)
         payload.flush()
@@ -116,7 +122,7 @@ def scan_stream(stream, fingerprints, forbidden_paths=(), depth=0, public_graph=
 
 
 
-def main():
+def main() -> int:
     payloads, provenance, explicit_source_text, public_text, _end = sys.stdin.read().split("\0")
     roots = [Path(item) for item in provenance.splitlines() if item]
     explicit_sources = [Path(item) for item in explicit_source_text.split()]
@@ -136,7 +142,7 @@ def main():
                 print(f"Private source fingerprints unavailable for non-public payload {path}; refusing cache upload", file=sys.stderr)
                 return 1
             if path.is_file():
-                files = [path]
+                files: Iterable[Path] = [path]
             elif path.is_dir():
                 files = (entry for entry in path.rglob("*") if entry.is_file())
             else:

@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -20,53 +21,53 @@ TRUTH_COLOR = [60, 220, 100]
 PREDICTED_COLOR = [255, 140, 40]
 
 
-def require(condition, message):
+def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
 
 
-def _unique_object(pairs):
-    result = {}
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
     for key, value in pairs:
         require(key not in result, f"duplicate JSON key: {key}")
         result[key] = value
     return result
 
 
-def load_json(path):
+def load_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open("rb") as stream:
         raw = stream.read(MAX_BYTES + 1)
     require(len(raw) <= MAX_BYTES, f"JSON exceeds {MAX_BYTES} bytes: {path}")
-    value = json.loads(raw, object_pairs_hook=_unique_object,
+    value: dict[str, Any] = json.loads(raw, object_pairs_hook=_unique_object,
                        parse_constant=lambda value: require(False, f"nonfinite JSON: {value}"))
     require(isinstance(value, dict), "JSON root must be an object")
     return value
 
 
-def entity(identifier):
+def entity(identifier: str) -> str:
     return "id-" + str(identifier).encode("utf-8").hex()
 
 
-def client_position(position):
+def client_position(position: Any) -> Any:
     return FLIP @ np.asarray(position, dtype=float)
 
 
-def client_rotation(rotation):
+def client_rotation(rotation: Any) -> Any:
     return FLIP @ np.asarray(rotation, dtype=float) @ FLIP
 
 
-def quaternion_matrix(quaternion):
+def quaternion_matrix(quaternion: Any) -> Any:
     x, y, z, w = np.asarray(quaternion) / np.linalg.norm(quaternion)
     return np.array([[1 - 2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
                      [2*(x*y+z*w), 1 - 2*(x*x+z*z), 2*(y*z-x*w)],
                      [2*(x*z-y*w), 2*(y*z+x*w), 1 - 2*(x*x+y*y)]])
 
 
-def physical_to_world(screen, points):
+def physical_to_world(screen: dict[str, Any], points: Any) -> Any:
     return np.asarray(points) @ quaternion_matrix(screen["calibration"]["rotation"])
 
 
-def uv_to_world(screen, uv):
+def uv_to_world(screen: dict[str, Any], uv: Sequence[float]) -> Any:
     u, v = uv
     if not 0.0 <= u <= 1.0 or not 0.0 <= v <= 1.0:
         return None
@@ -90,7 +91,7 @@ def uv_to_world(screen, uv):
     return physical_to_world(screen, physical)
 
 
-def screen_mesh(screen):
+def screen_mesh(screen: dict[str, Any]) -> tuple[Any, Any, Any, list[Any]]:
     surface = screen["calibration"].get("surface")
     columns, rows = (surface["columns"], surface["rows"]) if surface else (17, 17)
     uv = [[x/(columns-1), y/(rows-1)] for y in range(rows) for x in range(columns)]
@@ -106,7 +107,8 @@ def screen_mesh(screen):
     return positions, np.asarray(triangles), np.asarray(uv), lines
 
 
-def authoritative(validator, arguments, allow_failed_accuracy=False):
+def authoritative(validator: str, arguments: Sequence[str | Path],
+                  allow_failed_accuracy: bool = False) -> dict[str, Any]:
     # Temporary files bound process output without keeping an unbounded pipe in RAM.
     with tempfile.TemporaryDirectory(prefix="odyssey-validation-") as directory:
         stdout_path, stderr_path = Path(directory)/"stdout.json", Path(directory)/"stderr.txt"
@@ -128,7 +130,7 @@ def authoritative(validator, arguments, allow_failed_accuracy=False):
         return value
 
 
-def checked_asset(asset, root, validator):
+def checked_asset(asset: dict[str, Any], root: Path, validator: str) -> dict[str, Any]:
     relative = Path(asset["path"])
     require(not relative.is_absolute(), "visual asset path must be relative")
     path = (root/relative).resolve()
@@ -145,7 +147,7 @@ def checked_asset(asset, root, validator):
     return {**asset, "path": path}
 
 
-def load_input(path, validator):
+def load_input(path: str | Path, validator: str) -> dict[str, Any]:
     if Path(path).suffix == ".json":
         document = load_json(path)
         require("samples" not in document, "traces must be CBOR, not JSON")
@@ -153,7 +155,10 @@ def load_input(path, validator):
     return authoritative(validator, ["dump", path])
 
 
-def checked_inputs(input_path, capture_path, report_path, manifest_path, validator):
+def checked_inputs(input_path: Path, capture_path: Path | None, report_path: Path | None,
+                   manifest_path: Path | None, validator: str) -> tuple[
+                       dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None,
+                       dict[str, Path], dict[str, Any] | None]:
     document = load_input(input_path, validator)
     trace = document if "samples" in document else None
     scene = trace.get("scene") if trace else document
@@ -168,11 +173,12 @@ def checked_inputs(input_path, capture_path, report_path, manifest_path, validat
             authoritative(validator, ["validate-scene", scene_path])
         report = None
         if capture_path or report_path:
-            require(trace is not None, "predictions require an original trace, not standalone scene")
+            if trace is None:
+                raise ValueError("predictions require an original trace, not standalone scene")
             if report_path:
                 report = authoritative(validator, ["evaluate-report", input_path, report_path], True)
             else:
-                report = authoritative(validator, ["evaluate", input_path, capture_path], True)
+                report = authoritative(validator, ["evaluate", input_path, str(capture_path)], True)
             outputs = report["capture"]["outputs"]
             require(len(outputs) == len(trace["samples"]) and
                     all(row["sample_index"] == index for index, row in enumerate(outputs)),
@@ -181,7 +187,8 @@ def checked_inputs(input_path, capture_path, report_path, manifest_path, validat
     visual_asset = None
     if manifest_path:
         manifest = load_json(manifest_path)
-        require(scene is not None, "image manifest requires scene")
+        if scene is None:
+            raise ValueError("image manifest requires scene")
         require(manifest.get("schema_version") == 1 and manifest.get("scene_schema_version") == 1,
                 "unsupported image manifest schema")
         require(manifest.get("scene") == scene, "image manifest scene differs from input scene")
@@ -218,7 +225,7 @@ def checked_inputs(input_path, capture_path, report_path, manifest_path, validat
     return scene, trace, report, dict(images), visual_asset
 
 
-def sdk():
+def sdk() -> tuple[Any, str]:
     version = importlib.metadata.version("rerun-sdk")
     numbers = tuple(int(part) for part in version.split(".")[:2])
     require(numbers == (0, 38), f"unsupported rerun-sdk {version}; use declared shell (0.38.1)")
@@ -226,21 +233,22 @@ def sdk():
     return rr, version
 
 
-def set_clock(recording, name, index, elapsed_us):
+def set_clock(recording: Any, name: str, index: int, elapsed_us: float) -> None:
     recording.reset_time()
     recording.set_time(name + "_index", sequence=index)
     recording.set_time(name + "_elapsed", duration=elapsed_us / 1_000_000)
 
 
-def source_identity(trace, source):
+def source_identity(trace: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     return {"source_id": source["id"], "device_uuid": source["device_uuid"],
             "clock_basis": source["clock_basis"], "trace_provenance": trace["provenance"],
             "provenance_kind": "declared, not inferred from pixels or device ID"}
 
 
-def default_blueprint(scene, trace, screens):
+def default_blueprint(scene: dict[str, Any] | None, trace: dict[str, Any] | None,
+                      screens: dict[int, dict[str, Any]]) -> Any:
     import rerun.blueprint as blueprint
-    points = []
+    points: list[Any] = []
     for screen in screens.values():
         surface = screen["calibration"].get("surface")
         points.extend(physical_to_world(screen, surface["positions_m"]) if surface else
@@ -291,7 +299,10 @@ def default_blueprint(scene, trace, screens):
         auto_layout=False, auto_views=False)
 
 
-def export_recording(output, scene, trace=None, report=None, images=None, visual_asset=None):
+def export_recording(output: str | Path, scene: dict[str, Any] | None,
+                     trace: dict[str, Any] | None = None, report: dict[str, Any] | None = None,
+                     images: dict[str, Path] | None = None,
+                     visual_asset: dict[str, Any] | None = None) -> Path:
     rr, version = sdk()
     images = images or {}
     output = Path(output)
@@ -302,7 +313,7 @@ def export_recording(output, scene, trace=None, report=None, images=None, visual
         screens = {screen["id"]: screen for screen in scene["screens"]} if scene else {
             screen["id"]: {**screen,
                            "marker_ids": [f"screen-{screen['id']}-marker-index-{i}" for i in range(6)]}
-            for screen in trace["screens"]}
+            for screen in cast(dict[str, Any], trace)["screens"]}
         recording = rr.RecordingStream("odyssey-tracking-regression")
         recording.save(temporary, default_blueprint=default_blueprint(scene, trace, screens))
         recording.log("world", rr.ViewCoordinates.RDF, static=True)
@@ -336,7 +347,7 @@ def export_recording(output, scene, trace=None, report=None, images=None, visual
         if scene:
             recording.log("identity/scene", rr.TextDocument(scene["provenance"]), static=True)
             cameras = {camera["id"]: camera for camera in scene["cameras"]}
-            paths = {}
+            paths: dict[str, list[Any]] = {}
             for camera in cameras.values():
                 recording.log("identity/cameras/"+entity(camera["id"]), rr.TextDocument(json.dumps(camera, indent=2)), static=True)
                 paths[camera["id"]] = []
@@ -431,7 +442,8 @@ def export_recording(output, scene, trace=None, report=None, images=None, visual
     return output
 
 
-def log_hit(recording, rr, screens, value, suffix, color):
+def log_hit(recording: Any, rr: Any, screens: dict[int, dict[str, Any]],
+            value: dict[str, Any] | None, suffix: str, color: list[int]) -> None:
     world_path, uv_path = "world/hits/"+suffix, "aim_uv/"+suffix
     recording.log(world_path, rr.Clear(recursive=True))
     recording.log(uv_path, rr.Clear(recursive=True))
@@ -447,16 +459,17 @@ def log_hit(recording, rr, screens, value, suffix, color):
                           labels=[suffix.split("/")[0]], show_labels=False))
 
 
-def read_recording(path, entities=None):
+def read_recording(path: str | Path,
+                   entities: set[str] | None = None) -> dict[str, list[dict[str, Any]]]:
     import pyarrow as pa
     from rerun.chunk import RrdReader
-    result = {}
+    result: dict[str, list[dict[str, Any]]] = {}
     for chunk in RrdReader(path).stream():
         name = chunk.entity_path.lstrip("/")
         if entities is not None and name not in entities:
             continue
         batch = chunk.to_record_batch()
-        columns = {}
+        columns: dict[str, Any] = {}
         for field, column in zip(batch.schema, batch.columns):
             if field.name in ("log_time", "log_tick", "rerun.controls.RowId"):
                 continue
@@ -467,11 +480,13 @@ def read_recording(path, entities=None):
     return result
 
 
-def check_recording(path, scene, trace, report):
+def check_recording(path: str | Path, scene: dict[str, Any] | None, trace: dict[str, Any] | None,
+                    report: dict[str, Any] | None) -> None:
     selected = {"identity/runtime"}
     if scene:
         selected.update(f"world/screens/{screen['id']}/surface" for screen in scene["screens"])
     if report:
+        assert trace is not None
         selected.update("samples/"+entity(source["id"])+"/predicted_valid" for source in trace["sources"])
     rows = read_recording(path, selected)
     require("identity/runtime" in rows, "recording identity missing")
@@ -481,6 +496,7 @@ def check_recording(path, scene, trace, report):
             actual = next(row["Mesh3D:vertex_positions"] for row in values if row.get("Mesh3D:vertex_positions"))
             np.testing.assert_allclose(actual, screen_mesh(screen)[0], rtol=1e-5, atol=1e-6)
     if report:
+        assert trace is not None
         for source in trace["sources"]:
             name = "samples/"+entity(source["id"])+"/predicted_valid"
             expected = [int(row["tracking"] is not None) for sample, row in
@@ -490,7 +506,7 @@ def check_recording(path, scene, trace, report):
             require(actual == expected, "recorded prediction validity differs from evaluated capture")
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="standalone scene v2 or original trace JSON")
     parser.add_argument("output", type=Path, help="new .rrd; never overwritten")

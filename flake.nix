@@ -36,6 +36,13 @@
       packages = forAllSystems (system: projects.${system}.packages);
       checks = forAllSystems (system: projects.${system}.checks // {
         format = treefmt.${system}.config.build.check self;
+        python-types = let pkgs = projects.${system}.pkgs; in pkgs.runCommand "odyssey-python-types" {
+          nativeBuildInputs = [ pkgs.mypy ];
+        } ''
+          cd ${self}
+          mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
+          touch "$out"
+        '';
       });
       legacyPackages = forAllSystems (system: { inherit (projects.${system}) publicCache; });
       formatter = forAllSystems (system: treefmt.${system}.config.build.wrapper);

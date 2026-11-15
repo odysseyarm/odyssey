@@ -17,11 +17,13 @@ import posixpath
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Any
 
-SUITES = ("host", "xtask", "protocols", "proofs", "cache", "tracking", "ffi", "uniffi", "format")
+SUITES = ("host", "xtask", "protocols", "proofs", "cache", "tracking", "ffi", "uniffi", "format", "python")
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
@@ -54,7 +56,7 @@ HOST_DATA = (
 class Rule:
     paths: list[str]
     skip: tuple[str, ...] = ()
-    match: object = None
+    match: Callable[[str], bool] | None = None
     reasons: dict[str, str] = field(default_factory=dict)
 
 
@@ -63,7 +65,7 @@ def inside(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
-def dependency_paths(directory: str, data: dict, shared: dict[str, str]) -> set[str]:
+def dependency_paths(directory: str, data: dict[str, Any], shared: dict[str, str]) -> set[str]:
     tables = [data.get(key, {}) for key in DEPENDENCY_TABLES]
     for target in data.get("target", {}).values():
         tables.extend(target.get(key, {}) for key in DEPENDENCY_TABLES)
@@ -80,7 +82,7 @@ def dependency_paths(directory: str, data: dict, shared: dict[str, str]) -> set[
     return found
 
 
-def load_graph(root: Path, manifests: list[str]) -> tuple[dict[str, set[str]], dict]:
+def load_graph(root: Path, manifests: list[str]) -> tuple[dict[str, set[str]], dict[str, Any]]:
     parsed = {
         posixpath.dirname(manifest) or ".": tomllib.loads((root / manifest).read_text(encoding="utf-8-sig"))
         for manifest in manifests
@@ -113,7 +115,7 @@ def closure(graph: dict[str, set[str]], roots: list[str]) -> list[str]:
     return sorted(seen)
 
 
-def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
+def build_rules(graph: dict[str, set[str]], workspace: dict[str, Any]) -> dict[str, Rule]:
     members = [
         directory
         for directory in graph
@@ -189,6 +191,7 @@ def build_rules(graph: dict[str, set[str]], workspace: dict) -> dict[str, Rule]:
         ),
         "cache": Rule([".github/actions/push-cache", f"{workflow}host-ci.yml"]),
         "format": Rule(["rustfmt.toml", "treefmt.nix", f"{workflow}fmt.yml"], match=formatted),
+        "python": Rule(["mypy.ini", f"{workflow}python-types.yml"], match=lambda path: path.endswith(".py")),
         "ffi": ffi,
         "uniffi": uniffi,
     }
@@ -230,7 +233,7 @@ def changed_files(base: str, head: str) -> list[str]:
 
 
 def select(environment: dict[str, str]) -> tuple[dict[str, str | None], str]:
-    everything = {suite: "run everything" for suite in SUITES}
+    everything: dict[str, str | None] = {suite: "run everything" for suite in SUITES}
     compared = comparison(environment)
     if compared is None:
         return everything, f"{environment.get('EVENT', 'unknown')} runs every suite"

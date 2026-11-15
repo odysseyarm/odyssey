@@ -34,30 +34,30 @@ LIVE_STORE_PATH = re.compile(rb"/nix/store/([0-9a-df-np-sv-z]{32})(?=-)")
 OPENSSL_DIR = re.compile(rb"/nix/store/[0-9a-df-np-sv-z]{32}-openssl[^/\x00\"\s]*/etc/ssl")
 
 
-def run(*cmd):
+def run(*cmd: str) -> str:
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
 
-def is_elf(path):
+def is_elf(path: str) -> bool:
     with open(path, "rb") as f:
         return f.read(4) == b"\x7fELF"
 
 
-def needed(path):
+def needed(path: str) -> list[str]:
     return run("patchelf", "--print-needed", path).split()
 
 
-def rpath_dirs(path):
+def rpath_dirs(path: str) -> list[str]:
     origin = os.path.dirname(os.path.realpath(path))
     raw = run("patchelf", "--print-rpath", path).strip()
     return [d.replace("${ORIGIN}", origin).replace("$ORIGIN", origin) for d in raw.split(":") if d]
 
 
-def is_host(soname, patterns):
+def is_host(soname: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(soname, p) for p in patterns)
 
 
-def resolve(soname, requester, root_dirs, search):
+def resolve(soname: str, requester: str, root_dirs: list[str], search: list[str]) -> str:
     for d in rpath_dirs(requester) + root_dirs + search:
         candidate = os.path.join(d, soname)
         if os.path.isfile(candidate):
@@ -65,11 +65,11 @@ def resolve(soname, requester, root_dirs, search):
     sys.exit(f"bundle: cannot resolve {soname} needed by {requester}")
 
 
-def sanitize(path):
+def sanitize(path: str) -> None:
     with open(path, "rb") as f:
         data = f.read()
 
-    def openssl(m):
+    def openssl(m: re.Match[bytes]) -> bytes:
         return b"/etc/ssl".ljust(len(m.group(0)), b"/")
 
     out = OPENSSL_DIR.sub(openssl, data)
@@ -77,13 +77,13 @@ def sanitize(path):
     out = LIVE_STORE_PATH.sub(lambda m: b"/nix/store/" + b"e" * 32, out)
     if out != data:
         mode = os.stat(path).st_mode
-        with open(path, "wb") as f:
-            f.write(out)
+        with open(path, "wb") as w:
+            w.write(out)
         os.chmod(path, mode)
         print(f"bundle: cut {len(seen)} store reference(s) in {os.path.relpath(path)}")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", required=True)
     ap.add_argument("--appdir", required=True)

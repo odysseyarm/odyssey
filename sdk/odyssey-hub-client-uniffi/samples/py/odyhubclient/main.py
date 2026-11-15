@@ -20,7 +20,7 @@ def lookup_timestamp(hist: ohc.TrackingHistory, impact_ts: int, shot_delay_ms: i
         base_ts = impact_ts
     return (base_ts - shot_delay_us) & 0xFFFFFFFF
 
-async def main():
+async def main() -> None:
     while True:
         try:
             client = ohc.Client()

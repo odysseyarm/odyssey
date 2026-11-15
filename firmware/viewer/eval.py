@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 from io import TextIOWrapper
 import json, sys, argparse, os
+from typing import Any
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("path", type=str, help="Path to directory containing calibration")
     args = parser.parse_args()
@@ -25,7 +26,7 @@ def main():
     print("file://" + str(Path(os.getcwd()) / outpath))
 
 
-def run(nf_calib: dict, wf_calib: dict, stereo_calib: dict, outfile: TextIOWrapper):
+def run(nf_calib: dict[str, Any], wf_calib: dict[str, Any], stereo_calib: dict[str, Any], outfile: TextIOWrapper) -> None:
     nf_calib_images = ['/'.join(p.split('/')[2:]) for p in nf_calib["image_files"]]
     wf_calib_images = ['/'.join(p.split('/')[2:]) for p in wf_calib["image_files"]]
     stereo_calib_images = {

@@ -2,6 +2,7 @@
 """Persist exact approvals and retain built outputs until their upload succeeds."""
 
 import argparse
+from collections.abc import Callable
 import fcntl
 import hashlib
 import json
@@ -12,18 +13,19 @@ import sqlite3
 import subprocess
 import tempfile
 import sys
+from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 STORE_PATH = re.compile(r"/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}-[^/\s]+\Z")
 
 
-def store_path(value):
+def store_path(value: str) -> str:
     if not STORE_PATH.fullmatch(value):
         raise ValueError(f"Invalid store path: {value!r}")
     return value
 
 
-def open_queue(state):
+def open_queue(state: Path) -> sqlite3.Connection:
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     db = sqlite3.connect(state / "queue.sqlite")
     db.execute("PRAGMA synchronous = FULL")
@@ -34,7 +36,7 @@ def open_queue(state):
     return db
 
 
-def register(db, plan):
+def register(db: sqlite3.Connection, plan: str) -> None:
     rows = []
     private = []
     for line in plan.splitlines():
@@ -58,7 +60,7 @@ def register(db, plan):
             db.execute("INSERT OR IGNORE INTO approvals (id,policy,drv,outputs,private_sources) VALUES (?,?,?,?,?)", (key, *values))
 
 
-def record_completed(db, events):
+def record_completed(db: sqlite3.Connection, events: Path) -> None:
     if not events.exists():
         return
     with db:
@@ -74,7 +76,7 @@ def record_completed(db, events):
             db.execute("INSERT OR REPLACE INTO completed VALUES (?,?)", (drv, json.dumps(sorted(set(outputs)))))
 
 
-def discover(db, state):
+def discover(db: sqlite3.Connection, state: Path) -> None:
     roots = state / "roots"
     roots.mkdir(exist_ok=True)
     for key, policy, drv, encoded, recorded in db.execute("""SELECT a.id,a.policy,a.drv,a.outputs,c.outputs
@@ -100,7 +102,7 @@ def discover(db, state):
             db.execute("UPDATE approvals SET status='pending' WHERE id=?", (key,))
 
 
-def pending_selection(db):
+def pending_selection(db: sqlite3.Connection) -> tuple[list[Any], dict[str, str]]:
     rows = db.execute("SELECT id,policy,drv,outputs,private_sources FROM approvals WHERE status='pending' ORDER BY id").fetchall()
     outputs, closures, private = set(), set(), set()
     for _key, policy, drv, encoded, sources in rows:
@@ -115,7 +117,7 @@ def pending_selection(db):
         "PRIVATE_SOURCES": " ".join(sorted(private)),
     }
 
-def flush(db, state, upload):
+def flush(db: sqlite3.Connection, state: Path, upload: Callable[[dict[str, str]], Any]) -> None:
     rows, selection = pending_selection(db)
     if rows:
         upload(selection)
@@ -125,7 +127,7 @@ def flush(db, state, upload):
         (state / "roots" / key).unlink(missing_ok=True)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--register", metavar="FLAKE", help="persist approvals without uploading or building")

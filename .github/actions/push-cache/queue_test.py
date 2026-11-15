@@ -10,7 +10,7 @@ import tempfile
 import local
 
 
-def check(drv, output, dependency, unbuilt_drv, unbuilt_output):
+def check(drv: str, output: str, dependency: str, unbuilt_drv: str, unbuilt_output: str) -> None:
     with tempfile.TemporaryDirectory() as work:
         state = Path(work) / "state"
         events = Path(work) / "events"
@@ -33,7 +33,7 @@ def check(drv, output, dependency, unbuilt_drv, unbuilt_output):
         assert output in references and dependency in references
         assert not subprocess.run(["nix-store", "--check-validity", unbuilt_output], stderr=subprocess.DEVNULL).returncode == 0
 
-        def offline(_selection):
+        def offline(_selection: dict[str, str]) -> None:
             raise OSError("Connection unavailable")
 
         try:
@@ -46,7 +46,7 @@ def check(drv, output, dependency, unbuilt_drv, unbuilt_output):
         db = local.open_queue(state)
         assert root.exists() and local.pending_selection(db)[0]
 
-        def copy(_selection):
+        def copy(_selection: dict[str, str]) -> None:
             subprocess.run(["nix", "copy", "--to", f"file://{work}/cache", output, dependency], check=True)
 
         local.flush(db, state, copy)

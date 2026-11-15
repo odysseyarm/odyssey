@@ -6,13 +6,14 @@ from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+from typing import Any
 
 import numpy as np
 
 import rerun_export as export
 
 
-def fixture():
+def fixture() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     screen = {"id": 0, "calibration": {"rotation": [0, 0, 0, 1],
               "homography": [0.5, 0, 0, 0, 1, 0, 0, 0, 1],
               "object_points": [[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0]]},
@@ -30,7 +31,7 @@ def fixture():
               "clock_basis": "physical arrival epoch unknown; sensor clock wraps independently",
               "settings": {"camera_model_nf": {"k": [500, 0, 0, 0, 500, 0, 320, 240, 1]},
                            "camera_model_wf": {"k": [500, 0, 0, 0, 500, 0, 320, 240, 1]}}}
-    sample = {"elapsed_us": 900, "source_id": source["id"], "input": {"type": "imu", "timestamp": 4294967295,
+    sample: dict[str, Any] = {"elapsed_us": 900, "source_id": source["id"], "input": {"type": "imu", "timestamp": 4294967295,
               "accel": [0, 0, 9.81], "gyro": [0, 0, 0]}, "truth": truth,
               "expectation": True, "score": True, "image_artifacts": []}
     optical = copy.deepcopy(sample)
@@ -51,17 +52,17 @@ def fixture():
     return scene, trace, report
 
 
-def recording_rows(path):
+def recording_rows(path: Path) -> dict[str, list[dict[str, Any]]]:
     return export.read_recording(path)
 
 
-def component(rows, entity, fragment):
+def component(rows: dict[str, list[dict[str, Any]]], entity: str, fragment: str) -> list[Any]:
     return [value for row in rows[entity] for name, value in row.items()
             if fragment in name.lower() and value is not None and value != []]
 
 
 class Geometry(unittest.TestCase):
-    def test_client_rotation_changes_both_bases(self):
+    def test_client_rotation_changes_both_bases(self) -> None:
         rotation = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
         np.testing.assert_allclose(export.client_position([1, 2, 3]), [1, -2, -3])
         np.testing.assert_allclose(export.client_rotation(rotation), [[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
@@ -69,7 +70,7 @@ class Geometry(unittest.TestCase):
         np.testing.assert_allclose(export.client_rotation(rotation) @ export.client_position(vector),
                                    export.client_position(np.array(rotation) @ vector))
 
-    def test_inverse_homography_is_projective_not_bilinear(self):
+    def test_inverse_homography_is_projective_not_bilinear(self) -> None:
         scene, _, _ = fixture()
         screen = scene["screens"][0]
         screen["calibration"]["homography"] = [0.5, 0, 0.1, 0.1, 1, 0, 0, 0, 1]
@@ -82,7 +83,7 @@ class Geometry(unittest.TestCase):
         screen["calibration"]["rotation"] = [0, 0, math.sqrt(0.5), math.sqrt(0.5)]
         np.testing.assert_allclose(export.physical_to_world(screen, [1, 0, 0]), [0, -1, 0], atol=1e-14)
 
-    def test_wavy_grid_uses_cell_diagonal_and_nonlinear_spacing(self):
+    def test_wavy_grid_uses_cell_diagonal_and_nonlinear_spacing(self) -> None:
         scene, _, _ = fixture()
         screen = scene["screens"][0]
         screen["calibration"]["surface"] = {"columns": 2, "rows": 2,
@@ -94,7 +95,7 @@ class Geometry(unittest.TestCase):
         np.testing.assert_equal(triangles, [[0, 1, 3], [0, 3, 2]])
         self.assertIsNone(export.uv_to_world(screen, [1.01, 0.5]))
 
-    def test_real_rrd_preserves_coordinates_clocks_identity_and_missing_outputs(self):
+    def test_real_rrd_preserves_coordinates_clocks_identity_and_missing_outputs(self) -> None:
         scene, trace, report = fixture()
         source = export.entity(trace["sources"][0]["id"])
         with tempfile.TemporaryDirectory() as directory:
@@ -129,7 +130,7 @@ class Geometry(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "overwrite"):
                 export.export_recording(path, scene)
 
-    def test_asset_rejects_changed_evidence_and_path_escape_before_import(self):
+    def test_asset_rejects_changed_evidence_and_path_escape_before_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root/"visual.glb").write_bytes(b"changed asset")
@@ -142,7 +143,7 @@ class Geometry(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "escapes"):
                 export.checked_asset(asset, root, "/not-invoked")
 
-    def test_cbor_trace_capture_and_report_cross_rust_boundary(self):
+    def test_cbor_trace_capture_and_report_cross_rust_boundary(self) -> None:
         validator = os.environ.get("TRACKING_REGRESSION", "target/debug/tracking-regression")
         validator = str(Path(validator).resolve())
         with tempfile.TemporaryDirectory() as directory:
@@ -157,11 +158,13 @@ class Geometry(unittest.TestCase):
             _, loaded, report, _, _ = export.checked_inputs(
                 trace_path, capture_path, None, None, validator)
             self.assertEqual(loaded, trace)
+            assert report is not None
             supplied = copy.deepcopy(report)
             supplied["passed"] = not report["passed"]
             report_path.write_text(json.dumps(supplied, allow_nan=False))
             _, _, rechecked, _, _ = export.checked_inputs(
                 trace_path, None, report_path, None, validator)
+            assert rechecked is not None
             self.assertEqual(rechecked["passed"], report["passed"])
             self.assertEqual(rechecked["metrics"]["truth_matches"], report["metrics"]["truth_matches"])
             self.assertAlmostEqual(rechecked["metrics"]["aim_rmse"], report["metrics"]["aim_rmse"], places=12)
@@ -176,7 +179,7 @@ class Geometry(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "traces must be CBOR"):
                 export.load_input(json_trace, validator)
 
-    def test_input_rejects_duplicate_keys_and_oversize_json(self):
+    def test_input_rejects_duplicate_keys_and_oversize_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/"input.json"
             path.write_text('{"id":1,"id":2}')

@@ -37,6 +37,10 @@ configured in `treefmt.nix`: rustfmt on the pinned nightly (options in
 `nix build .#checks.x86_64-linux.format` and fails on any tracked file a formatter
 would change. Add a formatter in `treefmt.nix`, not as a separate CI step.
 
+Every tracked Python script is type-checked with `mypy --strict` (`mypy.ini`), so a
+missing annotation fails the `python-types` check. Run it with
+`nix build .#checks.x86_64-linux.python-types`.
+
 The default shell includes `cargo-release` for package-version and dependency
 updates. Release patches and generated firmware manifests go through pull
 requests: review, passing `host`, `rustfmt` and `tracking` checks, then squash
