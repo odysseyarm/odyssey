@@ -5,9 +5,8 @@
 //! The real [`ExposureController`] closes the loop through register 0x67, so a
 //! simulated unit adapts exactly as the firmware does.
 //!
-//! Spot positions are in the simulator's marker grid (2x native px, which is
-//! what `MarkersReport` carries). The controller works in 1/64 native px, so
-//! positions and hub hints cross with [`UNITS_PER_REPORT_PX`].
+//! Spot positions are on the chip's report grid, 1/64 native px, which is what
+//! `MarkersReport`, hub hints and the controller all use.
 
 use std::f64::consts::{PI, TAU};
 
@@ -16,7 +15,7 @@ use odyssey_cv::exposure::{ExposureController, Limits, Spot};
 use odyssey_protocol::MarkersReport;
 
 use super::unit::Registers;
-use super::world::{IMAGE_SIZE_PX, Marker};
+use super::world::Marker;
 
 const EXPOSURE: (u8, u8) = (0, 0x67);
 const GAIN: (u8, u8) = (0, 0x68);
@@ -26,9 +25,9 @@ const AREA_MAX: [(u8, u8); 2] = [(0, 0x70), (0, 0x71)];
 const LED_ALWAYS_ON: u8 = 0x80;
 const EXPOSURE_MASK: u8 = 0x7f;
 
-/// The controller's 1/64 native px per marker-grid px (the grid is 2x native).
-const UNITS_PER_REPORT_PX: f64 = 32.0;
-const MAX_UNITS: f64 = 20480.0;
+/// The chip's report grid: 320x240 native px interpolated to 1/64 px.
+const GRID: [f64; 2] = [20480.0, 15360.0];
+const UNITS_PER_PX: f64 = 64.0;
 /// Datasheet gain the brightness below is stated for.
 const BASE_GAIN: f64 = 3.0;
 /// Peak pixel value of a unit-intensity LED at 1 m per exposure unit (100 µs) at
@@ -46,11 +45,11 @@ const LAMP_RADIUS_PX: f64 = 2.0;
 const WINDOW_AREA_PX: f64 = 400.0;
 /// Relative shot noise on a brightness reading.
 const PEAK_NOISE: f64 = 0.02;
-/// Centroid noise in marker-grid px at 100 counts; falls as 1/sqrt(signal).
-const CENTROID_NOISE_PX: f64 = 0.12;
-/// Saturated blobs bloom lopsided: centroid bias per e-fold, and its cap.
-const SATURATION_BIAS_PX: f64 = 0.4;
-const MAX_BIAS_PX: f64 = 1.0;
+/// Centroid noise in native px at 100 counts; falls as 1/sqrt(signal).
+const CENTROID_NOISE_PX: f64 = 0.06;
+/// Saturated blobs bloom lopsided: centroid bias in native px per e-fold, and its cap.
+const SATURATION_BIAS_PX: f64 = 0.2;
+const MAX_BIAS_PX: f64 = 0.5;
 /// Writing 0x67 needs Idle, which drops frames while the sensor re-enters Object.
 const FRAME_GAP_MS: u64 = 20;
 const MIN_DISTANCE_M: f64 = 0.05;
@@ -80,7 +79,7 @@ pub(crate) enum Source {
 pub(crate) struct PlantSpot {
     pub(crate) spot: Spot,
     pub(crate) source: Source,
-    /// The centroid in marker-grid px, before the sensor's 1/64 px rounding.
+    /// The centroid in report-grid units, before the chip's rounding.
     pub(crate) px: [f64; 2],
     /// Brightness before the 8-bit clip.
     pub(crate) peak: f64,
@@ -92,14 +91,13 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
-    /// What `MarkersReport` carries: integer marker-grid px, no brightness.
+    /// What `MarkersReport` carries: report-grid positions, no brightness.
     pub(crate) fn report(&self) -> MarkersReport {
         let mut points = [Point2::origin(); 16];
         let visible = self.spots.iter().filter_map(|spot| {
             let [u, v] = spot.px;
-            ((1.0..=f64::from(IMAGE_SIZE_PX[0] - 1)).contains(&u)
-                && (1.0..=f64::from(IMAGE_SIZE_PX[1] - 1)).contains(&v))
-            .then(|| Point2::new(u.round() as u16, v.round() as u16))
+            ((1.0..=GRID[0] - 1.0).contains(&u) && (1.0..=GRID[1] - 1.0).contains(&v))
+                .then(|| Point2::new(u.round() as u16, v.round() as u16))
         });
         for (slot, point) in points.iter_mut().zip(visible) {
             *slot = point;
@@ -211,11 +209,7 @@ impl Sensor {
         let Some(controller) = &mut self.controller else {
             return;
         };
-        let units: Vec<[u16; 2]> = points
-            .iter()
-            .map(|point| point.map(|value| value.saturating_mul(UNITS_PER_REPORT_PX as u16)))
-            .collect();
-        controller.set_hint(&units, now_ms as u32);
+        controller.set_hint(points, now_ms as u32);
     }
 
     /// One sensor frame of `markers`, or `None` while the sensor is blind after
@@ -318,18 +312,18 @@ impl Sensor {
         }
         let mut px = blob.px;
         if !self.ideal {
-            let sigma = CENTROID_NOISE_PX * (100.0 / peak.min(SATURATION)).sqrt();
-            let bias = (SATURATION_BIAS_PX * over).min(MAX_BIAS_PX);
+            let sigma = UNITS_PER_PX * CENTROID_NOISE_PX * (100.0 / peak.min(SATURATION)).sqrt();
+            let bias = UNITS_PER_PX * (SATURATION_BIAS_PX * over).min(MAX_BIAS_PX);
             // The lopsidedness is a property of the blob, so it keeps its direction.
             let angle = TAU * Noise { time: 0, ..noise }.uniform(8);
             px[0] += sigma * noise.gauss(1) + bias * angle.cos();
             px[1] += sigma * noise.gauss(2) + bias * angle.sin();
         }
-        let units = |value: f64| (value * UNITS_PER_REPORT_PX).round().clamp(0.0, MAX_UNITS) as u16;
+        let units = |value: f64, max: f64| value.round().clamp(0.0, max) as u16;
         Some(PlantSpot {
             spot: Spot {
-                x: units(px[0]),
-                y: units(px[1]),
+                x: units(px[0], GRID[0]),
+                y: units(px[1], GRID[1]),
                 area,
                 avg: peak.min(SATURATION).round() as u8,
                 is_circle: blob.round && peak < HEAVY_SATURATION * SATURATION,

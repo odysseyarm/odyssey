@@ -180,7 +180,7 @@ impl Unit {
     pub(crate) fn new(uuid: Uuid, sensor_model: SensorModel, world: &World) -> Self {
         let camera: odyssey_protocol::wire::CameraCalibrationParams =
             odyssey_protocol::wire::CameraCalibrationParams {
-                camera_matrix: [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0],
+                camera_matrix: sensor_model.camera_matrix(),
                 dist_coeffs: [0.0; 5],
             };
         let configs = [
@@ -856,14 +856,18 @@ impl Unit {
         let camera = &self.configs[ConfigKind::CameraModelNf as usize];
         let report = match &mut self.sensor {
             Some(sensor) => {
-                let markers = io.world.targets(&self.pose, camera);
+                let markers = io
+                    .world
+                    .targets(&self.pose, camera, self.sensor_model.report_grid());
                 // The sensor drops frames while it re-enters Object mode after an exposure write.
                 let Some(frame) = sensor.frame(&mut self.registers, io.now_ms, &markers) else {
                     return;
                 };
                 frame.report()
             }
-            None => io.world.markers(&self.pose, camera),
+            None => io
+                .world
+                .markers(&self.pose, camera, self.sensor_model.report_grid()),
         };
         self.report(PacketData::MarkersReport(report), io);
     }

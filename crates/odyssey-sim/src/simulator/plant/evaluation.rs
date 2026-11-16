@@ -13,12 +13,13 @@ const FRAME_MS: u64 = 10;
 const HINT_PERIOD_MS: u64 = 100;
 /// With the stock 120 the exposure window around the stored 20 cannot reach 6 m.
 const LIGHT_THRESHOLD: u8 = 60;
+const GRID: [u32; 2] = SensorModel::Pag7665qn.report_grid();
 const WINDOW: Distractor = Distractor::Window {
-    px: [60.0, 440.0],
+    px: [1920.0, 14080.0],
     intensity: 50.0,
 };
 const LAMP: Distractor = Distractor::Lamp {
-    px: [590.0, 40.0],
+    px: [18880.0, 1280.0],
     intensity: 1.0,
 };
 
@@ -59,7 +60,7 @@ struct Metrics {
     visible: u32,
     detected: u32,
     saturated: u32,
-    squared_error_px: f64,
+    squared_error: f64,
     exposure: u8,
 }
 
@@ -72,8 +73,9 @@ impl Metrics {
         f64::from(self.saturated) / f64::from(self.visible.max(1))
     }
 
+    /// Native px; positions are 1/64 px.
     fn rms_px(&self) -> f64 {
-        (self.squared_error_px / f64::from(self.detected.max(1))).sqrt()
+        (self.squared_error / f64::from(self.detected.max(1))).sqrt() / 64.0
     }
 }
 
@@ -86,7 +88,7 @@ struct Run {
 fn camera() -> GeneralConfig {
     GeneralConfig::CameraModelNf(
         CameraCalibrationParams {
-            camera_matrix: [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0],
+            camera_matrix: SensorModel::Pag7665qn.camera_matrix(),
             dist_coeffs: [0.0; 5],
         }
         .into(),
@@ -121,7 +123,7 @@ fn simulate(mode: Mode, distractors: &[Distractor], phases: &[Phase]) -> Run {
             let distance_m = phase.from_m + (phase.to_m - phase.from_m) * progress;
             let mut pose = base.clone();
             pose.position_m[2] = -distance_m;
-            let markers = world.targets(&pose, &camera);
+            let markers = world.targets(&pose, &camera, GRID);
 
             if mode == Mode::Hinted && now_ms % HINT_PERIOD_MS == 0 && !matched.is_empty() {
                 sensor.hint(&matched, now_ms);
@@ -149,7 +151,7 @@ fn simulate(mode: Mode, distractors: &[Distractor], phases: &[Phase]) -> Run {
                     let Some(seen) = seen else { continue };
                     metrics.detected += 1;
                     metrics.saturated += u32::from(seen.peak >= 255.0);
-                    metrics.squared_error_px +=
+                    metrics.squared_error +=
                         (seen.px[0] - marker.px[0]).powi(2) + (seen.px[1] - marker.px[1]).powi(2);
                 }
             }
@@ -334,7 +336,7 @@ fn an_ideal_sensor_reports_the_projected_markers_exactly() {
     let world = World::synthetic();
     let camera = camera();
     let pose = world.aim_pose([0.3, 0.6]).unwrap();
-    let markers = world.targets(&pose, &camera);
+    let markers = world.targets(&pose, &camera, GRID);
     let mut registers = reset_registers(SensorModel::Pag7665qn);
     let mut sensor = Sensor::new(false);
     sensor.ideal = true;
@@ -349,13 +351,13 @@ fn an_ideal_sensor_reports_the_projected_markers_exactly() {
             .unwrap();
         assert_eq!(spot.px, marker.px);
     }
-    assert_eq!(frame.report(), world.markers(&pose, &camera));
+    assert_eq!(frame.report(), world.markers(&pose, &camera, GRID));
 }
 
 #[test]
 fn an_exposure_write_blinds_the_sensor_for_a_frame_gap() {
     let world = World::synthetic();
-    let markers = world.targets(&world.aim_pose([0.5, 0.5]).unwrap(), &camera());
+    let markers = world.targets(&world.aim_pose([0.5, 0.5]).unwrap(), &camera(), GRID);
     let mut registers = reset_registers(SensorModel::Pag7665qn);
     registers.insert((0, 0x68), 6);
     let mut sensor = Sensor::new(true);
