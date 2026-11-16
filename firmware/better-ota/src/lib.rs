@@ -27,7 +27,12 @@
 //! 4. **[`Receiver`].** `firmware/better-ota/src/receiver.rs` decodes the frame, enforces order
 //!    (`Begin`, contiguous `Data`, then `Commit`), checks the CRC-32 by reading the image back
 //!    from flash, and asks the [`Slots`] backend to validate it. Any failure drops all staged
-//!    images, so a commit only ever activates images that were verified in this session.
+//!    images, so a commit only ever activates images that were verified in this session. With the
+//!    `signed` feature the host also sends each image's 76-byte signature record (version and
+//!    Ed25519 signature) as in-order `Signature` chunks after its last `Data`, sized to the
+//!    link so a 20-byte GATT write carries them too, and `Commit` hashes each staged image
+//!    from flash and checks the signature against `firmware/release-signing`'s trusted keys; the
+//!    status reports this as `signature_required`, which makes the host send the signature.
 //! 5. **[`Slots`] backends.** One per board, each owning the flash layout:
 //!    - `FlashSlots` in `firmware/atslite-common/src/ota.rs` (lite1 and legacy-atslite). It writes
 //!      the application into the inactive bank and the net core into a staging region, and its

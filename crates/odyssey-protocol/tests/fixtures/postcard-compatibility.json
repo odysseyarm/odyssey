@@ -603,6 +603,10 @@
                   {
                     "data": "Unit",
                     "name": "NetCoreRelease"
+                  },
+                  {
+                    "data": "Unit",
+                    "name": "BootloaderVersion"
                   }
                 ]
               }
@@ -686,6 +690,18 @@
                       "Newtype": "U16"
                     },
                     "name": "NetCoreRelease"
+                  },
+                  {
+                    "data": {
+                      "Newtype": {
+                        "Tuple": [
+                          "U32",
+                          "U32",
+                          "U32"
+                        ]
+                      }
+                    },
+                    "name": "BootloaderVersion"
                   }
                 ]
               }
@@ -2216,6 +2232,10 @@
                                                 {
                                                   "data": "Unit",
                                                   "name": "NetCoreRelease"
+                                                },
+                                                {
+                                                  "data": "Unit",
+                                                  "name": "BootloaderVersion"
                                                 }
                                               ]
                                             }
@@ -2299,6 +2319,18 @@
                                                     "Newtype": "U16"
                                                   },
                                                   "name": "NetCoreRelease"
+                                                },
+                                                {
+                                                  "data": {
+                                                    "Newtype": {
+                                                      "Tuple": [
+                                                        "U32",
+                                                        "U32",
+                                                        "U32"
+                                                      ]
+                                                    }
+                                                  },
+                                                  "name": "BootloaderVersion"
                                                 }
                                               ]
                                             }
@@ -6200,6 +6232,10 @@
                                                 {
                                                   "data": "Unit",
                                                   "name": "NetCoreRelease"
+                                                },
+                                                {
+                                                  "data": "Unit",
+                                                  "name": "BootloaderVersion"
                                                 }
                                               ]
                                             }
@@ -6283,6 +6319,18 @@
                                                     "Newtype": "U16"
                                                   },
                                                   "name": "NetCoreRelease"
+                                                },
+                                                {
+                                                  "data": {
+                                                    "Newtype": {
+                                                      "Tuple": [
+                                                        "U32",
+                                                        "U32",
+                                                        "U32"
+                                                      ]
+                                                    }
+                                                  },
+                                                  "name": "BootloaderVersion"
                                                 }
                                               ]
                                             }
@@ -10906,6 +10954,10 @@
                             {
                               "data": "Unit",
                               "name": "NetCoreRelease"
+                            },
+                            {
+                              "data": "Unit",
+                              "name": "BootloaderVersion"
                             }
                           ]
                         }
@@ -10989,6 +11041,18 @@
                                 "Newtype": "U16"
                               },
                               "name": "NetCoreRelease"
+                            },
+                            {
+                              "data": {
+                                "Newtype": {
+                                  "Tuple": [
+                                    "U32",
+                                    "U32",
+                                    "U32"
+                                  ]
+                                }
+                              },
+                              "name": "BootloaderVersion"
                             }
                           ]
                         }

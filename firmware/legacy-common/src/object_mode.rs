@@ -128,6 +128,7 @@ pub async fn object_mode<
         ctx.ota,
         ctx.version,
         P::netcore_release,
+        P::bootloader_version,
         &impact_settings,
         P::round_accel_odr,
         P::set_ble_name,
@@ -206,6 +207,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
     ota: atslite_common::ota::OtaHandle,
     version: [u32; 3],
     netcore_release: fn() -> u16,
+    bootloader_version: fn() -> [u32; 3],
     impact_settings: &ImpactSettings,
     round_accel_odr: fn(u16) -> u16,
     set_ble_name: fn(&str),
@@ -368,6 +370,7 @@ async fn usb_rcv_loop<L: L2capChannels>(
                     PropKind::Name => Props::Name(settings.general.name.clone().into()),
                     PropKind::Version => Props::Version(odyssey_protocol::Version::new(version)),
                     PropKind::NetCoreRelease => Props::NetCoreRelease(netcore_release()),
+                    PropKind::BootloaderVersion => Props::BootloaderVersion(bootloader_version()),
                 };
                 Some(Packet {
                     id: pkt.id,

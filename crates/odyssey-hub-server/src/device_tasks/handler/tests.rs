@@ -50,6 +50,7 @@ fn device(capabilities: u8) -> Device {
         product_id: 0,
         name: Device::name_bytes(""),
         netcore_release: 0,
+        bootloader_version: [0, 0, 0],
     }
 }
 
@@ -371,6 +372,28 @@ async fn net_core_release_is_published_once_per_change() {
     harness
         .commands
         .send(DeviceTaskMessage::SetNetCoreRelease(7))
+        .await
+        .unwrap();
+    harness.barrier().await;
+    assert!(harness.messages.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn bootloader_version_is_published_once_per_change() {
+    let mut harness = start_handler(0);
+    harness
+        .commands
+        .send(DeviceTaskMessage::SetBootloaderVersion([0, 2, 1]))
+        .await
+        .unwrap();
+    let Message::UpdateDevice(updated) = harness.next_message().await else {
+        panic!("expected UpdateDevice");
+    };
+    assert_eq!(updated.bootloader_version, [0, 2, 1]);
+
+    harness
+        .commands
+        .send(DeviceTaskMessage::SetBootloaderVersion([0, 2, 1]))
         .await
         .unwrap();
     harness.barrier().await;

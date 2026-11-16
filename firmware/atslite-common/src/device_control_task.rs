@@ -92,6 +92,9 @@ async fn handle_cmd(
                 PropKind::NetCoreRelease => {
                     Props::NetCoreRelease(crate::ble::netcore::netcore_release())
                 }
+                PropKind::BootloaderVersion => {
+                    Props::BootloaderVersion(crate::bootloader_version::bootloader_version())
+                }
             };
             device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
         }

@@ -1,6 +1,9 @@
 //! The OTA state machine. `lib.rs` describes how it fits into the update flow.
 
-use odyssey_protocol::ota::{Code, Crc32, Image, MAX_FRAME, Request, Status};
+use odyssey_protocol::ota::{Code, Crc32, Image, MAX_FRAME, Request, SIGNATURE_RECORD_LEN, Status};
+use release_signing::Component;
+#[cfg(feature = "signed")]
+use {odyssey_protocol::ota::SIGNATURE_LEN, release_signing::Sha256};
 
 /// Flash word size. Every write starts on, and (except for an image's tail) covers whole words.
 const WRITE_ALIGNMENT: usize = 4;
@@ -9,6 +12,8 @@ const VERIFY_CHUNK: usize = 64;
 /// Smallest image the receiver accepts: the stack pointer and reset vector the validity check
 /// reads.
 const MIN_IMAGE_SIZE: u32 = 8;
+/// Whether `Commit` requires a trusted signature on every staged image.
+const SIGNATURE_REQUIRED: bool = cfg!(feature = "signed");
 /// Largest data payload (`MAX_FRAME` minus opcode and offset) rounded up to a whole flash word.
 const MAX_WRITE: usize = (MAX_FRAME - 5).next_multiple_of(WRITE_ALIGNMENT);
 
@@ -40,6 +45,9 @@ pub trait Slots {
         offset: u32,
         data: &mut [u8],
     ) -> impl core::future::Future<Output = Result<(), Code>>;
+    /// Component id the image is signed as. Binds a signature to this board and image, so a
+    /// signed image for another product does not verify here.
+    fn component(&self, image: Image) -> Component;
     /// Checks image vectors and target-specific constraints. Runs after the CRC-32 matched.
     fn valid(
         &mut self,
@@ -74,6 +82,20 @@ struct Transfer {
     offset: u32,
 }
 
+/// A signature record assembled from in-order chunks.
+#[derive(Clone, Copy, Debug)]
+struct SignatureBuffer {
+    received: u8,
+    bytes: [u8; SIGNATURE_RECORD_LEN],
+}
+
+impl SignatureBuffer {
+    const EMPTY: Self = Self {
+        received: 0,
+        bytes: [0; SIGNATURE_RECORD_LEN],
+    };
+}
+
 /// Stages images and activates them only after explicit commit.
 ///
 /// One receiver serves one session. The transport must feed it one frame at a time and call
@@ -86,6 +108,8 @@ pub struct Receiver {
     transfer: Option<Transfer>,
     app_size: Option<u32>,
     netcore_size: Option<u32>,
+    /// Signature record received so far for each image, indexed by `Image as usize`.
+    signatures: [SignatureBuffer; 2],
 }
 
 impl Default for Receiver {
@@ -102,6 +126,7 @@ impl Receiver {
             transfer: None,
             app_size: None,
             netcore_size: None,
+            signatures: [SignatureBuffer::EMPTY; 2],
         }
     }
 
@@ -128,6 +153,7 @@ impl Receiver {
                 } else if self.staged_size(image).is_some() {
                     Err(Code::Busy)
                 } else {
+                    self.signatures[image as usize] = SignatureBuffer::EMPTY;
                     self.transfer = Some(Transfer {
                         image,
                         size,
@@ -138,6 +164,11 @@ impl Receiver {
                 }
             }
             Request::Data { offset, data } => self.data(slots, offset, data).await,
+            Request::Signature {
+                image,
+                offset,
+                bytes,
+            } => self.signature(image, offset, bytes),
             Request::Commit => self.commit(slots).await,
             Request::Abort => {
                 self.abort();
@@ -171,6 +202,7 @@ impl Receiver {
             offset: self.transfer.map_or(0, |transfer| transfer.offset),
             firmware_version,
             netcore_release,
+            signature_required: SIGNATURE_REQUIRED,
         }
     }
 
@@ -179,6 +211,7 @@ impl Receiver {
         self.transfer = None;
         self.app_size = None;
         self.netcore_size = None;
+        self.signatures = [SignatureBuffer::EMPTY; 2];
     }
 
     async fn data(
@@ -193,7 +226,7 @@ impl Receiver {
         if offset != transfer.offset {
             return Err(Code::Offset);
         }
-        if offset as usize % WRITE_ALIGNMENT != 0 {
+        if !(offset as usize).is_multiple_of(WRITE_ALIGNMENT) {
             return Err(Code::Alignment);
         }
         let length = u32::try_from(data.len()).map_err(|_| Code::Size)?;
@@ -201,7 +234,7 @@ impl Receiver {
         if end > transfer.size {
             return Err(Code::Size);
         }
-        if end < transfer.size && data.len() % WRITE_ALIGNMENT != 0 {
+        if end < transfer.size && !data.len().is_multiple_of(WRITE_ALIGNMENT) {
             return Err(Code::Alignment);
         }
 
@@ -257,6 +290,27 @@ impl Receiver {
         Ok(Action::Continue)
     }
 
+    fn signature(&mut self, image: Image, offset: u8, bytes: &[u8]) -> Result<Action, Code> {
+        // Only an image in flight or staged can be signed; anything else is out of order.
+        let present = self
+            .transfer
+            .is_some_and(|transfer| transfer.image == image)
+            || self.staged_size(image).is_some();
+        if !present {
+            return Err(Code::State);
+        }
+        let buffer = &mut self.signatures[image as usize];
+        if offset != buffer.received {
+            return Err(Code::Offset);
+        }
+        let start = usize::from(offset);
+        let end = start + bytes.len();
+        let target = buffer.bytes.get_mut(start..end).ok_or(Code::Size)?;
+        target.copy_from_slice(bytes);
+        buffer.received = u8::try_from(end).map_err(|_| Code::Size)?;
+        Ok(Action::Continue)
+    }
+
     async fn commit(&mut self, slots: &mut impl Slots) -> Result<Action, Code> {
         if self.transfer.is_some() {
             return Err(Code::Busy);
@@ -264,7 +318,11 @@ impl Receiver {
         if self.app_size.is_none() && self.netcore_size.is_none() {
             return Err(Code::State);
         }
-        // A failed commit drops every staged image; the host restages instead of retrying.
+        // A failed verification or commit drops every staged image; the host restages.
+        if let Err(error) = self.verify_signatures(slots).await {
+            self.abort();
+            return Err(error);
+        }
         if slots
             .commit(self.app_size, self.netcore_size)
             .await
@@ -275,7 +333,52 @@ impl Receiver {
         }
         self.app_size = None;
         self.netcore_size = None;
+        self.signatures = [SignatureBuffer::EMPTY; 2];
         Ok(Action::Reset)
+    }
+
+    /// Without the `signed` feature neither the hash nor the verifier is compiled in: the ATS
+    /// application's flash bank has little room to spare.
+    #[cfg(not(feature = "signed"))]
+    async fn verify_signatures(&self, _slots: &mut impl Slots) -> Result<(), Code> {
+        Ok(())
+    }
+
+    /// Hashes each staged image as it sits in flash and checks its signature, so what is
+    /// verified is exactly what the bootloader will install.
+    #[cfg(feature = "signed")]
+    async fn verify_signatures(&self, slots: &mut impl Slots) -> Result<(), Code> {
+        for image in [Image::Application, Image::NetCore] {
+            let Some(size) = self.staged_size(image) else {
+                continue;
+            };
+            let buffer = &self.signatures[image as usize];
+            if usize::from(buffer.received) != SIGNATURE_RECORD_LEN {
+                return Err(Code::Signature);
+            }
+            let (version_bytes, signature) = buffer.bytes.split_at(12);
+            let signature: &[u8; SIGNATURE_LEN] =
+                signature.try_into().map_err(|_| Code::Signature)?;
+            let mut version = [0; 3];
+            for (word, chunk) in version.iter_mut().zip(version_bytes.as_chunks::<4>().0) {
+                *word = u32::from_le_bytes(*chunk);
+            }
+            let mut hash = Sha256::new();
+            let mut offset = 0;
+            let mut bytes = [0; VERIFY_CHUNK];
+            while offset < size {
+                let count = (size - offset).min(VERIFY_CHUNK as u32) as usize;
+                slots.read(image, offset, &mut bytes[..count]).await?;
+                hash.update(&bytes[..count]);
+                offset += count as u32;
+            }
+            let message =
+                release_signing::message(slots.component(image), size, version, &hash.finalize());
+            if !release_signing::verify(&message, signature) {
+                return Err(Code::Signature);
+            }
+        }
+        Ok(())
     }
 
     fn staged_size(&self, image: Image) -> Option<u32> {
@@ -293,10 +396,10 @@ impl Receiver {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::task::{Context, Poll, Waker};
 
     use odyssey_protocol::ota::{self, Code, Image, Request};
+    use release_signing::Component;
 
     use super::{Action, Receiver, Slots};
 
@@ -361,6 +464,12 @@ mod tests {
                 Ok(())
             }
         }
+        fn component(&self, image: Image) -> Component {
+            match image {
+                Image::Application => Component::Lite1App,
+                Image::NetCore => Component::Lite1NetCore,
+            }
+        }
         async fn commit(&mut self, app: Option<u32>, netcore: Option<u32>) -> Result<(), Code> {
             if self.fail_commit {
                 return Err(Code::Flash);
@@ -369,13 +478,8 @@ mod tests {
             Ok(())
         }
     }
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
     fn run<F: core::future::Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(Noop));
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(Waker::noop());
         let mut future = std::pin::pin!(future);
         match future.as_mut().poll(&mut context) {
             Poll::Ready(value) => value,
@@ -442,6 +546,7 @@ mod tests {
         );
         assert_eq!(flash.writes.len(), 0);
     }
+    #[cfg(not(feature = "signed"))]
     #[test]
     fn stages_both_images_then_commits_once() {
         let mut receiver = Receiver::new();
@@ -600,6 +705,7 @@ mod tests {
         assert_eq!(flash.committed, None);
     }
 
+    #[cfg(not(feature = "signed"))]
     #[test]
     fn nonword_tail_gets_aligned_padding_but_checksum_uses_image_bytes() {
         let mut receiver = Receiver::new();
@@ -615,5 +721,305 @@ mod tests {
             request(&mut receiver, &mut flash, Request::Commit),
             Ok(Action::Reset)
         );
+    }
+
+    /// Data chunk of the marker's GATT link, which also sizes its signature chunks.
+    const MARKER_CHUNK: usize = 12;
+
+    fn send_record(
+        receiver: &mut Receiver,
+        flash: &mut Flash,
+        image: Image,
+        record: &[u8; ota::SIGNATURE_RECORD_LEN],
+        chunk: usize,
+    ) -> Result<(), Code> {
+        for (index, bytes) in record.chunks(chunk).enumerate() {
+            request(
+                receiver,
+                flash,
+                Request::Signature {
+                    image,
+                    offset: (index * chunk) as u8,
+                    bytes,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn signature_needs_an_image_in_flight_or_staged() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        let record = [0; ota::SIGNATURE_RECORD_LEN];
+        let send = |receiver: &mut Receiver, flash: &mut Flash| {
+            send_record(receiver, flash, Image::Application, &record, MARKER_CHUNK)
+        };
+        assert_eq!(send(&mut receiver, &mut flash), Err(Code::State));
+        request(
+            &mut receiver,
+            &mut flash,
+            Request::Begin {
+                image: Image::NetCore,
+                size: 8,
+                crc32: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(send(&mut receiver, &mut flash), Err(Code::State));
+        request(&mut receiver, &mut flash, Request::Abort).unwrap();
+        transfer(&mut receiver, &mut flash, Image::Application, &[0; 8]).unwrap();
+        assert_eq!(send(&mut receiver, &mut flash), Ok(()));
+    }
+
+    #[test]
+    fn signature_chunks_must_be_contiguous_and_stay_inside_the_record() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        transfer(&mut receiver, &mut flash, Image::Application, &[0; 8]).unwrap();
+        let chunk = |offset, bytes| Request::Signature {
+            image: Image::Application,
+            offset,
+            bytes,
+        };
+        assert_eq!(
+            request(&mut receiver, &mut flash, chunk(12, &[0; 4])),
+            Err(Code::Offset)
+        );
+        assert_eq!(
+            request(&mut receiver, &mut flash, chunk(0, &[0; 12])),
+            Ok(Action::Continue)
+        );
+        assert_eq!(
+            request(&mut receiver, &mut flash, chunk(0, &[0; 12])),
+            Err(Code::Offset)
+        );
+        assert_eq!(
+            request(&mut receiver, &mut flash, chunk(12, &[0; 64])),
+            Ok(Action::Continue)
+        );
+        assert_eq!(
+            run(receiver.handle(&mut flash, &[5, 0, 76, 1])),
+            Err(Code::Size)
+        );
+    }
+
+    #[test]
+    fn signature_record_fits_one_frame_or_marker_sized_chunks_and_abort_restarts_it() {
+        let record = [7; ota::SIGNATURE_RECORD_LEN];
+        for chunk in [ota::SIGNATURE_RECORD_LEN, MARKER_CHUNK, 1] {
+            let mut receiver = Receiver::new();
+            let mut flash = Flash::new();
+            transfer(&mut receiver, &mut flash, Image::Application, &[0; 8]).unwrap();
+            assert_eq!(
+                send_record(
+                    &mut receiver,
+                    &mut flash,
+                    Image::Application,
+                    &record,
+                    chunk
+                ),
+                Ok(()),
+                "chunk {chunk}"
+            );
+        }
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        transfer(&mut receiver, &mut flash, Image::Application, &[0; 8]).unwrap();
+        request(
+            &mut receiver,
+            &mut flash,
+            Request::Signature {
+                image: Image::Application,
+                offset: 0,
+                bytes: &record[..40],
+            },
+        )
+        .unwrap();
+        request(&mut receiver, &mut flash, Request::Abort).unwrap();
+        transfer(&mut receiver, &mut flash, Image::Application, &[0; 8]).unwrap();
+        assert_eq!(
+            send_record(
+                &mut receiver,
+                &mut flash,
+                Image::Application,
+                &record,
+                MARKER_CHUNK
+            ),
+            Ok(())
+        );
+    }
+
+    #[cfg(feature = "signed")]
+    fn stage_with_signature(
+        receiver: &mut Receiver,
+        flash: &mut Flash,
+        image: Image,
+        bytes: &[u8],
+        version: [u32; 3],
+        signature: [u8; ota::SIGNATURE_LEN],
+    ) {
+        transfer(receiver, flash, image, bytes).unwrap();
+        let mut record = [0; ota::SIGNATURE_RECORD_LEN];
+        for (chunk, word) in record.as_chunks_mut::<4>().0.iter_mut().zip(version) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        record[12..].copy_from_slice(&signature);
+        send_record(receiver, flash, image, &record, MARKER_CHUNK).unwrap();
+    }
+
+    #[cfg(feature = "signed")]
+    #[test]
+    fn commit_with_partial_signature_record_is_refused() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        transfer(&mut receiver, &mut flash, Image::Application, &[1; 8]).unwrap();
+        request(
+            &mut receiver,
+            &mut flash,
+            Request::Signature {
+                image: Image::Application,
+                offset: 0,
+                bytes: &[0; MARKER_CHUNK],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            request(&mut receiver, &mut flash, Request::Commit),
+            Err(Code::Signature)
+        );
+        assert_eq!(flash.committed, None);
+    }
+
+    #[cfg(feature = "signed")]
+    #[test]
+    fn commit_without_signature_is_refused_and_drops_staged_images() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        transfer(&mut receiver, &mut flash, Image::Application, &[1; 8]).unwrap();
+        assert_eq!(
+            request(&mut receiver, &mut flash, Request::Commit),
+            Err(Code::Signature)
+        );
+        assert_eq!(receiver.status(0, 3, [0; 3], 0).staged, 0);
+        assert_eq!(flash.committed, None);
+    }
+
+    #[cfg(feature = "signed")]
+    #[test]
+    fn commit_with_untrusted_signature_is_refused() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        stage_with_signature(
+            &mut receiver,
+            &mut flash,
+            Image::Application,
+            &[1; 8],
+            [1, 2, 3],
+            [0x5a; ota::SIGNATURE_LEN],
+        );
+        assert_eq!(
+            request(&mut receiver, &mut flash, Request::Commit),
+            Err(Code::Signature)
+        );
+        assert_eq!(flash.committed, None);
+    }
+
+    #[cfg(all(feature = "signed", feature = "dev-signing-key"))]
+    mod dev_signed {
+        use release_signing::{Component, Sha256};
+
+        use super::{
+            Action, Code, Flash, Image, Receiver, Request, ota, request, stage_with_signature,
+        };
+
+        /// The public development seed, the same value as in `firmware/release-signing`.
+        const DEV_SEED: [u8; 32] = [
+            0xda, 0x87, 0xce, 0x81, 0xe4, 0xa7, 0x02, 0xa2, 0x7b, 0x21, 0xed, 0xf4, 0xe4, 0x59,
+            0x4f, 0x6f, 0xd2, 0x77, 0x18, 0x9e, 0xe3, 0x95, 0x8c, 0x64, 0x8e, 0x50, 0xec, 0x73,
+            0x35, 0xaa, 0x4b, 0x04,
+        ];
+        const APP: [u8; 8] = [9, 8, 7, 6, 5, 4, 3, 2];
+        const NETCORE: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+        fn sign(component: Component, bytes: &[u8], version: [u32; 3]) -> [u8; ota::SIGNATURE_LEN] {
+            let digest = Sha256::digest(bytes);
+            let message = release_signing::message(component, bytes.len() as u32, version, &digest);
+            salty::Keypair::from(&DEV_SEED).sign(&message).to_bytes()
+        }
+
+        #[test]
+        fn valid_signatures_commit_both_images() {
+            let mut receiver = Receiver::new();
+            let mut flash = Flash::new();
+            let signed = sign;
+            stage_with_signature(
+                &mut receiver,
+                &mut flash,
+                Image::NetCore,
+                &NETCORE,
+                [2, 0, 0],
+                signed(Component::Lite1NetCore, &NETCORE, [2, 0, 0]),
+            );
+            stage_with_signature(
+                &mut receiver,
+                &mut flash,
+                Image::Application,
+                &APP,
+                [1, 2, 3],
+                signed(Component::Lite1App, &APP, [1, 2, 3]),
+            );
+            assert_eq!(
+                request(&mut receiver, &mut flash, Request::Commit),
+                Ok(Action::Reset)
+            );
+            assert_eq!(flash.committed, Some((Some(8), Some(8))));
+        }
+
+        #[test]
+        fn image_changed_after_staging_is_refused() {
+            let mut receiver = Receiver::new();
+            let mut flash = Flash::new();
+            stage_with_signature(
+                &mut receiver,
+                &mut flash,
+                Image::Application,
+                &APP,
+                [1, 2, 3],
+                sign(Component::Lite1App, &APP, [1, 2, 3]),
+            );
+            flash.app[3] ^= 1;
+            assert_eq!(
+                request(&mut receiver, &mut flash, Request::Commit),
+                Err(Code::Signature)
+            );
+            assert_eq!(flash.committed, None);
+        }
+
+        #[test]
+        fn signature_for_another_component_or_version_is_refused() {
+            let wrong = [
+                (Component::Lite1NetCore, [1, 2, 3], [1, 2, 3]),
+                (Component::MarkerApp, [1, 2, 3], [1, 2, 3]),
+                (Component::Lite1App, [1, 2, 3], [1, 2, 4]),
+            ];
+            for (component, signed_version, sent_version) in wrong {
+                let mut receiver = Receiver::new();
+                let mut flash = Flash::new();
+                stage_with_signature(
+                    &mut receiver,
+                    &mut flash,
+                    Image::Application,
+                    &APP,
+                    sent_version,
+                    sign(component, &APP, signed_version),
+                );
+                assert_eq!(
+                    request(&mut receiver, &mut flash, Request::Commit),
+                    Err(Code::Signature),
+                    "{component:?} {signed_version:?} {sent_version:?}"
+                );
+            }
+        }
     }
 }

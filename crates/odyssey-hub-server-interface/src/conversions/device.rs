@@ -49,6 +49,11 @@ impl From<common::device::Device> for Device {
                 .known()
                 .map(|version| version.to_string()),
             netcore_release: u32::from(d.netcore_release),
+            bootloader_version: (d.bootloader_version != [0, 0, 0]).then_some(FirmwareVersion {
+                major: d.bootloader_version[0],
+                minor: d.bootloader_version[1],
+                patch: d.bootloader_version[2],
+            }),
         }
     }
 }
@@ -90,6 +95,9 @@ impl TryFrom<Device> for common::device::Device {
                 .unwrap_or_default(),
             netcore_release: u16::try_from(d.netcore_release)
                 .map_err(|_conversion_error| "net core release exceeds u16")?,
+            bootloader_version: d.bootloader_version.map_or([0; 3], |version| {
+                [version.major, version.minor, version.patch]
+            }),
         })
     }
 }

@@ -14,6 +14,7 @@
 //! | 2      | [`Request::Data`]   | offset `u32`, then image bytes         | 6 to 98      |
 //! | 3      | [`Request::Commit`] | none                                   | 1            |
 //! | 4      | [`Request::Abort`]  | none                                   | 1            |
+//! | 5      | [`Request::Signature`] | image `u8`, record offset `u8`, record bytes (version `[u32; 3]`, signature `[u8; 64]`; 76 in all) | 4 to 79 |
 //!
 //! The status reply is [`STATUS_LEN`] bytes. See [`Status::encode`] for the layout.
 
@@ -31,10 +32,25 @@ pub const MAX_FRAME: usize = 98;
 ///
 /// Since: Unreleased.
 pub const STATUS_LEN: usize = 22;
-/// First byte of every status. A device with a different value is not speaking this protocol.
+/// First byte of every status this build writes. Version 2 added [`Request::Signature`] and
+/// [`Status::signature_required`].
 ///
 /// Since: Unreleased.
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
+/// Oldest status version [`Status::decode`] still reads, so a hub can update a device that
+/// predates signatures. Such a device never requires one.
+///
+/// Since: Unreleased.
+pub const MIN_PROTOCOL_VERSION: u8 = 1;
+/// Length of the Ed25519 signature in a signature record.
+///
+/// Since: Unreleased.
+pub const SIGNATURE_LEN: usize = 64;
+/// Length of the signature record [`Request::Signature`] carries: three little-endian `u32`
+/// version words, then the [`SIGNATURE_LEN`]-byte signature.
+///
+/// Since: Unreleased.
+pub const SIGNATURE_RECORD_LEN: usize = 12 + SIGNATURE_LEN;
 /// Oldest dongle mux protocol that relays the accessory commands `MarkerOta` and
 /// `MarkerOtaStatus` to a marker board.
 ///
@@ -91,6 +107,9 @@ pub enum Code {
     Image = 9,
     /// The request is not valid in the receiver's current state.
     State = 10,
+    /// The staged image has no signature or the signature does not verify against a trusted key
+    /// (see `firmware/release-signing`). The receiver drops its staged state.
+    Signature = 11,
 }
 
 impl core::fmt::Display for Code {
@@ -106,10 +125,13 @@ const OP_BEGIN: u8 = 1;
 const OP_DATA: u8 = 2;
 const OP_COMMIT: u8 = 3;
 const OP_ABORT: u8 = 4;
+const OP_SIGNATURE: u8 = 5;
 /// Opcode, image, size, CRC-32.
 const BEGIN_LEN: usize = 10;
 /// Opcode and offset.
 const DATA_HEADER_LEN: usize = 5;
+/// Opcode, image, record offset.
+const SIGNATURE_HEADER_LEN: usize = 3;
 
 /// One request from the host.
 ///
@@ -126,6 +148,17 @@ pub enum Request<'a> {
     Commit,
     /// Drops the transfer in progress and everything staged.
     Abort,
+    /// Next chunk of the signature record for an image that is receiving or staged. `offset`
+    /// must equal the record bytes received so far. The record is [`SIGNATURE_RECORD_LEN`]
+    /// bytes: the version the signature binds the image to (application semver, or
+    /// `[release, 0, 0]` for the net core) as three `u32`, then the Ed25519 signature.
+    /// The host sizes chunks to the link, so a record fits a 20-byte GATT write in several
+    /// frames. Checked at `Commit` by devices that require signatures and ignored by the others.
+    Signature {
+        image: Image,
+        offset: u8,
+        bytes: &'a [u8],
+    },
 }
 
 impl<'a> Request<'a> {
@@ -141,16 +174,22 @@ impl<'a> Request<'a> {
     pub fn decode(frame: &'a [u8]) -> Result<Self, Code> {
         match frame.first() {
             Some(&OP_QUERY) if frame.len() == 1 => Ok(Self::Query),
-            Some(&OP_BEGIN) if frame.len() == BEGIN_LEN => {
-                let image = match frame[1] {
-                    0 => Image::Application,
-                    1 => Image::NetCore,
-                    _ => return Err(Code::Image),
-                };
-                Ok(Self::Begin {
+            Some(&OP_BEGIN) if frame.len() == BEGIN_LEN => Ok(Self::Begin {
+                image: image_from_byte(frame[1])?,
+                size: le_u32(&frame[2..6])?,
+                crc32: le_u32(&frame[6..10])?,
+            }),
+            Some(&OP_SIGNATURE) if frame.len() > SIGNATURE_HEADER_LEN => {
+                let image = image_from_byte(frame[1])?;
+                let offset = frame[2];
+                let bytes = &frame[SIGNATURE_HEADER_LEN..];
+                if usize::from(offset) + bytes.len() > SIGNATURE_RECORD_LEN {
+                    return Err(Code::Size);
+                }
+                Ok(Self::Signature {
                     image,
-                    size: le_u32(&frame[2..6])?,
-                    crc32: le_u32(&frame[6..10])?,
+                    offset,
+                    bytes,
                 })
             }
             Some(&OP_DATA) if (DATA_HEADER_LEN + 1..=MAX_FRAME).contains(&frame.len()) => {
@@ -180,12 +219,18 @@ impl<'a> Request<'a> {
         let length = match self {
             Self::Query | Self::Commit | Self::Abort => 1,
             Self::Begin { .. } => BEGIN_LEN,
+            Self::Signature { offset, bytes, .. }
+                if !bytes.is_empty()
+                    && usize::from(*offset) + bytes.len() <= SIGNATURE_RECORD_LEN =>
+            {
+                SIGNATURE_HEADER_LEN + bytes.len()
+            }
             Self::Data { data, .. }
                 if !data.is_empty() && data.len() <= MAX_FRAME - DATA_HEADER_LEN =>
             {
                 DATA_HEADER_LEN + data.len()
             }
-            Self::Data { .. } => return Err(Code::Size),
+            Self::Data { .. } | Self::Signature { .. } => return Err(Code::Size),
         };
         if output.len() < length {
             return Err(Code::Size);
@@ -205,6 +250,16 @@ impl<'a> Request<'a> {
             }
             Self::Commit => output[0] = OP_COMMIT,
             Self::Abort => output[0] = OP_ABORT,
+            Self::Signature {
+                image,
+                offset,
+                bytes,
+            } => {
+                output[0] = OP_SIGNATURE;
+                output[1] = *image as u8;
+                output[2] = *offset;
+                output[3..length].copy_from_slice(bytes);
+            }
         }
         Ok(length)
     }
@@ -233,12 +288,17 @@ pub struct Status {
     /// Release number of the running network core firmware. 0 on devices that report none (the
     /// marker board).
     pub netcore_release: u16,
+    /// The device refuses to commit an image without a valid [`Request::Signature`]. Hosts send
+    /// the signature whenever the manifest has one and fail early when this is set and it does
+    /// not.
+    pub signature_required: bool,
 }
 
 impl Status {
     /// Layout: version, error code, `app_slot`, a flags byte (`supported` in bits 0-1, `staged` in
-    /// bits 2-3, `receiving` in bits 4-5 as 0 none, 1 application, 2 net core), `offset` as
-    /// `u32`, three `u32` firmware version words, `netcore_release` as `u16`. Little endian.
+    /// bits 2-3, `receiving` in bits 4-5 as 0 none, 1 application, 2 net core,
+    /// `signature_required` in bit 6, bit 7 reserved zero), `offset` as `u32`, three `u32`
+    /// firmware version words, `netcore_release` as `u16`. Little endian.
     ///
     /// Since: Unreleased.
     pub fn encode(self) -> [u8; STATUS_LEN] {
@@ -251,7 +311,10 @@ impl Status {
         output[0] = PROTOCOL_VERSION;
         output[1] = self.error as u8;
         output[2] = self.app_slot;
-        output[3] = (self.supported & 3) | ((self.staged & 3) << 2) | (receiving << 4);
+        output[3] = (self.supported & 3)
+            | ((self.staged & 3) << 2)
+            | (receiving << 4)
+            | (u8::from(self.signature_required) << 6);
         output[4..8].copy_from_slice(&self.offset.to_le_bytes());
         for (index, version) in self.firmware_version.into_iter().enumerate() {
             let start = 8 + index * 4;
@@ -270,7 +333,9 @@ impl Status {
     ///
     /// Since: Unreleased.
     pub fn decode(input: &[u8]) -> Result<Self, Code> {
-        if input.len() != STATUS_LEN || input[0] != PROTOCOL_VERSION {
+        if input.len() != STATUS_LEN
+            || !(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&input[0])
+        {
             return Err(Code::InvalidFrame);
         }
         let error = code_from_byte(input[1]).ok_or(Code::InvalidFrame)?;
@@ -281,7 +346,10 @@ impl Status {
             2 => Some(Image::NetCore),
             _ => return Err(Code::InvalidFrame),
         };
-        if input[2] > 2 || flags & 0xc0 != 0 {
+        if input[2] > 2
+            || flags & 0x80 != 0
+            || (input[0] == MIN_PROTOCOL_VERSION && (flags & 0x40 != 0 || error == Code::Signature))
+        {
             return Err(Code::InvalidFrame);
         }
         Ok(Self {
@@ -297,7 +365,16 @@ impl Status {
                 le_u32(&input[16..20])?,
             ],
             netcore_release: le_u16(&input[20..22])?,
+            signature_required: flags & 0x40 != 0,
         })
+    }
+}
+
+fn image_from_byte(value: u8) -> Result<Image, Code> {
+    match value {
+        0 => Ok(Image::Application),
+        1 => Ok(Image::NetCore),
+        _ => Err(Code::Image),
     }
 }
 
@@ -328,6 +405,7 @@ fn code_from_byte(value: u8) -> Option<Code> {
         8 => Code::Checksum,
         9 => Code::Image,
         10 => Code::State,
+        11 => Code::Signature,
         _ => return None,
     })
 }
@@ -437,6 +515,58 @@ mod tests {
     }
 
     #[test]
+    fn signature_chunks_have_frozen_layout_and_bounds() {
+        let record: [u8; super::SIGNATURE_RECORD_LEN] = core::array::from_fn(|index| index as u8);
+        let mut frame = [0; super::MAX_FRAME];
+        let first = Request::Signature {
+            image: Image::NetCore,
+            offset: 0,
+            bytes: &record[..12],
+        };
+        assert_eq!(first.encode(&mut frame), Ok(15));
+        assert_eq!(
+            &frame[..15],
+            &[5, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        );
+        assert_eq!(Request::decode(&frame[..15]), Ok(first));
+
+        let last = Request::Signature {
+            image: Image::Application,
+            offset: 72,
+            bytes: &record[72..],
+        };
+        assert_eq!(last.encode(&mut frame), Ok(7));
+        assert_eq!(&frame[..7], &[5, 0, 72, 72, 73, 74, 75]);
+        assert_eq!(Request::decode(&frame[..7]), Ok(last));
+
+        let whole = Request::Signature {
+            image: Image::Application,
+            offset: 0,
+            bytes: &record,
+        };
+        assert_eq!(whole.encode(&mut frame), Ok(79));
+        assert_eq!(Request::decode(&frame[..79]), Ok(whole));
+
+        assert_eq!(Request::decode(&[5, 0, 0]), Err(Code::InvalidFrame));
+        assert_eq!(Request::decode(&[5, 2, 0, 1]), Err(Code::Image));
+        assert_eq!(Request::decode(&[5, 0, 76, 1]), Err(Code::Size));
+        assert_eq!(Request::decode(&[5, 0, 75, 1, 2]), Err(Code::Size));
+        let oversize = Request::Signature {
+            image: Image::Application,
+            offset: 1,
+            bytes: &record,
+        };
+        assert_eq!(oversize.encode(&mut frame), Err(Code::Size));
+        let empty = Request::Signature {
+            image: Image::Application,
+            offset: 0,
+            bytes: &[],
+        };
+        assert_eq!(empty.encode(&mut frame), Err(Code::Size));
+        assert_eq!(first.encode(&mut [0; 14]), Err(Code::Size));
+    }
+
+    #[test]
     fn status_codec_preserves_little_endian_fields_and_rejects_invalid_values() {
         let status = Status {
             error: Code::Checksum,
@@ -447,21 +577,35 @@ mod tests {
             offset: 0x1234_5678,
             firmware_version: [0x1234_5678, 0x89ab_cdef, 0x0001_0000],
             netcore_release: 0xabcd,
+            signature_required: true,
         };
         let bytes = status.encode();
         assert_eq!(
             bytes,
             [
-                1, 8, 2, 0x27, 0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab,
+                2, 8, 2, 0x67, 0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab,
                 0x89, 0, 0, 1, 0, 0xcd, 0xab,
             ]
         );
         assert_eq!(Status::decode(&bytes), Ok(status));
-        for (index, value) in [(1, 11), (2, 3), (3, 0x30), (3, 0x40)] {
+        for (index, value) in [(0, 0), (0, 3), (1, 12), (2, 3), (3, 0x30 | 0x40), (3, 0xe7)] {
             let mut invalid = bytes;
             invalid[index] = value;
-            assert_eq!(Status::decode(&invalid), Err(Code::InvalidFrame));
+            assert_eq!(
+                Status::decode(&invalid),
+                Err(Code::InvalidFrame),
+                "{index} {value}"
+            );
         }
+        let mut legacy = bytes;
+        legacy[0] = 1;
+        assert_eq!(Status::decode(&legacy), Err(Code::InvalidFrame));
+        legacy[3] &= !0x40;
+        legacy[1] = Code::Signature as u8;
+        assert_eq!(Status::decode(&legacy), Err(Code::InvalidFrame));
+        legacy[1] = Code::Checksum as u8;
+        let legacy = Status::decode(&legacy).expect("version 1 status decodes");
+        assert!(!legacy.signature_required);
         assert_eq!(Status::decode(&bytes[..21]), Err(Code::InvalidFrame));
     }
 }

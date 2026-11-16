@@ -1090,6 +1090,7 @@ name = "better-ota"
 version = "0.0.0"
 dependencies = [
  "odyssey-protocol",
+ "release-signing",
 ]
 
 [[package]]
@@ -8885,6 +8886,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "postcard",
+ "release-signing",
  "reqwest",
  "semver",
  "serde",
@@ -10594,6 +10596,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "release-signing"
+version = "0.0.0"
+dependencies = [
+ "salty",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11006,6 +11016,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "salty"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b947325a585e90733e0e9ec097228f40b637cc346f9bd68f84d5c6297d0fcfef"
+dependencies = [
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

@@ -219,6 +219,7 @@ def build_rules(
             closure(graph, ["crates/odyssey-protocol"])
             + [
                 "firmware/better-ota",
+                "firmware/release-signing",
                 "Cargo.toml",
                 "Cargo.lock",
                 "clippy.toml",

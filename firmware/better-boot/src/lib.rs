@@ -120,7 +120,7 @@ pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
         }
     }
 
-    if valid.get(active as usize) == Some(&true) {
+    let fallback = if valid.get(active as usize) == Some(&true) {
         Some(active)
     } else if valid[0] {
         Some(0)
@@ -128,7 +128,14 @@ pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
         Some(1)
     } else {
         None
+    };
+    // The fallback bank becomes the confirmed slot, so no stale trial or active slot survives.
+    if let Some(slot) = fallback {
+        state.active_slot = slot;
+        state.pending_slot = slot;
+        state.boot_counter = 0;
     }
+    fallback
 }
 
 /// Reads and writes the boot state partition at `state_addr`: a 4-byte magic
@@ -604,5 +611,39 @@ mod tests {
         );
         assert_eq!(&flash.bytes[..4], &[0xff; 4]);
         assert_eq!(flash.writes[2], 0x1000);
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_bank_becomes_active_and_clears_trial() {
+        let mut state = BootState::new();
+        state.active_slot = 0;
+        state.pending_slot = 0;
+        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
+        assert_eq!(
+            (state.active_slot, state.pending_slot, state.boot_counter),
+            (1, 1, 0)
+        );
+        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
+    }
+
+    #[test]
+    fn invalid_pending_and_active_falls_back_without_trial() {
+        let mut state = BootState::new();
+        state.active_slot = 0;
+        state.pending_slot = 1;
+        state.boot_counter = 1;
+        assert_eq!(select_boot_slot(&mut state, [false, false]), None);
+
+        state.pending_slot = 1;
+        assert_eq!(select_boot_slot(&mut state, [true, false]), Some(0));
+        assert_eq!(
+            (state.active_slot, state.pending_slot, state.boot_counter),
+            (0, 0, 0)
+        );
     }
 }

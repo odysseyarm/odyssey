@@ -269,8 +269,8 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
     };
     let out = &args.out;
     create_dir(out)?;
-    // Relative path -> sha256, so a file shared by releases is fetched once.
-    let mut have = BTreeMap::new();
+    // Relative path -> digest, so a file shared by releases is fetched once.
+    let mut have = BTreeMap::<String, (String, u64)>::new();
     for channel in channels {
         let mut source = read(&manifests.join(format!("releases.{}.json", channel.name())))?;
         select(&mut source, channel.name(), &args.devices, args.latest)?;
@@ -279,7 +279,14 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
                 continue;
             };
             let relative = format!("{tag}/{}", asset_filename(device, entry, key));
-            if have.contains_key(&relative) {
+            if let Some((existing_sha, existing_size)) = have.get(&relative) {
+                check_shared_asset_digest(
+                    &relative,
+                    file["sha256"].as_str(),
+                    file["size"].as_u64(),
+                    existing_sha,
+                    *existing_size,
+                )?;
                 continue;
             }
             let data = download(&format!(
@@ -303,7 +310,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
             fs::write(&target, &data)
                 .with_context(|| format!("could not write {}", target.display()))?;
             println!("{relative}  ({} bytes)", digest.size);
-            have.insert(relative, digest.sha256);
+            have.insert(relative, (digest.sha256, digest.size));
         }
         write(
             &out.join(format!("releases.{}.json", channel.name())),
@@ -329,7 +336,7 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
         }
     }
     let mut sums = String::new();
-    for (relative, digest) in &have {
+    for (relative, (digest, _)) in &have {
         writeln!(sums, "{digest}  {relative}").expect("writing to String cannot fail");
     }
     let sums_path = out.join("SHA256SUMS");
@@ -421,6 +428,18 @@ fn asset_filename(device: &str, entry: &Value, key: &str) -> String {
     )
 }
 
+fn check_shared_asset_digest(
+    relative: &str,
+    expected_sha: Option<&str>,
+    expected_size: Option<u64>,
+    existing_sha: &str,
+    existing_size: u64,
+) -> eros::Result<()> {
+    if expected_sha != Some(existing_sha) || expected_size != Some(existing_size) {
+        eros::bail!("{relative}: selected manifests disagree on asset digest");
+    }
+    Ok(())
+}
 /// Every (device, entry, file key, file) in the manifest, files in key order.
 fn files(source: &Value) -> Vec<(&str, &Value, &str, &Value)> {
     let mut listed = Vec::new();
@@ -720,6 +739,18 @@ mod tests {
         ] {
             validate_layout(&entry).expect_err("mixed app layout is rejected");
         }
+    }
+
+    #[test]
+    fn pack_rejects_different_digests_for_a_shared_asset_path() {
+        check_shared_asset_digest("tag/app.bin", Some("same"), Some(1), "same", 1)
+            .expect("matching digest and size share one asset");
+        check_shared_asset_digest("tag/app.bin", Some("different"), Some(1), "same", 1)
+            .expect_err("different digests cannot share one asset");
+        check_shared_asset_digest("tag/app.bin", None, Some(1), "same", 1)
+            .expect_err("shared asset must include digest");
+        check_shared_asset_digest("tag/app.bin", Some("same"), Some(2), "same", 1)
+            .expect_err("different sizes cannot share one asset");
     }
 
     #[test]

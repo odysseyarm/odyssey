@@ -130,6 +130,7 @@ impl HubManager {
             product_id: identity.product_id,
             name: identity.name,
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
 
         // A unit already connected over USB gets the BLE events merged into its handler.

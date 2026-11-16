@@ -71,6 +71,10 @@ pub enum OtaError {
     ImageUnsupported(Image),
     #[error("device did not return expected application/net-core versions after reboot")]
     VersionMismatch,
+    #[error("device only installs signed firmware but manifest image {0} has no signature")]
+    MissingSignature(&'static str),
+    #[error("manifest signature for {0} is not 128 hex characters")]
+    InvalidSignature(&'static str),
 }
 
 /// Carries one OTA request frame to the device and returns its status reply.
@@ -111,7 +115,7 @@ pub struct Images<'a> {
     pub app_version: [u32; 3],
     /// Bootloader version the unit is known to run. A release whose
     /// `requires_bootloader` is above it is refused before any radio traffic.
-    /// ATS Lite takes it from a USB-installed proof; see
+    /// ATS Lite reports it over the control channel (`Device::bootloader_version`); see
     /// `RADIO_OTA_MIN_BOOTLOADER` in odyssey-desktop's
     /// `firmware_update/update_manager.rs` for why. The marker has one
     /// bootloader version; see `accessories/ota.rs`.
@@ -135,6 +139,36 @@ async fn exchange<T: OtaTransport>(
     Ok(status)
 }
 
+/// Builds the signature record for `file` when the device requires signatures: `version` as
+/// three little-endian words, then the signature. `version` is what the signature binds the
+/// image to: the application semver, or `[release, 0, 0]` for the net core. Devices that do
+/// not require signatures never get the frames, so older firmware that does not know the
+/// opcode is not sent it.
+fn signature_record(
+    status: &Status,
+    name: &'static str,
+    file: &FileEntry,
+    version: [u32; 3],
+) -> Result<Option<[u8; ota::SIGNATURE_RECORD_LEN]>, OtaError> {
+    if !status.signature_required {
+        return Ok(None);
+    }
+    let hex = file
+        .signature
+        .as_deref()
+        .ok_or(OtaError::MissingSignature(name))?;
+    let signature = hex::decode(hex)
+        .ok()
+        .and_then(|bytes| <[u8; ota::SIGNATURE_LEN]>::try_from(bytes).ok())
+        .ok_or(OtaError::InvalidSignature(name))?;
+    let mut record = [0; ota::SIGNATURE_RECORD_LEN];
+    for (index, word) in version.into_iter().enumerate() {
+        record[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    record[12..].copy_from_slice(&signature);
+    Ok(Some(record))
+}
+
 fn ensure_image(image: VerifiedImage<'_>, name: &'static str) -> Result<(), OtaError> {
     if image.bytes.is_empty()
         || u64::try_from(image.bytes.len()).ok() != Some(image.manifest.size)
@@ -150,6 +184,7 @@ async fn transfer<T: OtaTransport>(
     image: Image,
     bytes: &[u8],
     link: LinkMtu,
+    signature: Option<[u8; ota::SIGNATURE_RECORD_LEN]>,
 ) -> Result<(), OtaError> {
     let size =
         u32::try_from(bytes.len()).map_err(|_conversion_error| OtaError::InvalidImage("image"))?;
@@ -202,6 +237,21 @@ async fn transfer<T: OtaTransport>(
     if status.staged & image.bit() == 0 {
         return Err(OtaError::NotStaged(image));
     }
+    if let Some(record) = signature {
+        for (index, bytes) in record.chunks(chunk_size).enumerate() {
+            let offset = u8::try_from(index * chunk_size)
+                .map_err(|_conversion_error| OtaError::InvalidImage("signature"))?;
+            exchange(
+                transport,
+                Request::Signature {
+                    image,
+                    offset,
+                    bytes,
+                },
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 async fn transfer_safely<T: OtaTransport>(
@@ -209,8 +259,9 @@ async fn transfer_safely<T: OtaTransport>(
     image: Image,
     bytes: &[u8],
     link: LinkMtu,
+    signature: Option<[u8; ota::SIGNATURE_RECORD_LEN]>,
 ) -> Result<(), OtaError> {
-    match transfer(transport, image, bytes, link).await {
+    match transfer(transport, image, bytes, link, signature).await {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = exchange(transport, Request::Abort).await;
@@ -261,6 +312,12 @@ pub async fn send<T: OtaTransport>(
     if status.supported & app_image.bit() == 0 {
         return Err(OtaError::ImageUnsupported(app_image));
     }
+    let app_signature = signature_record(
+        &status,
+        "application",
+        application.manifest,
+        images.app_version,
+    )?;
 
     if let Some(netcore) = images.netcore {
         ensure_image(netcore, "net-core")?;
@@ -276,14 +333,31 @@ pub async fn send<T: OtaTransport>(
     }
     let netcore_target = published_netcore.unwrap_or(status.netcore_release);
     let needs_netcore = netcore_target > status.netcore_release && netcore_target >= netcore_floor;
+    // The device keeps its session across BLE drops; a stale one answers Begin with Busy.
+    if status.receiving.is_some() || status.staged != 0 {
+        exchange(transport, Request::Abort).await?;
+    }
     if needs_netcore {
         if status.supported & Image::NetCore.bit() == 0 {
             return Err(OtaError::ImageUnsupported(Image::NetCore));
         }
         let netcore = images.netcore.ok_or(OtaError::MissingImage("net-core"))?;
-        transfer_safely(transport, Image::NetCore, netcore.bytes, link).await?;
+        let netcore_signature = signature_record(
+            &status,
+            "net-core",
+            netcore.manifest,
+            [u32::from(netcore_target), 0, 0],
+        )?;
+        transfer_safely(
+            transport,
+            Image::NetCore,
+            netcore.bytes,
+            link,
+            netcore_signature,
+        )
+        .await?;
     }
-    transfer_safely(transport, app_image, application.bytes, link).await?;
+    transfer_safely(transport, app_image, application.bytes, link, app_signature).await?;
     let status = match exchange(transport, Request::Query).await {
         Ok(status) => status,
         Err(error) => {
@@ -332,10 +406,11 @@ pub async fn send<T: OtaTransport>(
 mod tests {
     use better_ota::{Action, Receiver, Slots};
     use odyssey_firmware_manifest::{FileEntry, FirmwareEntry};
-    use odyssey_protocol::ota::{self, Code, Image};
+    use odyssey_protocol::ota::{self, Code, Image, Request};
+    use release_signing::Component;
     use sha2::Digest as _;
 
-    use super::{Images, LinkMtu, OtaError, OtaTransport, VerifiedImage, send};
+    use super::{Images, LinkMtu, OtaError, OtaTransport, VerifiedImage, exchange, send, transfer};
 
     struct Flash {
         app: Vec<u8>,
@@ -388,6 +463,13 @@ mod tests {
             }))
         }
 
+        fn component(&self, image: Image) -> Component {
+            match image {
+                Image::Application => Component::Lite1App,
+                Image::NetCore => Component::Lite1NetCore,
+            }
+        }
+
         fn valid(&mut self, _image: Image, _size: u32) -> impl Future<Output = Result<(), Code>> {
             std::future::ready(Ok(()))
         }
@@ -420,6 +502,8 @@ mod tests {
         target_netcore: u16,
         corrupt_next_data: bool,
         reset: bool,
+        require_signature: bool,
+        signatures: Vec<Vec<u8>>,
     }
 
     impl Device {
@@ -433,6 +517,8 @@ mod tests {
                 target_netcore: 2,
                 corrupt_next_data,
                 reset: false,
+                require_signature: false,
+                signatures: Vec::new(),
             }
         }
     }
@@ -444,19 +530,21 @@ mod tests {
                 frame[5] ^= 1;
                 self.corrupt_next_data = false;
             }
+            if frame.first() == Some(&5) {
+                self.signatures.push(frame.clone());
+            }
             match self.receiver.handle(&mut self.flash, &frame).await {
                 Ok(Action::Reset) => self.reset = true,
                 Ok(Action::Continue) | Err(_) => {}
             }
-            Ok(self
-                .receiver
-                .status(
-                    self.slot,
-                    Image::Application.bit() | Image::NetCore.bit(),
-                    self.app_version,
-                    self.current_netcore,
-                )
-                .encode())
+            let mut status = self.receiver.status(
+                self.slot,
+                Image::Application.bit() | Image::NetCore.bit(),
+                self.app_version,
+                self.current_netcore,
+            );
+            status.signature_required = self.require_signature;
+            Ok(status.encode())
         }
 
         fn verify_reconnected(
@@ -476,6 +564,7 @@ mod tests {
             size: bytes.len() as u64,
             version: None,
             release,
+            signature: None,
         }
     }
 
@@ -571,5 +660,201 @@ mod tests {
         );
         assert_eq!(status.receiving, None);
         assert_eq!(status.staged, 0);
+    }
+
+    #[tokio::test]
+    async fn interrupted_receiving_session_is_aborted_before_retry() {
+        let stale = b"interrupted application image";
+        let app = b"retried application image";
+        let app_file = file(app, None);
+        let mut device = Device::new(false);
+        device.target_netcore = device.current_netcore;
+        let begin = Request::Begin {
+            image: Image::Application,
+            size: u32::try_from(stale.len()).expect("size"),
+            crc32: ota::crc32(stale),
+        };
+        exchange(&mut device, begin).await.expect("stale begin");
+        assert_eq!(
+            device.receiver.status(2, 0, [0; 3], 0).receiving,
+            Some(Image::Application)
+        );
+
+        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+            .await
+            .expect("retry after interrupted transfer");
+
+        assert_eq!(device.flash.commits, 1);
+        assert_eq!(&device.flash.app[..app.len()], app);
+    }
+
+    #[tokio::test]
+    async fn staged_session_is_aborted_before_retry() {
+        let stale = b"staged but never committed";
+        let app = b"retried application image";
+        let app_file = file(app, None);
+        let mut device = Device::new(false);
+        device.target_netcore = device.current_netcore;
+        transfer(
+            &mut device,
+            Image::Application,
+            stale,
+            LinkMtu::Vendor,
+            None,
+        )
+        .await
+        .expect("stage stale image");
+        assert_ne!(device.receiver.status(2, 0, [0; 3], 0).staged, 0);
+
+        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+            .await
+            .expect("retry after staged session");
+
+        assert_eq!(device.flash.commits, 1);
+        assert_eq!(&device.flash.app[..app.len()], app);
+    }
+
+    fn signed_file(bytes: &[u8], release: Option<u16>, fill: u8) -> FileEntry {
+        FileEntry {
+            signature: Some(hex::encode([fill; ota::SIGNATURE_LEN])),
+            ..file(bytes, release)
+        }
+    }
+
+    async fn update(
+        device: &mut Device,
+        link: LinkMtu,
+        app: (&[u8], &FileEntry),
+        netcore: Option<(&[u8], &FileEntry)>,
+    ) -> Result<(), OtaError> {
+        send(
+            device,
+            link,
+            &entry(),
+            Images {
+                application: None,
+                app_a: None,
+                app_b: Some(VerifiedImage {
+                    bytes: app.0,
+                    manifest: app.1,
+                }),
+                netcore: netcore.map(|(bytes, manifest)| VerifiedImage { bytes, manifest }),
+                app_version: [1, 2, 3],
+                known_bootloader_floor: &semver::Version::new(0, 0, 0),
+            },
+        )
+        .await
+    }
+
+    /// Signature frames for a record of `version` and a signature of `fill` bytes, split into
+    /// chunks of at most `chunk` bytes.
+    fn frames(image: u8, version: [u32; 3], fill: u8, chunk: usize) -> Vec<Vec<u8>> {
+        let mut record = Vec::new();
+        for word in version {
+            record.extend(word.to_le_bytes());
+        }
+        record.extend([fill; ota::SIGNATURE_LEN]);
+        record
+            .chunks(chunk)
+            .enumerate()
+            .map(|(index, bytes)| {
+                let mut frame = vec![5, image, u8::try_from(index * chunk).expect("offset")];
+                frame.extend(bytes);
+                frame
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn signature_follows_each_staged_image_when_the_device_requires_one() {
+        let app = b"signed application image";
+        let netcore = b"signed network core image";
+        let app_file = signed_file(app, None, 0xa1);
+        let netcore_file = signed_file(netcore, Some(2), 0xb2);
+        let mut device = Device::new(false);
+        device.require_signature = true;
+
+        update(
+            &mut device,
+            LinkMtu::Vendor,
+            (app, &app_file),
+            Some((netcore, &netcore_file)),
+        )
+        .await
+        .expect("signed update");
+
+        let expected = [
+            frames(1, [2, 0, 0], 0xb2, ota::MAX_FRAME),
+            frames(0, [1, 2, 3], 0xa1, ota::MAX_FRAME),
+        ]
+        .concat();
+        assert_eq!(device.signatures, expected);
+        assert_eq!(device.signatures.len(), 2);
+        assert_eq!(device.flash.commits, 1);
+    }
+
+    #[tokio::test]
+    async fn device_requiring_signatures_refuses_unsigned_manifest_before_any_transfer() {
+        let app = b"unsigned application image";
+        let app_file = file(app, None);
+        let mut device = Device::new(false);
+        device.require_signature = true;
+
+        let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+
+        assert!(matches!(
+            result,
+            Err(OtaError::MissingSignature("application"))
+        ));
+        assert_eq!(device.flash.app, vec![0xff; 256]);
+        assert_eq!(device.flash.commits, 0);
+    }
+
+    #[tokio::test]
+    async fn malformed_signature_is_rejected() {
+        let app = b"application image";
+        let mut app_file = file(app, None);
+        app_file.signature = Some("abcd".into());
+        let mut device = Device::new(false);
+        device.require_signature = true;
+
+        let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+
+        assert!(matches!(
+            result,
+            Err(OtaError::InvalidSignature("application"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn device_not_requiring_signatures_is_never_sent_one() {
+        let app = b"signed application image";
+        let app_file = signed_file(app, None, 0xa1);
+        let mut device = Device::new(false);
+        device.target_netcore = device.current_netcore;
+
+        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+            .await
+            .expect("update");
+
+        assert_eq!(device.signatures.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn marker_link_sends_the_signature_record_in_chunks_that_fit_one_gatt_write() {
+        let app = b"signed application image";
+        let app_file = signed_file(app, None, 0xa1);
+        let mut device = Device::new(false);
+        device.require_signature = true;
+        device.target_netcore = device.current_netcore;
+
+        update(&mut device, LinkMtu::Marker, (app, &app_file), None)
+            .await
+            .expect("signed marker update");
+
+        assert_eq!(device.signatures, frames(0, [1, 2, 3], 0xa1, 12));
+        assert_eq!(device.signatures.len(), 7);
+        assert!(device.signatures.iter().all(|frame| frame.len() <= 20));
+        assert_eq!(device.flash.commits, 1);
     }
 }

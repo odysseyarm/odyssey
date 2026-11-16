@@ -37,6 +37,16 @@ pub enum PropKind {
     /// Wire baseline: device protocol 0.1.5.
     #[cfg_attr(feature = "minicbor", n(4))]
     NetCoreRelease = 4,
+    /// The version of the stage2 bootloader installed on the unit as
+    /// `[major, minor, patch]`, `[0, 0, 0]` when the bootloader predates
+    /// reporting. Gate reads on a device protocol of 0.2.1 or newer: older
+    /// firmware cannot decode the request.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.1.
+    #[cfg_attr(feature = "minicbor", n(5))]
+    BootloaderVersion = 5,
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -74,4 +84,9 @@ pub enum Props {
     /// Wire baseline: device protocol 0.1.5.
     #[cfg_attr(feature = "minicbor", n(4))]
     NetCoreRelease(#[cfg_attr(feature = "minicbor", n(0))] u16),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.1.
+    #[cfg_attr(feature = "minicbor", n(5))]
+    BootloaderVersion(#[cfg_attr(feature = "minicbor", n(0))] [u32; 3]),
 }

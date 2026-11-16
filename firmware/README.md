@@ -128,6 +128,10 @@ system Bluetooth controller or an Odyssey dongle. ATS Lite boards use an
 Odyssey dongle; the dongle relays packets and is not an OTA receiver. The
 transfer library is shared by the marker and ATS Lite applications.
 
+lite1 and marker applications require a trusted Ed25519 release signature before
+activating radio updates. Legacy ATS Lite remains unsigned. USB DFU signature
+verification is separate and is not enabled; see [signed releases](manifests/README.md#signed-releases).
+
 Incomplete transfers are not activated. A complete image is read back and
 checked before the application or boot state changes. ATS Lite's stage2
 bootloader still performs the net-core install at reset; stage2 bootloader
@@ -137,6 +141,17 @@ through Desktop over USB so the updater can install the recovery-capable
 bootloader before the app. If a BLE update reports failure or the device enters
 recovery, connect that same unit over USB and use Desktop's firmware update
 flow; it verifies bootloader, application and net-core versions after updates.
+
+An interrupted radio transfer is cleared before the next transfer starts.
+Marker staging erases flash one page at a time so the first data write does
+not wait for the whole slot to erase. Network-core copies include flash-word
+padding; signed image lengths and hashes exclude that padding.
+
+ATS Lite stage2 bootloaders retry failed network-core copies within their
+existing attempt limit, then enter USB DFU. A fallback application bank becomes
+the recorded active bank so the next application update retains trial-boot
+rollback. Battery read failures retain the last published state, and skipped
+samples remain included in the next fuel-gauge elapsed interval.
 
 ## Adaptive marker exposure
 

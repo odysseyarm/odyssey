@@ -35,6 +35,7 @@ use odyssey_protocol::marker_control::{
 use odyssey_protocol::ota::{Code, Image, STATUS_LEN, Status};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+use release_signing::Component;
 use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::{
     AdStructure, Address, Advertisement, AttErrorCode, BR_EDR_NOT_SUPPORTED, BleHostError,
@@ -127,6 +128,8 @@ const DFU_START: u32 = 0x48000;
 const DFU_LEN: u32 = 224 * 1024;
 /// Largest application image, the size of the `app_flash` region in the memory map.
 const APP_CAPACITY: u32 = 220 * 1024;
+/// nRF52 flash erase granule.
+const ERASE_PAGE: u32 = 4096;
 /// Largest OTA frame in one GATT write: the 23-byte default ATT MTU minus the 3-byte header.
 const MAX_OTA_WRITE: usize = 20;
 
@@ -144,6 +147,8 @@ fn ota_status(receiver: &Receiver) -> Status {
 /// Application image staged in the DFU partition for embassy-boot to swap in.
 struct MarkerSlots<'a, 'd> {
     dfu: Partition<'a, NoopRawMutex, mpsl::Flash<'d>>,
+    /// Bytes from the start of the image already erased; sequential writes erase each page once.
+    erased_until: u32,
 }
 
 impl Slots for MarkerSlots<'_, '_> {
@@ -158,11 +163,23 @@ impl Slots for MarkerSlots<'_, '_> {
         if image != Image::Application {
             return Err(Code::Unsupported);
         }
+        let len = u32::try_from(data.len()).map_err(|_| Code::Size)?;
+        let write_end = offset.checked_add(len).ok_or(Code::Size)?;
+        if write_end > APP_CAPACITY {
+            return Err(Code::Size);
+        }
         if offset == 0 {
+            self.erased_until = 0;
+        }
+        // Incremental erase keeps each GATT write within its 5 s acknowledgement budget.
+        let erase_end =
+            write_end.checked_add(ERASE_PAGE - 1).ok_or(Code::Size)? & !(ERASE_PAGE - 1);
+        if self.erased_until < erase_end {
             self.dfu
-                .erase(0, APP_CAPACITY)
+                .erase(self.erased_until, erase_end)
                 .await
                 .map_err(|_| Code::Flash)?;
+            self.erased_until = erase_end;
         }
         self.dfu.write(offset, data).await.map_err(|_| Code::Flash)
     }
@@ -172,6 +189,10 @@ impl Slots for MarkerSlots<'_, '_> {
             return Err(Code::Unsupported);
         }
         self.dfu.read(offset, data).await.map_err(|_| Code::Flash)
+    }
+
+    fn component(&self, _image: Image) -> Component {
+        Component::MarkerApp
     }
 
     async fn valid(&mut self, image: Image, size: u32) -> Result<(), Code> {
@@ -442,6 +463,7 @@ async fn session<F: NorFlash>(
     let mut receiver = Receiver::new();
     let mut slots = MarkerSlots {
         dfu: Partition::new(ota_flash, DFU_START, DFU_LEN),
+        erased_until: 0,
     };
     server.set(&server.markers.ota, &ota_status(&receiver).encode())?;
     loop {

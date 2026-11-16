@@ -630,6 +630,9 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                     PropKind::NetCoreRelease => {
                         Props::NetCoreRelease(crate::ble::netcore::netcore_release())
                     }
+                    PropKind::BootloaderVersion => {
+                        Props::BootloaderVersion(crate::bootloader_version::bootloader_version())
+                    }
                 };
                 Some(Packet {
                     id: pkt.id,
@@ -645,11 +648,8 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             }),
 
             PacketData::WriteConfig(config) => {
-                defmt::info!(
-                    "[object_mode] WriteConfig: {:?}",
-                    defmt::Debug2Format(&config)
-                );
                 let wire_config: GeneralConfig = config.into();
+                defmt::info!("[object_mode] WriteConfig: {:?}", wire_config);
                 // Shared by USB control and object mode, and imu_loop reads the same live settings.
                 // Persisted on the next FlashSettings.
                 crate::settings::with_settings(|s| s.general.set_general_config(&wire_config));

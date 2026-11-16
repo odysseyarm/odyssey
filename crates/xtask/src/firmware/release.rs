@@ -4,10 +4,12 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use eros::Context as _;
+use release_signing::Component;
 use serde_json::{Value, json};
 
 use super::board::{Board, Crate};
 use super::manifest::{self, NIGHTLY};
+use super::signing::{self, Signer};
 use super::{FileDigest, OUTPUT_DIR, download, listing};
 use crate::cmd;
 
@@ -304,7 +306,7 @@ pub(super) fn gen_release(
     check_netcore_floor(firmwares, requires_netcore)?;
 
     let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
-    let entry = json!({
+    let mut entry = json!({
         "version": version,
         "requires_bootloader": requires_bootloader.to_string(),
         "requires_netcore": requires_netcore,
@@ -325,6 +327,38 @@ pub(super) fn gen_release(
         },
         "released": today,
     });
+    if board.name == "legacy-atslite" {
+        if let Some(signer) = Signer::from_env()? {
+            let app_version = signing::app_version(&version)?;
+            signer.sign_files(
+                &mut entry,
+                &[
+                    ("app-a", Component::LegacyAtsliteApp, app_version),
+                    ("app-b", Component::LegacyAtsliteApp, app_version),
+                    (
+                        "net-core",
+                        Component::LegacyAtsliteNetCore,
+                        [net_core.release, 0, 0],
+                    ),
+                ],
+            )?;
+        }
+    } else {
+        let signer = Signer::required_from_env()?;
+        let (app_component, net_component) = match board.name {
+            "lite1" => (Component::Lite1App, Component::Lite1NetCore),
+            name => eros::bail!("no signing components for board {name}"),
+        };
+        let app_version = signing::app_version(&version)?;
+        signer.sign_files(
+            &mut entry,
+            &[
+                ("app-a", app_component, app_version),
+                ("app-b", app_component, app_version),
+                ("net-core", net_component, [net_core.release, 0, 0]),
+            ],
+        )?;
+    }
     // The manifest lists newest first. check_netcore_floor reads firmwares[0].
     manifest::prepend(&mut manifest, dual.device, entry)?;
     manifest::write(&manifest_path, &manifest)?;
@@ -374,18 +408,18 @@ fn gen_single_release(
     let today = cmd::output(Command::new("date").arg("+%Y-%m-%d"))?;
     let path = cmd::root().join(manifest::MANIFESTS).join(NIGHTLY);
     let mut manifest = manifest::read(&path)?;
-    manifest::prepend(
-        &mut manifest,
-        board.name,
-        json!({
-            "version": version,
-            "requires_bootloader": requires_bootloader.to_string(),
-            "requires_netcore": 0,
-            "min_desktop": min_desktop,
-            "files": { "app": { "sha256": app.sha256, "size": app.size } },
-            "released": today,
-        }),
-    )?;
+    let mut entry = json!({
+        "version": version,
+        "requires_bootloader": requires_bootloader.to_string(),
+        "requires_netcore": 0,
+        "min_desktop": min_desktop,
+        "files": { "app": { "sha256": app.sha256, "size": app.size } },
+        "released": today,
+    });
+    let signer = Signer::required_from_env()?;
+    let files = [("app", Component::MarkerApp, signing::app_version(&version)?)];
+    signer.sign_files(&mut entry, &files)?;
+    manifest::prepend(&mut manifest, board.name, entry)?;
     manifest::write(&path, &manifest)
 }
 

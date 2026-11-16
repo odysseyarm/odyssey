@@ -757,6 +757,7 @@ mod tests {
             product_id: 0,
             name: [0; 33],
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
 
         // The current-thread runtime has not polled the queued request yet.

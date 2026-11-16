@@ -55,6 +55,7 @@ unused_workspace_dependencies = "deny"
 
 [build-dependencies]
 memory-spec = "0.1.0"
+bootloader-info = { path = "../bootloader-info" }
 
 [dependencies]
 odyssey-version = { path = "../../crates/odyssey-version" }
@@ -70,6 +71,7 @@ cortex-m-rt = "0.7.5"
 cfg-if = "1.0.0"
 better-dfu = { path = "../better-dfu", features = ["dfu", "cortex-m"] }
 better-boot = { path = "../better-boot" }
+bootloader-info = { path = "../bootloader-info" }
 embassy-usb = { version = "0.5.1", default-features = false }
 embassy-futures = "0.1.2"
 icmsg = { git = "https://github.com/0e4ef622/icmsg-rs", default-features = false }

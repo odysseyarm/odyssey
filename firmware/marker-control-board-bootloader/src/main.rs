@@ -30,6 +30,12 @@ use hardware::{DEVICE_INTERFACE_GUIDS, Irqs, Markers, force_markers_off, reset_s
 include!(concat!(env!("OUT_DIR"), "/layout.rs"));
 
 const VERSION: [u32; 3] = odyssey_version::parse_cargo_version(env!("CARGO_PKG_VERSION"));
+
+// The linker script maps this section to the last bytes of the bootloader flash region.
+#[used]
+#[unsafe(link_section = ".bootloader_info")]
+static BOOTLOADER_INFO: bootloader_info::BootloaderInfo =
+    bootloader_info::BootloaderInfo::new(VERSION);
 const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(VERSION[0]);
 embassy_nrf::bind_interrupts!(struct VbusIrqs {
     CLOCK_POWER => embassy_nrf::usb::vbus_detect::InterruptHandler;

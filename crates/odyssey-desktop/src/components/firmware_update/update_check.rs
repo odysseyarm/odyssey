@@ -1,7 +1,7 @@
 //! Decides what a device's firmware row offers, from the manifest and the
 //! device as the hub last reported it.
 //!
-//! [`check_for_update_with_proof`] is called on every render by
+//! [`check_for_update_with_bootloader`] is called on every render by
 //! `device_firmware_update.rs`. It returns the state to show: nothing, an
 //! update (with held-back or blocked newer releases noted), or "plug in USB".
 //! The click is handled by `update_task.rs`, which re-selects the entry the
@@ -36,30 +36,8 @@ pub(super) fn is_in_bootloader(device: &Device) -> bool {
             .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
 }
 
-/// The `requires_bootloader` of the manifest entry the device's installed
-/// application came from, or `None` when that entry or version is unknown.
-pub(super) fn installed_bootloader_floor<'a>(
-    manifest: &'a FirmwareManifest,
-    device_type: &str,
-    device: &Device,
-) -> Option<&'a semver::Version> {
-    let installed = device.firmware_identity.known()?;
-    manifest
-        .devices
-        .get(device_type)?
-        .firmwares
-        .iter()
-        .find(|entry| {
-            entry
-                .version
-                .parse::<FirmwareVersion>()
-                .is_ok_and(|candidate| candidate == installed)
-        })
-        .map(|entry| &entry.requires_bootloader)
-}
-
-/// The ATS Lite device types, whose Bluetooth updates depend on a stage2
-/// bootloader proof.
+/// The ATS Lite device types, whose Bluetooth updates depend on the stage2
+/// bootloader version they report.
 pub(super) fn is_ats_lite(device_type: &str) -> bool {
     matches!(device_type, "atslite1" | "legacy-atslite1")
 }
@@ -68,10 +46,10 @@ pub(super) fn is_ats_lite(device_type: &str) -> bool {
 /// allowed for it yet.
 ///
 /// Only ATS Lite reached over BLE through the dongle (`Transport::UsbMux`) is
-/// ever forced. It is forced without a bootloader proof; see
-/// `RADIO_OTA_MIN_BOOTLOADER` for why. With one, it is forced when the target
-/// needs a newer bootloader than the proof shows, or carries a net core and the
-/// proof is below that floor.
+/// ever forced. It is forced when the unit reports no bootloader at the floor;
+/// see `RADIO_OTA_MIN_BOOTLOADER` for why. With one, it is forced when the
+/// target needs a newer bootloader than the reported one, or carries a net core
+/// and the reported one is below that floor.
 fn ats_ble_update_needs_usb(
     device_type: &str,
     device: &Device,
@@ -100,14 +78,15 @@ pub(super) fn check_for_update(
     device: &Device,
     current_state: &FirmwareUpdateState,
 ) -> FirmwareUpdateState {
-    check_for_update_with_proof(manifest, device, current_state, None)
+    check_for_update_with_bootloader(manifest, device, current_state, None)
 }
 
 /// What the manifest offers `device`, as the state its row should show.
 ///
 /// `current_state` is only read to log a transition once instead of on every
-/// render. `radio_ota_bootloader` is the device's bootloader proof, if any.
-pub(super) fn check_for_update_with_proof(
+/// render. `radio_ota_bootloader` is the bootloader the device reports, if it is
+/// at the Bluetooth floor.
+pub(super) fn check_for_update_with_bootloader(
     manifest: &FirmwareManifest,
     device: &Device,
     current_state: &FirmwareUpdateState,
@@ -276,6 +255,7 @@ mod tests {
             product_id: 0x5213,
             name: [0; 33],
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
         assert!(!is_in_bootloader(&device));
         assert!(matches!(
@@ -332,6 +312,7 @@ mod tests {
             product_id: 0x5213,
             name: [0; 33],
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
         let state = check_for_update(
             &make_manifest(&[newer, older]),
@@ -353,7 +334,7 @@ mod tests {
         );
     }
     #[test]
-    fn ats_ble_netcore_update_requires_proven_bounded_retry_bootloader() {
+    fn ats_ble_netcore_update_requires_reported_bounded_retry_bootloader() {
         let manifest: FirmwareManifest = serde_json::from_value(serde_json::json!({
             "version": 2,
             "devices": { "atslite1": { "firmwares": [
@@ -393,17 +374,18 @@ mod tests {
             product_id: 0x5211,
             name: [0; 33],
             netcore_release: 1,
+            bootloader_version: [0, 0, 0],
         };
 
         assert!(ats_ble_update_needs_usb("atslite1", &device, target, None,));
         device.firmware_identity = FirmwareVersion::default();
         device.firmware_version = [0, 2, 0];
-        let proven_bootloader = semver::Version::new(0, 2, 0);
+        let reported_bootloader = semver::Version::new(0, 2, 0);
         assert!(!ats_ble_update_needs_usb(
             "atslite1",
             &device,
             target,
-            Some(&proven_bootloader),
+            Some(&reported_bootloader),
         ));
     }
 }

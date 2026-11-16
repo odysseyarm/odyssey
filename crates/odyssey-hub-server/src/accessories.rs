@@ -1661,6 +1661,7 @@ mod tests {
             product_id: 0,
             name: Device::name_bytes(""),
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
         let device_list = DeviceList::default();
         device_list.upsert(device, None);

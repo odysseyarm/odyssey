@@ -63,6 +63,11 @@ pub struct FileEntry {
     /// application and reported by the unit as its net-core release.
     #[serde(default)]
     pub release: Option<u16>,
+    /// Ed25519 release signature as 128 hex characters over the message
+    /// `release_signing::message` builds for this asset. Absent on unsigned
+    /// releases and on entries that predate signing.
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
 impl FirmwareEntry {
@@ -193,6 +198,19 @@ mod tests {
             ReleaseSource::Bootloader { version: &version }.tag("unit"),
             "unit-bootloader-v0.0.4-rc.1"
         );
+    }
+
+    #[test]
+    fn file_signature_is_optional() {
+        let file = |signature: Option<&str>| {
+            let mut value = serde_json::json!({ "sha256": "abc", "size": 1 });
+            if let Some(signature) = signature {
+                value["signature"] = signature.into();
+            }
+            serde_json::from_value::<super::FileEntry>(value).expect("valid file entry")
+        };
+        assert_eq!(file(None).signature, None);
+        assert_eq!(file(Some("ab")).signature.as_deref(), Some("ab"));
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! picked, the host's own adapter or an Odyssey dongle; `accessories/transport.rs`
 //! hides the difference. The marker needs no USB bootstrap: it has one
 //! bootloader, never updated over the radio, so [`MARKER_BOOTLOADER`] is a
-//! constant and not a proof like the ATS Lite one.
+//! constant rather than a version the unit reports, as ATS Lite does.
 
 use std::time::Duration;
 

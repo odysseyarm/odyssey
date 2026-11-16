@@ -1,6 +1,7 @@
 mod board;
 mod manifest;
 mod release;
+mod signing;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -89,6 +90,15 @@ pub(crate) enum Cmd {
     /// crates/odyssey-hub-server/src/firmware/pack.rs), and this runs the same
     /// completeness check before it finishes.
     BuildPack(manifest::PackArgs),
+    /// Print the hex Ed25519 release signature of one image.
+    ///
+    /// `--signer dev` uses the public development seed, which only
+    /// `dev-signing-key` builds trust. Any other `--signer` is a command (split
+    /// on whitespace, no quoting) that reads the 67-byte message on stdin and
+    /// writes the 64 raw signature bytes to stdout. `gen-release` signs its
+    /// files the same way when `ODYSSEY_SIGNER` is set. See "Signed releases"
+    /// in `firmware/manifests/README.md`.
+    Sign(signing::SignArgs),
     /// Copy one release entry from the nightly manifest to the stable one.
     ///
     /// Stable only ever contains entries someone promoted here, so this is the one
@@ -203,6 +213,7 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             Ok(())
         }
         Cmd::BuildPack(args) => manifest::build_pack(&args),
+        Cmd::Sign(args) => signing::sign(&args),
         Cmd::Promote { device, version } => manifest::promote(&device, &version),
     }
 }

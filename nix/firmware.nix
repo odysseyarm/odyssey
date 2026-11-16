@@ -691,7 +691,12 @@ in
     better-ota-tests = hostTest (testArgs {
       dir = "firmware/better-ota";
       pname = "better-ota-tests";
-      cargoExtraArgs = "--locked --offline";
+      cargoExtraArgs = "--locked --offline --features signed,dev-signing-key";
+    });
+    release-signing-tests = hostTest (testArgs {
+      dir = "firmware/release-signing";
+      pname = "release-signing-tests";
+      cargoExtraArgs = "--locked --offline --features dev-signing-key";
     });
   };
 

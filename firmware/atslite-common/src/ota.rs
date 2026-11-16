@@ -16,6 +16,7 @@ use better_ota::{Action, Receiver, Slots};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
 use odyssey_protocol::ota::{Code, Image, MAX_FRAME, STATUS_LEN};
+use release_signing::Component;
 
 const QUEUE: usize = 1;
 
@@ -88,6 +89,14 @@ pub async fn run(
 /// nRF5340 flash page, the erase unit.
 const PAGE_SIZE: u32 = 4096;
 
+/// Board the firmware runs on. Selects the signature component id, so a signed image for one
+/// product does not install on the other.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Product {
+    Lite1,
+    LegacyAtslite,
+}
+
 /// Flash and memory map the update works on. Filled from linker symbols by the board's `main.rs`.
 #[expect(
     missing_debug_implementations,
@@ -113,6 +122,8 @@ pub struct Layout {
     pub netcore_ram: core::ops::Range<u32>,
     /// Address of the boot-state page that `better_boot::write_ota_state` rewrites.
     pub boot_state: u32,
+    /// Product this firmware is built for.
+    pub product: Product,
 }
 
 #[expect(
@@ -227,6 +238,15 @@ impl Slots for FlashSlots {
         })
     }
 
+    fn component(&self, image: Image) -> Component {
+        match (self.layout.product, image) {
+            (Product::Lite1, Image::Application) => Component::Lite1App,
+            (Product::Lite1, Image::NetCore) => Component::Lite1NetCore,
+            (Product::LegacyAtslite, Image::Application) => Component::LegacyAtsliteApp,
+            (Product::LegacyAtslite, Image::NetCore) => Component::LegacyAtsliteNetCore,
+        }
+    }
+
     async fn valid(&mut self, image: Image, size: u32) -> Result<(), Code> {
         let mut vectors = [0; 8];
         self.read(image, 0, &mut vectors).await?;
@@ -260,7 +280,13 @@ impl Slots for FlashSlots {
         app_size: Option<u32>,
         netcore_size: Option<u32>,
     ) -> Result<(), Code> {
-        let netcore = netcore_size.map(|size| (self.layout.netcore_stage.start, size));
+        let netcore = netcore_size
+            .map(|size| {
+                size.checked_next_multiple_of(4)
+                    .map(|len| (self.layout.netcore_stage.start, len))
+                    .ok_or(Code::Image)
+            })
+            .transpose()?;
         self.layout.flash.lock(|cell| {
             better_boot::write_ota_state(
                 self.layout.boot_state,
