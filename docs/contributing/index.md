@@ -259,6 +259,28 @@ version fields, so MSI upgrade checks use the numeric `X.Y.Z` core; firmware
 compatibility checks compare full SemVer, keeping a Nightly below matching
 Stable floor.
 
+### Windows desktop smoke
+
+`desktop-release.yml` runs hosted Windows MSI install/uninstall smoke for online
+and full installers, then requires `windows-lab` environment approval before
+scheduling hardware UI smoke on `[self-hosted, Windows, X64, odyssey-windows-ui]`.
+Configure protected `windows-lab` environment reviewers, allowed branches/tags,
+and all-external-contributor pull-request approval before use. GitHub may limit
+environment reviewers to same-organization users; external approval needs
+organization-level configuration or maintainer approval. Workflow has no
+pull-request trigger, and self-hosted job never runs for pull requests. The
+runner needs an unlocked interactive desktop session logged in as `odyssey-lab`;
+the UI smoke requires healthy AMD hardware rendering. CI verifies the executable
+SHA256 against same-run `prebuilt.json` before launching. Hosted MSI validation
+does not exercise hardware; UI validation makes no USB, BLE or DFU claims.
+
+From repository root, run either smoke locally:
+
+```powershell
+./.github/scripts/windows-installer-smoke.ps1 -InstallerPath C:\path\Odyssey.msi
+./.github/scripts/windows-desktop-smoke.ps1 -ExecutablePath C:\path\odyssey-desktop.exe -OutputDirectory C:\path\evidence -RequireHardwareGpu
+```
+
 ### NixOS package
 
 Desktop releases attach the pushed store path as
@@ -363,8 +385,8 @@ These still live next to the code they describe:
 
 Calibration saves belong to the wizard task, not the confirmation UI. Confirming
 replacement removes that UI before persistence completes. Keep the accepted
-result and screen ID fixed for the duration of the save; a failed write must
-leave the review available for retry.
+result and screen ID fixed for the duration of the save; Back and Escape must
+not reset it. A failed write must leave the review available for retry.
 
 The headless save regression uses isolated simulator storage and covers
 replacement, remembered display settings and preservation after invalid input:
@@ -374,7 +396,30 @@ cargo nextest run -p odyssey-desktop --features sim \
   -E 'test(saving_replaces_a_screen_and_a_rejected_calibration_keeps_it)'
 ```
 
+Use a native display or Xvfb; ensure no other Odyssey hub is running. The test
+starts an owned desktop with `--sim --no-discovery --temp-config calibrate --demo --diagonal 55`,
+using isolated settings, `HOME` and runtime directories plus a random loopback
+secret. It scrolls the calibration page, edits real screen-size text, checks
+dialog Escape/Close behavior and visits sidebar Settings, Devices and Home. Artifacts go under
+`target/gui-smoke/<PID-nonce>/`: `scale-board.png`, `setup.png` and app logs.
+On failure, it attempts to capture `failure.png` and `failure.json` while the
+automation connection is available. This smoke test is not a release-workflow gate.
+
+Screenshots are manual review artifacts, not pixel baselines. Open them for
+first-run review, intentional layout changes, or failures; passing behavior
+assertions do not establish visual correctness.
+
+```sh
+cargo nextest run --offline --locked -p odyssey-desktop \
+  --features ui-automation,sim --test gui_smoke --profile gui --run-ignored only
+```
+
 Calibration text beside icons needs `flex_1().min_w_0()` on the text column
 and `flex_shrink_0()` on the icon wrapper so paragraphs wrap within the card.
 Check “How big is the screen?” at 600px and 760px window widths, including
 the missing-display-size advice, setup hint and tape/card measurement prompt.
+
+Size inputs synchronize from the wizard only when its value changes. Rendering
+must not overwrite an input edit before its queued change event reaches the model.
+CLI calibration initialization runs on the foreground executor, outside platform
+callbacks that may hold an X11 display borrow.

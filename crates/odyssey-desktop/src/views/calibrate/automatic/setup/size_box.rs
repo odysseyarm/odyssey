@@ -16,6 +16,7 @@ use crate::views::calibrate::automatic::wizard::Wizard;
 pub(super) struct SizeBox {
     wizard: Entity<Wizard>,
     input: Entity<InputState>,
+    synced_text: Option<gpui::SharedString>,
     /// A half-typed number such as the "4" of 40 is out of range for a moment.
     /// That is reported once the tech leaves the box, not while they type.
     left_box: bool,
@@ -46,6 +47,7 @@ impl SizeBox {
         Self {
             wizard,
             input,
+            synced_text: None,
             left_box: false,
             _subscriptions: subscriptions,
         }
@@ -80,10 +82,13 @@ impl Render for SizeBox {
                 format!("{}–{}", WIDTH_RANGE_CM.start(), WIDTH_RANGE_CM.end()),
             ),
         };
-        let text = wizard.size_text.clone();
-        if self.input.read(cx).value() != text.as_str() {
-            self.input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
+        if self.synced_text.as_deref() != Some(wizard.size_text.as_str()) {
+            let text: gpui::SharedString = wizard.size_text.clone().into();
+            self.synced_text = Some(text.clone());
+            if self.input.read(cx).value() != text.as_str() {
+                self.input
+                    .update(cx, |input, cx| input.set_value(text, window, cx));
+            }
         }
 
         let mut col = div()
@@ -102,7 +107,13 @@ impl Render for SizeBox {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().w(px(192.0)).child(Input::new(&self.input)))
+                    .child(
+                        div().w(px(192.0)).child(
+                            Input::new(&self.input)
+                                .id("calibration-size")
+                                .aria_label(label),
+                        ),
+                    )
                     .child(
                         div()
                             .text_lg()

@@ -88,7 +88,7 @@ jobs:
   bundle:
     name: Bundle MSI
     needs: [check-version, windows-build]
-    runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
+    runs-on: windows-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
       ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
@@ -120,6 +120,63 @@ jobs:
         with:
           name: odyssey-desktop-msi
           path: dist
+
+  windows-installer-smoke:
+    name: Smoke-test Windows MSI installers
+    needs: [check-version, bundle]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: odyssey-desktop-msi
+          path: dist
+      - uses: actions/checkout@v5
+      - name: Install, validate, and uninstall both MSI variants
+        shell: powershell
+        run: |
+          ./.github/scripts/windows-installer-smoke.ps1 `
+            -InstallerPath "dist/Odyssey-${{ needs.check-version.outputs.version }}-win-x64.msi"
+          ./.github/scripts/windows-installer-smoke.ps1 `
+            -InstallerPath "dist/Odyssey-${{ needs.check-version.outputs.version }}-win-x64-full.msi"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: odyssey-desktop-windows-msi-smoke
+          path: windows-installer-smoke
+          if-no-files-found: ignore
+
+  windows-ui-smoke:
+    name: Hardware Windows UI smoke
+    needs: [windows-build, windows-installer-smoke]
+    runs-on: [self-hosted, Windows, X64, odyssey-windows-ui]
+    environment: windows-lab
+    timeout-minutes: 20
+    concurrency:
+      group: odyssey-windows-ui
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with:
+          name: odyssey-desktop-windows-prebuilt
+          path: prebuilt
+      - name: Verify prebuilt executable hash and run UI smoke
+        shell: powershell
+        run: |
+          $manifest = Get-Content prebuilt/prebuilt.json -Raw | ConvertFrom-Json
+          $relativePath = 'full/odyssey-desktop.exe'
+          $expectedHash = $manifest.sha256.$relativePath
+          if (-not $expectedHash) { throw "Missing SHA256 for $relativePath in prebuilt.json" }
+          $exe = Join-Path prebuilt $relativePath
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $expectedHash) { throw "Executable SHA256 mismatch" }
+          ./.github/scripts/windows-desktop-smoke.ps1 -ExecutablePath $exe -OutputDirectory windows-ui-smoke -RequireHardwareGpu
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: odyssey-desktop-windows-ui-smoke
+          path: windows-ui-smoke
+          if-no-files-found: ignore
 
   appimage:
     name: Bundle AppImage
@@ -183,7 +240,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [check-version, bundle, appimage, nixos-prebuilt]
+    needs: [check-version, bundle, windows-ui-smoke, appimage, nixos-prebuilt]
     if: github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write

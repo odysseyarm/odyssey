@@ -116,7 +116,7 @@ let
     )
   '';
 
-  # gpui-pre-windows 0.3.11 only compiles its shaders when the *host* is
+  # gpui-pre-windows 0.3.12 only compiles its shaders when the *host* is
   # Windows. The patch moves that decision to the target and keeps the rest of
   # upstream's build.rs. It is tied to this version and refuses any other.
   gpuiCrossBuild =
@@ -125,10 +125,10 @@ let
     if name != "gpui-pre-windows" then
       drv
     else
-      assert lib.assertMsg (version == "0.3.11")
-        "nix/patches/gpui-pre-windows-0.3.11-cross-build.patch is for gpui-pre-windows 0.3.11, not ${version}: port it";
+      assert lib.assertMsg (version == "0.3.12")
+        "nix/patches/gpui-pre-windows-0.3.12-cross-build.patch is for gpui-pre-windows 0.3.12, not ${version}: port it";
       drv.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ [ ./patches/gpui-pre-windows-0.3.11-cross-build.patch ];
+        patches = (old.patches or [ ]) ++ [ ./patches/gpui-pre-windows-0.3.12-cross-build.patch ];
       });
 
   # ---- the app -------------------------------------------------------------------
