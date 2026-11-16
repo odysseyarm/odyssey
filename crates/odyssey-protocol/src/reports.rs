@@ -19,6 +19,13 @@ pub struct MarkersReport {
     pub points: [Point2<u16>; 16],
 }
 
+impl MarkersReport {
+    /// Report units per native sensor pixel: the PAG7665QN reports 1/64 px.
+    ///
+    /// Since: Unreleased.
+    pub const UNITS_PER_PX: f64 = 64.0;
+}
+
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
 #[repr(C)]

@@ -130,6 +130,13 @@ impl From<MarkersReport> for CombinedMarkersReport {
     }
 }
 
+impl CombinedMarkersReport {
+    /// Report units per native sensor pixel: the PAJ7025 spreads 98 px over 0..=4094.
+    ///
+    /// Since: Unreleased.
+    pub const UNITS_PER_PX: f64 = 4094.0 / 97.0;
+}
+
 #[cfg(feature = "pyo3")]
 #[pyo3::pymethods]
 impl CombinedMarkersReport {
