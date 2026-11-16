@@ -1,4 +1,11 @@
-{ pkgs, craneLib, common, toolchain, xtask, gitRev ? "unknown" }:
+{
+  pkgs,
+  craneLib,
+  common,
+  toolchain,
+  xtask,
+  gitRev ? "unknown",
+}:
 let
   inherit (pkgs) lib;
 
@@ -8,9 +15,13 @@ let
     nrf52 = "thumbv7em-none-eabihf";
   };
   hostTriple = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+  buildVersion = builtins.getEnv "ODYSSEY_BUILD_VERSION";
+  buildVersionEnv = lib.optionalAttrs (buildVersion != "") {
+    ODYSSEY_BUILD_VERSION = buildVersion;
+  };
 
   arm = pkgs.gcc-arm-embedded;
-  # The DFU package is signed by nrfutil's nrf5sdk-tools extension; 1.1.0 is the
+  # The DFU package is signed by nrfutil's nrf5sdk-tools extension. 1.1.0 is the
   # version the release workflow used to install by hand.
   nrfutil = pkgs.nrfutil.withExtensions [ "nrfutil-nrf5sdk-tools" ];
   # nrf-sdc-sys and nrf-mpsl-sys run bindgen over headers that need the bare-metal
@@ -31,173 +42,292 @@ let
   rootToml = builtins.fromTOML (builtins.readFile (readable + "/Cargo.toml"));
 
   # "a/b/../c" -> "a/c"
-  join = dir: rel:
-    lib.concatStringsSep "/" (lib.foldl'
-      (parts: part:
-        if part == ".." then lib.init parts
-        else if part == "." || part == "" then parts
-        else parts ++ [ part ])
-      [ ]
-      (lib.splitString "/" "${dir}/${rel}"));
+  join =
+    dir: rel:
+    lib.concatStringsSep "/" (
+      lib.foldl' (
+        parts: part:
+        if part == ".." then
+          lib.init parts
+        else if part == "." || part == "" then
+          parts
+        else
+          parts ++ [ part ]
+      ) [ ] (lib.splitString "/" "${dir}/${rel}")
+    );
 
-  pathDeps = dir:
+  pathDeps =
+    dir:
     let
       toml = tomlOf dir;
       tables = [ toml ] ++ lib.attrValues (toml.target or { });
-      deps = lib.concatMap
-        (table: lib.attrsToList ((table.dependencies or { })
-          // (table.build-dependencies or { })
-          // (table.dev-dependencies or { })))
-        tables;
-      resolve = { name, value }:
-        if !(builtins.isAttrs value) then [ ]
+      deps = lib.concatMap (
+        table:
+        lib.attrsToList (
+          (table.dependencies or { }) // (table.build-dependencies or { }) // (table.dev-dependencies or { })
+        )
+      ) tables;
+      resolve =
+        { name, value }:
+        if !(builtins.isAttrs value) then
+          [ ]
         else if value.workspace or false then
-          let shared = (rootToml.workspace.dependencies or { }).${name} or null;
-          in lib.optional (builtins.isAttrs shared && shared ? path) (join "" shared.path)
-        else lib.optional (value ? path) (join dir value.path);
+          let
+            shared = (rootToml.workspace.dependencies or { }).${name} or null;
+          in
+          lib.optional (builtins.isAttrs shared && shared ? path) (join "" shared.path)
+        else
+          lib.optional (value ? path) (join dir value.path);
     in
     lib.concatMap resolve deps;
 
-  closure = dir: map (node: node.key) (lib.genericClosure {
-    startSet = [{ key = dir; }];
-    operator = { key, ... }: map (key: { inherit key; }) (pathDeps key);
-  });
+  closure =
+    dir:
+    map (node: node.key) (
+      lib.genericClosure {
+        startSet = [ { key = dir; } ];
+        operator = { key, ... }: map (key: { inherit key; }) (pathDeps key);
+      }
+    );
 
-  mkSource = { dirs, files ? [ ] }:
-    let keep = dirs ++ files;
-    in lib.cleanSourceWith {
+  mkSource =
+    {
+      dirs,
+      files ? [ ],
+    }:
+    let
+      keep = dirs ++ files;
+    in
+    lib.cleanSourceWith {
       src = root;
-      filter = path: type:
-        let rel = lib.removePrefix base path;
-        in !(lib.hasPrefix base path)
-          # The workspace manifest the odyssey-protocol path dependency inherits from.
-          || rel == "Cargo.toml"
-          # Signing keys only go into the package that signs with them.
-          || (lib.elem rel files)
-          || (baseNameOf rel != ".claude" && !(lib.hasSuffix ".pem" rel)
-            && lib.any (dir: rel == dir || lib.hasPrefix "${dir}/" rel) dirs)
-          || (type == "directory" && lib.any (kept: lib.hasPrefix "${rel}/" kept) keep);
+      filter =
+        path: type:
+        let
+          rel = lib.removePrefix base path;
+        in
+        !(lib.hasPrefix base path)
+        # The workspace manifest the odyssey-protocol path dependency inherits from.
+        || lib.elem rel [
+          "Cargo.toml"
+          "clippy.toml"
+        ]
+        # Signing keys only go into the package that signs with them.
+        || (lib.elem rel files)
+        || (
+          baseNameOf rel != ".claude"
+          && !(lib.hasSuffix ".pem" rel)
+          && lib.any (dir: rel == dir || lib.hasPrefix "${dir}/" rel) dirs
+        )
+        || (type == "directory" && lib.any (kept: lib.hasPrefix "${rel}/" kept) keep);
     };
   # firmware/memory is read by every build script.
-  sourceFor = { dir, files ? [ ] }: mkSource {
-    dirs = closure dir ++ [ "firmware/memory" ];
-    inherit files;
-  };
+  sourceFor =
+    {
+      dir,
+      files ? [ ],
+    }:
+    mkSource {
+      dirs = closure dir ++ [ "firmware/memory" ];
+      inherit files;
+    };
 
   lockOf = dir: readable + "/${dir}/Cargo.lock";
   # The lock file alone, so a package depends on it and not on the whole tree.
   lockFile = dir: pkgs.writeText "Cargo.lock" (builtins.readFile (lockOf dir));
   # Hashes for the git dependencies of the firmware lock files. Some revisions are
-  # no longer on any branch, which fetchGit cannot fetch but fetchgit can; the
+  # no longer on any branch, which fetchGit cannot fetch but fetchgit can. The
   # table is regenerated by update-firmware-git-hashes.sh.
   outputHashes = builtins.fromJSON (builtins.readFile ./firmware-git-hashes.json);
   vendorArgs = {
     inherit outputHashes;
-    overrideVendorGitCheckout = packages: drv:
-      if lib.any (package: lib.hasInfix "github.com/embassy-rs/trouble" package.source) packages
-      then drv.overrideAttrs (old: {
-        postPatch = (old.postPatch or "") + ''
-          # Trouble includes its workspace README through CARGO_PKG_README.
-          cp README.md host/README.md
-          substituteInPlace host/Cargo.toml \
-            --replace-fail 'readme = "../README.md"' 'readme = "README.md"'
-        '';
-      })
-      else if lib.any (package: lib.hasInfix "github.com/alexmoon/nrf-sdc" package.source) packages
-      then drv.overrideAttrs (old: {
-        postPatch = (old.postPatch or "") + ''
-          # Both sys crates omit headers that their bindgen scripts include.
-          substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
-            --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
-          substituteInPlace nrf-sdc-sys/Cargo.toml \
-            --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
-        '';
-      })
-      else drv;
+    overrideVendorGitCheckout =
+      packages: drv:
+      if lib.any (package: lib.hasInfix "github.com/embassy-rs/trouble" package.source) packages then
+        drv.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            # Trouble includes its workspace README through CARGO_PKG_README.
+            cp README.md host/README.md
+            substituteInPlace host/Cargo.toml \
+              --replace-fail 'readme = "../README.md"' 'readme = "README.md"'
+          '';
+        })
+      else if lib.any (package: lib.hasInfix "github.com/alexmoon/nrf-sdc" package.source) packages then
+        drv.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            # Both sys crates omit headers that their bindgen scripts include.
+            substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
+              --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
+            substituteInPlace nrf-sdc-sys/Cargo.toml \
+              --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+          '';
+        })
+      else
+        drv;
   };
   vendorOf = dir: craneLib.vendorCargoDeps (vendorArgs // { cargoLock = lockOf dir; });
   # -Z build-std compiles the standard library from the toolchain's rust-src, whose
   # own dependencies have to be vendored too.
-  stdVendorOf = dir: craneLib.vendorMultipleCargoDeps (vendorArgs // {
-    cargoLockList = [ (lockOf dir) "${toolchain}/lib/rustlib/src/rust/library/Cargo.lock" ];
-  });
+  stdVendorOf =
+    dir:
+    craneLib.vendorMultipleCargoDeps (
+      vendorArgs
+      // {
+        cargoLockList = [
+          (lockOf dir)
+          "${toolchain}/lib/rustlib/src/rust/library/Cargo.lock"
+        ];
+      }
+    );
 
   # One firmware crate: its dependencies are built once (buildDepsOnly) and every
   # variant of the crate (the two app banks) links against them.
   #
   # The package holds the ELF where `cargo xtask` looks for it under
   # ODYSSEY_PREBUILT: <dir>/<target dir>/<triple>/release/<bin>.
-  mkCrate = { dir, bin, target, features ? null, buildStd ? false, files ? [ ], extraArgs ? "" }:
+  mkCrate =
+    {
+      dir,
+      bin,
+      target,
+      features ? null,
+      buildStd ? false,
+      files ? [ ],
+      extraArgs ? "",
+    }:
     let
       name = lib.removePrefix "firmware/" dir;
-      shared = common.mkArgs
-        {
-          workspace = dir;
-          pname = name;
-          cargoExtraArgs = lib.concatStringsSep " " ([ "--locked" "--offline" ]
-            ++ lib.optionals buildStd [ "-Z" "build-std" "-Z" "build-std-features=optimize_for_size" ]
-            ++ [ "--target" target "--bin" bin ]
-            ++ lib.optionals (features != null) [ "--features" features ]
-            ++ lib.optional (extraArgs != "") extraArgs);
-        };
-      args = shared // bindgenEnv // {
-        src = sourceFor { inherit dir files; };
-        cargoLock = lockFile dir;
-        cargoVendorDir = if buildStd then stdVendorOf dir else vendorOf dir;
-        # arm-none-eabi-gcc is what the cc crate picks for the thumb targets.
-        nativeBuildInputs = shared.nativeBuildInputs ++ [ arm ];
-        doCheck = false;
+      shared = common.mkArgs {
+        workspace = dir;
+        pname = name;
+        cargoExtraArgs = lib.concatStringsSep " " (
+          [
+            "--locked"
+            "--offline"
+          ]
+          ++ lib.optionals buildStd [
+            "-Z"
+            "build-std"
+            "-Z"
+            "build-std-features=optimize_for_size"
+          ]
+          ++ [
+            "--target"
+            target
+            "--bin"
+            bin
+          ]
+          ++ lib.optionals (features != null) [
+            "--features"
+            features
+          ]
+          ++ lib.optional (extraArgs != "") extraArgs
+        );
       };
+      args =
+        shared
+        // bindgenEnv
+        // {
+          src = sourceFor { inherit dir files; };
+          cargoLock = lockFile dir;
+          cargoVendorDir = if buildStd then stdVendorOf dir else vendorOf dir;
+          # arm-none-eabi-gcc is what the cc crate picks for the thumb targets.
+          nativeBuildInputs = shared.nativeBuildInputs ++ [ arm ];
+          doCheck = false;
+        };
       deps = craneLib.buildDepsOnly args;
     in
     {
       inherit deps;
-      elf = { variant ? name, bank ? null, extraEnv ? { } }:
-        let targetDir = if bank == null then "target" else "target-bank-${bank}";
-        in craneLib.buildPackage (args // extraEnv // lib.optionalAttrs (bank != null) {
-          # Read by the app's build script to pick the bank's memory layout.
-          APP_BANK = "bank_${bank}";
-        } // {
-          pname = variant;
-          cargoArtifacts = deps;
-          doNotPostBuildInstallCargoBinaries = true;
-          # llvm-objcopy converts the ELF later; stripping it here would also need
-          # a strip that understands ARM.
-          dontStrip = true;
-          dontPatchELF = true;
-          installPhaseCommand = ''
-            install -Dm444 target/${target}/release/${bin} \
-              $out/${dir}/${targetDir}/${target}/release/${bin}
-          '';
-        });
+      elf =
+        {
+          variant ? name,
+          bank ? null,
+          extraEnv ? { },
+        }:
+        let
+          targetDir = if bank == null then "target" else "target-bank-${bank}";
+        in
+        craneLib.buildPackage (
+          args
+          // extraEnv
+          // buildVersionEnv
+          // lib.optionalAttrs (bank != null) {
+            # Read by the app's build script to pick the bank's memory layout.
+            APP_BANK = "bank_${bank}";
+          }
+          // {
+            pname = variant;
+            cargoArtifacts = deps;
+            doNotPostBuildInstallCargoBinaries = true;
+            # llvm-objcopy converts the ELF later. Stripping it here would also need
+            # a strip that understands ARM.
+            dontStrip = true;
+            dontPatchELF = true;
+            installPhaseCommand = ''
+              install -Dm444 target/${target}/release/${bin} \
+                $out/${dir}/${targetDir}/${target}/release/${bin}
+            '';
+          }
+        );
     };
 
   # Packages whose ELFs xtask converts and packages, run from a scratch tree that
   # has only what xtask reads. The ELFs come in through ODYSSEY_PREBUILT, so
   # nothing is rebuilt, and the packaging is the code a local build runs.
-  xtaskRun = { name, elfs, boardDir, command, outDir, expect, source ? null, tools ? [ ], pre ? "" }:
+  xtaskRun =
+    {
+      name,
+      elfs,
+      boardDir,
+      command,
+      outDir,
+      expect,
+      source ? null,
+      tools ? [ ],
+      pre ? "",
+    }:
     pkgs.runCommand name
-      {
-        nativeBuildInputs = [ xtask toolchain ] ++ tools;
-        ODYSSEY_PREBUILT = pkgs.symlinkJoin { name = "${name}-prebuilt"; paths = elfs; };
-      } ''
-      export ODYSSEY_REPO="$PWD/repo"
-      ${if source == null
-        then ''mkdir -p "$ODYSSEY_REPO/${boardDir}"''
-        else ''cp -r --no-preserve=mode ${source} "$ODYSSEY_REPO"''}
-      ${pre}
-      xtask ${command}
-      mkdir -p "$out"
-      cp -r "$ODYSSEY_REPO/${boardDir}/${outDir}/." "$out/"
-      for file in ${lib.escapeShellArgs expect}; do
-        test -s "$out/$file" || { echo "missing or empty: $file" >&2; exit 1; }
-      done
-    '';
+      (
+        {
+          nativeBuildInputs = [
+            xtask
+            toolchain
+          ]
+          ++ tools;
+          ODYSSEY_PREBUILT = pkgs.symlinkJoin {
+            name = "${name}-prebuilt";
+            paths = elfs;
+          };
+        }
+        // buildVersionEnv
+      )
+      ''
+        export ODYSSEY_REPO="$PWD/repo"
+        ${
+          if source == null then
+            ''mkdir -p "$ODYSSEY_REPO/${boardDir}"''
+          else
+            ''cp -r --no-preserve=mode ${source} "$ODYSSEY_REPO"''
+        }
+        ${pre}
+        xtask ${command}
+        mkdir -p "$out"
+        cp -r "$ODYSSEY_REPO/${boardDir}/${outDir}/." "$out/"
+        for file in ${lib.escapeShellArgs expect}; do
+          test -s "$out/$file" || { echo "missing or empty: $file" >&2; exit 1; }
+        done
+      '';
 
   # What `cargo xtask firmware <board> build` produces for a dual-core nRF5340 board.
   mkDualCore = { name, crates }: {
-    app-a = crates.app.elf { variant = "${name}-app-a"; bank = "a"; };
-    app-b = crates.app.elf { variant = "${name}-app-b"; bank = "b"; };
+    app-a = crates.app.elf {
+      variant = "${name}-app-a";
+      bank = "a";
+    };
+    app-b = crates.app.elf {
+      variant = "${name}-app-b";
+      bank = "b";
+    };
     bootloader = crates.bootloader.elf { };
     stage1 = crates.stage1.elf { };
     netcore-bootloader = crates.netcoreBootloader.elf { };
@@ -205,34 +335,92 @@ let
   };
 
   lite1Crates = {
-    app = mkCrate { dir = "firmware/lite1"; bin = "app"; target = triple.appCore; };
-    bootloader = mkCrate { dir = "firmware/lite1-bootloader"; bin = "lite1-bootloader"; target = triple.appCore; features = "defmt"; };
-    stage1 = mkCrate { dir = "firmware/lite1-stage1-bootloader"; bin = "lite1-stage1-bootloader"; target = triple.appCore; };
-    netcoreBootloader = mkCrate { dir = "firmware/lite1-netcore-bootloader"; bin = "lite1-netcore-bootloader"; target = triple.netCore; };
-    netCore = mkCrate { dir = "firmware/lite1-net-core"; bin = "lite1-net-core"; target = triple.netCore; };
+    app = mkCrate {
+      dir = "firmware/lite1";
+      bin = "app";
+      target = triple.appCore;
+    };
+    bootloader = mkCrate {
+      dir = "firmware/lite1-bootloader";
+      bin = "lite1-bootloader";
+      target = triple.appCore;
+      features = "defmt";
+    };
+    stage1 = mkCrate {
+      dir = "firmware/lite1-stage1-bootloader";
+      bin = "lite1-stage1-bootloader";
+      target = triple.appCore;
+    };
+    netcoreBootloader = mkCrate {
+      dir = "firmware/lite1-netcore-bootloader";
+      bin = "lite1-netcore-bootloader";
+      target = triple.netCore;
+    };
+    netCore = mkCrate {
+      dir = "firmware/lite1-net-core";
+      bin = "lite1-net-core";
+      target = triple.netCore;
+    };
   };
   legacyAtsliteCrates = {
-    # The standard library rebuilt for size (see firmware/README.md); the bank
+    # The standard library rebuilt for size (see firmware/README.md). The bank
     # boundaries are fixed.
-    app = mkCrate { dir = "firmware/legacy-atslite"; bin = "app"; target = triple.appCore; buildStd = true; };
-    bootloader = mkCrate { dir = "firmware/legacy-atslite-bootloader"; bin = "legacy-atslite-bootloader"; target = triple.appCore; features = "defmt"; };
-    stage1 = mkCrate { dir = "firmware/legacy-atslite-stage1-bootloader"; bin = "legacy-atslite-stage1-bootloader"; target = triple.appCore; };
-    netcoreBootloader = mkCrate { dir = "firmware/legacy-atslite-netcore-bootloader"; bin = "legacy-atslite-netcore-bootloader"; target = triple.netCore; };
-    netCore = mkCrate { dir = "firmware/legacy-atslite-net-core"; bin = "legacy-atslite-net-core"; target = triple.netCore; };
+    app = mkCrate {
+      dir = "firmware/legacy-atslite";
+      bin = "app";
+      target = triple.appCore;
+      buildStd = true;
+    };
+    bootloader = mkCrate {
+      dir = "firmware/legacy-atslite-bootloader";
+      bin = "legacy-atslite-bootloader";
+      target = triple.appCore;
+      features = "defmt";
+    };
+    stage1 = mkCrate {
+      dir = "firmware/legacy-atslite-stage1-bootloader";
+      bin = "legacy-atslite-stage1-bootloader";
+      target = triple.appCore;
+    };
+    netcoreBootloader = mkCrate {
+      dir = "firmware/legacy-atslite-netcore-bootloader";
+      bin = "legacy-atslite-netcore-bootloader";
+      target = triple.netCore;
+    };
+    netCore = mkCrate {
+      dir = "firmware/legacy-atslite-net-core";
+      bin = "legacy-atslite-net-core";
+      target = triple.netCore;
+    };
   };
   legacyVmCrates = {
-    app = mkCrate { dir = "firmware/legacy-vm"; bin = "app"; target = triple.nrf52; };
-    bootloader = mkCrate { dir = "firmware/legacy-vm-bootloader"; bin = "legacy-vm-bootloader"; target = triple.nrf52; };
+    app = mkCrate {
+      dir = "firmware/legacy-vm";
+      bin = "app";
+      target = triple.nrf52;
+    };
+    bootloader = mkCrate {
+      dir = "firmware/legacy-vm-bootloader";
+      bin = "legacy-vm-bootloader";
+      target = triple.nrf52;
+    };
   };
   markerCrates = {
-    app = mkCrate { dir = "firmware/marker-control-board"; bin = "app"; target = triple.nrf52; };
+    app = mkCrate {
+      dir = "firmware/marker-control-board";
+      bin = "app";
+      target = triple.nrf52;
+    };
     # Its build script and two modules are the app's.
     bootloader = mkCrate {
       dir = "firmware/marker-control-board-bootloader";
       bin = "marker-control-board-bootloader";
       target = triple.nrf52;
-      files = map (file: "firmware/marker-control-board/${file}")
-        [ "build_support.rs" "src/hardware.rs" "src/valid_vectors.rs" ];
+      files = map (file: "firmware/marker-control-board/${file}") [
+        "build_support.rs"
+        "src/hardware.rs"
+        "src/valid_vectors.rs"
+      ];
     };
   };
   dongleCrate = mkCrate {
@@ -242,8 +430,14 @@ let
     extraArgs = "--bin dongle-fw";
   };
 
-  lite1 = mkDualCore { name = "lite1"; crates = lite1Crates; };
-  legacyAtslite = mkDualCore { name = "legacy-atslite"; crates = legacyAtsliteCrates; };
+  lite1 = mkDualCore {
+    name = "lite1";
+    crates = lite1Crates;
+  };
+  legacyAtslite = mkDualCore {
+    name = "legacy-atslite";
+    crates = legacyAtsliteCrates;
+  };
   legacyVm = {
     app = legacyVmCrates.app.elf { variant = "legacy-vm-app"; };
     bootloader = legacyVmCrates.bootloader.elf { };
@@ -252,39 +446,64 @@ let
     app = markerCrates.app.elf { variant = "marker-control-board-app"; };
     bootloader = markerCrates.bootloader.elf { };
   };
-  # The commit the dongle reports in its boot log; a checkout would ask git.
-  dongle = dongleCrate.elf { variant = "dongle-fw"; extraEnv = { GIT_DESCRIBE = gitRev; }; };
+  # The commit the dongle reports in its boot log. A checkout would ask git.
+  dongle = dongleCrate.elf {
+    variant = "dongle-fw";
+    extraEnv = {
+      GIT_DESCRIBE = gitRev;
+    };
+  };
 
   # `cargo xtask firmware <board> build` and `build-dual-bank`.
   dualCoreImages = board: parts: {
     "firmware-${board}-images" = xtaskRun {
       name = "firmware-${board}-images";
-      elfs = [ parts.stage1 parts.app-a parts.app-b parts.bootloader parts.netcore-bootloader parts.net-core ];
+      elfs = [
+        parts.stage1
+        parts.app-a
+        parts.app-b
+        parts.bootloader
+        parts.netcore-bootloader
+        parts.net-core
+      ];
       boardDir = "firmware/${board}";
       command = "firmware ${board} build";
       outDir = "build";
       expect = [
         "stage1-bootloader.hex"
-        "stage2-bootloader.hex" "stage2-bootloader.bin"
-        "app-a.hex" "app-a.bin"
-        "app-b.hex" "app-b.bin"
+        "stage2-bootloader.hex"
+        "stage2-bootloader.bin"
+        "app-a.hex"
+        "app-a.bin"
+        "app-b.hex"
+        "app-b.bin"
         "netcore-bootloader.hex"
-        "net-core.hex" "net-core.bin"
+        "net-core.hex"
+        "net-core.bin"
         "merged.hex"
       ];
     };
     "firmware-${board}-images-dual-bank" = xtaskRun {
       name = "firmware-${board}-images-dual-bank";
-      elfs = [ parts.stage1 parts.app-a parts.app-b parts.bootloader parts.net-core ];
+      elfs = [
+        parts.stage1
+        parts.app-a
+        parts.app-b
+        parts.bootloader
+        parts.net-core
+      ];
       boardDir = "firmware/${board}";
       command = "firmware ${board} build-dual-bank";
       outDir = "build";
       expect = [
         "stage1-bootloader.hex"
         "stage2-bootloader.hex"
-        "app-a.hex" "app-a.bin"
-        "app-b.hex" "app-b.bin"
-        "net-core.hex" "net-core.bin"
+        "app-a.hex"
+        "app-a.bin"
+        "app-b.hex"
+        "app-b.bin"
+        "net-core.hex"
+        "net-core.bin"
         "merged-dual.hex"
       ];
     };
@@ -299,7 +518,11 @@ let
       boardDir = "firmware/${board}";
       command = "firmware ${board} dist-bootloader";
       outDir = "dist-bootloader";
-      expect = map (ext: "${stem}.${ext}") [ "bin" "hex" "elf" ];
+      expect = map (ext: "${stem}.${ext}") [
+        "bin"
+        "hex"
+        "elf"
+      ];
     };
   };
   netcoreDist = board: elf: {
@@ -309,7 +532,11 @@ let
       boardDir = "firmware/${board}";
       command = "firmware ${board} dist-netcore";
       outDir = "dist-netcore";
-      expect = map (ext: "net-core.${ext}") [ "bin" "hex" "elf" ];
+      expect = map (ext: "net-core.${ext}") [
+        "bin"
+        "hex"
+        "elf"
+      ];
     };
   };
 
@@ -321,15 +548,23 @@ let
     command = "dongle dist";
     outDir = "dist";
     # What the release workflow checks before it uploads.
-    expect = map (suffix: "dongle-fw-${dongleVersion}${suffix}")
-      [ ".hex" ".uf2" "-dfu-fanstel.zip" "-dfu-laird.zip" ];
+    expect = map (suffix: "dongle-fw-${dongleVersion}${suffix}") [
+      ".hex"
+      ".uf2"
+      "-dfu-fanstel.zip"
+      "-dfu-laird.zip"
+    ];
     # Only what the packaging reads: the version, the flash layout that bounds the
     # padded DFU image, and the two vendor signing keys, which are already tracked
     # in the public repository.
     source = mkSource {
       dirs = [ ];
-      files = map (file: "firmware/dongle-fw/${file}")
-        [ "Cargo.toml" "memory-dongle.kdl" "fanstel-debug.pem" "laird-dongle.pem" ];
+      files = map (file: "firmware/dongle-fw/${file}") [
+        "Cargo.toml"
+        "memory-dongle.kdl"
+        "fanstel-debug.pem"
+        "laird-dongle.pem"
+      ];
     };
     tools = [ nrfutil ];
     # nrfutil keeps state under its home, which the sandbox has to provide.
@@ -341,16 +576,30 @@ let
 
   # Host tests the marker release workflow gates on. Dev profile, as `cargo test`
   # runs them: debug assertions and overflow checks stay on.
-  testArgs = { dir, pname, cargoExtraArgs }:
-    common.mkArgs { workspace = dir; inherit pname cargoExtraArgs; } // {
+  testArgs =
+    {
+      dir,
+      pname,
+      cargoExtraArgs,
+    }:
+    common.mkArgs {
+      workspace = dir;
+      inherit pname cargoExtraArgs;
+    }
+    // {
       src = sourceFor { inherit dir; };
       cargoLock = lockFile dir;
       cargoVendorDir = vendorOf dir;
       CARGO_PROFILE = "dev";
     };
-  hostTest = args: craneLib.cargoTest (args // {
-    cargoArtifacts = craneLib.buildDepsOnly (args // { doCheck = false; });
-  });
+  hostTest =
+    args:
+    craneLib.cargoTest (
+      args
+      // {
+        cargoArtifacts = craneLib.buildDepsOnly (args // { doCheck = false; });
+      }
+    );
 in
 {
   packages =
@@ -364,19 +613,36 @@ in
       # cargo xtask firmware marker-control-board build: app.*, bootloader.*, merged.hex.
       firmware-marker-control-board-images = xtaskRun {
         name = "firmware-marker-control-board-images";
-        elfs = [ marker.app marker.bootloader ];
+        elfs = [
+          marker.app
+          marker.bootloader
+        ];
         boardDir = "firmware/marker-control-board";
         command = "firmware marker-control-board build";
         outDir = "build";
-        expect = [ "app.bin" "app.elf" "app.hex" "bootloader.elf" "bootloader.hex" "merged.hex" ];
+        expect = [
+          "app.bin"
+          "app.elf"
+          "app.hex"
+          "bootloader.elf"
+          "bootloader.hex"
+          "merged.hex"
+        ];
       };
       firmware-legacy-vm-images = xtaskRun {
         name = "firmware-legacy-vm-images";
-        elfs = [ legacyVm.app legacyVm.bootloader ];
+        elfs = [
+          legacyVm.app
+          legacyVm.bootloader
+        ];
         boardDir = "firmware/legacy-vm";
         command = "firmware legacy-vm build";
         outDir = "build";
-        expect = [ "app.hex" "bootloader.hex" "merged.hex" ];
+        expect = [
+          "app.hex"
+          "bootloader.hex"
+          "merged.hex"
+        ];
       };
     }
     // dualCoreImages "lite1" lite1
@@ -400,15 +666,30 @@ in
       pname = "better-dfu-tests";
       cargoExtraArgs = "--locked --offline --features dfu,application,embassy-time/std";
     });
+    better-ota-tests = hostTest (testArgs {
+      dir = "firmware/better-ota";
+      pname = "better-ota-tests";
+      cargoExtraArgs = "--locked --offline";
+    });
   };
 
-  devShell = pkgs.mkShell ({
-    packages = [ toolchain pkgs.gcc arm pkgs.gh nrfutil pkgs.probe-rs-tools ]
+  devShell = pkgs.mkShell (
+    {
+      packages = [
+        toolchain
+        pkgs.gcc
+        arm
+        pkgs.gh
+        nrfutil
+        pkgs.probe-rs-tools
+      ]
       # Nordic's tools only come for Linux.
       ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.nrf-command-line-tools;
-    # nrfutil runs extensions from its home (~/.nrfutil) before the ones on PATH;
-    # those are generic-Linux binaries NixOS cannot start, so the shell points it
-    # at a home of its own and uses the nix-built ones.
-    shellHook = ''export NRFUTIL_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/nrfutil-nix"'';
-  } // bindgenEnv);
+      # nrfutil runs extensions from its home (~/.nrfutil) before the ones on PATH.
+      # Those are generic-Linux binaries NixOS cannot start, so the shell points it
+      # at a home of its own and uses the nix-built ones.
+      shellHook = ''export NRFUTIL_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/nrfutil-nix"'';
+    }
+    // bindgenEnv
+  );
 }

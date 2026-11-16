@@ -16,7 +16,7 @@ use crate::theme::{RADIUS_SM, palette};
 /// Shows a transport mode selector (BLE / USB) for ATS Lite / Lite1 devices.
 /// Requires only CONTROL capability, so it is visible even when the device is
 /// in BLE mode and the EVENTS bulk endpoint is not available. Firmware with
-/// AUTO_TRANSPORT picks its link itself and gets no selector.
+/// `AUTO_TRANSPORT` picks its link itself and gets no selector.
 pub(crate) struct TransportModePanel {
     device: Device,
     /// Distinguishes this panel's element ids from other rows'.
@@ -62,7 +62,7 @@ impl TransportModePanel {
     }
 
     /// Asks the hub to switch the device's events transport and reports
-    /// progress through `status`; the device reboots, so success only means
+    /// progress through `status`. The device reboots, so success only means
     /// "requested".
     fn switch_mode(&mut self, usb_mode: bool, cx: &mut Context<Self>) {
         if self.switching {
@@ -85,7 +85,7 @@ impl TransportModePanel {
                     async move { client.device(device).set_transport_mode(usb_mode).await },
                 )
                 .await;
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(Ok(confirmed_usb)) => {
                         let mode = if confirmed_usb { "USB" } else { "Bluetooth" };
@@ -112,8 +112,7 @@ impl TransportModePanel {
                 }
                 this.switching = false;
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -128,7 +127,7 @@ impl Render for TransportModePanel {
         if !should_render {
             return div();
         }
-        let palette = palette(cx);
+        let palette = &palette(cx);
         // The displayed mode prefers the user's request while the reboot is
         // pending, and otherwise follows the device.
         let pending_usb = self

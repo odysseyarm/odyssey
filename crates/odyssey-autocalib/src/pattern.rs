@@ -1,7 +1,7 @@
 //! The dot pattern shown on the screen and its detection in a color image.
 //!
 //! White dots sit on a regular grid on black. Three grid corners (top left,
-//! top right, bottom left) carry larger *anchor* dots; the bottom right stays
+//! top right, bottom left) carry larger *anchor* dots. The bottom right stays
 //! normal. The anchors break the four-fold rotational ambiguity of the grid and
 //! make the corner correspondences unique, so detection needs no pattern
 //! dictionary: blobs, anchors, a seed homography, then RANSAC refinement.
@@ -18,9 +18,11 @@ mod edges;
 mod grid;
 
 use bias::{Debiased, remove_center_bias};
+/// Since: Odyssey Desktop 0.6.5.
 pub use bias::{center_bias, corrected_centers};
 pub(crate) use blobs::components;
 use blobs::{Blob, find_blobs};
+/// Since: Odyssey Desktop 0.6.5.
 pub use edges::{EdgeCheck, SideSet, check_edges};
 use grid::{Matcher, PointIndex, find_seed, refine};
 
@@ -45,6 +47,8 @@ const ANCHOR_RADIUS_H: f64 = 0.035;
 const MIN_DOT_SCALE: f64 = 0.5;
 const MAX_DOT_SCALE: f64 = 1.4;
 /// Thickness of the border ring as a fraction of the screen height.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const FRAME_THICKNESS_H: f64 = 0.006;
 /// Thickness of the corner brackets' arms as a fraction of the screen height.
 const BRACKET_THICKNESS_H: f64 = 0.015;
@@ -69,25 +73,40 @@ const RANSAC_ITERATIONS: usize = 200;
 /// Fixed seed, so a given image always gives the same detection.
 const RANSAC_SEED: u64 = 0x5EED;
 
-/// A filled rectangle of the pattern's border frame; see [`Pattern::frame_rects`].
+/// A filled rectangle of the pattern's border frame. See [`Pattern::frame_rects`].
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrameRect {
+    /// Since: Odyssey Desktop 0.6.5.
     pub x: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub y: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub width: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub height: f64,
 }
 
 /// One dot of the pattern.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Dot {
     /// Horizontal position, `0` at the left edge and `1` at the right edge.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub u: f64,
     /// Vertical position, `0` at the top edge and `1` at the bottom edge.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub v: f64,
     /// Radius as a fraction of the screen *height*, so a dot is round for any
     /// aspect ratio.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub radius_h: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub anchor: bool,
 }
 
@@ -100,6 +119,8 @@ impl Dot {
 
 /// The grid of dots for a screen of a given width-to-height ratio. The same
 /// description serves every resolution: the renderer scales it to pixels.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pattern {
     aspect: f64,
@@ -110,6 +131,8 @@ pub struct Pattern {
 
 impl Pattern {
     /// `aspect` is screen width divided by screen height.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(aspect: f64) -> Self {
         let aspect = if aspect.is_finite() {
             aspect.clamp(MIN_ASPECT, MAX_ASPECT)
@@ -130,9 +153,8 @@ impl Pattern {
         let mut dots = Vec::with_capacity(cols * rows);
         for row in 0..rows {
             for col in 0..cols {
-                let anchor = (row == 0 && col == 0)
-                    || (row == 0 && col == cols - 1)
-                    || (row == rows - 1 && col == 0);
+                let anchor =
+                    row == 0 && (col == 0 || col == cols - 1) || row == rows - 1 && col == 0;
                 dots.push(Dot {
                     u: (x0 + col as f64 * GRID_SPACING_H) / aspect,
                     v: y0 + row as f64 * GRID_SPACING_H,
@@ -156,6 +178,8 @@ impl Pattern {
     /// Like [`Pattern::new`] with every dot radius multiplied by `scale`,
     /// clamped to `0.5..=1.4` so neighboring dots stay apart. Larger dots help
     /// low-resolution cameras and stress the perspective correction.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn with_dot_scale(aspect: f64, scale: f64) -> Self {
         let mut pattern = Self::new(aspect);
         let scale = if scale.is_finite() {
@@ -169,6 +193,7 @@ impl Pattern {
         pattern
     }
 
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn aspect(&self) -> f64 {
         self.aspect
     }
@@ -181,6 +206,8 @@ impl Pattern {
     /// the image the ring disappears, which is how [`check_edges`] notices
     /// overscan. The brackets are thicker, so a cropped corner stays easy to
     /// see even when a thin ring blurs away.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn frame_rects(&self) -> Vec<FrameRect> {
         let (width, ring, thickness, length) = (
             self.aspect,
@@ -220,11 +247,15 @@ impl Pattern {
     }
 
     /// Grid size as `(columns, rows)`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn grid(&self) -> (usize, usize) {
         (self.cols, self.rows)
     }
 
     /// Dots in row-major order, top row first.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn dots(&self) -> &[Dot] {
         &self.dots
     }
@@ -239,12 +270,24 @@ impl Pattern {
 }
 
 /// Why no pattern was found.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectFailure {
     /// Fewer than 8 dot-like blobs in the image.
-    NoDots { blobs: usize },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    NoDots {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        blobs: usize,
+    },
     /// Dots are visible but no anchor triple with a consistent grid.
-    NoGrid { blobs: usize },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    NoGrid {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        blobs: usize,
+    },
 }
 
 impl std::fmt::Display for DetectFailure {
@@ -260,50 +303,79 @@ impl std::fmt::Display for DetectFailure {
 }
 
 /// A detected dot paired with its place in the pattern.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Correspondence {
     /// Index into [`Pattern::dots`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub index: usize,
     /// Normalized pattern position `(u, v)`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub pattern: Point2<f64>,
     /// Estimated image of the dot's true center in the pinhole pixel grid,
     /// i.e. with lens distortion and the perspective bias of the dot's
     /// elliptical image removed.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub pixel: Point2<f64>,
     /// Measured centroid of the dot's image, undistorted but not corrected for
     /// perspective. Differs from `pixel` by [`center_bias`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub centroid: Point2<f64>,
     /// Centroid in the raw image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub raw: Point2<f64>,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionQuality {
+    /// Since: Odyssey Desktop 0.6.5.
     pub matched: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub expected: usize,
     /// Root-mean-square distance between detected centers and the fitted
     /// homography's prediction, in undistorted pixels.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub rms_px: f64,
     /// Typical pixel distance between neighboring dots.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub spacing_px: f64,
     /// Dot-like blobs found, including ones that matched nothing.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub blobs: usize,
 }
 
 impl DetectionQuality {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn completeness(&self) -> f64 {
         self.matched as f64 / self.expected as f64
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct Detection {
+    /// Since: Odyssey Desktop 0.6.5.
     pub correspondences: Vec<Correspondence>,
     /// Maps normalized pattern coordinates to undistorted pixels.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub homography: Matrix3<f64>,
     /// Screen corners (top left, top right, bottom right, bottom left) in the
     /// raw image, extrapolated from the grid.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub quad_px: [Point2<f64>; 4],
+    /// Since: Odyssey Desktop 0.6.5.
     pub quality: DetectionQuality,
 }
 
@@ -357,6 +429,9 @@ fn robust_fit(src: &[Point2<f64>], dst: &[Point2<f64>], threshold: f64) -> Optio
 ///
 /// [`DetectFailure::NoDots`] when too few blobs are found, [`DetectFailure::NoGrid`] when no
 /// anchor triple yields a grid or the screen corners do not project to finite pixels.
+///
+/// # Since
+/// Odyssey Desktop 0.6.5.
 pub fn detect(
     pattern: &Pattern,
     image: &RgbImage,

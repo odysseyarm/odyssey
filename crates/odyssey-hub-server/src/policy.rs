@@ -1,26 +1,27 @@
 //! What the administrator who deployed Odyssey has switched off.
 //!
 //! One switch matters today: **offline mode**. With it on, no feature may open a
-//! connection to the internet: firmware comes from a folder on disk (see
+//! connection to the internet. Firmware comes from a folder on disk (see
 //! `firmware::pack`) instead of GitHub, and the camera SDK is never downloaded. Code
-//! that is about to use the network asks [`offline`] first, so a new feature has one
-//! obvious thing to check.
+//! about to use the network asks [`offline`] first, so a new feature has one obvious
+//! thing to check.
 //!
-//! The policy is read from places only an administrator can write, and **any of them
-//! can turn offline mode on; none can turn it off.** A stale file cannot undo a
+//! The policy is read from places only an administrator can write. **Any of them can
+//! turn offline mode on and none can turn it off.** A stale file cannot undo a
 //! registry setting or the other way round, and the environment can only tighten it.
-//! A policy file that cannot be read or understood turns offline mode on as well
-//! ([`Policy::issues`] says why): an administrator who wrote one wanted it enforced.
+//! A policy file that cannot be read or understood also turns offline mode on
+//! ([`Policy::issues`] says why), since an administrator who wrote one wanted it
+//! enforced.
 //!
 //! Sources, in the order they are consulted for the firmware folder:
 //!
-//! 1. the environment: `ODYSSEY_OFFLINE=1` and `ODYSSEY_FIRMWARE_PACK_DIR`, for
-//!    testing and for wrappers (it cannot switch offline mode off);
-//! 2. on Windows, the registry (`HKLM\SOFTWARE\Policies\OdysseyArm\Odyssey`, then
+//! 1. The environment: `ODYSSEY_OFFLINE=1` and `ODYSSEY_FIRMWARE_PACK_DIR`, for
+//!    testing and for wrappers. It cannot switch offline mode off.
+//! 2. On Windows, the registry (`HKLM\SOFTWARE\Policies\OdysseyArm\Odyssey`, then
 //!    `HKLM\SOFTWARE\OdysseyArm\Odyssey`): `OfflineMode` (DWORD) and `FirmwarePackDir`
-//!    (string), which is what Group Policy and Intune deploy;
-//! 3. the machine-wide policy file, on every platform ([`policy_file_path`]). It is
-//!    JSON5, so it may carry comments: `{ "offline": true, "firmware_pack_dir": "D:\\pack" }`.
+//!    (string). Group Policy and Intune deploy these.
+//! 3. The machine-wide policy file, on every platform ([`policy_file_path`]). It is
+//!    JSON5, so it can carry comments: `{ "offline": true, "firmware_pack_dir": "D:\\pack" }`.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -28,13 +29,21 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 /// The merged policy.
+///
+/// Since: Odyssey Desktop 0.6.6.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Policy {
     /// No feature may connect to the internet.
+    ///
+    /// Since: Odyssey Desktop 0.6.6.
     pub offline: bool,
     /// Where the offline firmware pack is, if the administrator said.
+    ///
+    /// Since: Odyssey Desktop 0.6.6.
     pub firmware_pack_dir: Option<PathBuf>,
     /// Sources that could not be read, for whoever is looking at the screen.
+    ///
+    /// Since: Odyssey Desktop 0.6.6.
     pub issues: Vec<String>,
 }
 
@@ -91,7 +100,7 @@ fn source_from_file(path: &Path) -> Option<Source> {
     }
 }
 
-/// Combines sources, highest priority first. Offline if any source says so; the
+/// Combines sources, highest priority first. Offline if any source says so. The
 /// firmware folder is the first one named.
 fn merge(sources: impl IntoIterator<Item = Source>) -> Policy {
     let mut policy = Policy::default();
@@ -124,12 +133,16 @@ fn environment_source(get: impl Fn(&str) -> Option<String>) -> Source {
 }
 
 /// Where the machine-wide policy file is: a place a standard user cannot write.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn policy_file_path() -> PathBuf {
     machine_dir().join("policy.json")
 }
 
 /// The folder Odyssey looks for the offline firmware pack in when policy does not
 /// name one.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn default_firmware_pack_dir() -> PathBuf {
     if cfg!(any(windows, target_os = "macos")) {
         machine_dir().join("firmware-pack")
@@ -141,8 +154,7 @@ pub fn default_firmware_pack_dir() -> PathBuf {
 fn machine_dir() -> PathBuf {
     if cfg!(windows) {
         let base = std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+            .map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from);
         base.join("OdysseyArm").join("Odyssey")
     } else if cfg!(target_os = "macos") {
         PathBuf::from("/Library/Application Support/OdysseyArm/Odyssey")
@@ -206,17 +218,23 @@ fn load() -> Policy {
 }
 
 /// The policy, read once at first use: changing it takes a restart.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn current() -> &'static Policy {
     static POLICY: LazyLock<Policy> = LazyLock::new(load);
     &POLICY
 }
 
 /// Whether offline mode is on. Check this before any feature touches the network.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn offline() -> bool {
     current().offline
 }
 
 /// The folder the offline firmware pack is read from.
+///
+/// Since: Odyssey Desktop 0.6.6.
 pub fn firmware_pack_dir() -> PathBuf {
     current()
         .firmware_pack_dir
@@ -254,7 +272,7 @@ mod tests {
         )]);
         assert!(policy.offline);
         assert_eq!(policy.firmware_pack_dir, Some(PathBuf::from(r"D:\pack")));
-        assert!(policy.issues.is_empty());
+        assert_eq!(policy.issues, Vec::<String>::new());
     }
 
     #[test]
@@ -263,7 +281,7 @@ mod tests {
             "// set by IT\n{ offline: true, /* later */ future_setting: 7, }\n",
         )]);
         assert!(policy.offline);
-        assert!(policy.issues.is_empty());
+        assert_eq!(policy.issues, Vec::<String>::new());
     }
 
     #[test]

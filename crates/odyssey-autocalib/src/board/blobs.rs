@@ -29,7 +29,7 @@ const BORDER_MARGIN_PX: usize = 2;
 /// A blob's area over the area of the ellipse with the same second moments
 /// must fall in this range for the blob to count as round.
 const ELLIPSE_FILL_RANGE: RangeInclusive<f64> = 0.75..=1.25;
-/// Shortest over longest axis of a blob's ellipse; thinner blobs are lines.
+/// Shortest over longest axis of a blob's ellipse. Thinner blobs are lines.
 const MIN_AXIS_RATIO: f64 = 0.3;
 /// Variance along each axis that one pixel's own area adds to a blob's
 /// second moments.
@@ -53,9 +53,9 @@ const WHITE_WINDOW_RADIUS_DIVISOR: usize = 10;
 const MIN_WHITE_WINDOW_RADIUS_CELLS: usize = 2;
 
 /// A blob is measured against the paper around it. The ring of paper samples
-/// starts this many pixels outside the blob's bounding box, which also is how
-/// far the darkness centroid reaches beyond the blob so that antialiased
-/// edges count in proportion to their darkness.
+/// starts this many pixels outside the blob's bounding box. The darkness
+/// centroid reaches the same distance beyond the blob, so antialiased edges
+/// count in proportion to their darkness.
 const EDGE_ALLOWANCE_PX: usize = 2;
 /// Width of the paper ring: a quarter of the blob's size, but at least this
 /// many pixels.
@@ -65,8 +65,8 @@ const MIN_RING_SAMPLES: usize = 12;
 /// The white plane is refitted without ring pixels farther than this many
 /// standard deviations from it (printed marks and shadows next to the dot).
 const RING_OUTLIER_SIGMAS: f64 = 2.5;
-/// Standard deviation floor for that rejection, gray levels, so that a
-/// noiseless ring does not reject its own pixels.
+/// Floor on the standard deviation in that rejection, gray levels. Without it
+/// a noiseless ring rejects its own pixels.
 const MIN_RING_SIGMA: f64 = 1.0;
 /// The paper around a dot is clean when the white plane's residual standard
 /// deviation is at most this fraction of the white level.
@@ -205,8 +205,8 @@ fn window_extreme(data: &mut [f32], w: usize, h: usize, radius: usize, max: bool
 /// Local white level: a morphological closing of the smoothed image, computed
 /// on a reduced grid (block maximum, then dilate and erode). The closing fills
 /// every dark feature smaller than its window, so dots vanish from it while
-/// uneven lighting and glare survive; dark surroundings larger than the
-/// window stay dark, so the reference is not dragged up there.
+/// uneven lighting and glare survive. Dark surroundings larger than the
+/// window stay dark, so the reference does not get dragged up there.
 #[derive(Debug)]
 struct WhiteLevel {
     data: Vec<f32>,
@@ -356,6 +356,7 @@ fn components(mask: &[bool], w: usize, h: usize) -> Vec<Component> {
 /// Shape test on a thresholded blob: size, border contact, ellipse-likeness
 /// (the area of an ellipse with the blob's second moments must match the blob)
 /// and axis ratio.
+#[expect(clippy::manual_midpoint, reason = "preserve covariance mean rounding")]
 fn plausible_dot_shape(c: &Component, w: usize, h: usize) -> bool {
     let area = c.pixels.len();
     if area < MIN_BLOB_AREA_PX || area as f64 > MAX_BLOB_AREA_FRACTION * (w * h) as f64 {

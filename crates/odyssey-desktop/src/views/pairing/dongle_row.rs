@@ -16,7 +16,7 @@ use crate::views::device_label::format_address;
 /// The dongle control protocol that can list its bonds.
 const BONDS_PROTOCOL_VERSION: [u16; 3] = [0, 1, 1];
 /// The firmware version shown for a dongle until it reports its own.
-const UNKNOWN_FIRMWARE_VERSION: [u16; 3] = [0, 0, 0];
+const UNKNOWN_FIRMWARE_VERSION: [u32; 3] = [0, 0, 0];
 
 pub(super) struct DongleRow {
     id: String,
@@ -37,7 +37,7 @@ impl DongleRow {
 
 impl Render for DongleRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         let hub = self.hub.read(cx);
         let Some(dongle) = hub.dongles.iter().find(|dongle| dongle.id == self.id) else {
             return div();
@@ -99,7 +99,7 @@ impl Render for DongleRow {
                     .child(self.controls.clone()),
             );
 
-        // Dongles that can list their bonds show those; older ones only show who
+        // Dongles that can list their bonds show those. Older ones only show who
         // is connected right now.
         let lists_bonds = dongle.control_protocol_version >= BONDS_PROTOCOL_VERSION;
         let (listed_addresses, list_label) = if lists_bonds {
@@ -121,7 +121,7 @@ impl Render for DongleRow {
                     .devices
                     .iter()
                     .find(|device| device.uuid == *address)
-                    .map_or_else(|| format_address(address), device_label);
+                    .map_or_else(|| format_address(*address), device_label);
                 list = list.child(
                     div()
                         .flex()

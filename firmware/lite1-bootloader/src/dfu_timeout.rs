@@ -11,13 +11,6 @@ pub(crate) async fn abandoned_entry(
     }
 }
 
-pub(crate) fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool {
-    (0x2000_0000..=0x2008_0000).contains(&sp)
-        && sp.is_multiple_of(8)
-        && reset & 1 == 1
-        && bank.contains(&((reset & !1) as usize))
-}
-
 #[cfg(test)]
 mod tests {
     use core::cell::Cell;
@@ -25,7 +18,9 @@ mod tests {
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
 
-    use super::{abandoned_entry, valid_vectors};
+    use better_boot::valid_vectors;
+
+    use super::abandoned_entry;
 
     #[test]
     fn timeout_only_completes_without_a_download() {

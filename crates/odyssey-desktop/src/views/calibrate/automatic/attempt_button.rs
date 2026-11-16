@@ -13,7 +13,7 @@ fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
-pub(super) fn save_attempt(p: Palette, wizard: &Entity<Wizard>, state: &Wizard) -> Div {
+pub(super) fn save_attempt(p: &Palette, wizard: &Entity<Wizard>, state: &Wizard) -> Div {
     let saving = state.attempt_saving;
     let label = if saving {
         "Saving\u{2026}"

@@ -858,11 +858,8 @@ async fn image_worker(
                 {
                     reboot_required.store(false, Ordering::Relaxed);
                 }
-                {
-                    let mut state = shared.lock();
-                    state.status = format!("Image mode unavailable: {error}");
-                    state.running = false;
-                }
+                shared.lock().status = format!("Image mode unavailable: {error}");
+                shared.lock().running = false;
                 drop(guard);
                 ctx.request_repaint();
                 if receiver.changed().await.is_err() {
@@ -871,16 +868,13 @@ async fn image_worker(
                 continue;
             }
         };
-        {
-            let mut state = shared.lock();
-            state.running = true;
-            state.status = if request.legacy {
-                "Live legacy USB images; reboot/reconnect required to resume tracking"
-            } else {
-                "Live USB images; sensor object tracking paused until Stop"
-            }
-            .into();
+        shared.lock().running = true;
+        shared.lock().status = if request.legacy {
+            "Live legacy USB images; reboot/reconnect required to resume tracking"
+        } else {
+            "Live USB images; sensor object tracking paused until Stop"
         }
+        .into();
         let mut previous_received = None;
         let mut request_changed = false;
         let mut renew = tokio::time::interval(Duration::from_millis(
@@ -939,23 +933,22 @@ async fn image_worker(
                 }
             }
         }
-        match stream.stop().await {
-            Err(error) => {
-                shared.lock().status = if request.legacy {
-                    format!(
-                        "Pixels stopped; reboot/power-cycle and reconnect REQUIRED to resume tracking. Stop result: {error}"
-                    )
-                } else {
-                    format!("Failed to restore sensor object mode: {error}")
-                };
-            }
-            Ok(()) => {
-                let mut state = shared.lock();
-                if request.legacy {
-                    state.status = "Pixels stopped; reboot/power-cycle and reconnect REQUIRED to resume tracking".into();
-                } else if state.status.starts_with("Live USB") {
-                    state.status = "Stopped; sensor object tracking restored".into();
-                }
+        if let Err(error) = stream.stop().await {
+            shared.lock().status = if request.legacy {
+                format!(
+                    "Pixels stopped; reboot/power-cycle and reconnect REQUIRED to resume tracking. Stop result: {error}"
+                )
+            } else {
+                format!("Failed to restore sensor object mode: {error}")
+            };
+        } else {
+            let mut state = shared.lock();
+            if request.legacy {
+                state.status =
+                    "Pixels stopped; reboot/power-cycle and reconnect REQUIRED to resume tracking"
+                        .into();
+            } else if state.status.starts_with("Live USB") {
+                state.status = "Stopped; sensor object tracking restored".into();
             }
         }
         shared.lock().running = false;

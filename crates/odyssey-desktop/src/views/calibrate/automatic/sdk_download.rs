@@ -113,7 +113,7 @@ mod online {
 
     impl Render for DownloadSdk {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let p = palette(cx);
+            let p = &palette(cx);
             let pin = sdk_install::pin();
             let megabytes = pin.windows_x64.size / 1_000_000;
             let working = matches!(self.state, State::Working(_));
@@ -184,7 +184,7 @@ mod online {
 #[cfg(feature = "sdk-download")]
 pub(super) use online::DownloadSdk;
 
-/// Without the feature there is nothing to download; Setup never asks for this.
+/// Without the feature there is nothing to download. Setup never asks for this.
 #[cfg(not(feature = "sdk-download"))]
 pub(super) struct DownloadSdk;
 
@@ -205,7 +205,7 @@ impl Render for DownloadSdk {
 /// Says so when the camera software in use is not the version this app is tested
 /// with. Only a warning: the loader accepts 2.8 and newer, so the cameras still
 /// work. When the copy is one Odyssey downloaded and it is older, the pinned one
-/// can be downloaded in its place; for a copy found elsewhere, or a newer one,
+/// can be downloaded in its place. For a copy found elsewhere, or a newer one,
 /// there is nothing to offer.
 pub(super) struct SdkVersionNote {
     wizard: Entity<Wizard>,
@@ -227,7 +227,7 @@ impl SdkVersionNote {
 
 impl Render for SdkVersionNote {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         // Cameras were listed, so the library is loaded and the lookup below is cached.
         if !matches!(self.wizard.read(cx).cameras, CameraList::Found(_)) {
             return div();
@@ -315,7 +315,7 @@ impl DownloadedSdkRow {
 
 impl Render for DownloadedSdkRow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
+        let p = &palette(cx);
         if sdk_install::delivery() != Delivery::Download || !sdk_install::has_managed_copy() {
             return div();
         }

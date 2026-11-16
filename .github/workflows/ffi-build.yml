@@ -58,6 +58,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
+      - name: Lint SDK
+        if: matrix.triplet == 'linux_x64'
+        run: nix build -L --no-link .#checks.x86_64-linux.sdk-ffi-lint
       - name: Build (nix, cargo-zigbuild)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
@@ -97,7 +100,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
       # The MSVC CRT and Windows SDK are a hash-pinned fixed-output derivation
-      # (nix/xwin.nix); nothing is downloaded by the build itself.
+      # (nix/xwin.nix), so the build downloads nothing itself.
       - name: Build (nix, cargo-xwin)
         id: build
         run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-win_x64)" >> "$GITHUB_OUTPUT"

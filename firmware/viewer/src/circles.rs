@@ -11,9 +11,12 @@ use opencv::imgproc::{COLOR_GRAY2BGR, INTER_CUBIC, cvt_color_def, resize};
 
 use crate::{PatternPoints, Port, ViewerError};
 
+/// Since: Odyssey Desktop 0.6.0.
 pub mod special;
 
 /// Returns detected points and pattern status, or the OpenCV failure.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub fn get_circles_centers(
     image: &[u8],
     port: Port,
@@ -24,7 +27,7 @@ pub fn get_circles_centers(
     asymmetric: bool,
     show: bool,
 ) -> Result<PatternPoints, ViewerError> {
-    let board_size = opencv::core::Size::new(board_cols as i32, board_rows as i32);
+    let board_size = Size::new(board_cols as i32, board_rows as i32);
 
     let im = Mat::new_rows_cols_with_data(resolution.1.into(), resolution.0.into(), image)?;
 
@@ -72,7 +75,7 @@ pub fn get_circles_centers(
 
 fn display_found_circles(
     im: &impl ToInputArray,
-    board_size: opencv::core::Size,
+    board_size: Size,
     centers: &Vector<Point2f>,
     pattern_was_found: bool,
     port: Port,
@@ -91,8 +94,8 @@ fn display_found_circles(
         INTER_CUBIC,
     )?;
     centers.as_mut_slice().iter_mut().for_each(|x| {
-        *x *= 512.0 / 98. as f32;
-        let half_pixel = (512.0 / 98. as f32) / 2.;
+        *x *= 512.0 / 98.;
+        let half_pixel = (512.0 / 98.) / 2.;
         *x += (half_pixel, half_pixel).into();
     });
 

@@ -1,8 +1,8 @@
 //! The green/amber/red verdict on a finished measurement.
 //!
-//! Independent checks each grade as good, fair or poor; the verdict is
+//! Each independent check grades as good, fair or poor, and the verdict is
 //! the worst of them. The thresholds are engineering judgment, not a
-//! specification: they sit inside what the solver itself accepts so that a
+//! specification. They sit inside what the solver itself accepts, so a
 //! result the solver produced is never flagged for something it cannot fix.
 //!
 //! | Check                 | Good           | Fair            | Poor      |
@@ -12,10 +12,10 @@
 //! | Size agreement        | within 2 %     | any larger gap  | never     |
 //!
 //! - *Plane fit RMSE* is the depth noise left after fitting the screen plane.
-//!   The live preview already refuses 15 mm; 5 mm is typical of a camera at
+//!   The live preview already refuses 15 mm. 5 mm is typical of a camera at
 //!   2 m on a well lit screen.
 //! - *Dots used* is the share of the pattern's dots that agreed with a flat
-//!   screen. A few misses from glare are normal; a large loss means the
+//!   screen. A few misses from glare are normal. A large loss means the
 //!   pattern was partly hidden.
 //! - *Size agreement* compares the depth camera's measurement with the size
 //!   the display or the tech declared. Depth scale error stays under 2 % at
@@ -31,7 +31,7 @@ use super::kind::SizeOrigin;
 /// What to tell the tech when the camera and the declared size disagree: how
 /// far apart they are, and why that might be.
 pub(crate) fn disagreement_message(check: &SizeCheck, origin: Option<SizeOrigin>) -> String {
-    let ratio = (check.ratio_w + check.ratio_h) / 2.0;
+    let ratio = f64::midpoint(check.ratio_w, check.ratio_h);
     let percent = ((ratio - 1.0).abs() * 100.0).round();
     let how_much = if percent < 1.0 {
         "a little".to_string()
@@ -89,7 +89,7 @@ pub(crate) struct Measures {
     pub dots_used: usize,
     pub dots_expected: usize,
     /// The larger relative gap between the depth measurement and the declared
-    /// size along either axis; present only when a size was declared.
+    /// size along either axis. Present only when a size was declared.
     pub size_disagreement: Option<f64>,
 }
 

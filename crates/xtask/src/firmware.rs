@@ -3,6 +3,7 @@ mod manifest;
 mod release;
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -19,13 +20,29 @@ use crate::cmd;
 
 /// Where `build`, `build-dual-bank` and `flash-app` put their images, inside the board directory.
 const OUTPUT_DIR: &str = "build";
-/// stage1_state and stage2_state in memory-*.kdl. Erased so both bootloaders
-/// start from 0xFFFFFFFF.
+/// `stage1_state` and `stage2_state` in `memory-*.kdl`. Erased so both bootloaders
+/// start from `0xFFFFFFFF`.
 const BOOT_STATE_PAGES: [&str; 2] = ["0xF9000", "0xFA000"];
-/// Guard pages between boot state and settings in memory-*.kdl, erased after a
+/// Guard pages between boot state and settings in `memory-*.kdl`, erased after a
 /// chip erase or recover, which have already cleared the boot state pages.
 const GUARD_PAGES: [&str; 2] = ["0xFC000", "0xFD000"];
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Raises ATS Lite application release manifests to the bounded-recovery floor.
+///
+/// Since: Unreleased.
+pub(crate) fn with_ats_ota_bootloader_floor(
+    is_ats_lite: bool,
+    requested: semver::Version,
+) -> semver::Version {
+    let minimum = semver::Version::new(0, 2, 0);
+    if is_ats_lite && requested.cmp_precedence(&minimum).is_lt() {
+        minimum
+    } else {
+        requested
+    }
+}
+
 const USER_AGENT: &str = "odyssey-firmware-pack";
 
 #[derive(clap::Subcommand)]
@@ -42,13 +59,7 @@ pub(crate) enum Cmd {
     /// Marker control board (nRF52833), single application and USB DFU bootloader.
     #[command(subcommand)]
     MarkerControlBoard(Task),
-    /// Print the release counter a bootloader or net-core main.rs declares with
-    /// `macro_rules! release { () => { N }; }`, or nothing when there is none.
-    ///
-    /// The source is read as tokens, with all whitespace dropped, so rustfmt may
-    /// lay the macro out however it likes. The board commands and the bootloader
-    /// and net-core release workflows all read the counter through here, so there
-    /// is one parser to keep right.
+    /// Print net-core release counter from its `release!` macro. Bootloaders use `SemVer`.
     ReleaseCounter {
         /// The main.rs to read.
         source: PathBuf,
@@ -60,7 +71,7 @@ pub(crate) enum Cmd {
     /// For each channel it writes OUT/releases.<channel>.json, holding the newest
     /// N releases of each device from the manifests, and downloads every file
     /// those releases list into OUT/<tag>/<name>.bin, checking each against the
-    /// size and sha256 in the manifest. Single-image boards download app; dual-bank
+    /// size and sha256 in the manifest. Single-image boards download app. Dual-bank
     /// boards download both app-a and app-b, whichever slot unit is not running.
     ///
     /// The result goes wherever the administrator points Odyssey's
@@ -99,12 +110,12 @@ pub(crate) enum Task {
     BuildBootloader,
     /// Build bootloader release artifacts into dist-bootloader/ (marker: factory SWD only).
     DistBootloader,
-    /// Publish bootloader GitHub release, <device>-bootloader-v<release> (marker: SWD only).
+    /// Publish bootloader GitHub release, <device>-bootloader-v<semver> (marker: SWD only).
     ///
-    /// Set DRY_RUN=1 to run every check and stop before publishing.
+    /// Set `DRY_RUN=1` to run every check and stop before publishing.
     ///
     /// The release is created as a draft and published last, so a tag never exists
-    /// without its assets; the bootloader-release workflow skips a tag that already
+    /// without its assets. The bootloader-release workflow skips a tag that already
     /// has a release, so the two ways of publishing cannot overwrite each other.
     ReleaseBootloader,
     /// Build the net core.
@@ -113,10 +124,10 @@ pub(crate) enum Task {
     DistNetcore,
     /// Publish the net core as its own GitHub release, <device>-netcore-v<release>.
     ///
-    /// Set DRY_RUN=1 to run every check and stop before publishing.
+    /// Set `DRY_RUN=1` to run every check and stop before publishing.
     ///
     /// The release is created as a draft and published last, so a tag never exists
-    /// without its assets; the netcore-release workflow skips a tag that already
+    /// without its assets. The netcore-release workflow skips a tag that already
     /// has a release, so the two ways of publishing cannot overwrite each other.
     ReleaseNetcore,
     /// Build the net-core bootloader.
@@ -157,8 +168,8 @@ pub(crate) enum Task {
     ///
     /// None of the arguments has a default: leaving one out would silently mean "any".
     GenRelease {
-        /// The lowest bootloader release this application can run on, 0 for none.
-        requires_bootloader: u32,
+        /// Lowest bootloader version this application can run on. 0.0.0 means no floor.
+        requires_bootloader: semver::Version,
         /// The net-core release the unit must already be running before this entry
         /// installs, 0 for none. This entry's own net core never counts, so it may not
         /// exceed what an existing entry carries.
@@ -178,7 +189,7 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
         Cmd::ReleaseCounter { source } => {
             let text = fs::read_to_string(&source)
                 .with_context(|| format!("could not read {}", source.display()))?;
-            if let Some(counter) = release::counter(&text) {
+            if let Some(counter) = counter(&text) {
                 println!("{counter}");
             }
             Ok(())
@@ -239,7 +250,7 @@ fn run_task(board: &Board, task: Task) -> eros::Result<()> {
             requires_bootloader,
             requires_netcore,
             min_desktop,
-        } => release::gen_release(board, requires_bootloader, requires_netcore, &min_desktop),
+        } => release::gen_release(board, &requires_bootloader, requires_netcore, &min_desktop),
     }
 }
 
@@ -475,7 +486,7 @@ fn package(board: &Board, images: &[Image], merged: &str) -> eros::Result<()> {
 /// writes it: linear addressing only.
 ///
 /// `llvm-objcopy` emits segmented records (types 02 and 03) for these images, so
-/// the parts cannot be concatenated as text; the addresses have to be resolved
+/// the parts cannot be concatenated as text. The addresses have to be resolved
 /// first. Start-address records are dropped, matching `mergehex`.
 ///
 /// # Errors
@@ -585,7 +596,7 @@ fn hex_line(address: u16, kind: u8, data: &[u8]) -> String {
     let mut line = String::with_capacity(raw.len() * 2 + 2);
     line.push(':');
     for byte in raw {
-        line.push_str(&format!("{byte:02X}"));
+        write!(line, "{byte:02X}").expect("writing to String cannot fail");
     }
     line.push('\n');
     line
@@ -826,7 +837,7 @@ fn remove_dir(dir: &Path) -> eros::Result<()> {
     }
 }
 
-/// Fetch `url`; an HTTP error status fails like `curl -f`.
+/// Fetch `url`. An HTTP error status fails like `curl -f`.
 fn download(url: &str) -> eros::Result<Vec<u8>> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(DOWNLOAD_TIMEOUT))
@@ -861,6 +872,7 @@ impl FileDigest {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn refusal(board: &Board, task: Task) -> String {
@@ -868,6 +880,30 @@ mod tests {
             Ok(()) => panic!("{} accepted a recipe it lacks", board.name),
             Err(error) => error.to_string(),
         }
+    }
+
+    #[test]
+    fn ats_ota_release_floor_is_at_least_v3_and_preserves_higher_floors() {
+        let minimum = semver::Version::new(0, 2, 0);
+        assert_eq!(
+            with_ats_ota_bootloader_floor(true, semver::Version::new(0, 0, 0)),
+            minimum
+        );
+        assert_eq!(
+            with_ats_ota_bootloader_floor(
+                true,
+                semver::Version::parse("0.2.0-rc.1").expect("valid prerelease"),
+            ),
+            minimum
+        );
+        assert_eq!(
+            with_ats_ota_bootloader_floor(true, semver::Version::new(0, 3, 0)),
+            semver::Version::new(0, 3, 0)
+        );
+        assert_eq!(
+            with_ats_ota_bootloader_floor(false, semver::Version::new(0, 0, 0)),
+            semver::Version::new(0, 0, 0)
+        );
     }
 
     #[test]
@@ -922,7 +958,7 @@ mod tests {
             Task::AttachBootloader,
             Task::AttachNetBootloader,
             Task::GenRelease {
-                requires_bootloader: 0,
+                requires_bootloader: semver::Version::new(0, 0, 0),
                 requires_netcore: 0,
                 min_desktop: "0.6.0".to_owned(),
             },

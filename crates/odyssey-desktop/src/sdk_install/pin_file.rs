@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn the_pin_is_complete_and_installs_the_library_where_the_loader_looks() {
         let pin = pin();
-        assert!(!pin.version.is_empty());
+        assert_ne!(pin.version, "");
         for hash in [&pin.eula.sha256, &pin.windows_x64.sha256] {
             assert_eq!(hash.len(), 64, "sha256 is 64 hex digits: {hash}");
             assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "{hash}");

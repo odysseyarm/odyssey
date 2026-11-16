@@ -16,7 +16,7 @@
 //! 3. A directory the application supplies, for a copy it manages itself.
 //!
 //! No install location is guessed. A candidate that is absent is
-//! recorded in [`RuntimeStatus::NotFound`]; one that is present but broken is
+//! recorded in [`RuntimeStatus::NotFound`]. One that is present but broken is
 //! remembered and reported unless a later candidate loads.
 
 use std::ffi::{OsStr, c_int};
@@ -31,13 +31,19 @@ use super::ffi::OrbbecSdk;
 
 /// Environment variable naming a directory that holds the SDK library, with
 /// its `extensions/` directory beside it.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const SDK_DIR_ENV: &str = "ODYSSEY_ORBBEC_SDK_DIR";
 
 /// File name the SDK library is loaded by.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[cfg(target_os = "windows")]
 pub const LIBRARY_NAME: &str = "OrbbecSDK.dll";
+/// Since: Odyssey Desktop 0.6.5.
 #[cfg(target_os = "macos")]
 pub const LIBRARY_NAME: &str = "libOrbbecSDK.dylib";
+/// Since: Odyssey Desktop 0.6.5.
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const LIBRARY_NAME: &str = "libOrbbecSDK.so.2";
 
@@ -49,21 +55,29 @@ pub const LIBRARY_NAME: &str = "libOrbbecSDK.so.2";
 /// keep the C functions the backend calls (a library that lacks one fails to
 /// load with the missing symbol named). Older 2.x releases and every other
 /// major version are refused rather than risked.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub const SUPPORTED_VERSIONS: &str = "2.8 or newer in the 2.x series (tested with 2.10.6)";
 
 /// A loaded SDK. Every handle holds a clone, so the library stays mapped for as
 /// long as anything created from it exists.
 pub(super) type Sdk = Arc<OrbbecSdk>;
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SdkVersion {
+    /// Since: Odyssey Desktop 0.6.5.
     pub major: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub minor: u32,
+    /// Since: Odyssey Desktop 0.6.5.
     pub patch: u32,
 }
 
 impl SdkVersion {
     /// Whether the backend accepts this version; see [`SUPPORTED_VERSIONS`].
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn is_supported(self) -> bool {
         self.major == 2 && self.minor >= 8
     }
@@ -76,23 +90,45 @@ impl fmt::Display for SdkVersion {
 }
 
 /// Whether camera support is usable on this machine, and if not, why.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeStatus {
     /// The library loaded and its version is supported. `library_path` is
     /// `None` when the operating system's loader found it by name.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     Available {
+        /// Since: Odyssey Desktop 0.6.5.
         version: SdkVersion,
+        /// Since: Odyssey Desktop 0.6.5.
         library_path: Option<PathBuf>,
     },
     /// No candidate holds the library. `tried` lists, in order, where it was
     /// looked for and what each lookup said.
-    NotFound { tried: Vec<String> },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    NotFound {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        tried: Vec<String>,
+    },
     /// A library is there but the loader refused it, or it lacks the SDK's
     /// functions. `library` is the path, or the name for a by-name load.
-    LoadFailed { library: String, error: String },
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    LoadFailed {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        library: String,
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        error: String,
+    },
     /// The library loaded and reports a version the backend does not accept.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     UnsupportedVersion {
+        /// Since: Odyssey Desktop 0.6.5.
         found: SdkVersion,
+        /// Since: Odyssey Desktop 0.6.5.
         supported: &'static str,
     },
 }
@@ -153,6 +189,8 @@ static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
 /// A successful result is cached, so later calls are cheap. A failed lookup is
 /// repeated on the next call, which is how an SDK installed while the
 /// application runs gets noticed.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn runtime_status(extra_dir: Option<&Path>) -> RuntimeStatus {
     match load(extra_dir) {
         Ok(loaded) => RuntimeStatus::Available {
@@ -189,7 +227,7 @@ pub(super) fn load(extra_dir: Option<&Path>) -> Result<Loaded, RuntimeStatus> {
 /// What one candidate came to.
 enum Attempt {
     Loaded(Loaded),
-    /// Nothing there; the text says where and what the lookup answered.
+    /// Nothing there. The text says where and what the lookup answered.
     Absent(String),
     /// Something is there but unusable.
     Failed(RuntimeStatus),
@@ -256,7 +294,7 @@ fn try_dir(dir: &Path, name: &OsStr) -> Attempt {
 
 fn try_name(name: &OsStr) -> Attempt {
     let shown = name.to_string_lossy();
-    // SAFETY: as in `try_dir`; the operating system's loader picks the file.
+    // SAFETY: as in `try_dir`, and the operating system's loader picks the file.
     match unsafe { Library::new(name) } {
         Ok(library) => bind(library, &shown, None),
         Err(error) if is_not_found(&error, &shown) => Attempt::Absent(format!(
@@ -335,7 +373,7 @@ fn describe(error: &libloading::Error) -> String {
 type VersionFn = unsafe extern "C" fn() -> c_int;
 
 /// Reads the version, checks the policy and builds the function table.
-/// Dropping `library` on a refusal unloads it; nothing has been created from it.
+/// Dropping `library` on a refusal unloads it, and nothing has been created from it.
 fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attempt {
     let failed = |error: libloading::Error| {
         Attempt::Failed(RuntimeStatus::LoadFailed {
@@ -346,7 +384,7 @@ fn bind(library: Library, origin: &str, library_path: Option<PathBuf>) -> Attemp
     // Versions come first and through single lookups: the full table needs
     // every function this backend calls, which an unsupported release may lack.
     let part = |symbol: &[u8]| -> Result<u32, libloading::Error> {
-        // SAFETY: a missing symbol is an `Err`; a present one is trusted to be
+        // SAFETY: a missing symbol is an `Err`, and a present one is trusted to be
         // the SDK's `int ob_get_*_version(void)`, which `VersionFn` describes.
         let f: libloading::Symbol<'_, VersionFn> = unsafe { library.get(symbol) }?;
         // SAFETY: `f` takes no arguments and `library` (borrowed by `f`)
@@ -462,7 +500,7 @@ mod tests {
             panic!("expected LoadFailed");
         };
         assert_eq!(library, broken.display().to_string());
-        assert!(!error.is_empty());
+        assert_ne!(error, "");
     }
 
     #[test]
@@ -499,7 +537,7 @@ mod tests {
             panic!("a file the loader rejects is not 'absent'");
         };
         assert_eq!(library, broken.display().to_string());
-        assert!(!error.is_empty());
+        assert_ne!(error, "");
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! Infrared tracker markers: blob detection in the infrared image, projection onto the
-//! screen plane, and finding the six markers wherever they stand on or around the screen,
-//! ordered the way the hub's tracker needs them (see [`crate::placement`]).
+//! Detects and orders six infrared tracker markers on or near the screen.
+//!
+//! Projects marker blobs onto the screen plane for tracker calibration.
 //!
 //! Detection runs with the camera at low exposure and the depth projector off,
 //! so the markers' LEDs are the only bright features. The image is normalized
@@ -37,24 +37,40 @@ const MARKER_COUNT: usize = 6;
 /// axis, and still count as a marker.
 const NEAR_SCREEN_MARGIN: f64 = 0.25;
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkerBlob {
     /// Intensity-weighted centroid in the raw infrared image.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub center: Point2<f64>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub area: u32,
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum MarkerError {
+    /// Since: Odyssey Desktop 0.6.5.
     #[error("found {found} bright spots, need at least 6")]
-    TooFewBlobs { found: usize },
+    TooFewBlobs {
+        #[doc = "Since: Odyssey Desktop 0.6.5."]
+        found: usize,
+    },
+    /// Since: Odyssey Desktop 0.6.7.
     #[error("found {near_screen} bright spots on or near the screen, need exactly 6")]
-    WrongCount { near_screen: usize },
+    WrongCount {
+        #[doc = "Since: Odyssey Desktop 0.6.7."]
+        near_screen: usize,
+    },
+    /// Since: Odyssey Desktop 0.6.7.
     #[error("the six markers cannot be told apart for tracking: {0}")]
     Placement(#[from] PlacementError),
 }
 
 /// Finds bright round spots in an infrared image, largest first.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
     let (lo, hi) = ir
         .pixels()
@@ -93,6 +109,8 @@ pub fn detect_blobs(ir: &GrayImage) -> Vec<MarkerBlob> {
 /// Where a bright spot lies on the screen, in final screen coordinates
 /// (meters), found by intersecting its infrared ray with the screen plane.
 /// The infrared camera need not share the depth camera's frame.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn blob_on_screen(
     geometry: &CameraGeometry,
     fit: &ScreenFit,
@@ -113,10 +131,13 @@ fn within(v: f64, extent: f64) -> bool {
         && (-NEAR_SCREEN_MARGIN * extent..=(1.0 + NEAR_SCREEN_MARGIN) * extent).contains(&v)
 }
 
-/// A plain-text account of the bright spots against the screen, for diagnosing a failed
-/// marker search: the camera's intrinsics, the screen's size and plane, every spot in the
-/// image and on the screen (and whether it counts as on or near the screen), and the order
-/// the tracker needs when the markers are found.
+/// Plain-text diagnostic for a failed marker search.
+///
+/// Includes camera and screen geometry, spot locations, and tracker order:
+/// camera intrinsics, screen size and plane, spot positions in image and screen
+/// coordinates, and whether each spot lies on or near the screen.
+///
+/// Since: Odyssey Desktop 0.6.7.
 pub fn describe_spots(geometry: &CameraGeometry, fit: &ScreenFit, blobs: &[MarkerBlob]) -> String {
     let mut out = String::new();
     // Writing to a String cannot fail.
@@ -223,25 +244,36 @@ fn write_tracker_order(
 }
 
 /// The six markers, in the order the tracker needs them.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarkerFit {
     /// Marker positions in final screen coordinates, in the order of
     /// `ScreenCalibration::object_points` (see [`crate::placement`]).
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub points_m: [Point2<f64>; 6],
     /// Index into the blob list for each marker.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub blob_for_marker: [usize; 6],
     /// The circle through the first three markers, the seed of the tracker's pose solve.
+    ///
+    /// Since: Odyssey Desktop 0.6.7.
     pub seed_circle: Option<Circle>,
 }
 
-/// Finds the six markers among `blobs` and orders them for the tracker. The markers may
-/// sit anywhere on or just around the screen: exactly six spots must be there, and three
-/// of them must make the row the tracker looks for (see [`crate::placement`]).
+/// Finds and orders six markers among `blobs`.
+/// Markers may sit on or near the screen; three must form the tracker row
+/// (see [`crate::placement`]).
 ///
 /// # Errors
 ///
 /// `TooFewBlobs` with fewer than six blobs, `WrongCount` unless exactly six land on or near
 /// the screen, and the placement error when those six cannot be ordered for the tracker.
+///
+/// # Since
+/// Odyssey Desktop 0.6.5.
 pub fn locate(
     geometry: &CameraGeometry,
     fit: &ScreenFit,
@@ -272,10 +304,12 @@ pub fn locate(
     })
 }
 
-/// The six `points` of a later frame in the order of `reference`: each reference marker takes
-/// its nearest point. The markers do not move between frames, so this labels a frame the way
-/// the first one was labelled whatever order [`tracker_order`] put its own points in. `None`
-/// when two reference markers claim the same point.
+/// Orders later-frame `points` by nearest match to each `reference` marker.
+/// Returns `None` when multiple reference markers claim one point.
+///
+/// Markers stay fixed between frames, so labels follow the first frame's tracker order.
+///
+/// Since: Odyssey Desktop 0.6.7.
 pub fn relabel(
     reference: &[Point2<f64>; 6],
     points: &[Point2<f64>; 6],
@@ -383,6 +417,6 @@ mod tests {
 
     #[test]
     fn blank_frame_has_no_blobs() {
-        assert!(detect_blobs(&GrayImage::from_pixel(64, 64, Luma([30]))).is_empty());
+        assert_eq!(detect_blobs(&GrayImage::from_pixel(64, 64, Luma([30]))), []);
     }
 }

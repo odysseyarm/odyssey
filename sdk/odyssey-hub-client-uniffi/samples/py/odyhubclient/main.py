@@ -1,10 +1,13 @@
 import asyncio
-import ohc_uniffi as ohc # pyright: ignore[reportMissingTypeStubs]
+import ohc_uniffi as ohc  # pyright: ignore[reportMissingTypeStubs]
 import typing
 
 ACCESSORY_TIMESTAMP = 0xFFFFFFFF
 
-def lookup_timestamp(hist: ohc.TrackingHistory, impact_ts: int, shot_delay_ms: int) -> int:
+
+def lookup_timestamp(
+    hist: ohc.TrackingHistory, impact_ts: int, shot_delay_ms: int
+) -> int:
     """Return the device timestamp to look up in the tracking history.
 
     For real device impacts, subtract shot delay (in µs) from the impact
@@ -20,7 +23,8 @@ def lookup_timestamp(hist: ohc.TrackingHistory, impact_ts: int, shot_delay_ms: i
         base_ts = impact_ts
     return (base_ts - shot_delay_us) & 0xFFFFFFFF
 
-async def main():
+
+async def main() -> None:
     while True:
         try:
             client = ohc.Client()
@@ -51,39 +55,64 @@ async def main():
             while True:
                 evt = await stream.next()
                 if evt.is_device_event():
-                    d_evt = typing.cast(ohc.DeviceEvent, typing.cast(ohc.Event.DEVICE_EVENT, evt)[0])
+                    d_evt = typing.cast(
+                        ohc.DeviceEvent, typing.cast(ohc.Event.DEVICE_EVENT, evt)[0]
+                    )
                     d = ohc.Device(d_evt.device)
                     uuid = d.uuid()
                     if d_evt.kind.is_tracking_event():
-                        t_evt = typing.cast(ohc.TrackingEvent, typing.cast(ohc.DeviceEventKind.TRACKING_EVENT, d_evt.kind)[0])
+                        t_evt = typing.cast(
+                            ohc.TrackingEvent,
+                            typing.cast(ohc.DeviceEventKind.TRACKING_EVENT, d_evt.kind)[
+                                0
+                            ],
+                        )
                         if uuid not in histories:
                             histories[uuid] = ohc.TrackingHistory(1000)
                         histories[uuid].push(t_evt)
-                        print(f"Tracking Event: device_id={uuid:x}, x={t_evt.aimpoint.x}, y={t_evt.aimpoint.y}")
+                        print(
+                            f"Tracking Event: device_id={uuid:x}, x={t_evt.aimpoint.x}, y={t_evt.aimpoint.y}"
+                        )
                     elif d_evt.kind.is_impact_event():
-                        i_evt = typing.cast(ohc.ImpactEvent, typing.cast(ohc.DeviceEventKind.IMPACT_EVENT, d_evt.kind)[0])
+                        i_evt = typing.cast(
+                            ohc.ImpactEvent,
+                            typing.cast(ohc.DeviceEventKind.IMPACT_EVENT, d_evt.kind)[
+                                0
+                            ],
+                        )
                         hist = histories.get(uuid)
                         if hist is not None:
                             delay_ms = shot_delays.get(uuid, 0)
                             ts = lookup_timestamp(hist, i_evt.timestamp, delay_ms)
                             closest_t_evt = hist.get_closest(ts)
                             if closest_t_evt is not None:
-                                src = "accessory" if i_evt.timestamp == ACCESSORY_TIMESTAMP else "device"
-                                print(f"Impact Event ({src}): device_id={uuid:x}, x={closest_t_evt.aimpoint.x}, y={closest_t_evt.aimpoint.y}")
+                                src = (
+                                    "accessory"
+                                    if i_evt.timestamp == ACCESSORY_TIMESTAMP
+                                    else "device"
+                                )
+                                print(
+                                    f"Impact Event ({src}): device_id={uuid:x}, x={closest_t_evt.aimpoint.x}, y={closest_t_evt.aimpoint.y}"
+                                )
                             else:
-                                print(f"Impact Event: device_id={uuid:x} (no tracking data)")
+                                print(
+                                    f"Impact Event: device_id={uuid:x} (no tracking data)"
+                                )
                         else:
                             print(f"Impact Event: device_id={uuid:x} (no history)")
                     elif d_evt.kind.is_connect_event():
                         shot_delay_ms = await client.get_shot_delay(d_evt.device)
                         shot_delays[uuid] = shot_delay_ms
-                        print(f"Connect Event: device_id={uuid:x} shot_delay_ms={shot_delay_ms}")
+                        print(
+                            f"Connect Event: device_id={uuid:x} shot_delay_ms={shot_delay_ms}"
+                        )
                     elif d_evt.kind.is_disconnect_event():
                         shot_delays.pop(uuid, None)
                         histories.pop(uuid, None)
                         print(f"Disconnect Event: device_id={uuid:x}")
         except ohc.ClientError as e:
             print(f"Event stream ended: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

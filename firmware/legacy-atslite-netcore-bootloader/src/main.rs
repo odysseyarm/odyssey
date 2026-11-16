@@ -1,3 +1,7 @@
+#![expect(
+    unsafe_code,
+    reason = "network-core bootloader reads and writes memory-mapped flash and linker SRAM"
+)]
 #![no_std]
 #![no_main]
 
@@ -28,6 +32,7 @@ fn pcd_region_addr() -> usize {
     unsafe extern "C" {
         static __pcd_region_start: u32;
     }
+    // SAFETY: linker defines this aligned address as shared PCD SRAM.
     unsafe { &__pcd_region_start as *const u32 as usize }
 }
 
@@ -105,6 +110,7 @@ fn boot_app() -> ! {
         static __bootloader_active_start: u32;
     }
 
+    // SAFETY: reset-to-boot transition grants exclusive peripheral access; linker symbol is active image vector table.
     unsafe {
         let mut p = cortex_m::Peripherals::steal();
 
@@ -126,7 +132,9 @@ fn clear_state_flag(flash: &Mutex<NoopRawMutex, RefCell<Nvmc<'_>>>) {
         static __bootloader_state_end: u32;
     }
 
+    // SAFETY: linker symbols delimit the reserved state flash page.
     let start = unsafe { &__bootloader_state_start as *const u32 as u32 };
+    // SAFETY: linker symbols delimit the reserved state flash page.
     let end = unsafe { &__bootloader_state_end as *const u32 as u32 };
 
     flash.lock(|_flash_cell| {
@@ -143,9 +151,13 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         static __bootloader_dfu_end: u32;
     }
 
+    // SAFETY: linker symbols delimit the network-core active and DFU flash partitions.
     let dst_addr = unsafe { &__bootloader_active_start as *const u32 as u32 };
+    // SAFETY: linker symbols delimit the network-core active and DFU flash partitions.
     let dst_end = unsafe { &__bootloader_active_end as *const u32 as u32 };
+    // SAFETY: linker symbols delimit the network-core active and DFU flash partitions.
     let dfu_start = unsafe { &__bootloader_dfu_start as *const u32 as u32 };
+    // SAFETY: linker symbols delimit the network-core active and DFU flash partitions.
     let dfu_end = unsafe { &__bootloader_dfu_end as *const u32 as u32 };
 
     let active_len = dst_end.saturating_sub(dst_addr);
@@ -249,6 +261,7 @@ fn erase_abs(start: u32, end: u32) -> Result<(), ()> {
     wait_ready();
 
     for page_addr in (start..end).step_by(PAGE_SIZE) {
+        // SAFETY: check_bounds validated page-aligned address inside mapped flash.
         unsafe {
             (page_addr as *mut u32).write_volatile(0xFFFF_FFFF);
         }
@@ -278,6 +291,7 @@ fn write_abs(addr: u32, bytes: &[u8]) -> Result<(), ()> {
         .write(|w| w.set_wen(pac::nvmc::vals::Wen::WEN));
     wait_ready();
 
+    // SAFETY: addr and byte length passed range and word-alignment checks; mapped flash remains writable.
     unsafe {
         let p_src = bytes.as_ptr() as *const u32;
         let p_dst = addr as *mut u32;

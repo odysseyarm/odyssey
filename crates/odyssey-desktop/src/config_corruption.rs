@@ -71,13 +71,12 @@ impl ConfigCorruptionModal {
         let deletion = runtime::spawn(delete_corrupted_files(reported));
         cx.spawn(async move |this, cx| {
             let remaining = deletion.await.unwrap_or(unchanged);
-            this.update(cx, |this, cx| {
+            let _ = this.update(cx, |this, cx| {
                 this.delete_failed = !remaining.is_empty();
                 this.corruptions = remaining;
                 this.deleting = false;
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
         cx.notify();
@@ -89,7 +88,7 @@ impl Render for ConfigCorruptionModal {
         if self.corruptions.is_empty() {
             return div().into_any_element();
         }
-        let palette = theme::palette(cx);
+        let palette = &theme::palette(cx);
         let count = self.corruptions.len();
         let intro = if count == 1 {
             "The following configuration file was corrupted and could not be loaded. Default values are being used instead:"

@@ -308,14 +308,14 @@ fn new_address(text: &str, name: &str, taken: &[Uuid], at: fn(u8) -> Uuid) -> er
         .ok_or_else(|| eros::error!("Every {name} address is taken"))
 }
 
-const CANVAS: u32 = 0xfaf8f7;
-const SURFACE: u32 = 0xffffff;
-const SURFACE_ALT: u32 = 0xf1eeed;
-const LINE: u32 = 0xe5e0df;
-const FG: u32 = 0x2b2727;
-const FG_STRONG: u32 = 0x111111;
-const DANGER_INK: u32 = 0xb42823;
-const DANGER_SOFT: u32 = 0xfde8e7;
+const CANVAS: u32 = 0x00fa_f8f7;
+const SURFACE: u32 = 0x00ff_ffff;
+const SURFACE_ALT: u32 = 0x00f1_eeed;
+const LINE: u32 = 0x00e5_e0df;
+const FG: u32 = 0x002b_2727;
+const FG_STRONG: u32 = 0x0011_1111;
+const DANGER_INK: u32 = 0x00b4_2823;
+const DANGER_SOFT: u32 = 0x00fd_e8e7;
 
 struct Controls {
     snapshot: Option<Snapshot>,
@@ -568,7 +568,8 @@ impl Render for Controls {
                                             match target {
                                                 Ok(target) => {
                                                     this.target = target;
-                                                    this.result = "The controls below act on these devices.".to_owned();
+                                                    "The controls below act on these devices."
+                                                        .clone_into(&mut this.result);
                                                 }
                                                 Err(error) => this.result = error.to_string(),
                                             }
@@ -788,19 +789,19 @@ mod tests {
 
     #[test]
     fn drafts_are_validated() {
-        assert!(number("NaN", "x").is_err());
-        assert!(number("inf", "x").is_err());
-        assert!(number("1.5", "x").is_ok());
-        assert!(aim_command("0.5", "1.1").is_err());
-        assert!(aim_command("0", "1").is_ok());
-        assert!(battery_command("101", false).is_err());
-        assert!(battery_command("100", true).is_ok());
-        assert!(pair_command("-1").is_err());
-        assert!(advance_command("1000").is_ok());
-        assert!(motion_command(["0", "0", "9.81", "0", "0", "x"]).is_err());
+        number("NaN", "x").unwrap_err();
+        number("inf", "x").unwrap_err();
+        number("1.5", "x").unwrap();
+        aim_command("0.5", "1.1").unwrap_err();
+        aim_command("0", "1").unwrap();
+        battery_command("101", false).unwrap_err();
+        battery_command("100", true).unwrap();
+        pair_command("-1").unwrap_err();
+        advance_command("1000").unwrap();
+        motion_command(["0", "0", "9.81", "0", "0", "x"]).unwrap_err();
         assert_eq!(address("  ", "Unit").unwrap(), None);
         assert_eq!(address("53494D000101", "Unit").unwrap(), Some(unit_uuid(1)));
-        assert!(address("53494d0001", "Unit").is_err());
-        assert!(named("", "unit").is_err());
+        address("53494d0001", "Unit").unwrap_err();
+        named("", "unit").unwrap_err();
     }
 }

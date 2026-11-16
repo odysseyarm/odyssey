@@ -62,6 +62,8 @@ fn normalized_coordinates(p: &Vector3<f64>) -> Option<Vector2<f64>> {
 
 /// Projects a camera-frame point to a pixel, including lens distortion.
 /// `None` for points at or behind the image plane.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn project(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
     let n = normalized_coordinates(p)?;
     let pixel = normalized_to_pixel(intr, distort_normalized(intr, n));
@@ -70,6 +72,8 @@ pub fn project(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
 
 /// Projects a camera-frame point with the pinhole model only. This is the
 /// pixel grid that [`undistort_pixel`] produces.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn project_pinhole(intr: &Intrinsics, p: &Vector3<f64>) -> Option<Point2<f64>> {
     let n = normalized_coordinates(p)?;
     let pixel = normalized_to_pixel(intr, n);
@@ -80,11 +84,13 @@ const UNDISTORT_ITERATIONS: usize = 40;
 const UNDISTORT_CONVERGED_PX: f64 = 0.01;
 const UNDISTORT_ACCEPT_PX: f64 = 0.5;
 
-/// Inverts the lens model: returns normalized, undistorted coordinates `(x, y)`
-/// of the ray through `pixel`. The model has no closed-form inverse, so this
-/// runs a fixed-point iteration and keeps the best iterate. Returns `None` when
-/// the iteration does not reach half a pixel, which happens only far outside
-/// the calibrated image area.
+/// Returns normalized, undistorted coordinates `(x, y)` for ray through `pixel`.
+///
+/// The lens model has no closed-form inverse, so fixed-point iteration keeps
+/// the best iterate. Returns `None` if error remains above half a pixel, which
+/// only happens far outside the calibrated image area.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn undistort(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector2<f64>> {
     let [k1, k2, k3, k4, k5, k6] = intr.k;
     let [p1, p2] = intr.p;
@@ -120,11 +126,15 @@ pub fn undistort(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector2<f64>> 
 }
 
 /// The pinhole pixel that sees the same ray as the distorted `pixel`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn undistort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Point2<f64>> {
     undistort(intr, pixel).map(|n| normalized_to_pixel(intr, n))
 }
 
 /// The inverse of [`undistort_pixel`]: where the lens puts a pinhole pixel.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn distort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Point2<f64> {
     let n = pixel_to_normalized(intr, pixel);
     normalized_to_pixel(intr, distort_normalized(intr, n))
@@ -132,6 +142,8 @@ pub fn distort_pixel(intr: &Intrinsics, pixel: Point2<f64>) -> Point2<f64> {
 
 /// Direction `(x, y, 1)` of the ray through a distorted pixel, in the camera
 /// frame. Scaling it by a depth gives the point at that z-depth.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn pixel_ray(intr: &Intrinsics, pixel: Point2<f64>) -> Option<Vector3<f64>> {
     undistort(intr, pixel).map(|n| Vector3::new(n.x, n.y, 1.0))
 }
@@ -144,13 +156,18 @@ pub(crate) fn pinhole_ray(intr: &Intrinsics, pixel: Point2<f64>) -> Vector3<f64>
 }
 
 /// A plane through `point` with unit `normal`.
+///
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plane {
+    /// Since: Odyssey Desktop 0.6.5.
     pub point: Vector3<f64>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub normal: Vector3<f64>,
 }
 
 impl Plane {
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn new(point: Vector3<f64>, normal: Vector3<f64>) -> Self {
         Self {
             point,
@@ -159,6 +176,8 @@ impl Plane {
     }
 
     /// Orthogonal distance, positive on the side the normal points to.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn signed_distance(&self, p: &Vector3<f64>) -> f64 {
         self.normal.dot(&(p - self.point))
     }
@@ -179,6 +198,8 @@ impl Plane {
     }
 
     /// Where the ray `origin + t * direction` meets the plane, for `t > 0`.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub fn intersect_ray(
         &self,
         origin: &Vector3<f64>,
@@ -190,6 +211,9 @@ impl Plane {
     }
 
     /// The same plane expressed in another frame.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
+    #[must_use]
     pub fn transformed(&self, to: &Extrinsics) -> Self {
         Self {
             point: to.apply(&self.point),
@@ -198,9 +222,13 @@ impl Plane {
     }
 }
 
-/// Least-squares plane through `points`: the centroid and the eigenvector of
-/// the centered points' scatter matrix with the smallest eigenvalue. `None`
-/// for fewer than three points, a non-finite point, or a collinear cloud.
+/// Fits a least-squares plane through `points`.
+///
+/// Uses the centroid and smallest-eigenvalue vector of the centered scatter
+/// matrix. Returns `None` for fewer than three points, non-finite points, or a
+/// collinear cloud.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
     if points.len() < 3 || points.iter().any(|p| !p.iter().all(|v| v.is_finite())) {
         return None;
@@ -225,20 +253,31 @@ pub fn fit_plane(points: &[Vector3<f64>]) -> Option<Plane> {
     Some(Plane::new(centroid, normal))
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RansacParams {
     /// Points per hypothesis. Larger samples average depth noise inside each
     /// hypothesis, which suits the thousands of mostly-correct points a screen
     /// yields.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub sample_size: usize,
     /// Orthogonal distance in meters below which a point supports a plane.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub threshold: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub max_trials: usize,
     /// Probability of having drawn one outlier-free sample before stopping.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub confidence: f64,
-    /// Hypotheses are scored on at most this many points; the winner is then
+    /// Hypotheses are scored on at most this many points. The winner is then
     /// refit on all of them.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub score_points: usize,
+    /// Since: Odyssey Desktop 0.6.5.
     pub seed: u64,
 }
 
@@ -250,20 +289,28 @@ impl Default for RansacParams {
             max_trials: 5000,
             confidence: 0.99,
             score_points: 4000,
-            seed: 0x0D155EA,
+            seed: 0x00D1_55EA,
         }
     }
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct PlaneFit {
     /// Normal oriented away from the camera at the origin.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub plane: Plane,
     /// Root-mean-square orthogonal distance of the inliers, meters.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub rmse: f64,
+    /// Since: Odyssey Desktop 0.6.5.
     pub max_error: f64,
     /// Indices into the input of the points within the threshold of the final
     /// plane.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub inliers: Vec<usize>,
 }
 
@@ -377,6 +424,8 @@ const PLANE_REFIT_ROUNDS: usize = 2;
 /// and is undefined for a plane seen edge-on, while the orthogonal distance
 /// keeps the threshold meaning "meters from the surface" for every pose. The
 /// seeded generator makes the result reproducible.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<PlaneFit> {
     let n = points.len();
     if params.sample_size < 3
@@ -428,8 +477,10 @@ pub fn ransac_plane(points: &[Vector3<f64>], params: &RansacParams) -> Option<Pl
     })
 }
 
-/// Applies a 3x3 homography to a point; `None` when it maps to infinity or to
+/// Applies a 3x3 homography to a point. `None` when it maps to infinity or to
 /// a non-finite point.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn apply_homography(h: &Matrix3<f64>, p: Point2<f64>) -> Option<Point2<f64>> {
     let v = h * Vector3::new(p.x, p.y, 1.0);
     if !v.iter().all(|coordinate| coordinate.is_finite()) || v.z.abs() <= HOMOGENEOUS_EPSILON {
@@ -494,6 +545,8 @@ fn dlt_system(
 /// Normalized direct linear transform: the homography `H` with `dst ~ H src`
 /// that minimizes the algebraic error over all pairs. Needs at least four pairs
 /// with no three collinear.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix3<f64>> {
     if src.len() != dst.len()
         || src.len() < MIN_HOMOGRAPHY_PAIRS
@@ -545,11 +598,16 @@ pub fn fit_homography(src: &[Point2<f64>], dst: &[Point2<f64>]) -> Option<Matrix
     Some(h / scale)
 }
 
+/// Since: Odyssey Desktop 0.6.5.
 #[derive(Debug, Clone)]
 pub struct HomographyFit {
+    /// Since: Odyssey Desktop 0.6.5.
     pub h: Matrix3<f64>,
+    /// Since: Odyssey Desktop 0.6.5.
     pub inliers: Vec<usize>,
     /// Root-mean-square transfer error of the inliers in `dst` units.
+    ///
+    /// Since: Odyssey Desktop 0.6.5.
     pub rmse: f64,
 }
 
@@ -594,7 +652,7 @@ const HOMOGRAPHY_CONFIDENCE: f64 = 0.999;
 /// Refits of the winning homography on its own inliers, before the final fit.
 const HOMOGRAPHY_REFIT_ROUNDS: usize = 3;
 
-/// Hypotheses from four random pairs; returns the inliers (by transfer error)
+/// Hypotheses from four random pairs. Returns the inliers (by transfer error)
 /// of the one with the most support, ties broken by the smaller error sum.
 /// `None` when four pairs are all there is and they are degenerate.
 fn best_homography_inliers(
@@ -665,6 +723,8 @@ fn best_homography_inliers(
 /// RANSAC around [`fit_homography`]: hypotheses come from four random pairs, a
 /// pair supports one when its transfer error in `dst` is at most `threshold`,
 /// and the winner is refit on its inliers.
+///
+/// Since: Odyssey Desktop 0.6.5.
 pub fn ransac_homography(
     src: &[Point2<f64>],
     dst: &[Point2<f64>],

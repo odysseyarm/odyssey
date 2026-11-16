@@ -1,6 +1,6 @@
 //! Small original illustrations for the two kinds of display, drawn from the
 //! palette so they follow the light or dark theme. The flat picture is one SVG
-//! rasterised once per theme; the sparkles and the projector's beam are mono
+//! rasterised once per theme. The sparkles and the projector's beam are mono
 //! SVGs laid over it so they can twinkle. Only the overlays animate.
 
 use std::collections::HashMap;
@@ -64,7 +64,7 @@ fn hex(color: Rgba) -> String {
     )
 }
 
-fn tv_svg(p: Palette) -> String {
+fn tv_svg(p: &Palette) -> String {
     let (soft, faint, muted, accent) = (
         hex(p.accent_soft),
         hex(p.fg_faint),
@@ -72,7 +72,7 @@ fn tv_svg(p: Palette) -> String {
         hex(p.accent),
     );
     format!(
-        r##"{SVG_OPEN}
+        r#"{SVG_OPEN}
 <ellipse cx="80" cy="66" rx="70" ry="48" fill="{soft}"/>
 <rect x="73" y="90" width="14" height="11" rx="2" fill="{faint}"/>
 <rect x="50" y="100" width="60" height="7" rx="3.5" fill="{muted}"/>
@@ -82,11 +82,11 @@ fn tv_svg(p: Palette) -> String {
 <circle cx="68" cy="55" r="3" fill="white"/>
 <circle cx="92" cy="55" r="3" fill="white"/>
 <path d="M68 66 Q80 76 92 66" stroke="white" stroke-width="3.5" stroke-linecap="round"/>
-</svg>"##
+</svg>"#
     )
 }
 
-fn projector_svg(p: Palette) -> String {
+fn projector_svg(p: &Palette) -> String {
     let (soft, faint, muted, accent) = (
         hex(p.accent_soft),
         hex(p.fg_faint),
@@ -104,7 +104,7 @@ fn projector_svg(p: Palette) -> String {
         }
     }
     format!(
-        r##"{SVG_OPEN}
+        r#"{SVG_OPEN}
 <ellipse cx="80" cy="66" rx="70" ry="48" fill="{soft}"/>
 <rect x="98" y="20" width="52" height="66" rx="3" fill="{surface}"/>
 <rect x="98" y="20" width="52" height="66" rx="3" stroke="{line}" stroke-width="2"/>
@@ -117,13 +117,13 @@ fn projector_svg(p: Palette) -> String {
 <circle cx="26" cy="60" r="2.4" fill="{surface}"/>
 <circle cx="38" cy="60" r="2.4" fill="{surface}"/>
 <path d="M26 68 Q32 73 38 68" stroke="{surface}" stroke-width="2.6" stroke-linecap="round"/>
-</svg>"##
+</svg>"#
     )
 }
 
 /// The rasterised picture for `kind` in this theme, made once. The key holds
 /// every colour the picture uses, so a theme switch gets its own copy.
-fn picture(tv: bool, p: Palette) -> Arc<Image> {
+fn picture(tv: bool, p: &Palette) -> Arc<Image> {
     type Key = (bool, [u32; 7]);
     static CACHE: Mutex<Option<HashMap<Key, Arc<Image>>>> = Mutex::new(None);
 
@@ -175,7 +175,7 @@ fn overlay(
         .into_any_element()
 }
 
-fn frame(height: f32, tv: bool, p: Palette, overlays: Vec<AnyElement>) -> impl IntoElement {
+fn frame(height: f32, tv: bool, p: &Palette, overlays: Vec<AnyElement>) -> impl IntoElement {
     div()
         .relative()
         .flex_shrink_0()
@@ -186,7 +186,7 @@ fn frame(height: f32, tv: bool, p: Palette, overlays: Vec<AnyElement>) -> impl I
 }
 
 /// A friendly flat TV on a stand, with a sparkle.
-pub(super) fn tv_illustration(p: Palette, height: f32) -> impl IntoElement {
+pub(super) fn tv_illustration(p: &Palette, height: f32) -> impl IntoElement {
     frame(
         height,
         true,
@@ -206,7 +206,7 @@ pub(super) fn tv_illustration(p: Palette, height: f32) -> impl IntoElement {
 }
 
 /// A projector throwing its beam onto a screen on the wall.
-pub(super) fn projector_illustration(p: Palette, height: f32) -> impl IntoElement {
+pub(super) fn projector_illustration(p: &Palette, height: f32) -> impl IntoElement {
     frame(
         height,
         false,

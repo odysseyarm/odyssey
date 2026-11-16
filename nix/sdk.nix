@@ -16,7 +16,12 @@
 # Python wheels come from maturin itself (same tool, wheel metadata, platform
 # tags and manylinux/musllinux audit as maturin-action), driven against the
 # vendored crates inside the sandbox.
-{ pkgs, craneLib, common, toolchain }:
+{
+  pkgs,
+  craneLib,
+  common,
+  toolchain,
+}:
 let
   inherit (pkgs) lib stdenv;
   xwin = import ./xwin.nix { inherit pkgs; };
@@ -24,19 +29,29 @@ let
   # The repo's one toolchain pin (channel only) plus exactly the std targets a
   # build needs. Components stay empty: SDK builds need no clippy/rustfmt.
   pin = (builtins.fromTOML (builtins.readFile ../rust-toolchain.toml)).toolchain;
-  toolchainFor = targets: pkgs.rust-bin.fromRustupToolchain {
-    inherit (pin) channel profile;
-    components = [ ];
-    targets = lib.unique targets;
-  };
+  toolchainFor =
+    targets:
+    pkgs.rust-bin.fromRustupToolchain {
+      inherit (pin) channel profile;
+      components = [ ];
+      targets = lib.unique targets;
+    };
   craneFor = targets: craneLib.overrideToolchain (toolchainFor targets);
 
-  ffi = { dir = "sdk/odyssey-hub-client-ffi"; package = "odyssey-hub-client-ffi"; };
-  uniffi = { dir = "sdk/odyssey-hub-client-uniffi"; package = "odyssey-hub-client-uniffi"; };
-  argsFor = ws: suffix: common.mkArgs {
-    workspace = ws.dir;
-    pname = "${ws.package}${suffix}";
+  ffi = {
+    dir = "sdk/odyssey-hub-client-ffi";
+    package = "odyssey-hub-client-ffi";
   };
+  uniffi = {
+    dir = "sdk/odyssey-hub-client-uniffi";
+    package = "odyssey-hub-client-uniffi";
+  };
+  argsFor =
+    ws: suffix:
+    common.mkArgs {
+      workspace = ws.dir;
+      pname = "${ws.package}${suffix}";
+    };
 
   gnu = {
     x86_64 = "x86_64-unknown-linux-gnu";
@@ -73,56 +88,72 @@ let
   '';
 
   # How one target is compiled against a given glibc floor (gnu rows only).
-  # `build` is the cargo front end (without -p); `maturin` the extra maturin
+  # `build` is the cargo front end (without -p). `maturin` holds the extra maturin
   # flags that select the same cross backend.
-  backendWith = glibc: triple:
-    if lib.hasInfix "windows" triple then {
-      tools = xwin.tools;
-      prelude = sandbox + xwin.setup;
-      build = "cargo xwin build --release --locked --offline --target ${triple}";
-      maturin = "";
-    } else if lib.hasInfix "apple-darwin" triple then {
-      tools = [ ];
-      # nixpkgs' darwin stdenv exports its own (newer) deployment target, which
-      # would change the wheel tags and the libs' minimum macOS; keep rustc's.
-      prelude = sandbox + ''
-        export MACOSX_DEPLOYMENT_TARGET=${if lib.hasPrefix "aarch64" triple then "11.0" else "10.12"}
-      '';
-      build = "cargo build --release --locked --offline --target ${triple}";
-      maturin = "";
-    } else {
-      tools = [ pkgs.cargo-zigbuild pkgs.zig ];
-      prelude = sandbox + ''
-        export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
-        export ZIG_LOCAL_CACHE_DIR="$TMPDIR/zig-local-cache"
-        # Zig links the target only. Build scripts and proc macros keep the Nix
-        # linker: a zig-linked executable asks for /lib64/ld-linux-*, which the
-        # sandbox lacks (matters when the target triple equals the host's).
-        export CARGO_UNSTABLE_HOST_CONFIG=true
-        export CARGO_UNSTABLE_TARGET_APPLIES_TO_HOST=true
-        export CARGO_TARGET_APPLIES_TO_HOST=false
-        export CARGO_HOST_LINKER=cc
-        # rustc's default release `strip = "debuginfo"` reaches zig as a full
-        # strip, dropping .symtab; uniffi-bindgen reads UniFFI metadata from it.
-        export CARGO_PROFILE_RELEASE_STRIP=none
-      '' + lib.optionalString (lib.hasInfix "musl" triple) ''
-        # A cdylib needs a dynamic musl (musllinux wheels load into CPython).
-        export RUSTFLAGS="-C target-feature=-crt-static"
-      '';
-      build = "cargo zigbuild --release --locked --offline --target ${
-        if lib.hasInfix "-gnu" triple then "${triple}.${glibc}" else triple
-      }";
-      maturin = "--zig --compatibility ${
-        if lib.hasInfix "musl" triple then "musllinux_1_2"
-        else if glibc == "2.17" then "manylinux2014"
-        else "manylinux_${lib.replaceStrings [ "." ] [ "_" ] glibc}"
-      }";
-    };
+  backendWith =
+    glibc: triple:
+    if lib.hasInfix "windows" triple then
+      {
+        tools = xwin.tools;
+        prelude = sandbox + xwin.setup;
+        build = "cargo xwin build --release --locked --offline --target ${triple}";
+        maturin = "";
+      }
+    else if lib.hasInfix "apple-darwin" triple then
+      {
+        tools = [ ];
+        # nixpkgs' darwin stdenv exports its own (newer) deployment target, which
+        # would change the wheel tags and the libs' minimum macOS. Keep rustc's.
+        prelude = sandbox + ''
+          export MACOSX_DEPLOYMENT_TARGET=${if lib.hasPrefix "aarch64" triple then "11.0" else "10.12"}
+        '';
+        build = "cargo build --release --locked --offline --target ${triple}";
+        maturin = "";
+      }
+    else
+      {
+        tools = [
+          pkgs.cargo-zigbuild
+          pkgs.zig
+        ];
+        prelude =
+          sandbox
+          + ''
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
+            export ZIG_LOCAL_CACHE_DIR="$TMPDIR/zig-local-cache"
+            # Zig links the target only. Build scripts and proc macros keep the Nix
+            # linker: a zig-linked executable asks for /lib64/ld-linux-*, which the
+            # sandbox lacks (matters when the target triple equals the host's).
+            export CARGO_UNSTABLE_HOST_CONFIG=true
+            export CARGO_UNSTABLE_TARGET_APPLIES_TO_HOST=true
+            export CARGO_TARGET_APPLIES_TO_HOST=false
+            export CARGO_HOST_LINKER=cc
+            # rustc's default release `strip = "debuginfo"` reaches zig as a full
+            # strip, dropping .symtab. uniffi-bindgen reads UniFFI metadata from it.
+            export CARGO_PROFILE_RELEASE_STRIP=none
+          ''
+          + lib.optionalString (lib.hasInfix "musl" triple) ''
+            # A cdylib needs a dynamic musl (musllinux wheels load into CPython).
+            export RUSTFLAGS="-C target-feature=-crt-static"
+          '';
+        build = "cargo zigbuild --release --locked --offline --target ${
+          if lib.hasInfix "-gnu" triple then "${triple}.${glibc}" else triple
+        }";
+        maturin = "--zig --compatibility ${
+          if lib.hasInfix "musl" triple then
+            "musllinux_1_2"
+          else if glibc == "2.17" then
+            "manylinux2014"
+          else
+            "manylinux_${lib.replaceStrings [ "." ] [ "_" ] glibc}"
+        }";
+      };
   backendFor = triple: backendWith (glibcFloor triple) triple;
 
   # (workspace, target) -> the cached dependency build and a derivation helper
   # that reuses it.
-  mkTarget = ws: triple:
+  mkTarget =
+    ws: triple:
     let
       craneL = craneFor [ triple ];
       backend = backendFor triple;
@@ -134,31 +165,45 @@ let
         dontFixup = true;
       };
       cargoBuild = "${backend.build} -p ${ws.package} --lib";
-      deps = craneL.buildDepsOnly (base // {
-        doCheck = false;
-        doInstallCargoArtifacts = true;
-        # maturin runs the workspace's own `cargo run --bin uniffi-bindgen` on the
-        # host (dev profile); build its dependencies here so they are cached too.
-        buildPhaseCargoCommand = cargoBuild + lib.optionalString (ws == uniffi) ''
+      deps = craneL.buildDepsOnly (
+        base
+        // {
+          doCheck = false;
+          doInstallCargoArtifacts = true;
+          # maturin runs the workspace's own `cargo run --bin uniffi-bindgen` on the
+          # host (dev profile). Build its dependencies here so they are cached too.
+          buildPhaseCargoCommand =
+            cargoBuild
+            + lib.optionalString (ws == uniffi) ''
 
-          cargo build --locked --offline -p odyssey-uniffi-bindgen
-        '';
-      });
+              cargo build --locked --offline -p odyssey-uniffi-bindgen
+            '';
+        }
+      );
       derive = args: craneL.mkCargoDerivation (base // { cargoArtifacts = deps; } // args);
       # Raw native artifacts: scrub toolchain/vendor store paths out of the
       # binaries so the closure stays small (crane's own hooks, byte-preserving).
-      scrub = [ craneL.removeReferencesToRustToolchainHook craneL.removeReferencesToVendoredSourcesHook ];
-    in {
+      scrub = [
+        craneL.removeReferencesToRustToolchainHook
+        craneL.removeReferencesToVendoredSourcesHook
+      ];
+    in
+    {
       inherit deps;
-      native = { suffix, install }: derive {
-        pnameSuffix = suffix;
-        nativeBuildInputs = base.nativeBuildInputs ++ scrub;
-        buildPhaseCargoCommand = cargoBuild;
-        installPhaseCommand = install;
-      };
+      native =
+        { suffix, install }:
+        derive {
+          pnameSuffix = suffix;
+          nativeBuildInputs = base.nativeBuildInputs ++ scrub;
+          buildPhaseCargoCommand = cargoBuild;
+          installPhaseCommand = install;
+        };
       wheel = derive {
         pnameSuffix = "-wheel";
-        nativeBuildInputs = base.nativeBuildInputs ++ [ pkgs.maturin pkgs.python3 ];
+        nativeBuildInputs = base.nativeBuildInputs ++ [
+          pkgs.maturin
+          pkgs.python3
+        ];
         # nixpkgs' python hooks export _PYTHON_HOST_PLATFORM, which maturin
         # honors over its own manylinux/macOS platform tag detection.
         buildPhaseCargoCommand = ''
@@ -175,51 +220,77 @@ let
   # Install `from` (relative to target/<triple>/release) as `to` under $out/<dir>.
   installFiles = triple: dir: files: ''
     mkdir -p $out/${dir}
-    ${lib.concatStringsSep "\n" (lib.mapAttrsToList (to: from: "cp target/${triple}/release/${from} $out/${dir}/${to}") files)}
+    ${lib.concatStringsSep "\n" (
+      lib.mapAttrsToList (to: from: "cp target/${triple}/release/${from} $out/${dir}/${to}") files
+    )}
   '';
 
   # ---- C/C++ FFI (CMake bundle inputs) ----------------------------------------
   # Output layout: libs/<final bundle file names>, include/ (cbindgen headers,
   # identical for every target; build.rs writes them next to the crate).
   ffiHeaders = "mkdir -p $out/include && cp -r generated/include/. $out/include/";
-  ffiRow = triplet: triple: files:
+  ffiRow =
+    triplet: triple: files:
     (mkTarget ffi triple).native {
       suffix = "-libs-${triplet}";
       install = installFiles triple "libs" files + "\n" + ffiHeaders;
     };
-  ffiLinux = triplet: triple: ffiRow triplet triple {
-    "libohc__${triplet}.a" = "libohc.a";
-    "libohc__${triplet}.so" = "libohc.so";
-  };
-  ffiRows = lib.optionalAttrs stdenv.hostPlatform.isLinux {
-    "sdk-ffi-linux_x64" = ffiLinux "linux_x64" gnu.x86_64;
-    "sdk-ffi-linux_arm64" = ffiLinux "linux_arm64" gnu.aarch64;
-    "sdk-ffi-win_x64" = ffiRow "win_x64" windows {
-      "ohc__win_x64.lib" = "ohc.lib";
-      "ohc__win_x64.dll" = "ohc.dll";
-      "ohc__win_x64.dll.lib" = "ohc.dll.lib";
+  ffiLinux =
+    triplet: triple:
+    ffiRow triplet triple {
+      "libohc__${triplet}.a" = "libohc.a";
+      "libohc__${triplet}.so" = "libohc.so";
     };
-  } // lib.optionalAttrs stdenv.hostPlatform.isDarwin (lib.mapAttrs' (name: triple:
-    lib.nameValuePair "sdk-ffi-macos_${name}" (ffiRow "macos_${name}" triple {
-      "libohc__macos_${name}.a" = "libohc.a";
-      "libohc__macos_${name}.dylib" = "libohc.dylib";
-    })) macos);
+  ffiRows =
+    lib.optionalAttrs stdenv.hostPlatform.isLinux {
+      "sdk-ffi-linux_x64" = ffiLinux "linux_x64" gnu.x86_64;
+      "sdk-ffi-linux_arm64" = ffiLinux "linux_arm64" gnu.aarch64;
+      "sdk-ffi-win_x64" = ffiRow "win_x64" windows {
+        "ohc__win_x64.lib" = "ohc.lib";
+        "ohc__win_x64.dll" = "ohc.dll";
+        "ohc__win_x64.dll.lib" = "ohc.dll.lib";
+      };
+    }
+    // lib.optionalAttrs stdenv.hostPlatform.isDarwin (
+      lib.mapAttrs' (
+        name: triple:
+        lib.nameValuePair "sdk-ffi-macos_${name}" (
+          ffiRow "macos_${name}" triple {
+            "libohc__macos_${name}.a" = "libohc.a";
+            "libohc__macos_${name}.dylib" = "libohc.dylib";
+          }
+        )
+      ) macos
+    );
 
   # ---- UniFFI: Python wheels ---------------------------------------------------
   # Artifact names keep the CI scheme python-<os>-<manylinux>-<target>.
   wheelRows =
     lib.optionalAttrs stdenv.hostPlatform.isLinux (
-      lib.mapAttrs' (arch: triple: lib.nameValuePair "sdk-python-linux-auto-${arch}" (mkTarget uniffi triple).wheel) gnu
-      // lib.mapAttrs' (arch: triple: lib.nameValuePair "sdk-python-linux-musllinux_1_2-${arch}" (mkTarget uniffi triple).wheel) musl
-      // { "sdk-python-windows-${windows}" = (mkTarget uniffi windows).wheel; }
-    ) // lib.optionalAttrs stdenv.hostPlatform.isDarwin (
-      lib.mapAttrs' (name: triple: lib.nameValuePair "sdk-python-macos-${if name == "x64" then "x86_64" else "aarch64"}" (mkTarget uniffi triple).wheel) macos
+      lib.mapAttrs' (
+        arch: triple: lib.nameValuePair "sdk-python-linux-auto-${arch}" (mkTarget uniffi triple).wheel
+      ) gnu
+      // lib.mapAttrs' (
+        arch: triple:
+        lib.nameValuePair "sdk-python-linux-musllinux_1_2-${arch}" (mkTarget uniffi triple).wheel
+      ) musl
+      // {
+        "sdk-python-windows-${windows}" = (mkTarget uniffi windows).wheel;
+      }
+    )
+    // lib.optionalAttrs stdenv.hostPlatform.isDarwin (
+      lib.mapAttrs' (
+        name: triple:
+        lib.nameValuePair "sdk-python-macos-${if name == "x64" then "x86_64" else "aarch64"}" (mkTarget uniffi triple)
+        .wheel
+      ) macos
     );
 
   # ---- UniFFI: C# natives -------------------------------------------------------
   # One file per triple, named as the NuGet project expects it under
   # target/<triple>/release/.
-  dotnetNative = triple: file:
+  dotnetNative =
+    triple: file:
     (mkTarget uniffi triple).native {
       suffix = "-native";
       install = installFiles triple "" { ${file} = file; };
@@ -229,12 +300,17 @@ let
       "sdk-dotnet-native-${gnu.x86_64}" = dotnetNative gnu.x86_64 "libohc_uniffi.so";
       "sdk-dotnet-native-${gnu.aarch64}" = dotnetNative gnu.aarch64 "libohc_uniffi.so";
       "sdk-dotnet-native-${windows}" = dotnetNative windows "ohc_uniffi.dll";
-    } // lib.optionalAttrs stdenv.hostPlatform.isDarwin (lib.mapAttrs' (_: triple:
-      lib.nameValuePair "sdk-dotnet-native-${triple}" (dotnetNative triple "libohc_uniffi.dylib")) macos);
+    }
+    // lib.optionalAttrs stdenv.hostPlatform.isDarwin (
+      lib.mapAttrs' (
+        _: triple:
+        lib.nameValuePair "sdk-dotnet-native-${triple}" (dotnetNative triple "libohc_uniffi.dylib")
+      ) macos
+    );
 
   # ---- UniFFI: C# bindings generator ---------------------------------------------
   # Pinned to the tag the C# project and xtask name (v<tool>+v<uniffi>, must
-  # match uniffi in sdk/odyssey-hub-client-uniffi/Cargo.toml; also
+  # match uniffi in sdk/odyssey-hub-client-uniffi/Cargo.toml, and also
   # UNIFFI_BINDGEN_CS_TAG in crates/xtask/src/sdk.rs).
   uniffiBindgenCs =
     let
@@ -253,7 +329,8 @@ let
         # and are not part of this repo's gate.
         doCheck = false;
       };
-    in craneLib.buildPackage (args // { cargoArtifacts = craneLib.buildDepsOnly args; });
+    in
+    craneLib.buildPackage (args // { cargoArtifacts = craneLib.buildDepsOnly args; });
 
   # Host builds of the UniFFI workspace: the repo's cs_bindgen post-processor and
   # the crate's unit tests share one dependency build.
@@ -261,50 +338,69 @@ let
     cargoExtraArgs = "--locked --offline";
   };
   uniffiHostDeps = craneLib.buildDepsOnly uniffiHostArgs;
-  csBindgen = craneLib.buildPackage (uniffiHostArgs // {
-    cargoArtifacts = uniffiHostDeps;
-    cargoExtraArgs = "--locked --offline --bin cs_bindgen";
-    doCheck = false; # tests run in checks.sdk-uniffi-tests
-  });
+  ffiHostArgs = argsFor ffi "-host";
+  ffiHostDeps = craneLib.buildDepsOnly ffiHostArgs;
+  csBindgen = craneLib.buildPackage (
+    uniffiHostArgs
+    // {
+      cargoArtifacts = uniffiHostDeps;
+      cargoExtraArgs = "--locked --offline --bin cs_bindgen";
+      doCheck = false; # tests run in checks.sdk-uniffi-tests
+    }
+  );
 
   # C# bindings: uniffi-bindgen-cs reads the UniFFI metadata of the x86_64
   # linux native (as CI always did) inside the crate's workspace, then
   # cs_bindgen applies the visibility patches.
-  csBindings = craneLib.mkCargoDerivation (argsFor uniffi "-csharp-bindings" // {
-    cargoArtifacts = null;
-    doInstallCargoArtifacts = false;
-    nativeBuildInputs = (argsFor uniffi "").nativeBuildInputs ++ [ csBindgen uniffiBindgenCs ];
-    preBuild = sandbox;
-    buildPhaseCargoCommand = ''
-      cd dotnet/OdysseyHubClient
-      cs_bindgen ${dotnetRows."sdk-dotnet-native-${gnu.x86_64}"}/libohc_uniffi.so OdysseyHubClient/generated
-      cd ../..
-    '';
-    installPhaseCommand = ''
-      mkdir -p $out
-      cp -r dotnet/OdysseyHubClient/OdysseyHubClient/generated/. $out/
-    '';
-  });
+  csBindings = craneLib.mkCargoDerivation (
+    argsFor uniffi "-csharp-bindings"
+    // {
+      cargoArtifacts = null;
+      doInstallCargoArtifacts = false;
+      nativeBuildInputs = (argsFor uniffi "").nativeBuildInputs ++ [
+        csBindgen
+        uniffiBindgenCs
+      ];
+      preBuild = sandbox;
+      buildPhaseCargoCommand = ''
+        cd dotnet/OdysseyHubClient
+        cs_bindgen ${
+          dotnetRows."sdk-dotnet-native-${gnu.x86_64}"
+        }/libohc_uniffi.so OdysseyHubClient/generated
+        cd ../..
+      '';
+      installPhaseCommand = ''
+        mkdir -p $out
+        cp -r dotnet/OdysseyHubClient/OdysseyHubClient/generated/. $out/
+      '';
+    }
+  );
 
   uniffiTests = craneLib.cargoTest (uniffiHostArgs // { cargoArtifacts = uniffiHostDeps; });
 
   # `pip install <wheel>; import ohc_uniffi` for the wheel this builder can run.
-  wheelImport = name: wheel: pkgs.runCommand name {
-    nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pip ])) ];
-    LD_LIBRARY_PATH = lib.optionalString stdenv.hostPlatform.isLinux "${stdenv.cc.cc.lib}/lib";
-  } ''
-    export HOME=$TMPDIR
-    pip install --no-index --no-deps --target "$TMPDIR/site" ${wheel}/dist/*.whl
-    PYTHONPATH="$TMPDIR/site" python -c "import ohc_uniffi"
-    touch $out
-  '';
+  wheelImport =
+    name: wheel:
+    pkgs.runCommand name
+      {
+        nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pip ])) ];
+        LD_LIBRARY_PATH = lib.optionalString stdenv.hostPlatform.isLinux "${stdenv.cc.cc.lib}/lib";
+      }
+      ''
+        export HOME=$TMPDIR
+        pip install --no-index --no-deps --target "$TMPDIR/site" ${wheel}/dist/*.whl
+        PYTHONPATH="$TMPDIR/site" python -c "import ohc_uniffi"
+        touch $out
+      '';
   nativeWheel =
-    if stdenv.hostPlatform.isLinux then wheelRows."sdk-python-linux-auto-${if stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64"}"
-    else wheelRows."sdk-python-macos-${if stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64"}";
+    if stdenv.hostPlatform.isLinux then
+      wheelRows."sdk-python-linux-auto-${if stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64"}"
+    else
+      wheelRows."sdk-python-macos-${if stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64"}";
 
   # ---- NuGet package ----------------------------------------------------------
   # The pack step is host-native (below) because the macOS natives come from
-  # other runners; everything it consumes is pinned here: the .NET SDK and the
+  # other runners. Everything it consumes is pinned here: the .NET SDK and the
   # restored NuGet packages (a fixed-output `dotnet restore`).
   dotnetSdk = pkgs.dotnetCorePackages.combinePackages [
     pkgs.dotnetCorePackages.sdk_10_0
@@ -325,7 +421,15 @@ let
     version = "0.0.0";
     src = lib.cleanSourceWith {
       src = common.source + "/${dotnetProjectDir}";
-      filter = path: _: !(builtins.elem (baseNameOf path) [ "bin" "obj" "generated" "nugets" "output" ]);
+      filter =
+        path: _:
+        !(builtins.elem (baseNameOf path) [
+          "bin"
+          "obj"
+          "generated"
+          "nugets"
+          "output"
+        ]);
     };
     nativeBuildInputs = [ dotnetSdk ];
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
@@ -361,30 +465,66 @@ let
     '';
   };
 
-  allTargets = lib.optionals stdenv.hostPlatform.isLinux (lib.attrValues gnu ++ lib.attrValues musl ++ [ windows ])
+  allTargets =
+    lib.optionals stdenv.hostPlatform.isLinux (lib.attrValues gnu ++ lib.attrValues musl ++ [ windows ])
     ++ lib.optionals stdenv.hostPlatform.isDarwin (lib.attrValues macos);
-in {
-  packages = ffiRows // wheelRows // dotnetRows // {
-    "uniffi-bindgen-cs" = uniffiBindgenCs;
-    "sdk-dotnet-sdk" = dotnetSdk;
-    "sdk-dotnet-nuget-deps" = nugetDeps;
-    "sdk-dotnet-pack" = dotnetPack;
-  } // lib.optionalAttrs stdenv.hostPlatform.isLinux {
-    "sdk-dotnet-csharp-bindings" = csBindings;
-    "sdk-xwin-sysroot" = xwin.sysroot;
-  };
+in
+{
+  packages =
+    ffiRows
+    // wheelRows
+    // dotnetRows
+    // {
+      "uniffi-bindgen-cs" = uniffiBindgenCs;
+      "sdk-dotnet-sdk" = dotnetSdk;
+      "sdk-dotnet-nuget-deps" = nugetDeps;
+      "sdk-dotnet-pack" = dotnetPack;
+    }
+    // lib.optionalAttrs stdenv.hostPlatform.isLinux {
+      "sdk-dotnet-csharp-bindings" = csBindings;
+      "sdk-xwin-sysroot" = xwin.sysroot;
+    };
 
   checks = {
+    sdk-ffi-lint = craneLib.cargoClippy (
+      ffiHostArgs
+      // {
+        cargoArtifacts = ffiHostDeps;
+        cargoClippyExtraArgs = "--all-targets -- -D warnings -A dead_code_pub_in_binary";
+      }
+    );
+    sdk-uniffi-lint = craneLib.cargoClippy (
+      uniffiHostArgs
+      // {
+        cargoArtifacts = uniffiHostDeps;
+        cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings -A dead_code_pub_in_binary";
+      }
+    );
     sdk-uniffi-tests = uniffiTests;
     sdk-python-wheel-import = wheelImport "sdk-python-wheel-import" nativeWheel;
   };
 
   devShell = pkgs.mkShell {
-    packages = [ (toolchainFor allTargets) pkgs.protobuf pkgs.pkg-config pkgs.python3 pkgs.maturin uniffiBindgenCs ]
-      ++ lib.optionals stdenv.hostPlatform.isLinux ([ pkgs.cargo-zigbuild pkgs.zig ] ++ xwin.tools)
-      ++ [ dotnetSdk ];
+    packages = [
+      (toolchainFor allTargets)
+      pkgs.protobuf
+      pkgs.pkg-config
+      pkgs.python3
+      pkgs.maturin
+      uniffiBindgenCs
+    ]
+    ++ lib.optionals stdenv.hostPlatform.isLinux (
+      [
+        pkgs.cargo-zigbuild
+        pkgs.zig
+      ]
+      ++ xwin.tools
+    )
+    ++ [ dotnetSdk ];
     PROTOC = "${pkgs.protobuf}/bin/protoc";
-    shellHook = lib.optionalString stdenv.hostPlatform.isLinux (xwin.setupAt "\${XDG_CACHE_HOME:-$HOME/.cache}/odyssey-xwin");
+    shellHook = lib.optionalString stdenv.hostPlatform.isLinux (
+      xwin.setupAt "\${XDG_CACHE_HOME:-$HOME/.cache}/odyssey-xwin"
+    );
   };
 
   inherit xwin backendWith;

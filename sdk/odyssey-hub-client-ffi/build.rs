@@ -1,7 +1,19 @@
+#![expect(unsafe_code, reason = "Rust 2024 environment mutation requires unsafe")]
 use std::path::Path;
 use std::{env, fs};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    for path in [
+        "src",
+        "include",
+        "Cargo.toml",
+        "Cargo.lock",
+        "../../crates/odyssey-hub-common/src",
+        "../../crates/odyssey-hub-common/Cargo.toml",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+
     // cbindgen probes rustc for target cfg info via a raw `rustc` invocation
     // that doesn't pass `--target`, so it always resolves to the host. Under
     // cargo-xwin, CARGO_ENCODED_RUSTFLAGS/RUSTFLAGS carry the cross target's
@@ -9,13 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // probe then applies against the host toolchain and fails. Header
     // generation never needs to link anything, so drop them.
     // SAFETY: The build script is still single-threaded, before cbindgen starts.
-    unsafe {
-        env::remove_var("CARGO_ENCODED_RUSTFLAGS");
-    }
+    unsafe { env::remove_var("CARGO_ENCODED_RUSTFLAGS") };
     // SAFETY: No threads have been started since the previous environment edit.
-    unsafe {
-        env::remove_var("RUSTFLAGS");
-    }
+    unsafe { env::remove_var("RUSTFLAGS") };
 
     let crate_dir = env::var("CARGO_MANIFEST_DIR")?;
     build_c(&crate_dir)?;

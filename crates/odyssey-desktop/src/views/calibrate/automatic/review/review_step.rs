@@ -42,7 +42,7 @@ fn headline(verdict: Verdict) -> (Icon, &'static str) {
 /// The save and redo buttons, which swap places with the verdict: the
 /// recommended action sits on the right. Neither action runs during a save.
 fn review_footer(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     poor: bool,
     saving: bool,
@@ -87,12 +87,12 @@ fn selected_monitor_name(wizard: &Wizard, cx: &App) -> String {
         )
 }
 
-fn stat_card(p: Palette) -> Div {
+fn stat_card(p: &Palette) -> Div {
     card(p).p_4()
 }
 
 pub(in crate::views::calibrate::automatic) fn review_step(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     details_open: &Entity<bool>,
     difference_open: &Entity<bool>,

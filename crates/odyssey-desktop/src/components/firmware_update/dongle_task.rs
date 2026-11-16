@@ -123,7 +123,7 @@ async fn run_update(
 async fn wait_for_version(
     mut versions: watch::Receiver<VersionSnapshot>,
     id: &str,
-    expected: [u16; 3],
+    expected: [u32; 3],
     transferred_at: Instant,
 ) -> eros::Result<()> {
     let wait = async {
@@ -154,7 +154,7 @@ mod tests {
 
     use super::*;
 
-    fn info(id: &str, firmware_version: [u16; 3]) -> DongleInfo {
+    fn info(id: &str, firmware_version: [u32; 3]) -> DongleInfo {
         DongleInfo {
             id: id.into(),
             firmware_version,
@@ -169,7 +169,7 @@ mod tests {
     async fn completion_requires_fresh_full_identity_and_expected_version() {
         let transferred = Instant::now();
         let (sender, receiver) = watch::channel(VersionSnapshot {
-            observed_at: transferred - Duration::from_secs(1),
+            observed_at: transferred.checked_sub(Duration::from_secs(1)).unwrap(),
             dongles: vec![info("0011223344556677", [0, 1, 13])],
         });
         let wait = wait_for_version(receiver, "0011223344556677", [0, 1, 13], transferred);

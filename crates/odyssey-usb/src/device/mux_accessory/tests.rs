@@ -1,3 +1,4 @@
+use odyssey_protocol::List;
 use odyssey_protocol::accessory::{self, Command, Completion, Event, Profile, Reply, Request};
 use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use tokio::sync::{broadcast, mpsc};
@@ -388,16 +389,14 @@ fn malformed_notification_payloads_are_rejected_at_deserialization_boundary() {
         matches!(postcard::from_bytes::<Event>(&valid), Ok(Event::Notification { data, .. })
         if data[..] == [1; accessory::MAX_NOTIFICATION])
     );
-    assert!(postcard::from_bytes::<Event>(&valid[..valid.len() - 1]).is_err());
-    assert!(
-        postcard::from_bytes::<Event>(&encoded(vec![1; accessory::MAX_NOTIFICATION + 1])).is_err()
-    );
+    postcard::from_bytes::<Event>(&valid[..valid.len() - 1]).unwrap_err();
+    postcard::from_bytes::<Event>(&encoded(vec![1; accessory::MAX_NOTIFICATION + 1])).unwrap_err();
     let mut malformed = serde_json::json!({ "Notification": {
         "address": [1, 1, 1, 1, 1, 1], "profile": "DryFireMag", "data": [256]
     }});
-    assert!(serde_json::from_value::<Event>(malformed.clone()).is_err());
+    serde_json::from_value::<Event>(malformed.clone()).unwrap_err();
     malformed["Notification"]["data"] = serde_json::json!(vec![1; accessory::MAX_NOTIFICATION + 1]);
-    assert!(serde_json::from_value::<Event>(malformed).is_err());
+    serde_json::from_value::<Event>(malformed).unwrap_err();
 }
 
 #[test]
@@ -407,7 +406,7 @@ fn mux_wire_discriminants_preserve_existing_tracker_firmware_compatibility() {
         data: PacketData::Ack(),
     };
     let messages = [
-        (MuxMsg::DevicesSnapshot(Default::default()), 0),
+        (MuxMsg::DevicesSnapshot(List::default()), 0),
         (
             MuxMsg::DevicePacket(DevicePacket {
                 dev: [1; 6],
@@ -475,7 +474,7 @@ fn accessory_event_wire_indices_remain_compatible_with_old_dongles() {
         Event::Discovered {
             address,
             profile: Profile::MarkerControlBoard,
-            name: Default::default(),
+            name: List::default(),
         },
         Event::Connected {
             address,
@@ -485,7 +484,7 @@ fn accessory_event_wire_indices_remain_compatible_with_old_dongles() {
         Event::Notification {
             address,
             profile: Profile::DryFireMag,
-            data: Default::default(),
+            data: List::default(),
         },
         Event::Error {
             address,

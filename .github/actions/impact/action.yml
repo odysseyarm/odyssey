@@ -8,6 +8,9 @@ outputs:
   xtask:
     description: Repository tool tests
     value: ${{ steps.select.outputs.xtask }}
+  protocols:
+    description: Protocol schema compatibility, tests and lints
+    value: ${{ steps.select.outputs.protocols }}
   proofs:
     description: Kani release and wire proofs
     value: ${{ steps.select.outputs.proofs }}
@@ -15,7 +18,7 @@ outputs:
     description: Public cache boundary self-test
     value: ${{ steps.select.outputs.cache }}
   host_ci:
-    description: Any of host, xtask, proofs or cache
+    description: Any of host, xtask, protocols, proofs or cache
     value: ${{ steps.select.outputs.host_ci }}
   tracking:
     description: Tracking regression suites
@@ -27,8 +30,11 @@ outputs:
     description: Python and C# UniFFI builds
     value: ${{ steps.select.outputs.uniffi }}
   format:
-    description: rustfmt over every Rust file
+    description: treefmt over every file it formats
     value: ${{ steps.select.outputs.format }}
+  python:
+    description: mypy --strict over every Python file
+    value: ${{ steps.select.outputs.python }}
 
 runs:
   using: composite

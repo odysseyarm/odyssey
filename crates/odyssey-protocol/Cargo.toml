@@ -19,13 +19,15 @@ serde_bytes = { version = "0.11.19", optional = true, default-features = false }
 heapless = { workspace = true }
 minicbor = { workspace = true, features = ["derive"], optional = true }
 minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", optional = true }
+postcard-schema-ng = { version = "0.4.1", optional = true, default-features = false, features = ["derive", "heapless-v0_9"] }
 
 [features]
 default = ["std"]
 std = ["nalgebra/std", "odyssey-common/std", "serde?/std"]
-# Firmware never receives image response payloads; omit those decoders in no_std builds.
+# Firmware never receives image response payloads, so no_std builds omit those decoders.
 device = []
 pyo3 = ["dep:pyo3", "std"]
+schema = ["serde", "dep:postcard-schema-ng"]
 serde = [
     "dep:serde",
     "dep:serde_bytes",
@@ -37,3 +39,11 @@ serde-no-std = ["serde"]
 serde-std = ["serde", "nalgebra/serde-serialize"]
 minicbor = ["dep:minicbor", "dep:minicbor-serde", "serde"]
 defmt = ["dep:defmt", "nalgebra/defmt", "heapless/defmt"]
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }
+serde_json = { workspace = true }
+
+[[test]]
+name = "postcard_compatibility"
+required-features = ["schema"]

@@ -17,7 +17,7 @@ use crate::views::calibrate::automatic::ui::{
 use crate::views::calibrate::automatic::wizard::Wizard;
 
 pub(super) fn flat_size(
-    p: Palette,
+    p: &Palette,
     wizard: &Entity<Wizard>,
     size_box: &Entity<SizeBox>,
     details_open: &Entity<bool>,
@@ -87,7 +87,7 @@ pub(super) fn flat_size(
 }
 
 /// What the display said about its size, or which size is used instead.
-fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
+fn finding_summary(p: &Palette, state: &Wizard, finding: &Finding) -> Div {
     let found = finding.is_found();
     let typed = !state.size_text.trim().is_empty();
     let by_hand = state.reference().is_some();
@@ -139,7 +139,7 @@ fn finding_summary(p: Palette, state: &Wizard, finding: &Finding) -> Div {
 
 /// The remembered choice to size flat screens with the camera instead of by
 /// what the display reports.
-fn prefer_camera_toggle(p: Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
+fn prefer_camera_toggle(p: &Palette, wizard: &Entity<Wizard>, cx: &App) -> Div {
     let prefer_camera = wizard.read(cx).prefer_camera_size();
     let wizard = wizard.clone();
     div()

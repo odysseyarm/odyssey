@@ -57,6 +57,7 @@ jobs:
               --validator "$V" --self-check'
       - name: Upload tracking evidence
         if: always() && steps.impact.outputs.tracking == 'true'
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: tracking-report

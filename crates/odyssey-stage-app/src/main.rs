@@ -91,7 +91,7 @@ async fn main() -> eros::Result<()> {
         hub::spawn(hub_sender);
     }
     let app = app::App::new(
-        load(args.stage.as_ref())?,
+        &load(args.stage.as_ref())?,
         hub_view,
         args.stage.clone(),
         args.web_dir.clone(),
@@ -120,7 +120,7 @@ async fn main() -> eros::Result<()> {
         .with_context(|| format!("port {} is in use; pick another with --port", args.port))?
         .serve(api::router(app, args.port).into_make_service())
         .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
+            let _ = tokio::signal::ctrl_c().await;
         })
         .await
         .context("the web server stopped")?;

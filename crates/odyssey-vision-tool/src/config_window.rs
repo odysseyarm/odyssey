@@ -33,8 +33,10 @@ const VENDOR_ID: u16 = 0x1915;
 /// The configuration window: a device picker, one tab per settings group, and
 /// the actions that write the settings to the device.
 ///
-/// Device IO runs on the tokio runtime; [`ConfigWindow::poll_events`] applies
+/// Device IO runs on the tokio runtime. [`ConfigWindow::poll_events`] applies
 /// results even when this window is hidden.
+///
+/// Since: Odyssey Desktop 0.7.0.
 pub struct ConfigWindow {
     runtime: tokio::runtime::Handle,
     runner: Arc<Mutex<MotRunner>>,
@@ -48,8 +50,8 @@ pub struct ConfigWindow {
     /// Devices discovered on USB or through a dongle.
     choices: Vec<DeviceChoice>,
     selected: Option<usize>,
-    /// Identifies the latest connection attempt so that a slow, superseded
-    /// attempt cannot install its device.
+    /// Identifies the latest connection attempt, so a slow, superseded attempt
+    /// cannot install its device.
     connection_attempt: u64,
     operation: Option<Operation>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -63,9 +65,7 @@ pub struct ConfigWindow {
 
     tab: Tab,
     general: GeneralSettingsForm,
-    wf: PajSensorSettingsForm,
-    nf: PajSensorSettingsForm,
-    pag: PagSensorSettingsForm,
+    sensors: SensorSettings,
 
     notice: Option<Notice>,
     flash: Option<(Flash, Instant)>,
@@ -82,7 +82,9 @@ impl std::fmt::Debug for ConfigWindow {
 }
 
 impl ConfigWindow {
-    /// Creates the window; simulation explicitly disables physical discovery.
+    /// Creates the window. Simulation explicitly disables physical discovery.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn new(
         runner: Arc<Mutex<MotRunner>>,
         runtime: tokio::runtime::Handle,
@@ -113,9 +115,7 @@ impl ConfigWindow {
             synthetic: false,
             tab: Tab::General,
             general: GeneralSettingsForm::default(),
-            wf: PajSensorSettingsForm::new(Port::Wf),
-            nf: PajSensorSettingsForm::new(Port::Nf),
-            pag: PagSensorSettingsForm::default(),
+            sensors: SensorSettings::Unsupported,
             notice: None,
             flash: None,
         };
@@ -126,14 +126,18 @@ impl ConfigWindow {
         window
     }
 
-    /// The connected device, if any. Cloning a device is not free; compare
+    /// The connected device, if any. Cloning a device is not free, so compare
     /// [`ConfigWindow::device_revision`] first.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn device(&self) -> Option<VmDevice> {
         self.device.clone()
     }
 
     /// Increments every time the connected device changes: connect,
     /// disconnect, or switching to another device.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn device_revision(&self) -> u64 {
         self.device_revision
     }
@@ -142,17 +146,23 @@ impl ConfigWindow {
     }
 
     /// Increments when the tracker adopts settings from a connect, reload or apply.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn config_revision(&self) -> u64 {
         self.config_revision
     }
 
     /// The device's accepted configuration, never an unapplied form edit.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn applied_accel_config(&self) -> AccelConfig {
         self.applied_accel_config
     }
 
     /// Whether async config work is pending. Recording must not start until
     /// pending device reads/writes and their UI-thread completion have finished.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn busy(&self) -> bool {
         self.operation.is_some()
     }
@@ -209,7 +219,7 @@ impl ConfigWindow {
     }
 
     /// Adopt fitted JSON through the same importer and apply/flash path as the
-    /// existing configuration forms; the runner receives accepted settings.
+    /// existing configuration forms. The runner receives accepted settings.
     pub(crate) fn apply_calibration(&mut self, calibration: ApplyCalibration) {
         if self.busy() || self.device.is_none() || self.runner.lock().record_packets {
             return;
@@ -247,6 +257,8 @@ impl ConfigWindow {
     }
 
     /// Draws the configuration window.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.poll_events();
         self.expire_flash(ui.ctx());
@@ -260,6 +272,8 @@ impl ConfigWindow {
     }
 
     /// Applies async results independently of whether the viewport is visible.
+    ///
+    /// Since: Odyssey Desktop 0.7.0.
     pub fn poll_events(&mut self) {
         let completed = self.task.as_mut().and_then(|task| {
             let mut context = std::task::Context::from_waker(&self.task_waker);
@@ -392,14 +406,7 @@ impl ConfigWindow {
         self.runner.lock().general_config = settings.config;
         self.config_revision += 1;
         self.general = settings.general;
-        match settings.sensors {
-            SensorSettings::Vm { wf, nf } => {
-                self.wf = *wf;
-                self.nf = *nf;
-            }
-            SensorSettings::Pro(pag) => self.pag = pag,
-            SensorSettings::Unsupported => {}
-        }
+        self.sensors = settings.sensors;
     }
 
     fn rebuild_choices(&mut self) {
@@ -430,14 +437,7 @@ impl ConfigWindow {
 
     /// The sensor forms that apply to the connected product.
     fn sensors(&self) -> SensorSettings {
-        match self.general.product() {
-            Some(ProductId::AtsVm | ProductId::AtsLite) => SensorSettings::Vm {
-                wf: Box::new(self.wf.clone()),
-                nf: Box::new(self.nf.clone()),
-            },
-            Some(ProductId::AtsPro) => SensorSettings::Pro(self.pag.clone()),
-            _ => SensorSettings::Unsupported,
-        }
+        self.sensors.clone()
     }
 
     fn device_bar(&mut self, ui: &mut egui::Ui) {
@@ -580,19 +580,25 @@ impl ConfigWindow {
                 ui.add_enabled_ui(self.operation.is_none(), |ui| match self.tab {
                     Tab::General => general_action = self.general.ui(ui, connected),
                     Tab::WideField => {
-                        ui.add_enabled_ui(connected, |ui| self.wf.ui(ui));
+                        if let SensorSettings::Vm { wf, .. } = &mut self.sensors {
+                            ui.add_enabled_ui(connected, |ui| wf.ui(ui));
+                        }
                     }
                     Tab::NearField => {
-                        ui.add_enabled_ui(connected, |ui| self.nf.ui(ui));
+                        if let SensorSettings::Vm { nf, .. } = &mut self.sensors {
+                            ui.add_enabled_ui(connected, |ui| nf.ui(ui));
+                        }
                     }
                     Tab::Pag => {
-                        pag_action = ui.add_enabled_ui(connected, |ui| self.pag.ui(ui)).inner;
+                        if let SensorSettings::Pro(pag) = &mut self.sensors {
+                            pag_action = ui.add_enabled_ui(connected, |ui| pag.ui(ui)).inner;
+                        }
                     }
                 });
             });
 
         if let Some(action) = general_action {
-            self.general_action(action);
+            self.general_action(&action);
         }
         if let PagAction::CaptureImage = pag_action {
             self.capture_requested = true;
@@ -624,9 +630,7 @@ impl ConfigWindow {
         }
         self.selected = Some(index);
         self.general.clear();
-        self.wf.clear();
-        self.nf.clear();
-        self.pag.clear();
+        self.sensors.clear();
         let old_device = self.set_device(None);
         self.connection_attempt += 1;
         self.begin_operation(Operation::Connect);
@@ -755,9 +759,7 @@ impl ConfigWindow {
 
     fn load_defaults(&mut self) {
         self.general.load_defaults();
-        self.nf.load_defaults();
-        self.wf.load_defaults();
-        self.pag.load_defaults();
+        self.sensors.load_defaults();
     }
 
     fn begin_operation(&mut self, operation: Operation) {
@@ -769,10 +771,10 @@ impl ConfigWindow {
         self.flash = None;
     }
 
-    fn general_action(&mut self, action: GeneralAction) {
+    fn general_action(&mut self, action: &GeneralAction) {
         match action {
-            GeneralAction::Upload(document) => self.upload(document),
-            GeneralAction::Download(document) => self.download(document),
+            GeneralAction::Upload(document) => self.upload(*document),
+            GeneralAction::Download(document) => self.download(*document),
             GeneralAction::SyncStereo => {
                 self.general.stereo_iso = self.runner.lock().general_config.stereo_iso;
             }
@@ -1182,6 +1184,7 @@ struct LoadedSettings {
 }
 
 /// The sensor forms that apply to a product.
+#[derive(Clone)]
 enum SensorSettings {
     Vm {
         wf: Box<PajSensorSettingsForm>,
@@ -1192,6 +1195,28 @@ enum SensorSettings {
 }
 
 impl SensorSettings {
+    fn clear(&mut self) {
+        match self {
+            Self::Vm { wf, nf } => {
+                wf.clear();
+                nf.clear();
+            }
+            Self::Pro(pag) => pag.clear(),
+            Self::Unsupported => {}
+        }
+    }
+
+    fn load_defaults(&mut self) {
+        match self {
+            Self::Vm { wf, nf } => {
+                wf.load_defaults();
+                nf.load_defaults();
+            }
+            Self::Pro(pag) => pag.load_defaults(),
+            Self::Unsupported => {}
+        }
+    }
+
     fn validate(&self) -> std::result::Result<(), Notice> {
         let mut errors = vec![];
         match self {
@@ -1252,7 +1277,7 @@ async fn apply_settings(
     })
 }
 
-/// Lays out a `label | widget` form; every tab uses the same column widths.
+/// Lays out a `label | widget` form. Every tab uses the same column widths.
 fn form_grid(id_salt: &'static str) -> egui::Grid {
     egui::Grid::new(id_salt)
         .num_columns(2)
@@ -1301,8 +1326,8 @@ impl GeneralSettingsForm {
         ProductId::from_u16(self.device_pid)
     }
 
-    /// Draws the General tab. The settings are editable only while `connected`;
-    /// the file transfers work any time.
+    /// Draws the General tab. The settings are editable only while `connected`.
+    /// The file transfers work any time.
     fn ui(&mut self, ui: &mut egui::Ui, connected: bool) -> Option<GeneralAction> {
         let mut action = None;
         section(ui, "Device", |ui| {
@@ -1491,23 +1516,20 @@ impl GeneralSettingsForm {
         self.accel_config = AccelConfig::default();
         self.gyro_config = GyroConfig::default();
 
-        match self.product() {
-            Some(ProductId::AtsPro) => {
-                // PAG7665QN sensor defaults:
-                // 78° horizontal FOV, 62.7° vertical FOV, 320x240 resolution
-                // With 6-bit fractional: 20480x15360 max coordinate range
-                // fx = (20480/2) / tan(78°/2) ≈ 12645
-                // fy = (15360/2) / tan(62.7°/2) ≈ 12601
-                // cx = 20480/2 = 10240, cy = 15360/2 = 7680
-                self.nf_intrinsics =
-                    RosOpenCvIntrinsics::from_params(12645., 0., 12601., 10240., 7680.);
-                self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
-            }
-            _ => {
-                // Default NF/WF intrinsics for AtsVm, AtsLite, etc.
-                self.nf_intrinsics = RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.);
-                self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
-            }
+        if let Some(ProductId::AtsPro) = self.product() {
+            // PAG7665QN sensor defaults:
+            // 78° horizontal FOV, 62.7° vertical FOV, 320x240 resolution
+            // With 6-bit fractional: 20480x15360 max coordinate range
+            // fx = (20480/2) / tan(78°/2) ≈ 12645
+            // fy = (15360/2) / tan(62.7°/2) ≈ 12601
+            // cx = 20480/2 = 10240, cy = 15360/2 = 7680
+            self.nf_intrinsics =
+                RosOpenCvIntrinsics::from_params(12645., 0., 12601., 10240., 7680.);
+            self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
+        } else {
+            // Default NF/WF intrinsics for AtsVm, AtsLite, etc.
+            self.nf_intrinsics = RosOpenCvIntrinsics::from_params(145., 0., 145., 45., 45.);
+            self.wf_intrinsics = RosOpenCvIntrinsics::from_params(34., 0., 34., 45., 45.);
         }
         self.stereo_iso = nalgebra::Isometry3::identity();
     }
@@ -1599,7 +1621,7 @@ async fn scan_devices(mut existing_muxes: Vec<ExistingMux>) -> Result<ScannedDev
         .filter(|info| info.vendor_id() == VENDOR_ID)
         .collect();
 
-    // Muxes are collected separately; direct vision modules are probed for
+    // Muxes are collected separately. Direct vision modules are probed for
     // their transport mode.
     let mut vm_connections: Vec<VmConnectionInfo> = Vec::new();
     let mut hub_devices: Vec<DeviceInfo> = Vec::new();
@@ -1713,7 +1735,7 @@ fn display_for_vm_connection(conn: &VmConnectionInfo) -> String {
 }
 
 /// Runs an asynchronous operation, giving each of up to `limit` attempts
-/// `timeout`. Only a timeout starts another attempt, immediately; `None` means
+/// `timeout`. Only a timeout starts another attempt, immediately. `None` means
 /// every attempt timed out.
 async fn retry<F, G>(mut op: F, timeout: Duration, limit: usize) -> Option<G::Output>
 where
@@ -1818,7 +1840,7 @@ mod tests {
             datapoints: Arc::new(Mutex::new(Vec::new())),
             packets: Arc::new(Mutex::new(Vec::new())),
             wfnf_realign: true,
-            screen_calibrations: Default::default(),
+            screen_calibrations: arrayvec::ArrayVec::default(),
         }));
         let mut window = ConfigWindow::new(
             runner,

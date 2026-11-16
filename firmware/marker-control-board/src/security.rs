@@ -1,63 +1,89 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use odyssey_protocol::marker_control::ENROLLMENT_SECONDS;
+/// Since: Odyssey Desktop 0.7.4.
 pub const BOND_PAGE_SIZE: u32 = 4096;
 const RECORD_SIZE: usize = 92;
 const COMMITTED: [u8; 4] = *b"MCB1";
 
+/// Since: Odyssey Desktop 0.7.4.
+#[expect(
+    missing_debug_implementations,
+    reason = "Debug output would expose persisted BLE keys"
+)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct OwnerBond {
+    /// Since: Odyssey Desktop 0.7.4.
     pub address: [u8; 6],
+    /// Since: Odyssey Desktop 0.7.4.
     pub ltk: [u8; 16],
+    /// Since: Odyssey Desktop 0.7.4.
     pub irk: Option<[u8; 16]>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub security_level: u8,
 }
 
 impl OwnerBond {
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn permits(&self, encrypted: bool, current: Option<&Self>) -> bool {
         encrypted && current.is_some_and(|bond| bond == self)
     }
 }
 
-#[derive(Default)]
+/// Since: Odyssey Desktop 0.7.4.
+#[derive(Debug, Default)]
 pub struct Enrollment {
     deadline: Option<u64>,
 }
 
 impl Enrollment {
+    /// Since: Odyssey Desktop 0.7.4.
     pub const fn new() -> Self {
         Self { deadline: None }
     }
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn open(&mut self, now: u64) {
         self.deadline = Some(now.saturating_add(u64::from(ENROLLMENT_SECONDS) * 1000));
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn active(&self, now: u64) -> bool {
         self.deadline.is_some_and(|deadline| now < deadline)
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn deadline(&self) -> Option<u64> {
         self.deadline
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn remaining_seconds(&self, now: u64) -> u8 {
         let remaining = self.deadline.unwrap_or(now).saturating_sub(now);
         remaining.div_ceil(1000).min(u64::from(ENROLLMENT_SECONDS)) as u8
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn next_change_at(&self, now: u64) -> Option<u64> {
         let seconds = self.remaining_seconds(now);
         (seconds != 0).then(|| self.deadline.unwrap() - u64::from(seconds - 1) * 1000)
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn close(&mut self) {
         self.deadline = None;
     }
 }
 
+/// A bond persistence failure.
+/// Since: Odyssey Desktop 0.7.4.
 #[derive(Debug, PartialEq, Eq)]
 pub enum StoreError<E> {
+    /// Since: Odyssey Desktop 0.7.4.
     Flash(E),
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Stored data failed integrity or format verification.
     Verification,
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Enrollment expired before replacement bond was committed.
     Expired,
 }
 
@@ -97,6 +123,11 @@ fn decode(bytes: &[u8; RECORD_SIZE]) -> Option<(OwnerBond, u32)> {
     ))
 }
 
+/// Since: Odyssey Desktop 0.7.4.
+#[expect(
+    missing_debug_implementations,
+    reason = "Debug formatting would expose flash and bond storage state"
+)]
 pub struct BondStore<F> {
     flash: F,
     start: u32,
@@ -106,6 +137,8 @@ pub struct BondStore<F> {
 }
 
 impl<F: NorFlash> BondStore<F> {
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Returns flash I/O failures from either bond page.
     pub async fn load(flash: F, start: u32) -> Result<Self, StoreError<F::Error>> {
         let mut store = Self {
             flash,
@@ -132,10 +165,13 @@ impl<F: NorFlash> BondStore<F> {
         Ok(store)
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
     pub fn owner(&self) -> Option<OwnerBond> {
         self.owner
     }
 
+    /// Since: Odyssey Desktop 0.7.4.
+    /// Returns flash I/O failures, failed record verification, or expired enrollment.
     pub async fn persist(
         &mut self,
         bond: OwnerBond,

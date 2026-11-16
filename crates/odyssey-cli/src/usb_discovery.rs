@@ -39,7 +39,7 @@ pub(crate) fn product_name(info: &DeviceInfo) -> &str {
     info.product_string().unwrap_or("Unknown")
 }
 
-pub(crate) fn format_bd_addr(addr: &[u8; 6]) -> String {
+pub(crate) fn format_bd_addr(addr: [u8; 6]) -> String {
     format!(
         "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]

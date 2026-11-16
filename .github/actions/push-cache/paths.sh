@@ -29,8 +29,8 @@ derivations=
 outputs=
 for path in $paths; do
   case "$path" in
-    *.drv) derivations="$derivations $path" ;;
-    *) outputs="$outputs $path" ;;
+  *.drv) derivations="$derivations $path" ;;
+  *) outputs="$outputs $path" ;;
   esac
 done
 if [ -n "$outputs" ]; then

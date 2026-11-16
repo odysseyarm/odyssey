@@ -1,5 +1,9 @@
 #![no_main]
 #![no_std]
+#![expect(
+    unsafe_code,
+    reason = "Firmware entrypoint coordinates raw channel pointers, logger state, and interrupt handoff"
+)]
 
 mod ble;
 mod control;
@@ -78,7 +82,7 @@ impl trouble_host::prelude::EventHandler for HostEventHandler {
                     },
                     rep.data,
                 );
-                // Cache names even outside pairing; ListBondsResponse reads them.
+                // Cache names even outside pairing. ListBondsResponse reads them.
                 if !name.is_empty() {
                     crate::ble::central::update_device_name(addr, name.clone());
                 }
@@ -131,11 +135,11 @@ bind_interrupts!(pub struct Irqs {
     USBD => nrf_usb::InterruptHandler<peripherals::USBD>;
 });
 
-const FIRMWARE_SEMVER: [u16; 3] = odyssey_version::cargo_version!();
+const FIRMWARE_SEMVER: [u32; 3] = odyssey_version::cargo_version!();
 
 #[exception]
 unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
-    // A panic ends up here too; reset rather than hang.
+    // A panic ends up here too. Resets instead of hanging.
     cortex_m::peripheral::SCB::sys_reset();
 }
 
@@ -354,7 +358,7 @@ async fn main(mut spawner: Spawner) {
         spawner,
     )));
 
-    // Always-on active scan; feeds the name cache and pairing detection.
+    // Always-on active scan. Feeds the name cache and pairing detection.
     spawner.spawn(unwrap!(ble::pairing_scanner::background_scanner_task(
         stack
     )));
@@ -712,7 +716,7 @@ async fn device_packets_tx_task(
                 if result.is_ok() {
                     tx_count += 1;
                 } else {
-                    // A real driver error; the endpoint is likely disabled or stalled.
+                    // A real driver error. The endpoint is likely disabled or stalled.
                     warn!("USB TX data: write failed after {} sent", tx_count);
                     break;
                 }
@@ -861,7 +865,7 @@ async fn control_exec_task(settings: &'static Settings) -> ! {
                 for opt in bonds.slots.iter() {
                     if let Some(bd) = opt {
                         // The adv cache tracks the name the device advertises now,
-                        // including after a USB rename; flash is the fallback.
+                        // including after a USB rename. Flash is the fallback.
                         let cached = crate::ble::central::get_cached_device_name(&bd.bd_addr);
                         let name = if !cached.is_empty() {
                             cached

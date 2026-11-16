@@ -1,4 +1,11 @@
-{ lib, stdenv, fetchurl, autoPatchelfHook, libglvnd, pin }:
+{
+  lib,
+  stdenv,
+  fetchurl,
+  autoPatchelfHook,
+  libglvnd,
+  pin,
+}:
 stdenv.mkDerivation {
   pname = "orbbec-sdk";
   version = pin.version;
@@ -7,7 +14,10 @@ stdenv.mkDerivation {
     sha256 = pin.linux_x64.sha256;
   };
   nativeBuildInputs = [ autoPatchelfHook ];
-  buildInputs = [ stdenv.cc.cc.lib libglvnd ];
+  buildInputs = [
+    stdenv.cc.cc.lib
+    libglvnd
+  ];
   dontConfigure = true;
   dontBuild = true;
   installPhase = ''

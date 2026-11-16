@@ -15,6 +15,8 @@ impl Packet {
     ///
     /// The header is a little-endian length in 16-bit words (header
     /// included), the packet type and the request id.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     pub fn serialize_parts<D: Serialize>(
         id: u8,
         ty: PacketType,
@@ -23,7 +25,8 @@ impl Packet {
     ) -> usize {
         const HEADER_SIZE: usize = 4;
         let orig_buf_len = buf.len();
-        let [words_low, words_high] = u16::to_le_bytes(((D::SIZE + HEADER_SIZE) / 2) as u16);
+        let [words_low, words_high] =
+            u16::to_le_bytes(usize::midpoint(D::SIZE, HEADER_SIZE) as u16);
         push(&mut buf, &[words_low, words_high, ty.into(), id]);
         data.serialize(&mut buf);
         orig_buf_len - buf.len()
@@ -45,7 +48,13 @@ const PACKED_POINT_SIZE: usize = 3;
 const HIGH_NIBBLE_MASK: u8 = 0x0f;
 
 /// Reads a value off the front of `bytes`, advancing the slice past it.
+///
+/// Since: Odyssey Desktop 0.6.0.
 pub trait Parse: Sized {
+    /// Since: Odyssey Desktop 0.6.0.
+    ///
+    /// # Errors
+    /// Returns an error if the input is truncated or contains invalid packet data.
     fn parse(bytes: &mut &[u8]) -> Result<Self, Error>;
 }
 
@@ -55,17 +64,28 @@ pub trait Parse: Sized {
 /// Implementations must initialise exactly the first [`Self::SIZE`] bytes of
 /// the original buffer and advance the cursor past those bytes. Safe callers
 /// may expose those bytes as initialised memory after this method returns.
+///
+/// # Since
+/// Odyssey Desktop 0.6.0.
 #[expect(
     unsafe_code,
     reason = "implementors guarantee initialisation of the output"
 )]
 pub unsafe trait Serialize {
     /// Exactly the number of bytes [`serialize`](Self::serialize) writes.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     const SIZE: usize;
 
     /// Writes [`SIZE`](Self::SIZE) bytes to the front of `buf` and advances it.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
+    #[expect(
+        clippy::mut_mut,
+        reason = "serialization advances the caller's slice cursor"
+    )]
     fn serialize(&self, buf: &mut &mut [MaybeUninit<u8>]);
-
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[expect(
         unsafe_code,
@@ -78,8 +98,8 @@ pub unsafe trait Serialize {
         let mut cursor = spare;
         self.serialize(&mut cursor);
         let written = spare_len - cursor.len();
-        // The unsafe trait contract guarantees that the first `SIZE` bytes
-        // were initialised; checking the cursor also catches size mistakes.
+        // The unsafe trait contract guarantees the first `SIZE` bytes were
+        // initialised. Checking the cursor also catches size mistakes.
         assert_eq!(written, Self::SIZE, "serialize wrote a different SIZE");
         // SAFETY: `Serialize` guarantees initialisation of the first `SIZE`
         // bytes, and the cursor check confirms the promised length.
@@ -92,6 +112,7 @@ pub unsafe trait Serialize {
 /// Copies `data` to the front of `buf` and advances `buf` past it.
 ///
 /// Panics if `buf` is shorter than `data`: `Serialize::SIZE` promises the room.
+#[expect(clippy::mut_mut, reason = "push advances the caller's slice cursor")]
 #[inline]
 pub(crate) fn push(buf: &mut &mut [MaybeUninit<u8>], data: &[u8]) {
     let (head, tail) = core::mem::take(buf).split_at_mut(data.len());
@@ -126,8 +147,12 @@ impl Parse for MotData {
     }
 }
 
-// SAFETY: `push` initialises and advances past all 16 bytes.
 #[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+#[expect(
+    clippy::mut_mut,
+    reason = "serialization advances the caller's slice cursor"
+)]
+// SAFETY: `push` initialises and advances past all 16 bytes.
 unsafe impl Serialize for MotData {
     const SIZE: usize = MOT_DATA_SIZE;
 
@@ -187,8 +212,12 @@ impl Parse for ObjectReport {
     }
 }
 
-// SAFETY: each field serializer and `push` initialises its entire wire field.
 #[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+#[expect(
+    clippy::mut_mut,
+    reason = "serialization advances the caller's slice cursor"
+)]
+// SAFETY: each field serializer and `push` initialises its entire wire field.
 unsafe impl Serialize for ObjectReport {
     const SIZE: usize =
         TIMESTAMP_SIZE + 2 * MOT_DATA_PER_CAMERA * MOT_DATA_SIZE + OBJECT_REPORT_TRAILER.len();
@@ -227,8 +256,12 @@ impl Parse for CombinedMarkersReport {
     }
 }
 
-// SAFETY: `push` initialises three bytes for each of the 32 points.
 #[expect(unsafe_code, reason = "the serializer initialises exactly SIZE bytes")]
+#[expect(
+    clippy::mut_mut,
+    reason = "serialization advances the caller's slice cursor"
+)]
+// SAFETY: `push` initialises three bytes for each of the 32 points.
 unsafe impl Serialize for CombinedMarkersReport {
     const SIZE: usize = 2 * MOT_DATA_PER_CAMERA * PACKED_POINT_SIZE;
 
@@ -589,6 +622,6 @@ mod tests {
         let mut cursor = &bytes[2..];
         assert_eq!(MotData::parse(&mut cursor).unwrap(), first);
         assert_eq!(MotData::parse(&mut cursor).unwrap(), second);
-        assert!(cursor.is_empty());
+        assert_eq!(cursor, [0u8; 0]);
     }
 }

@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Bounds, Corners, Hsla, IntoElement as _, ParentElement as _, Pixels, Rgba,
-    Styled as _, canvas, div, fill, point, px, size, white,
+    AnyElement, Bounds, Corners, IntoElement as _, ParentElement as _, Pixels, Rgba, Styled as _,
+    canvas, div, fill, point, px, size, white,
 };
 use odyssey_autocalib::pattern::Pattern;
 
@@ -82,7 +82,7 @@ pub(super) fn pattern_picture(pattern: Rc<Pattern>) -> AnyElement {
         move |bounds: Bounds<Pixels>, (), window, _| {
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
             let sx = w / pattern.aspect() as f32;
-            let white: Hsla = white();
+            let white = white();
             for rect in pattern.frame_rects() {
                 let origin = bounds.origin + point(px(rect.x as f32 * sx), px(rect.y as f32 * h));
                 let extent = size(px(rect.width as f32 * sx), px(rect.height as f32 * h));

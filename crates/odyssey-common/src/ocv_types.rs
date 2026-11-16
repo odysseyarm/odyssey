@@ -3,9 +3,11 @@ use opencv_ros_camera::{Distortion, RosOpenCvIntrinsics};
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy)]
 pub struct OpenCVMatrix3<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 9],
 }
 
@@ -27,69 +29,91 @@ impl<R: RealField> From<Matrix3<R>> for OpenCVMatrix3<R> {
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct OpenCVMatrix3WithRowsAndCols<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 9],
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy)]
 pub struct OpenCVMatrix3x1<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 3],
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct OpenCVMatrix3x1WithRowsAndCols<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 3],
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy)]
 pub struct OpenCVMatrix5x1<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 5],
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct OpenCVMatrix5x1WithRowsAndCols<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub rows: usize,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub cols: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     pub data: [R; 5],
 }
 
@@ -159,57 +183,79 @@ impl<R: RealField> From<OpenCVMatrix5x1WithRowsAndCols<R>> for OpenCVMatrix5x1<R
     }
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct CameraCalibrationParams<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub camera_matrix: OpenCVMatrix3WithRowsAndCols<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub dist_coeffs: OpenCVMatrix5x1WithRowsAndCols<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub rms_error: f64,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub num_captures: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub rms_error: f64,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub num_captures: usize,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct StereoCalibrationParams<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub r: OpenCVMatrix3WithRowsAndCols<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub t: OpenCVMatrix3x1WithRowsAndCols<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub rms_error: f64,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     #[serde(default)]
     pub num_captures: usize,
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub rms_error: f64,
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "std"))]
     pub num_captures: usize,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct MinimalCameraCalibrationParams<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub camera_matrix: OpenCVMatrix3<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub dist_coeffs: OpenCVMatrix5x1<R>,
 }
 
+/// Since: Odyssey Desktop 0.6.0.
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, Debug)]
 pub struct MinimalStereoCalibrationParams<R: RealField> {
+    /// Since: Odyssey Desktop 0.6.0.
     pub r: OpenCVMatrix3<R>,
+    /// Since: Odyssey Desktop 0.6.0.
     pub t: OpenCVMatrix3x1<R>,
 }
 
 /// The buffer ended before a whole calibration was read.
+///
+/// Since: Odyssey Desktop 0.7.0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnexpectedEnd;
 
@@ -244,7 +290,12 @@ fn put_f32s(buf: &mut Vec<u8>, values: &[f32]) {
 
 impl MinimalCameraCalibrationParams<f32> {
     /// `data` is left untouched when it is too short.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
+    /// # Errors
+    /// Returns [`UnexpectedEnd`] when input does not contain complete calibration parameters.
+    ///
     pub fn parse(data: &mut &[u8]) -> Result<Self, UnexpectedEnd> {
         let mut cursor = *data;
         let camera_matrix = OpenCVMatrix3 {
@@ -260,6 +311,7 @@ impl MinimalCameraCalibrationParams<f32> {
         })
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         put_f32s(buf, &self.camera_matrix.data);
@@ -269,7 +321,12 @@ impl MinimalCameraCalibrationParams<f32> {
 
 impl MinimalStereoCalibrationParams<f32> {
     /// `data` is left untouched when it is too short.
+    ///
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
+    /// # Errors
+    /// Returns [`UnexpectedEnd`] when input does not contain complete calibration parameters.
+    ///
     pub fn parse(data: &mut &[u8]) -> Result<Self, UnexpectedEnd> {
         let mut cursor = *data;
         let r = OpenCVMatrix3 {
@@ -282,6 +339,7 @@ impl MinimalStereoCalibrationParams<f32> {
         Ok(Self { r, t })
     }
 
+    /// Since: Odyssey Desktop 0.6.0.
     #[cfg(feature = "std")]
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         put_f32s(buf, &self.r.data);
@@ -463,7 +521,10 @@ mod tests {
         bytes.pop();
 
         let mut cursor = bytes.as_slice();
-        assert!(MinimalCameraCalibrationParams::parse(&mut cursor).is_err());
+        assert!(matches!(
+            MinimalCameraCalibrationParams::parse(&mut cursor),
+            Err(UnexpectedEnd)
+        ));
         assert_eq!(cursor.len(), bytes.len());
     }
 
