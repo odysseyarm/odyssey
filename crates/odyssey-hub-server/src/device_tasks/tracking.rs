@@ -249,7 +249,12 @@ impl DeviceTracker {
             Some(&self.cameras.stereo_iso),
         );
 
-        self.observe_markers(&near_points, &wide_markers, context);
+        self.observe_markers(
+            &near_points,
+            &wide_markers,
+            CombinedMarkersReport::UNITS_PER_PX,
+            context,
+        );
         let solution = self.raycast(device, context).await;
         Self::publish_marker_solution(device, solution, context);
     }
@@ -261,29 +266,32 @@ impl DeviceTracker {
         context: &DeviceTaskContext,
     ) {
         let near_points = detected_points(&report.points);
-        let matched = self.observe_markers(&near_points, &[], context);
+        let matched = self.observe_markers(&near_points, &[], MarkersReport::UNITS_PER_PX, context);
         self.hints.send(Instant::now(), &matched);
         let solution = self.raycast(device, context).await;
         Self::publish_marker_solution(device, solution, context);
     }
 
     /// Feed one near-field frame to the filter, then, if the filter is tracking, give the
-    /// matched markers to the calibration estimator. Returns the report coordinates of the
-    /// markers the filter matched to the pattern.
+    /// matched markers to the calibration estimator. `units_per_px` is the reporting sensor's
+    /// grid units per native pixel. Returns the report coordinates of the markers the filter
+    /// matched to the pattern.
     fn observe_markers(
         &mut self,
         near_points: &[Point2<f32>],
         wide_markers: &[Marker],
+        units_per_px: f64,
         context: &DeviceTaskContext,
     ) -> ArrayVec<[u16; 2], MARKERS> {
         let calibrations = self.calibrations_for_frame(context);
-        self.observe_with(near_points, wide_markers, &calibrations)
+        self.observe_with(near_points, wide_markers, units_per_px, &calibrations)
     }
 
     fn observe_with(
         &mut self,
         near_points: &[Point2<f32>],
         wide_markers: &[Marker],
+        units_per_px: f64,
         calibrations: &ScreenCalibrationList,
     ) -> ArrayVec<[u16; 2], MARKERS> {
         let near_markers = build_markers_from_points(near_points, &self.cameras.near_field, None);
@@ -304,7 +312,13 @@ impl DeviceTracker {
             .foveated
             .match_markers_from_eskf(&near_markers, &[], &calibration.object_points)
             .nf;
-        self.collect_for_calibration(screen_id, &matched, &near_markers, calibrations);
+        self.collect_for_calibration(
+            screen_id,
+            &matched,
+            &near_markers,
+            units_per_px,
+            calibrations,
+        );
         matched_report_points(&matched, near_points)
     }
 
@@ -336,6 +350,7 @@ impl DeviceTracker {
         screen_id: u8,
         matched: &[Option<usize>; MARKERS],
         near_markers: &[Marker],
+        units_per_px: f64,
         calibrations: &ScreenCalibrationList,
     ) {
         let near_field = &self.cameras.near_field;
@@ -360,7 +375,7 @@ impl DeviceTracker {
             let markers = calibration.object_points.map(nalgebra::OPoint::cast);
             self.refinement.estimator = Some(Box::new((
                 screen_id,
-                CalibrationEstimator::new(base, markers),
+                CalibrationEstimator::new(base, markers, units_per_px),
             )));
         }
         let Some((_, estimator)) = self.refinement.estimator.as_deref_mut() else {
@@ -763,7 +778,7 @@ mod tests {
         let calibrations = edge_calibrations();
         let seen = seen_from_front(&calibrations);
         let mut tracker = lite1_tracker();
-        let matched = tracker.observe_with(&seen, &[], &calibrations);
+        let matched = tracker.observe_with(&seen, &[], MarkersReport::UNITS_PER_PX, &calibrations);
         assert!(tracker.foveated.init());
         let mut expected: Vec<[u16; 2]> = seen
             .iter()
@@ -784,13 +799,14 @@ mod tests {
         tracker.set_hint_sink(tx.downgrade());
 
         // Three of the six points cannot start the filter, so nothing is matched or sent.
-        let matched = tracker.observe_with(&seen[..3], &[], &calibrations);
+        let matched =
+            tracker.observe_with(&seen[..3], &[], MarkersReport::UNITS_PER_PX, &calibrations);
         assert!(!tracker.foveated.init());
         assert!(matched.is_empty());
         assert!(!tracker.hints.send(Instant::now(), &matched));
         rx.try_recv().unwrap_err();
 
-        let matched = tracker.observe_with(&seen, &[], &calibrations);
+        let matched = tracker.observe_with(&seen, &[], MarkersReport::UNITS_PER_PX, &calibrations);
         assert!(tracker.hints.send(Instant::now(), &matched));
         assert!(matches!(
             rx.try_recv(),
