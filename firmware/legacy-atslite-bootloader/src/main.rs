@@ -624,7 +624,18 @@ impl<'d> better_dfu::DualBankWriter for DualBankFlashWriter<'d> {
     }
 }
 
-/// Selects only banks with valid stack and reset vectors; rolls back failed pending slot.
+/// Picks the application bank to jump to and persists the updated boot state.
+///
+/// A bank is bootable only if its stack pointer and reset vector pass
+/// `better_boot::valid_vectors`. `better_boot::select_boot_slot` then applies
+/// the trial-boot rules: it counts an attempt on a pending slot, rolls back to
+/// the active slot once the attempts run out or the pending bank is invalid,
+/// and otherwise prefers the active slot.
+///
+/// Returns the bank's flash address (`None` when neither bank is bootable, which
+/// the caller turns into DFU recovery), a bank name for logs, and the updated
+/// state. A failed state write is logged and boot continues with the in-memory
+/// state.
 fn select_boot_bank(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
 ) -> (Option<usize>, &'static str, BootState) {
@@ -687,6 +698,7 @@ fn select_boot_bank(
                 (None, "Bank A (DFU)")
             }
         }
+        // INVARIANT: `select_boot_slot` returns only slot 0 or 1.
         Some(_) => unreachable!(),
     };
 

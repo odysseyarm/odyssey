@@ -1,18 +1,32 @@
-use odyssey_protocol::ota::{Code, Crc32, Image, Request, Status};
+//! The OTA state machine. `lib.rs` describes how it fits into the update flow.
 
+use odyssey_protocol::ota::{Code, Crc32, Image, MAX_FRAME, Request, Status};
+
+/// Flash word size. Every write starts on, and (except for an image's tail) covers whole words.
 const WRITE_ALIGNMENT: usize = 4;
+/// Stack buffer for reading an image back to verify its CRC-32.
 const VERIFY_CHUNK: usize = 64;
+/// Smallest image the receiver accepts: the stack pointer and reset vector the validity check
+/// reads.
+const MIN_IMAGE_SIZE: u32 = 8;
+/// Largest data payload (`MAX_FRAME` minus opcode and offset) rounded up to a whole flash word.
+const MAX_WRITE: usize = (MAX_FRAME - 5).next_multiple_of(WRITE_ALIGNMENT);
 
+/// Data payload copied here so the backend sees a word-aligned buffer, since a frame sits at an
+/// arbitrary offset inside the packet it arrived in.
 #[repr(align(4))]
-struct AlignedWrite([u8; 96]);
+struct AlignedWrite([u8; MAX_WRITE]);
 
-/// Flash slot operations used by the receiver.
+/// Flash slot operations used by the receiver. One implementation per board owns the flash
+/// layout and is the only code that touches boot metadata.
 ///
 /// Since: Unreleased.
 pub trait Slots {
     /// Usable image capacity after backend reservations.
     fn capacity(&self, image: Image) -> u32;
-    /// Writes bytes at aligned image offset.
+    /// Writes bytes at aligned image offset. `offset` and `data.len()` are multiples of 4 and
+    /// `data` is word aligned; an image's last write is padded with `0xff`. A write at offset 0
+    /// starts a new image, so the backend erases what it needs there.
     fn write(
         &mut self,
         image: Image,
@@ -26,13 +40,14 @@ pub trait Slots {
         offset: u32,
         data: &mut [u8],
     ) -> impl core::future::Future<Output = Result<(), Code>>;
-    /// Checks image vectors and target-specific constraints.
+    /// Checks image vectors and target-specific constraints. Runs after the CRC-32 matched.
     fn valid(
         &mut self,
         image: Image,
         size: u32,
     ) -> impl core::future::Future<Output = Result<(), Code>>;
-    /// Writes durable activation metadata.
+    /// Writes durable activation metadata so the bootloader runs the staged images on the next
+    /// reset. `None` means that image was not staged. An `Ok` return commits the update.
     fn commit(
         &mut self,
         app_size: Option<u32>,
@@ -40,12 +55,14 @@ pub trait Slots {
     ) -> impl core::future::Future<Output = Result<(), Code>>;
 }
 
-/// Result of processing one OTA request.
+/// What the transport does after sending the status reply.
 ///
 /// Since: Unreleased.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
     Continue,
+    /// An update was committed. Reset the device after the reply is out, so the host sees the
+    /// acknowledgement.
     Reset,
 }
 
@@ -58,6 +75,9 @@ struct Transfer {
 }
 
 /// Stages images and activates them only after explicit commit.
+///
+/// One receiver serves one session. The transport must feed it one frame at a time and call
+/// [`Receiver::abort`] when the link drops.
 ///
 /// Since: Unreleased.
 #[derive(Clone, Copy, Debug)]
@@ -97,12 +117,13 @@ impl Receiver {
                 return Ok(Action::Continue);
             }
             Request::Begin { image, size, crc32 } => {
+                // The slot must hold the size rounded up to a flash word, which is what gets written.
                 let Some(write_size) = size.checked_add(3).map(|value| value & !3) else {
                     return self.fail(Code::Size);
                 };
                 if self.transfer.is_some() {
                     Err(Code::Busy)
-                } else if size < 8 || write_size > slots.capacity(image) {
+                } else if size < MIN_IMAGE_SIZE || write_size > slots.capacity(image) {
                     Err(Code::Size)
                 } else if self.staged_size(image).is_some() {
                     Err(Code::Busy)
@@ -184,7 +205,7 @@ impl Receiver {
             return Err(Code::Alignment);
         }
 
-        let mut padded = AlignedWrite([0xff; 96]);
+        let mut padded = AlignedWrite([0xff; MAX_WRITE]);
         let write_len = (data.len() + 3) & !3;
         if write_len > padded.0.len() {
             return Err(Code::Size);
@@ -243,6 +264,7 @@ impl Receiver {
         if self.app_size.is_none() && self.netcore_size.is_none() {
             return Err(Code::State);
         }
+        // A failed commit drops every staged image; the host restages instead of retrying.
         if slots
             .commit(self.app_size, self.netcore_size)
             .await

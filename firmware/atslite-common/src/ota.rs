@@ -1,7 +1,21 @@
+//! OTA for the lite1 and legacy-atslite trackers: a task that owns the `better_ota::Receiver`,
+//! and the flash backend that stages images for the bootloader.
+//!
+//! The packet handlers in `object_mode.rs` (and `legacy-common`) receive OTA vendor packets from
+//! the hub and call [`OtaHandle::request`]. The request goes through a channel to [`run`], which
+//! feeds the single `Receiver` and answers with the encoded status. One exchange at a time:
+//! both channels hold one item and `request` waits for its own reply.
+//!
+//! [`FlashSlots`] implements `better_ota::Slots`. The application goes into the bank that is not
+//! running, the net core into a staging region. `commit` writes the boot-state page through
+//! `better_boot::write_ota_state`; `firmware/lite1-bootloader` and
+//! `firmware/legacy-atslite-bootloader` read it on the next reset. `firmware/better-ota/src/lib.rs`
+//! describes the whole flow.
+
 use better_ota::{Action, Receiver, Slots};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::Channel;
-use odyssey_protocol::ota::{MAX_FRAME, STATUS_LEN};
+use odyssey_protocol::ota::{Code, Image, MAX_FRAME, STATUS_LEN};
 
 const QUEUE: usize = 1;
 
@@ -14,16 +28,21 @@ struct Frame {
     bytes: [u8; MAX_FRAME],
 }
 
+/// Status for the hub, and whether to reset after the reply is sent.
 #[derive(Clone, Copy, Debug)]
 pub struct Reply {
+    /// Encoded `odyssey_protocol::ota::Status`.
     pub status: [u8; STATUS_LEN],
+    /// A commit succeeded; the caller resets the device once the reply has gone out.
     pub reset: bool,
 }
 
+/// Sends OTA frames to [`run`]. Zero-sized; every copy talks to the same task.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OtaHandle;
 
 impl OtaHandle {
+    /// Returns the reply to `bytes`, or `None` if the frame is over [`MAX_FRAME`].
     pub async fn request(&self, bytes: &[u8]) -> Option<Reply> {
         let Ok(len) = u8::try_from(bytes.len()) else {
             return None;
@@ -41,6 +60,9 @@ impl OtaHandle {
     }
 }
 
+/// Owns the receiver for the life of the firmware. `app_slot` and `supported` are reported in
+/// every status; `netcore_release` is read per reply because an asynchronous query to the net
+/// core (`ble/netcore.rs`) fills it in after boot.
 pub async fn run(
     mut slots: impl Slots,
     app_slot: u8,
@@ -63,23 +85,33 @@ pub async fn run(
     }
 }
 
+/// nRF5340 flash page, the erase unit.
 const PAGE_SIZE: u32 = 4096;
 
+/// Flash and memory map the update works on. Filled from linker symbols by the board's `main.rs`.
 #[expect(
     missing_debug_implementations,
     reason = "Carries peripheral ownership and linker ranges"
 )]
 pub struct Layout {
+    /// Shared with boot confirmation and DFU, which use the same NVMC.
     pub flash: &'static embassy_sync::blocking_mutex::Mutex<
         embassy_sync::blocking_mutex::raw::NoopRawMutex,
         core::cell::RefCell<embassy_nrf::nvmc::Nvmc<'static>>,
     >,
+    /// Flash ranges of application bank A and bank B.
     pub app_banks: [core::ops::Range<u32>; 2],
+    /// Index into `app_banks` of the bank this firmware executes from.
     pub running_app: u8,
+    /// RAM a valid application initial stack pointer points into.
     pub app_ram: core::ops::Range<u32>,
+    /// Flash region the net core image is written to before the bootloader installs it.
     pub netcore_stage: core::ops::Range<u32>,
+    /// Flash range the net core executes from, after installation. Bounds its reset vector.
     pub netcore_active: core::ops::Range<u32>,
+    /// RAM a valid net core initial stack pointer points into.
     pub netcore_ram: core::ops::Range<u32>,
+    /// Address of the boot-state page that `better_boot::write_ota_state` rewrites.
     pub boot_state: u32,
 }
 
@@ -89,7 +121,10 @@ pub struct Layout {
 )]
 pub struct FlashSlots {
     layout: Layout,
+    /// Bank (index into `Layout::app_banks`) that is not running, where the application goes.
     target_app: u8,
+    /// Bytes from the start of each image already erased, indexed by `Image as usize`. Lets
+    /// sequential writes erase each page once, just before first use.
     erased_until: [u32; 2],
 }
 
@@ -102,17 +137,20 @@ impl FlashSlots {
         }
     }
 
+    /// Slot number reported in the OTA status: 1 for bank A, 2 for bank B.
     pub const fn app_slot(&self) -> u8 {
         self.target_app + 1
     }
 
-    fn region(&self, image: odyssey_protocol::ota::Image) -> (u32, u32) {
+    fn region(&self, image: Image) -> (u32, u32) {
         match image {
-            odyssey_protocol::ota::Image::Application => {
+            Image::Application => {
                 let region = &self.layout.app_banks[self.target_app as usize];
                 (region.start, region.end)
             }
-            odyssey_protocol::ota::Image::NetCore => {
+            Image::NetCore => {
+                // One page of each region is held back; the image must fit both the staging
+                // region it is written to and the active region it is installed into.
                 let staging_capacity = self
                     .layout
                     .netcore_stage
@@ -135,120 +173,84 @@ impl FlashSlots {
 }
 
 impl Slots for FlashSlots {
-    fn capacity(&self, image: odyssey_protocol::ota::Image) -> u32 {
+    fn capacity(&self, image: Image) -> u32 {
         let (start, end) = self.region(image);
         end.saturating_sub(start)
     }
 
-    async fn write(
-        &mut self,
-        image: odyssey_protocol::ota::Image,
-        offset: u32,
-        data: &[u8],
-    ) -> Result<(), odyssey_protocol::ota::Code> {
+    async fn write(&mut self, image: Image, offset: u32, data: &[u8]) -> Result<(), Code> {
         use embedded_storage::nor_flash::NorFlash;
 
         let index = image as usize;
         let (base, end) = self.region(image);
-        let len = u32::try_from(data.len()).map_err(|_| odyssey_protocol::ota::Code::Size)?;
-        let limit = end
-            .checked_sub(base)
-            .ok_or(odyssey_protocol::ota::Code::Size)?;
-        let write_end = offset
-            .checked_add(len)
-            .ok_or(odyssey_protocol::ota::Code::Size)?;
+        let len = u32::try_from(data.len()).map_err(|_| Code::Size)?;
+        let limit = end.checked_sub(base).ok_or(Code::Size)?;
+        let write_end = offset.checked_add(len).ok_or(Code::Size)?;
         if write_end > limit {
-            return Err(odyssey_protocol::ota::Code::Size);
+            return Err(Code::Size);
         }
+        // A new image restarts the erase high-water mark; pages are erased just before first use.
         if offset == 0 {
             self.erased_until[index] = 0;
         }
-        let erase_end = write_end
-            .checked_add(PAGE_SIZE - 1)
-            .ok_or(odyssey_protocol::ota::Code::Size)?
-            & !(PAGE_SIZE - 1);
+        let erase_end = write_end.checked_add(PAGE_SIZE - 1).ok_or(Code::Size)? & !(PAGE_SIZE - 1);
         let erase_start = self.erased_until[index];
         self.layout.flash.lock(|cell| {
             let mut flash = cell.borrow_mut();
             if erase_start < erase_end {
                 flash
                     .erase(base + erase_start, base + erase_end)
-                    .map_err(|_| odyssey_protocol::ota::Code::Flash)?;
+                    .map_err(|_| Code::Flash)?;
             }
-            flash
-                .write(base + offset, data)
-                .map_err(|_| odyssey_protocol::ota::Code::Flash)
+            flash.write(base + offset, data).map_err(|_| Code::Flash)
         })?;
         self.erased_until[index] = self.erased_until[index].max(erase_end);
         Ok(())
     }
 
-    async fn read(
-        &mut self,
-        image: odyssey_protocol::ota::Image,
-        offset: u32,
-        data: &mut [u8],
-    ) -> Result<(), odyssey_protocol::ota::Code> {
+    async fn read(&mut self, image: Image, offset: u32, data: &mut [u8]) -> Result<(), Code> {
         use embedded_storage::nor_flash::ReadNorFlash;
 
         let (base, end) = self.region(image);
-        let len = u32::try_from(data.len()).map_err(|_| odyssey_protocol::ota::Code::Size)?;
-        let address = base
-            .checked_add(offset)
-            .ok_or(odyssey_protocol::ota::Code::Size)?;
+        let len = u32::try_from(data.len()).map_err(|_| Code::Size)?;
+        let address = base.checked_add(offset).ok_or(Code::Size)?;
         if address
             .checked_add(len)
             .is_none_or(|read_end| read_end > end)
         {
-            return Err(odyssey_protocol::ota::Code::Size);
+            return Err(Code::Size);
         }
         self.layout.flash.lock(|cell| {
             cell.borrow_mut()
                 .read(address, data)
-                .map_err(|_| odyssey_protocol::ota::Code::Flash)
+                .map_err(|_| Code::Flash)
         })
     }
 
-    async fn valid(
-        &mut self,
-        image: odyssey_protocol::ota::Image,
-        size: u32,
-    ) -> Result<(), odyssey_protocol::ota::Code> {
-        let (base, _) = self.region(image);
+    async fn valid(&mut self, image: Image, size: u32) -> Result<(), Code> {
         let mut vectors = [0; 8];
         self.read(image, 0, &mut vectors).await?;
-        let sp = u32::from_le_bytes(
-            vectors[..4]
-                .try_into()
-                .map_err(|_| odyssey_protocol::ota::Code::Image)?,
-        );
-        let reset = u32::from_le_bytes(
-            vectors[4..]
-                .try_into()
-                .map_err(|_| odyssey_protocol::ota::Code::Image)?,
-        );
+        let sp = u32::from_le_bytes(vectors[..4].try_into().map_err(|_| Code::Image)?);
+        let reset = u32::from_le_bytes(vectors[4..].try_into().map_err(|_| Code::Image)?);
+        // The reset vector must land in the range the image executes from. For the application
+        // that is the bank it is written to; the net core is staged elsewhere and installed into
+        // `netcore_active` by the bootloader.
         let (ram, execution) = match image {
-            odyssey_protocol::ota::Image::Application => (
+            Image::Application => (
                 &self.layout.app_ram,
                 &self.layout.app_banks[self.target_app as usize],
             ),
-            odyssey_protocol::ota::Image::NetCore => {
-                (&self.layout.netcore_ram, &self.layout.netcore_active)
-            }
+            Image::NetCore => (&self.layout.netcore_ram, &self.layout.netcore_active),
         };
-        let execution_end = execution
-            .start
-            .checked_add(size)
-            .ok_or(odyssey_protocol::ota::Code::Image)?;
+        let execution_end = execution.start.checked_add(size).ok_or(Code::Image)?;
         let reset_address = reset & !1;
         if sp < ram.start
             || sp > ram.end
             || reset & 1 == 0
             || reset_address < execution.start
             || reset_address >= execution_end
-            || (image == odyssey_protocol::ota::Image::Application && base != execution.start)
         {
-            return Err(odyssey_protocol::ota::Code::Image);
+            return Err(Code::Image);
         }
         Ok(())
     }
@@ -257,7 +259,7 @@ impl Slots for FlashSlots {
         &mut self,
         app_size: Option<u32>,
         netcore_size: Option<u32>,
-    ) -> Result<(), odyssey_protocol::ota::Code> {
+    ) -> Result<(), Code> {
         let netcore = netcore_size.map(|size| (self.layout.netcore_stage.start, size));
         self.layout.flash.lock(|cell| {
             better_boot::write_ota_state(
@@ -267,7 +269,7 @@ impl Slots for FlashSlots {
                 netcore,
                 PAGE_SIZE,
             )
-            .map_err(|_| odyssey_protocol::ota::Code::Flash)
+            .map_err(|_| Code::Flash)
         })
     }
 }

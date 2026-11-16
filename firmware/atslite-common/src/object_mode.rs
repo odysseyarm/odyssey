@@ -1,6 +1,12 @@
 //! Tracking and reversible USB image capture for the main firmware.
 //! Reports use USB while configured, otherwise BLE. Image capture is USB-only and
 //! retains Image mode for the session without acquiring object snapshots.
+//!
+//! While tracking, `obj_loop` also runs the adaptive exposure loop: each object snapshot goes
+//! to the hub as a marker report and to `odyssey_cv::exposure::ExposureController`, which
+//! rewrites register 0x67 within a window around the user's setting. The hub answers with marker
+//! hints (`MARKER_HINT`) naming the spots it matched to the marker pattern. The module docs of
+//! `odyssey_cv::exposure` describe the whole loop.
 
 use core::future::Future;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -71,7 +77,8 @@ const EXPOSURE_LED_ALWAYS_ON: u8 = 0x80;
 static USER_EXPOSURE: AtomicU8 = AtomicU8::new(0);
 
 /// Newest hub hint with the time it arrived. Hints are only useful fresh, so a newer one simply
-/// replaces an unread older one.
+/// replaces an unread older one. The tracking loop hands it to the exposure controller with the
+/// next object snapshot.
 static MARKER_HINT: Signal<ThreadModeRawMutex, (MarkerHint, u32)> = Signal::new();
 
 /// USB packets retain the connection that received/produced them across queue backpressure.

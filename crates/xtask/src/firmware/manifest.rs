@@ -1,3 +1,16 @@
+//! The firmware release manifests in `firmware/manifests`, and the offline pack
+//! built from them.
+//!
+//! `releases.nightly.json` takes every new release (`release.rs` prepends the
+//! entry its `gen-release` builds). `promote` copies an entry from there to
+//! `releases.stable.json`. Both files are schema 2, newest entry first, because
+//! hosts install the first entry they can. `build_pack` downloads the newest
+//! releases listed in those files into a folder an offline Odyssey reads.
+//!
+//! Manifests are handled as untyped JSON so that fields this code does not know
+//! survive a rewrite; `validate` checks only the schema in
+//! `odyssey_firmware_manifest`.
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -64,6 +77,8 @@ pub(super) fn write(path: &Path, manifest: &Value) -> eros::Result<()> {
 }
 
 /// Put `entry` first in the device's firmwares, creating the list if needed.
+/// The marker control board and the dongle are versioned strictly upward, so
+/// for them an entry that is not newer than the head is refused.
 pub(super) fn prepend(manifest: &mut Value, device: &str, entry: Value) -> eros::Result<()> {
     if matches!(device, "marker-control-board" | "dongle")
         && let Some(head) = entries(manifest, device).first()
@@ -87,7 +102,7 @@ pub(super) fn release_of(file: &Value) -> u64 {
     file.get("release").and_then(Value::as_u64).unwrap_or(0)
 }
 
-/// The device's entries, newest first. None when the device is not listed.
+/// The device's entries, newest first. Empty when the device is not listed.
 fn entries<'a>(manifest: &'a Value, device: &str) -> &'a [Value] {
     entries_of(&manifest["devices"][device])
 }
@@ -427,7 +442,7 @@ fn files(source: &Value) -> Vec<(&str, &Value, &str, &Value)> {
     listed
 }
 
-/// A device's entries, newest first. None when it lists no firmwares.
+/// A device's entries, newest first. Empty when it lists no firmwares.
 fn entries_of(info: &Value) -> &[Value] {
     info["firmwares"].as_array().map_or(&[][..], Vec::as_slice)
 }

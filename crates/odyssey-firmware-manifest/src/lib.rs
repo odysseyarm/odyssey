@@ -1,3 +1,14 @@
+//! Typed view of the firmware channel manifest and the release asset naming.
+//!
+//! The manifest is published JSON with one list of releases per device type.
+//! `odyssey_hub_server::firmware` selects and downloads from it and the desktop
+//! update UI reads it through the same types, so a missing required field is
+//! rejected in one place. Unknown fields are ignored on read; a caller that
+//! rewrites the manifest keeps the source JSON.
+//!
+//! The release flow that produces entries is described in
+//! `firmware/manifests/README.md`.
+
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -10,28 +21,46 @@ pub struct FirmwareManifest {
     pub devices: HashMap<String, DeviceManifest>,
 }
 
+/// Releases of one device type, newest first.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceManifest {
     pub firmwares: Vec<FirmwareEntry>,
 }
 
+/// One firmware release and what a unit needs before it can install it.
+///
+/// The floors are the compatibility claims; `firmware/manifests/README.md`
+/// says how each is set. For ATS Lite, `requires_bootloader` is the floor that
+/// gates Bluetooth updates; see `RADIO_OTA_MIN_BOOTLOADER` in odyssey-desktop's
+/// `firmware_update/update_manager.rs`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FirmwareEntry {
     pub version: String,
+    /// Lowest bootloader this application runs on. `0.0.0` means no floor.
     pub requires_bootloader: semver::Version,
+    /// Net-core release the unit must already be running. `0` means none.
     pub requires_netcore: u16,
+    /// Oldest Odyssey Desktop that may install this release.
     pub min_desktop: String,
+    /// Assets by role: `app`, `app-a`/`app-b`, `net-core`, `stage2-bootloader`,
+    /// and the dongle's `dfu-*` packages.
     pub files: HashMap<String, FileEntry>,
+    /// Publication timestamp, when the entry has one. Hosts do not read it.
     #[serde(default)]
     pub released: Option<String>,
 }
 
+/// A release asset, identified by its SHA-256 and size. Downloads are accepted
+/// only if both match.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileEntry {
     pub sha256: String,
     pub size: u64,
+    /// Version of a bootloader asset.
     #[serde(default)]
     pub version: Option<semver::Version>,
+    /// Counter of a net-core asset, which is released separately from the
+    /// application and reported by the unit as its net-core release.
     #[serde(default)]
     pub release: Option<u16>,
 }
@@ -46,6 +75,10 @@ impl FirmwareEntry {
         ])
     }
 
+    /// The application images this release carries: a lone `app` for a
+    /// single-image device, or the `app-a`/`app-b` pair for a dual-bank one.
+    /// `None` for any other combination, including an `app` next to a net core
+    /// or a stage2 bootloader.
     pub fn application_files(&self) -> Option<impl Iterator<Item = (&'static str, &FileEntry)>> {
         let files = match (
             self.files.get("app"),
@@ -66,6 +99,8 @@ impl FirmwareEntry {
     }
 }
 
+/// Release asset file name for `key`. Every asset is `<key>.bin` except the
+/// dongle's DFU packages, which carry the application version.
 pub fn asset_filename(device: &str, source: ReleaseSource<'_>, key: &str) -> String {
     match (device, source, key) {
         ("dongle", ReleaseSource::Application { version }, "dfu-fanstel" | "dfu-laird") => {

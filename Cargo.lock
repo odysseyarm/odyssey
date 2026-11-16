@@ -3854,7 +3854,7 @@ checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 [[package]]
 name = "eskf"
 version = "0.3.0"
-source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#ad76b8f74e774db65bec209ff04f0ffe90a9a875"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#7570e6457e0121b2e19d62975748b1c8941cb66e"
 dependencies = [
  "nalgebra 0.35.0",
 ]
@@ -8724,7 +8724,7 @@ dependencies = [
 [[package]]
 name = "odyssey-cv"
 version = "0.1.0"
-source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#ad76b8f74e774db65bec209ff04f0ffe90a9a875"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#7570e6457e0121b2e19d62975748b1c8941cb66e"
 dependencies = [
  "arrayvec 0.7.8",
  "cam-geom",

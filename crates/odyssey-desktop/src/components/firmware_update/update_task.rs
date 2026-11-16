@@ -1,3 +1,20 @@
+//! Runs one device's firmware update, outside any view's lifetime.
+//!
+//! The device's transport picks the path:
+//!
+//! - Wired (`Transport::Usb`), including a unit already in its bootloader: DFU
+//!   over USB. This path can rewrite the bootloader and the net core, and it is
+//!   the only one that can bootstrap a unit onto Bluetooth updates by recording
+//!   the proof described at `RADIO_OTA_MIN_BOOTLOADER` in `update_manager.rs`.
+//! - ATS Lite over BLE through a mux dongle (`Transport::UsbMux`): radio OTA,
+//!   [`run_radio_ota`]. Frames travel as vendor packets through the hub
+//!   (`DeviceClient::exchange_ota`). It needs that proof.
+//!
+//! A marker control board is not handled here. Its Bluetooth update runs inside
+//! the hub (`odyssey-hub-server/src/accessories/ota.rs`). The dongle's own
+//! firmware is updated by `dongle_task.rs`.
+//! `odyssey_hub_server::firmware::ota` describes the radio session itself.
+
 use std::future;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
@@ -17,8 +34,10 @@ use super::dfu_session::DfuSession;
 use super::downloads::{Downloads, published_release};
 use super::netcore::wait_for_netcore_release;
 use super::poll_window::{poll_window, ready};
-use super::update_check::{desktop_version, format_version, is_in_bootloader};
-use super::update_manager::FirmwareUpdateManager;
+use super::update_check::{
+    desktop_version, format_version, installed_bootloader_floor, is_ats_lite, is_in_bootloader,
+};
+use super::update_manager::{FirmwareUpdateManager, RADIO_OTA_MIN_BOOTLOADER};
 use super::update_state::FirmwareUpdateState;
 use crate::runtime;
 
@@ -141,15 +160,10 @@ async fn run_firmware_update(
     )?;
     tracing::info!("Update steps for {:02x?}: {:?}", session.uuid, steps);
 
+    let over_radio = device.transport == Transport::UsbMux;
     session.set_state(FirmwareUpdateState::Downloading);
-    let mut downloads = Downloads::fetch(
-        &device_type,
-        firmware_entry,
-        &steps,
-        device.transport == Transport::UsbMux,
-    )
-    .await?;
-    if device.transport == Transport::UsbMux {
+    let mut downloads = Downloads::fetch(&device_type, firmware_entry, &steps, over_radio).await?;
+    if over_radio {
         let client = client.ok_or_else(|| eros::error!("Hub client is disconnected"))?;
         return run_radio_ota(manager, client, device, firmware_entry, &downloads).await;
     }
@@ -188,16 +202,19 @@ async fn run_firmware_update(
         }
     }
 
-    if let Some(bootloader_version) =
-        verified_bootloader.filter(|version| *version >= semver::Version::new(0, 2, 0))
-        && matches!(device_type.as_str(), "atslite1" | "legacy-atslite1")
+    // The USB update that bootstraps Bluetooth updates. It must have ended on a
+    // bootloader at the floor, with the new application confirmed running and
+    // its own entry requiring the floor. `record_radio_ota_proof` rejects a
+    // bootloader below the floor.
+    if let Some(bootloader_version) = verified_bootloader
+        && is_ats_lite(&device_type)
         && let Some(installed) = manager
             .devices()
             .into_iter()
             .find(|d| d.uuid == device.uuid)
         && installed.firmware_identity.known() == Some(expected)
-        && super::update_check::installed_bootloader_floor(&manifest, &device_type, &installed)
-            .is_some_and(|floor| *floor >= semver::Version::new(0, 2, 0))
+        && installed_bootloader_floor(&manifest, &device_type, &installed)
+            .is_some_and(|floor| *floor >= RADIO_OTA_MIN_BOOTLOADER)
     {
         manager.record_radio_ota_proof(device.uuid, expected, &bootloader_version);
     }
@@ -206,6 +223,12 @@ async fn run_firmware_update(
     Ok(())
 }
 
+/// Updates an ATS Lite over Bluetooth, with the images already downloaded.
+///
+/// Refuses without a bootloader proof; see `RADIO_OTA_MIN_BOOTLOADER`. The
+/// proven version is what `send` checks the entry's `requires_bootloader`
+/// against. Unlike the DFU path this ignores the update-step plan: `send`
+/// decides from the unit's own status whether the net core is written.
 async fn run_radio_ota(
     manager: &FirmwareUpdateManager,
     client: Client,
@@ -260,14 +283,21 @@ async fn run_radio_ota(
             netcore,
             app_version,
             known_bootloader_floor: &known_bootloader_floor,
-            stage2_bootloader_update: false,
         },
     )
     .await?;
+    // `send` confirmed the unit runs the new app. Radio updates never touch the
+    // bootloader, so the proof carries over; without this the next lookup would
+    // see a different app and demand USB again.
+    if let Ok(installed) = entry.version.parse::<FirmwareVersion>() {
+        manager.record_radio_ota_proof(device.uuid, installed, &known_bootloader_floor);
+    }
     manager.set_state(device.uuid, FirmwareUpdateState::Complete);
     Ok(())
 }
 
+/// Carries OTA frames through the hub's `exchange_vendor` RPC and watches the
+/// hub's device list for the unit to come back on the new versions.
 struct RadioOtaTransport {
     client: Client,
     device: DeviceClient,

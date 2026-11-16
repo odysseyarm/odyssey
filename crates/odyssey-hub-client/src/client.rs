@@ -561,12 +561,18 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Sends one acknowledged OTA frame through the device's selected packet link.
+    /// Sends one acknowledged OTA frame through the device's selected packet link
+    /// and returns its raw status reply, for `odyssey_protocol::ota::Status::decode`.
+    ///
+    /// ATS Lite radio OTA runs `odyssey_hub_server::firmware::ota::send` over this call.
     ///
     /// # Errors
     /// Returns an error if the device transport or OTA RPC fails.
     /// Since: Odyssey Desktop (unreleased).
-    pub async fn exchange_ota(&self, frame: Vec<u8>) -> Result<[u8; 22], ClientError> {
+    pub async fn exchange_ota(
+        &self,
+        frame: Vec<u8>,
+    ) -> Result<[u8; odyssey_protocol::ota::STATUS_LEN], ClientError> {
         let reply = self
             .rpc
             .clone()

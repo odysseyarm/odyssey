@@ -3,8 +3,8 @@ use odyssey_protocol_macros::protocol_type;
 
 use crate::{AccelConfig, GyroConfig};
 
-/// What the tracking sensor sees: marker positions in its pixel grid, with
-/// empty slots at the origin.
+/// What the tracking sensor sees: marker positions on the sensor's report grid
+/// ([`Self::UNITS_PER_PX`] units per native pixel), with empty slots at the origin.
 ///
 /// Since: Odyssey Desktop 0.7.5.
 #[protocol_type]
@@ -20,7 +20,8 @@ pub struct MarkersReport {
 }
 
 impl MarkersReport {
-    /// Report units per native sensor pixel: the PAG7665QN reports 1/64 px.
+    /// Report units per native sensor pixel: the PAG7665QN reports 1/64 px. The hub passes it
+    /// to the calibration estimator, and marker hints use the same grid.
     ///
     /// Since: Unreleased.
     pub const UNITS_PER_PX: f64 = 64.0;

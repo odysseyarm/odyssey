@@ -1,45 +1,95 @@
-//! Raw OTA request and status framing.
+//! Wire format of the radio OTA protocol: request frames, the status reply, and the CRC-32 that
+//! guards each staged image.
+//!
+//! The device side is `Receiver` in `firmware/better-ota/src/receiver.rs`; the host side is
+//! `crates/odyssey-hub-server/src/firmware/ota.rs`. Both only see byte frames, so the same codec
+//! serves every transport. `firmware/better-ota/src/lib.rs` describes the whole flow.
+//!
+//! Every request gets a [`Status`] back. Requests are one frame of at most [`MAX_FRAME`] bytes:
+//!
+//! | Byte 0 | Request          | Remaining bytes (little endian)           | Frame length |
+//! |--------|------------------|-------------------------------------------|--------------|
+//! | 0      | [`Request::Query`]  | none                                   | 1            |
+//! | 1      | [`Request::Begin`]  | image `u8`, size `u32`, CRC-32 `u32`   | 10           |
+//! | 2      | [`Request::Data`]   | offset `u32`, then image bytes         | 6 to 98      |
+//! | 3      | [`Request::Commit`] | none                                   | 1            |
+//! | 4      | [`Request::Abort`]  | none                                   | 1            |
+//!
+//! The status reply is [`STATUS_LEN`] bytes. See [`Status::encode`] for the layout.
 
+/// Tag of the vendor packet that carries OTA frames on the L2CAP packet link. The marker hint uses
+/// [`crate::marker_hint::VENDOR_TAG`].
+///
 /// Since: Unreleased.
 pub const VENDOR_TAG: u8 = 0xfe;
+/// Largest request frame: one opcode byte, a 4-byte offset and up to 93 data bytes. Equals
+/// [`crate::VendorData::CAPACITY`], so a frame fits one vendor packet.
+///
 /// Since: Unreleased.
 pub const MAX_FRAME: usize = 98;
+/// Length of an encoded [`Status`].
+///
 /// Since: Unreleased.
 pub const STATUS_LEN: usize = 22;
+/// First byte of every status. A device with a different value is not speaking this protocol.
+///
 /// Since: Unreleased.
 pub const PROTOCOL_VERSION: u8 = 1;
+/// Oldest dongle mux protocol that relays the accessory commands `MarkerOta` and
+/// `MarkerOtaStatus` to a marker board.
+///
 /// Since: Unreleased.
 pub const MARKER_OTA_MUX_PROTOCOL: [u16; 3] = [0, 6, 0];
 
+/// Image a transfer targets.
+///
+/// Since: Unreleased.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-/// Since: Unreleased.
 pub enum Image {
+    /// Application firmware. The device writes it to the slot it is not running from.
     Application = 0,
+    /// The nRF5340 network core firmware.
     NetCore = 1,
 }
 
 impl Image {
+    /// Bit of this image in [`Status::supported`] and [`Status::staged`].
+    ///
     /// Since: Unreleased.
     pub const fn bit(self) -> u8 {
         1 << self as u8
     }
 }
 
+/// Result code in a [`Status`], also the error type of the request codec and the receiver.
+///
+/// Since: Unreleased.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-/// Since: Unreleased.
 pub enum Code {
+    /// The last request succeeded.
     Ok = 0,
+    /// The frame is malformed.
     InvalidFrame = 1,
+    /// A transfer or staged image already exists for this request.
     Busy = 2,
+    /// The device cannot take this image or operation.
     Unsupported = 3,
+    /// A length is out of range for the frame, the image or the flash slot.
     Size = 4,
+    /// A data frame does not start where the previous one ended.
     Offset = 5,
+    /// A data frame breaks the 4-byte flash write alignment.
     Alignment = 6,
+    /// A flash read, write, erase or commit failed. The receiver drops its staged state.
     Flash = 7,
+    /// The staged image does not match the CRC-32 from `Begin`. The receiver drops its staged state.
     Checksum = 8,
+    /// The staged image failed the target's validity check (reset and stack vectors). The
+    /// receiver drops its staged state.
     Image = 9,
+    /// The request is not valid in the receiver's current state.
     State = 10,
 }
 
@@ -51,13 +101,30 @@ impl core::fmt::Display for Code {
 
 impl core::error::Error for Code {}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+const OP_QUERY: u8 = 0;
+const OP_BEGIN: u8 = 1;
+const OP_DATA: u8 = 2;
+const OP_COMMIT: u8 = 3;
+const OP_ABORT: u8 = 4;
+/// Opcode, image, size, CRC-32.
+const BEGIN_LEN: usize = 10;
+/// Opcode and offset.
+const DATA_HEADER_LEN: usize = 5;
+
+/// One request from the host.
+///
 /// Since: Unreleased.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Request<'a> {
+    /// Reads the status without changing state. Clears the last error code.
     Query,
+    /// Starts a transfer of `size` bytes whose CRC-32 is `crc32`.
     Begin { image: Image, size: u32, crc32: u32 },
+    /// Next chunk of the transfer. `offset` must equal the bytes received so far.
     Data { offset: u32, data: &'a [u8] },
+    /// Activates every fully received image on the next reset.
     Commit,
+    /// Drops the transfer in progress and everything staged.
     Abort,
 }
 
@@ -73,8 +140,8 @@ impl<'a> Request<'a> {
     /// Since: Unreleased.
     pub fn decode(frame: &'a [u8]) -> Result<Self, Code> {
         match frame.first() {
-            Some(0) if frame.len() == 1 => Ok(Self::Query),
-            Some(1) if frame.len() == 10 => {
+            Some(&OP_QUERY) if frame.len() == 1 => Ok(Self::Query),
+            Some(&OP_BEGIN) if frame.len() == BEGIN_LEN => {
                 let image = match frame[1] {
                     0 => Image::Application,
                     1 => Image::NetCore,
@@ -86,14 +153,17 @@ impl<'a> Request<'a> {
                     crc32: le_u32(&frame[6..10])?,
                 })
             }
-            Some(2) if (6..=MAX_FRAME).contains(&frame.len()) => Ok(Self::Data {
-                offset: le_u32(&frame[1..5])?,
-                data: &frame[5..],
-            }),
-            Some(3) if frame.len() == 1 => Ok(Self::Commit),
-            Some(4) if frame.len() == 1 => Ok(Self::Abort),
-            Some(2) if frame.len() < 6 => Err(Code::InvalidFrame),
-            Some(2) => Err(Code::Size),
+            Some(&OP_DATA) if (DATA_HEADER_LEN + 1..=MAX_FRAME).contains(&frame.len()) => {
+                Ok(Self::Data {
+                    offset: le_u32(&frame[1..DATA_HEADER_LEN])?,
+                    data: &frame[DATA_HEADER_LEN..],
+                })
+            }
+            Some(&OP_COMMIT) if frame.len() == 1 => Ok(Self::Commit),
+            Some(&OP_ABORT) if frame.len() == 1 => Ok(Self::Abort),
+            // A data frame with no payload is malformed; one over MAX_FRAME is only too big.
+            Some(&OP_DATA) if frame.len() <= DATA_HEADER_LEN => Err(Code::InvalidFrame),
+            Some(&OP_DATA) => Err(Code::Size),
             _ => Err(Code::InvalidFrame),
         }
     }
@@ -109,9 +179,11 @@ impl<'a> Request<'a> {
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, Code> {
         let length = match self {
             Self::Query | Self::Commit | Self::Abort => 1,
-            Self::Begin { .. } => 10,
-            Self::Data { data, .. } if !data.is_empty() && data.len() <= MAX_FRAME - 5 => {
-                5 + data.len()
+            Self::Begin { .. } => BEGIN_LEN,
+            Self::Data { data, .. }
+                if !data.is_empty() && data.len() <= MAX_FRAME - DATA_HEADER_LEN =>
+            {
+                DATA_HEADER_LEN + data.len()
             }
             Self::Data { .. } => return Err(Code::Size),
         };
@@ -119,39 +191,55 @@ impl<'a> Request<'a> {
             return Err(Code::Size);
         }
         match self {
-            Self::Query => output[0] = 0,
+            Self::Query => output[0] = OP_QUERY,
             Self::Begin { image, size, crc32 } => {
-                output[0] = 1;
+                output[0] = OP_BEGIN;
                 output[1] = *image as u8;
                 output[2..6].copy_from_slice(&size.to_le_bytes());
-                output[6..10].copy_from_slice(&crc32.to_le_bytes());
+                output[6..BEGIN_LEN].copy_from_slice(&crc32.to_le_bytes());
             }
             Self::Data { offset, data } => {
-                output[0] = 2;
-                output[1..5].copy_from_slice(&offset.to_le_bytes());
-                output[5..length].copy_from_slice(data);
+                output[0] = OP_DATA;
+                output[1..DATA_HEADER_LEN].copy_from_slice(&offset.to_le_bytes());
+                output[DATA_HEADER_LEN..length].copy_from_slice(data);
             }
-            Self::Commit => output[0] = 3,
-            Self::Abort => output[0] = 4,
+            Self::Commit => output[0] = OP_COMMIT,
+            Self::Abort => output[0] = OP_ABORT,
         }
         Ok(length)
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Device state reported after every request.
+///
 /// Since: Unreleased.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Status {
+    /// Result of the last request. Cleared by the next successful request.
     pub error: Code,
+    /// Application slot an update would be written to: 0 for a device with a single update slot
+    /// (marker board), 1 for bank A, 2 for bank B. The host picks the matching manifest image.
     pub app_slot: u8,
+    /// Bitmask of [`Image::bit`] for the images the device can receive.
     pub supported: u8,
+    /// Bitmask of [`Image::bit`] for images fully received and verified, awaiting `Commit`.
     pub staged: u8,
+    /// Image of the transfer in progress.
     pub receiving: Option<Image>,
+    /// Bytes of the transfer in progress already written. The next `Data` offset.
     pub offset: u32,
+    /// Running application version as major, minor, patch.
     pub firmware_version: [u32; 3],
+    /// Release number of the running network core firmware. 0 on devices that report none (the
+    /// marker board).
     pub netcore_release: u16,
 }
 
 impl Status {
+    /// Layout: version, error code, `app_slot`, a flags byte (`supported` in bits 0-1, `staged` in
+    /// bits 2-3, `receiving` in bits 4-5 as 0 none, 1 application, 2 net core), `offset` as
+    /// `u32`, three `u32` firmware version words, `netcore_release` as `u16`. Little endian.
+    ///
     /// Since: Unreleased.
     pub fn encode(self) -> [u8; STATUS_LEN] {
         let receiving = match self.receiving {
@@ -244,6 +332,8 @@ fn code_from_byte(value: u8) -> Option<Code> {
     })
 }
 
+/// CRC-32/ISO-HDLC (the zlib and Ethernet CRC) of `bytes`.
+///
 /// Since: Unreleased.
 pub fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = Crc32::new();
@@ -251,8 +341,10 @@ pub fn crc32(bytes: &[u8]) -> u32 {
     crc.finish()
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Incremental [`crc32`], bitwise so it needs no lookup table in firmware.
+///
 /// Since: Unreleased.
+#[derive(Clone, Copy, Debug)]
 pub struct Crc32(u32);
 
 impl Crc32 {
@@ -265,6 +357,7 @@ impl Crc32 {
         for byte in bytes {
             self.0 ^= u32::from(*byte);
             for _ in 0..8 {
+                // Reflected form of the polynomial 0x04c1_1db7.
                 self.0 = (self.0 >> 1) ^ (0xedb8_8320 & (0u32.wrapping_sub(self.0 & 1)));
             }
         }
@@ -280,6 +373,7 @@ impl Default for Crc32 {
         Self::new()
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::{Code, Crc32, Image, Request, Status, crc32};

@@ -57,6 +57,7 @@ pub(super) struct Engine {
     backend: Backend,
     events: UnboundedSender<Event>,
     in_flight: Arc<AtomicBool>,
+    /// Shared with the `Worker` and the open `Session`; see the worker module docs.
     cancellation: Arc<AtomicBool>,
     live: Option<Live>,
     mode: Mode,
@@ -176,6 +177,7 @@ impl Engine {
     fn open(&mut self, session: u64, request: &OpenRequest) {
         self.close_quietly();
         self.session = session;
+        // A `Close` that cancelled the previous session must not cancel this one.
         self.cancellation.store(false, Ordering::Release);
         self.timeouts = 0;
         self.size_origin = request.size_origin;
@@ -270,6 +272,7 @@ impl Engine {
         });
         match result {
             Ok(()) => self.emit(done),
+            // The `Close` that raised the flag is queued next and reports `Closed`.
             Err(SessionError::Cancelled) => {}
             Err(e) => self.session_failed(&e),
         }
@@ -343,6 +346,8 @@ impl Engine {
     }
 
     fn stream_error(&mut self, error: &SessionError) {
+        // Cancellation comes from a queued `Close`, which releases the camera
+        // and reports `Closed`, so it is not a failure to show.
         if matches!(error, SessionError::Cancelled) {
             return;
         }

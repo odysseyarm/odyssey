@@ -30,6 +30,8 @@ fn marker_writes_follow_frozen_gatt_layout() {
     assert_eq!(marker_control::parse_pairing_state(data), pairing);
 }
 
+/// Every accepted request has exactly the length its opcode requires, so `Data` never borrows
+/// past the frame and `Begin`, `Query`, `Commit` and `Abort` carry no trailing bytes.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(10)]
@@ -54,6 +56,8 @@ fn ota_decode_never_accepts_noncanonical_frames_or_out_of_bounds_data() {
     }
 }
 
+/// Pins the status byte layout (flags byte `0b01_1011` is supported 3, staged 2, receiving
+/// application) that the host and every firmware parse, and that decode inverts encode.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(4)]
@@ -165,6 +169,7 @@ fn device_version_decodes_frozen_unsigned_16_bit_fields() {
     }
 }
 
+/// A hint that decodes is canonical: re-encoding it reproduces the input bytes.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(27)]
@@ -181,6 +186,7 @@ fn marker_hint_decode_never_accepts_noncanonical_bytes() {
     }
 }
 
+/// Encoding then decoding returns the same hint for every point count up to `MAX_POINTS`.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(27)]

@@ -1,3 +1,28 @@
+//! Bluetooth accessories (markers, magazines, MantisX): radios, sessions and
+//! one-shot operations.
+//!
+//! [`accessory_manager`] is one actor task that owns every radio and the state
+//! of every accessory address. Nothing else touches a connection. Other code
+//! sends it commands through [`AccessoryRadios`] and reads snapshots and events
+//! from its watch and broadcast channels.
+//!
+//! A radio is the host's own Bluetooth adapter (enumerated by `native`) or an
+//! Odyssey dongle from [`DongleList`]. `transport.rs` puts both behind
+//! [`Link`], so the code here does not branch on which one carries a session.
+//!
+//! Each address has at most one session task:
+//!
+//! - The resident session ([`SessionContext::run`]) keeps a configured
+//!   accessory connected and forwards its events. A marker only connects while
+//!   some screen demands it ([`MarkerDemand`]). `reconcile` respawns it
+//!   whenever the configuration or the radio changes.
+//! - A one-shot session runs a single operation: enroll, reset a marker's mode,
+//!   or update a marker over the air (`ota.rs`). The manager cancels the
+//!   resident session, parks the request as `pending_one_shot`, and starts it
+//!   once the address is free. A second request for the same address while one
+//!   is parked or running is refused. Afterwards `reconcile` brings the
+//!   resident session back.
+
 mod native;
 mod ota;
 mod transport;
@@ -71,10 +96,14 @@ impl Drop for MarkerDemandGuard {
     }
 }
 
+/// What a one-shot session does, run by [`SessionContext`] on the address's
+/// radio.
 #[derive(Debug)]
 enum OneShotAction {
     Enroll,
     ResetMarkerMode,
+    /// The marker update reports its outcome message through its own channel;
+    /// the one-shot reply only carries the radio the operation ran on.
     MarkerOta {
         desktop_version: semver::Version,
         result: oneshot::Sender<Result<String, String>>,
@@ -92,6 +121,8 @@ pub(crate) enum ResetMarkerModeError {
     Failed(String),
 }
 
+/// A one-shot request parked in [`AccessoryState`] until the address has no
+/// session. `reply` is answered when the operation ends or cannot start.
 pub(crate) struct OneShotCommand {
     address: [u8; 6],
     info: AccessoryInfo,
@@ -143,6 +174,11 @@ impl AccessoryRadios {
             .map_err(ResetMarkerModeError::Failed)
     }
 
+    /// Updates a configured marker over its saved radio and returns the
+    /// outcome message shown to the user.
+    ///
+    /// Resolves once the marker has rebooted and reported the new versions, or
+    /// with the reason it did not.
     pub(crate) async fn update_marker_ota(
         &self,
         address: [u8; 6],
@@ -227,6 +263,8 @@ struct RadioWorker {
     task: JoinHandle<()>,
 }
 
+/// A running session task for one address. `one_shot` marks sessions that
+/// `reconcile` must not cancel for being out of step with the configuration.
 struct Session {
     radio: AccessoryRadio,
     ty: AccessoryType,
@@ -237,6 +275,9 @@ struct Session {
     info: AccessoryInfo,
 }
 
+/// Everything the manager tracks for one address. `status` is the last
+/// connection state the session reported, and is cleared when its session
+/// is replaced.
 #[derive(Default)]
 struct AccessoryState {
     session: Option<Session>,
@@ -854,6 +895,9 @@ impl SessionContext {
             .await;
     }
 
+    /// Connects to the marker, runs [`ota::update`] and disconnects.
+    ///
+    /// Connects with `enroll: false`, so this never pairs the marker.
     async fn marker_ota_update(
         mut self,
         desktop_version: &semver::Version,

@@ -131,7 +131,8 @@ impl From<MarkersReport> for CombinedMarkersReport {
 }
 
 impl CombinedMarkersReport {
-    /// Report units per native sensor pixel: the PAJ7025 spreads 98 px over 0..=4094.
+    /// Report units per native sensor pixel: the PAJ7025 spreads 98 px over 0..=4094. The hub
+    /// passes it to the calibration estimator. Legacy units get no marker hints.
     ///
     /// Since: Unreleased.
     pub const UNITS_PER_PX: f64 = 4094.0 / 97.0;

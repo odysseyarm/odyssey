@@ -1,4 +1,11 @@
 //! Rate-limited delivery of marker hints to a unit.
+//!
+//! A hint lists the report-grid positions the tracker matched to the marker pattern. lite1
+//! firmware uses it to restrict its exposure controller to real markers (see
+//! `odyssey_cv::exposure` for the whole loop). `tracking.rs` calls [`MarkerHintSender::send`]
+//! for every marker report. The sender stays silent unless the tracker matched enough markers,
+//! so hints flow only while tracking; the firmware drops a hint after about 300 ms and falls
+//! back to shape heuristics. Firmware that predates hints ignores the vendor tag.
 
 use std::time::{Duration, Instant};
 

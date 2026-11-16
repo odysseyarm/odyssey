@@ -264,6 +264,9 @@ in
       private-source-boundary = common.privateBoundaryCheck "odyssey-private-source-boundary" (
         [ (common.vendor "." { }) ] ++ firmware.privateVendors
       );
+      # Runs mypy --strict (mypy.ini) over every tracked .py file, which is also
+      # what the python-types workflow runs. The fileset keeps the derivation
+      # independent of the rest of the tree.
       python-types =
         let
           root = ../.;
@@ -288,8 +291,9 @@ in
   # What a trusted builder may publish to the public binary cache. Nothing
   # else leaves the machine (.github/actions/push-cache/local.sh). `closures`
   # are public workspaces and go up with their build dependencies. `outputs`
-  # compile private sources or are bare proof markers, so only the finished
-  # output and its runtime closure are published.
+  # compile private sources (see common.nix) or are bare proof markers, so only
+  # the finished output and its runtime closure are published. Firmware that
+  # compiles odyssey-cv is in neither list.
   publicCache = {
     closures =
       builtins.removeAttrs firmware.packages firmware.privatePackages
