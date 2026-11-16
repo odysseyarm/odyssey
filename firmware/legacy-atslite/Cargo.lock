@@ -71,6 +71,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "askama"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -150,6 +156,7 @@ dependencies = [
  "npm1300-rs",
  "nrf-fuel-gauge",
  "nrfxlib-sys",
+ "odyssey-cv",
  "odyssey-protocol",
  "pag7665qn",
  "postcard",
@@ -1785,6 +1792,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "microfft"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b6673eb0cc536241d6734c2ca45abfdbf90e9e7791c66a36a7ba3c315b76cf"
+dependencies = [
+ "cfg-if",
+ "num-complex",
+ "static_assertions",
+]
+
+[[package]]
 name = "miette"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2051,6 +2069,19 @@ dependencies = [
  "num",
  "opencv-ros-camera 0.17.0",
  "simba 0.10.2",
+]
+
+[[package]]
+name = "odyssey-cv"
+version = "0.1.0"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#9dc60a70d662201ecbef17af319830519f24124a"
+dependencies = [
+ "arrayvec",
+ "microfft",
+ "nalgebra 0.35.0",
+ "num",
+ "odyssey-common",
+ "opencv-ros-camera 0.17.0",
 ]
 
 [[package]]
@@ -2582,6 +2613,12 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "static_cell"

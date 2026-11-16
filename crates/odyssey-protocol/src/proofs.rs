@@ -164,3 +164,34 @@ fn device_version_decodes_frozen_unsigned_16_bit_fields() {
         );
     }
 }
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(27)]
+fn marker_hint_decode_never_accepts_noncanonical_bytes() {
+    let bytes: [u8; crate::marker_hint::ENCODED_LEN] = kani::any();
+    let length: usize = kani::any();
+    kani::assume(length <= bytes.len() + 1);
+    let mut padded = [0u8; crate::marker_hint::ENCODED_LEN + 1];
+    padded[..bytes.len()].copy_from_slice(&bytes);
+    if let Ok(hint) = crate::marker_hint::MarkerHint::decode(&padded[..length]) {
+        assert_eq!(length, crate::marker_hint::ENCODED_LEN);
+        assert!(usize::from(hint.len) <= crate::marker_hint::MAX_POINTS);
+        assert_eq!(hint.encode(), bytes);
+    }
+}
+
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(27)]
+fn marker_hint_encode_decode_roundtrips() {
+    let points: [[u16; 2]; crate::marker_hint::MAX_POINTS] = kani::any();
+    let count: usize = kani::any();
+    kani::assume(count <= points.len());
+    let hint = crate::marker_hint::MarkerHint::new(&points[..count]);
+    assert_eq!(hint.points(), &points[..count]);
+    assert_eq!(
+        crate::marker_hint::MarkerHint::decode(&hint.encode()),
+        Ok(hint)
+    );
+}

@@ -3,6 +3,7 @@ mod handler;
 mod hub_manager;
 pub(crate) mod image_stream;
 mod manager;
+mod marker_hint_sender;
 mod messages;
 mod netcore_probe;
 mod semver;

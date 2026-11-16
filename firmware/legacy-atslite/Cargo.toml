@@ -130,3 +130,7 @@ embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db6
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+
+# odyssey-cv names odyssey-common by git URL; build against this tree's copy.
+[patch."https://github.com/odysseyarm/odyssey"]
+odyssey-common = { path = "../../crates/odyssey-common" }

@@ -53,6 +53,9 @@ pub mod legacy;
 /// Since: Odyssey Desktop 0.7.4.
 ///
 pub mod marker_control;
+/// Since: Unreleased.
+///
+pub mod marker_hint;
 /// Since: Odyssey Desktop 0.6.0.
 ///
 pub mod mux;

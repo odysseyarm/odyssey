@@ -7,7 +7,9 @@ set -euo pipefail
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 
+# odyssey-cv is private: firmware.nix vendors it from the flake input, never by hash.
 cat firmware/*/Cargo.lock | grep -o '^source = "git+[^"]*"' | sed 's/^source = "//; s/"$//' | sort -u |
+  grep -v 'odysseyarm/odyssey-cv\.git' |
   while read -r source; do
     url=${source#git+}
     rev=${url##*#}

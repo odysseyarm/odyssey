@@ -261,7 +261,9 @@ in
     // desktopNixos.checks
     // windows.checks
     // {
-      private-source-boundary = common.privateBoundaryCheck;
+      private-source-boundary = common.privateBoundaryCheck "odyssey-private-source-boundary" (
+        [ (common.vendor "." { }) ] ++ firmware.privateVendors
+      );
       python-types =
         let
           root = ../.;
@@ -290,7 +292,7 @@ in
   # output and its runtime closure are published.
   publicCache = {
     closures =
-      firmware.packages
+      builtins.removeAttrs firmware.packages firmware.privatePackages
       // firmware.checks
       // sdk.packages
       // sdk.checks
