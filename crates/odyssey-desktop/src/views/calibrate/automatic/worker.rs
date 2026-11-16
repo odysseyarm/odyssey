@@ -11,9 +11,13 @@
 //! A missed preview frame resets readiness, even when the camera recovers before
 //! the consecutive-timeout limit. Invalid camera data closes the session rather
 //! than leaving a supposedly reusable stream behind.
-
-//! `Close` signals active capture before queuing shutdown, so bursts stop between
-//! frames and the worker still owns camera cleanup.
+//!
+//! Closing has to interrupt a measurement that is already running, but the
+//! thread only reads a command between blocking calls. So [`Worker::send`] sets
+//! a shared cancellation flag the moment it queues [`Command::Close`]. The
+//! `Session` checks it between camera frames and gives up with
+//! `SessionError::Cancelled`; the queued `Close` then releases the camera on
+//! the worker thread. The next `Command::Open` clears the flag.
 
 mod backend;
 mod command;
@@ -43,6 +47,8 @@ use tokio::sync::mpsc::UnboundedSender;
 pub(crate) struct Worker {
     commands: Sender<Command>,
     in_flight: Arc<AtomicBool>,
+    /// Set by `send` for `Close`, read by the open `Session` between frames, and
+    /// cleared by the engine when a session opens.
     cancellation: Arc<AtomicBool>,
 }
 

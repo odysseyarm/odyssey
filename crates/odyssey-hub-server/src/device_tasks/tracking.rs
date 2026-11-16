@@ -1,3 +1,21 @@
+//! Per-unit tracking: turns sensor reports into the events clients see.
+//!
+//! IMU reports drive the ESKF's prediction and re-solve the pose. Marker reports are matched
+//! to the screen's marker pattern by the ESKF (`odyssey_cv::foveated`). Two things hang off a
+//! match:
+//!
+//! - Marker hints. The matched positions go back to lite1 firmware (`marker_hint_sender.rs`) so
+//!   its exposure controller measures only real markers. `odyssey_cv::exposure` describes the
+//!   whole loop: sensor, firmware exposure controller, `MarkersReport`, ESKF match, hint.
+//! - Calibration refinement. Matched frames feed a `CalibrationEstimator`
+//!   (`odyssey_cv::dynamic_calibration`) that can improve the near-field camera and the marker
+//!   positions for this connection. See the second `impl DeviceTracker` block.
+//!
+//! Units: each sensor reports on its own grid, and the camera model in the unit's settings is
+//! stated on that grid. Pixel-based thresholds need the grid scale, which
+//! `MarkersReport::UNITS_PER_PX` (1/64 px, lite1) and `CombinedMarkersReport::UNITS_PER_PX`
+//! (PAJ7025) provide. Hint positions are in report units as received, not converted.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -82,9 +100,18 @@ pub(super) struct DeviceTracker {
 struct NearFieldRefinement {
     /// The server's list this state was built against, compared by pointer.
     source: Option<Arc<ScreenCalibrationList>>,
-    /// `source` with the accepted marker positions.
+    /// `source` with the accepted marker positions. `None` until an estimate is accepted.
     calibrations: Option<Arc<ScreenCalibrationList>>,
-    estimator: Option<Box<(u8, CalibrationEstimator)>>,
+    /// Collects frames until it can solve. Cleared after each accepted refinement and replaced
+    /// when the tracked screen changes.
+    estimator: Option<Box<ScreenEstimator>>,
+}
+
+/// A calibration estimator and the screen whose pattern it models.
+#[derive(Debug)]
+struct ScreenEstimator {
+    screen_id: u8,
+    estimator: CalibrationEstimator,
 }
 
 /// Where the unit points on the screen, and how far away it is.
@@ -267,6 +294,8 @@ impl DeviceTracker {
     ) {
         let near_points = detected_points(&report.points);
         let matched = self.observe_markers(&near_points, &[], MarkersReport::UNITS_PER_PX, context);
+        // Only a tracking filter yields enough matched points; otherwise the sender holds back
+        // and the firmware's hint expires on its own.
         self.hints.send(Instant::now(), &matched);
         let solution = self.raycast(device, context).await;
         Self::publish_marker_solution(device, solution, context);
@@ -287,6 +316,7 @@ impl DeviceTracker {
         self.observe_with(near_points, wide_markers, units_per_px, &calibrations)
     }
 
+    /// [`Self::observe_markers`] against calibrations the caller already chose.
     fn observe_with(
         &mut self,
         near_points: &[Point2<f32>],
@@ -312,7 +342,7 @@ impl DeviceTracker {
             .foveated
             .match_markers_from_eskf(&near_markers, &[], &calibration.object_points)
             .nf;
-        self.collect_for_calibration(
+        self.feed_estimator(
             screen_id,
             &matched,
             &near_markers,
@@ -320,116 +350,6 @@ impl DeviceTracker {
             calibrations,
         );
         matched_report_points(&matched, near_points)
-    }
-
-    /// The calibrations to track against: the server's, with this connection's refined marker
-    /// positions if an estimate was accepted. A new list from the server drops the refinement,
-    /// since it describes a pattern that has been measured again.
-    fn calibrations_for_frame(
-        &mut self,
-        context: &DeviceTaskContext,
-    ) -> Arc<ScreenCalibrationList> {
-        let loaded = context.screen_calibrations.load_full();
-        let current = self
-            .refinement
-            .source
-            .as_ref()
-            .is_some_and(|source| Arc::ptr_eq(source, &loaded));
-        if !current {
-            self.cameras.near_field = self.configured_near_field.clone();
-            self.refinement = NearFieldRefinement {
-                source: Some(Arc::clone(&loaded)),
-                ..NearFieldRefinement::default()
-            };
-        }
-        self.refinement.calibrations.clone().unwrap_or(loaded)
-    }
-
-    fn collect_for_calibration(
-        &mut self,
-        screen_id: u8,
-        matched: &[Option<usize>; MARKERS],
-        near_markers: &[Marker],
-        units_per_px: f64,
-        calibrations: &ScreenCalibrationList,
-    ) {
-        let near_field = &self.cameras.near_field;
-        let (fx, fy) = (near_field.p.m11, near_field.p.m22);
-        let (cx, cy) = (near_field.p.m13, near_field.p.m23);
-        if self
-            .refinement
-            .estimator
-            .as_ref()
-            .is_none_or(|boxed| boxed.0 != screen_id)
-        {
-            let Some(calibration) = ats_helpers::get_screen_calibration(calibrations, screen_id)
-            else {
-                return;
-            };
-            let base = Intrinsics {
-                fx: f64::from(fx),
-                fy: f64::from(fy),
-                cx: f64::from(cx),
-                cy: f64::from(cy),
-            };
-            let markers = calibration.object_points.map(nalgebra::OPoint::cast);
-            self.refinement.estimator = Some(Box::new((
-                screen_id,
-                CalibrationEstimator::new(base, markers, units_per_px),
-            )));
-        }
-        let Some((_, estimator)) = self.refinement.estimator.as_deref_mut() else {
-            return;
-        };
-        // The marker positions are normalized by the same projection matrix, so this restores
-        // the pixel the unit reported (after undistortion).
-        let observations = matched.map(|index| {
-            index.map(|i| {
-                let n = near_markers[i].position;
-                Vector2::new(f64::from(fx * n.x + cx), f64::from(fy * n.y + cy))
-            })
-        });
-        let pose = Isometry3::from_parts(
-            Translation3::from(self.foveated.filter.position.coords.cast::<f64>()),
-            self.foveated.filter.orientation.cast::<f64>(),
-        );
-        estimator.observe(&pose, observations);
-        if !estimator.ready() {
-            return;
-        }
-        if let Some(refinement) = estimator.solve() {
-            self.apply_refinement(screen_id, &refinement, calibrations);
-        }
-    }
-
-    /// In memory only: the unit's stored settings and the server's calibrations stay as they
-    /// were, so a reconnect starts from the configured values again.
-    fn apply_refinement(
-        &mut self,
-        screen_id: u8,
-        refinement: &Refinement,
-        calibrations: &ScreenCalibrationList,
-    ) {
-        let Some(near_field) = refined_near_field(&self.cameras.near_field, &refinement.intrinsics)
-        else {
-            return;
-        };
-        let mut refined = calibrations.clone();
-        for (id, calibration) in &mut refined {
-            if *id == screen_id {
-                calibration.object_points = refinement.markers.map(nalgebra::OPoint::cast);
-            }
-        }
-        info!(
-            "Refined near-field optics for screen {screen_id}: focal x{:.4} (sd {:.4}), held-out RMS {:.2} -> {:.2}",
-            refinement.intrinsics.fx / f64::from(self.cameras.near_field.p.m11),
-            refinement.focal_sd,
-            refinement.rms_before,
-            refinement.rms_after
-        );
-        self.cameras.near_field = near_field;
-        self.refinement.calibrations = Some(Arc::new(refined));
-        self.refinement.estimator = None;
     }
 
     /// Solve pose and aimpoint from the current foveated state, applying the device's stored
@@ -497,6 +417,134 @@ impl DeviceTracker {
                 screen_id: solution.screen_id,
             }),
         );
+    }
+}
+
+/// Refinement of the near-field optics and marker pattern, kept per connection.
+///
+/// The estimator watches frames the filter is tracking. When it accepts a solution,
+/// [`Self::apply_refinement`] replaces the tracker's near-field camera and a private copy of the
+/// screen calibrations, and later frames are matched with those. The server's list and the
+/// unit's stored settings stay untouched. [`Self::calibrations_for_frame`] decides which list a
+/// frame uses and when the refinement is discarded.
+///
+/// `raycast` keeps using the server's list: it reads the screen geometry, and refinement
+/// changes only marker positions.
+impl DeviceTracker {
+    /// The calibrations to track against: the server's, with this connection's refined marker
+    /// positions if an estimate was accepted. A new list from the server drops the refinement
+    /// and restores the configured camera, since the list describes a pattern that has been
+    /// measured again.
+    fn calibrations_for_frame(
+        &mut self,
+        context: &DeviceTaskContext,
+    ) -> Arc<ScreenCalibrationList> {
+        let loaded = context.screen_calibrations.load_full();
+        let current = self
+            .refinement
+            .source
+            .as_ref()
+            .is_some_and(|source| Arc::ptr_eq(source, &loaded));
+        if !current {
+            self.cameras.near_field = self.configured_near_field.clone();
+            self.refinement = NearFieldRefinement {
+                source: Some(Arc::clone(&loaded)),
+                ..NearFieldRefinement::default()
+            };
+        }
+        self.refinement.calibrations.clone().unwrap_or(loaded)
+    }
+
+    /// Gives the estimator for `screen_id` the frame's matched markers, and applies a solution
+    /// once it accepts one. `matched` indexes `near_markers` in pattern order.
+    fn feed_estimator(
+        &mut self,
+        screen_id: u8,
+        matched: &[Option<usize>; MARKERS],
+        near_markers: &[Marker],
+        units_per_px: f64,
+        calibrations: &ScreenCalibrationList,
+    ) {
+        let near_field = &self.cameras.near_field;
+        let (fx, fy) = (near_field.p.m11, near_field.p.m22);
+        let (cx, cy) = (near_field.p.m13, near_field.p.m23);
+        if self
+            .refinement
+            .estimator
+            .as_ref()
+            .is_none_or(|current| current.screen_id != screen_id)
+        {
+            let Some(calibration) = ats_helpers::get_screen_calibration(calibrations, screen_id)
+            else {
+                return;
+            };
+            // The camera model is stated in report units, so the estimator's intrinsics and
+            // the observations below are too; `units_per_px` scales its pixel thresholds.
+            let base = Intrinsics {
+                fx: f64::from(fx),
+                fy: f64::from(fy),
+                cx: f64::from(cx),
+                cy: f64::from(cy),
+            };
+            let markers = calibration.object_points.map(nalgebra::OPoint::cast);
+            self.refinement.estimator = Some(Box::new(ScreenEstimator {
+                screen_id,
+                estimator: CalibrationEstimator::new(base, markers, units_per_px),
+            }));
+        }
+        let Some(ScreenEstimator { estimator, .. }) = self.refinement.estimator.as_deref_mut()
+        else {
+            return;
+        };
+        // The marker positions are normalized by the same projection matrix, so this restores
+        // the pixel the unit reported (after undistortion).
+        let observations = matched.map(|index| {
+            index.map(|i| {
+                let n = near_markers[i].position;
+                Vector2::new(f64::from(fx * n.x + cx), f64::from(fy * n.y + cy))
+            })
+        });
+        let pose = Isometry3::from_parts(
+            Translation3::from(self.foveated.filter.position.coords.cast::<f64>()),
+            self.foveated.filter.orientation.cast::<f64>(),
+        );
+        estimator.observe(&pose, observations);
+        if !estimator.ready() {
+            return;
+        }
+        if let Some(refinement) = estimator.solve() {
+            self.apply_refinement(screen_id, &refinement, calibrations);
+        }
+    }
+
+    /// In memory only: the unit's stored settings and the server's calibrations stay as they
+    /// were, so a reconnect starts from the configured values again.
+    fn apply_refinement(
+        &mut self,
+        screen_id: u8,
+        refinement: &Refinement,
+        calibrations: &ScreenCalibrationList,
+    ) {
+        let Some(near_field) = refined_near_field(&self.cameras.near_field, &refinement.intrinsics)
+        else {
+            return;
+        };
+        let mut refined = calibrations.clone();
+        for (id, calibration) in &mut refined {
+            if *id == screen_id {
+                calibration.object_points = refinement.markers.map(nalgebra::OPoint::cast);
+            }
+        }
+        info!(
+            "Refined near-field optics for screen {screen_id}: focal x{:.4} (sd {:.4}), held-out RMS {:.2} -> {:.2}",
+            refinement.intrinsics.fx / f64::from(self.cameras.near_field.p.m11),
+            refinement.focal_sd,
+            refinement.rms_before,
+            refinement.rms_after
+        );
+        self.cameras.near_field = near_field;
+        self.refinement.calibrations = Some(Arc::new(refined));
+        self.refinement.estimator = None;
     }
 }
 

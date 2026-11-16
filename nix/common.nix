@@ -50,17 +50,35 @@ let
         ]
       );
   };
-  # Private-source boundary. Every vendored copy of odyssey-cv (and the eskf it
-  # carries) is a stub: the real manifests, so features and the dependency graph
-  # are unchanged, with empty sources. Dependency layers (buildDepsOnly) compile
-  # only that stub, so they are safe for public caches. Builds that need the real
-  # code go through `withPrivateSource`. Inside the sandbox it copies the stub's
-  # vendored crates, overlays the flake input's sources and repoints only that
-  # one Cargo source at the copy. The real source is never a derivation output
-  # and every other vendored path stays byte-identical, so Cargo rebuilds only
-  # odyssey-cv, eskf and their dependents on top of the cached layer.
-  # The stub is addressed by manifest content alone, so dependency layers stay
-  # cached across odyssey-cv changes that do not touch its manifests.
+  # Private-source boundary
+  #
+  # odyssey-cv (a private git dependency) and the eskf crate it carries must
+  # never reach the public binary cache. Three pieces enforce that:
+  #
+  # 1. Stub vendoring (`privateCheckout`, via `vendor`). Every vendored copy of
+  #    the private crates keeps the real Cargo.toml and Cargo.lock, so features
+  #    and the dependency graph are unchanged, but its sources are empty. The
+  #    stub is addressed by manifest content alone, so cached dependency layers
+  #    survive odyssey-cv changes that leave its manifests alone.
+  # 2. Overlay in the final build (`withPrivateSource`). Dependency layers
+  #    (buildDepsOnly) compile only the stub and are safe to publish. The final
+  #    build, and any check that needs the real code, wraps its args in
+  #    `withPrivateSource`. Inside the sandbox it copies the stub's vendored
+  #    crates, overlays the flake input's sources, and repoints only that one
+  #    Cargo source at the copy. The real source is never a derivation output
+  #    and every other vendored path stays byte-identical, so Cargo rebuilds
+  #    only odyssey-cv, eskf and their dependents on top of the cached layer.
+  # 3. Publication policy. Outputs built from the real source are listed so the
+  #    cache push skips them or publishes only the finished output: see
+  #    `publicCache` in default.nix and `privatePackages` in firmware.nix.
+  #    `privateBoundaryCheck` verifies piece 1 and runs as the
+  #    `private-source-boundary` check.
+  #
+  # Callers: host.nix, appimage.nix, desktop-*.nix and firmware.nix apply
+  # `withPrivateSource`; `vendor` here and `vendorArgs` in firmware.nix apply
+  # `privateCheckout`.
+  #
+  # Manifests only (plus directories, so the tree layout is kept).
   privateManifests = builtins.path {
     name = "odyssey-cv-manifests";
     path = privateSource;
@@ -76,6 +94,9 @@ let
     odyssey-cv = "crates/odyssey-cv";
     eskf = "third_party/eskf";
   };
+  # Wraps crane args so the build overlays the real odyssey-cv and eskf sources
+  # over the stub vendor directory (piece 2 above). Fails if the vendor
+  # directory holds no odyssey-cv. Pass only final builds, never buildDepsOnly.
   withPrivateSource =
     args:
     args
@@ -103,7 +124,10 @@ let
         sed -i "s|^directory = \"$stub\"$|directory = \"$private\"|" "$CARGO_HOME/config.toml"
       '';
     };
-  # Vendors odyssey-cv (a git dependency) as the manifest-only stub.
+  # `overrideVendorGitCheckout` hook: replaces a checkout of the odyssey-cv git
+  # repository with the manifest-only stub (piece 1 above) and leaves every other
+  # git dependency alone. Also checks that the flake input is the revision
+  # Cargo.lock pins, since the overlay trusts it.
   privateCheckout =
     packages: drv:
     if
@@ -170,7 +194,10 @@ let
       # fingerprint, so this applies to the dependency layer too.
       CARGO_PROFILE_RELEASE_STRIP = "symbols";
     };
-  # Fails if any vendored copy of the private crates in `vendors` carries real source.
+  # The `private-source-boundary` check: fails if any vendored copy of the
+  # private crates under `vendors` has a source file other than the stub's
+  # `#![no_std]`, or if a vendor directory holds no private crate (which would
+  # make the check pass vacuously).
   privateBoundaryCheck =
     name: vendors:
     pkgs.runCommand name { } ''

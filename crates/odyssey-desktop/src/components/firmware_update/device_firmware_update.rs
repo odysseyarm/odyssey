@@ -1,3 +1,10 @@
+//! The firmware row of one device: status text, progress, and the entry point
+//! to start an update.
+//!
+//! Availability comes from `update_check.rs`, fed with the device's Bluetooth
+//! bootloader proof from `update_manager.rs`. Starting an update is
+//! `update_available.rs`, which hands off to `update_task.rs`.
+
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;

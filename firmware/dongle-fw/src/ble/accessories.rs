@@ -1,4 +1,9 @@
 //! Accessory links own separate slots. Tracker queues and reconnect policy stay independent.
+//!
+//! Marker OTA is a pure relay. The hub's `MarkerOta` command (one request frame) becomes an
+//! acknowledged GATT write to the marker board's OTA characteristic, and `MarkerOtaStatus` becomes
+//! a read of it. The dongle neither parses nor stores the frames; `firmware/better-ota/src/lib.rs`
+//! describes the whole OTA flow.
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -443,6 +448,24 @@ async fn secure_marker(
     }
 }
 
+/// Finds the marker board's OTA characteristic. `Ok(None)` means the board predates radio OTA.
+async fn find_ota_characteristic(
+    client: &GattClient<'_, crate::Controller, crate::Pool, 4>,
+    service: &ServiceHandle,
+) -> Result<Option<Characteristic<u8>>, Error> {
+    match client
+        .characteristic_by_uuid(
+            service,
+            &Uuid::from(u128::from_be_bytes(marker_control::OTA_UUID)),
+        )
+        .await
+    {
+        Ok(characteristic) => Ok(Some(characteristic)),
+        Err(BleHostError::BleHost(trouble_host::Error::NotFound)) => Ok(None),
+        Err(_) => Err(Error::Gatt),
+    }
+}
+
 #[embassy_executor::task(pool_size = odyssey_protocol::accessory::ACCESSORY_CAPACITY)]
 async fn accessory_session(
     stack: &'static trouble_host::Stack<'static, crate::Controller, crate::Pool>,
@@ -457,8 +480,8 @@ async fn accessory_session(
     let conn = RefCell::new(None::<Connection<'static, crate::Pool>>);
     let connected = Cell::new(false);
     let pending = Cell::new(None::<u32>);
-    let mut ota_characteristic: Option<Characteristic<u8>> = None;
-    let mut ota_characteristic_checked = false;
+    // Looked up on the first OTA command. `Some(None)`: the board has no OTA characteristic.
+    let mut ota_characteristic: Option<Option<Characteristic<u8>>> = None;
     let run = async {
         let mut central = stack.build().central;
         let config = ConnectConfig {
@@ -626,6 +649,9 @@ async fn accessory_session(
                             .map_err(|_| Error::Timeout)
                             .and_then(|result| result)
                     }
+                    // The hub sends each OTA request frame with MarkerOta and reads the reply with
+                    // MarkerOtaStatus. Both go to the board's OTA characteristic; the board's own
+                    // `Receiver` (marker-control-board/src/ble.rs) interprets the frame.
                     Command::MarkerOta { frame, .. } => {
                         let frame_len = usize::from(frame.len);
                         if frame_len == 0
@@ -636,21 +662,13 @@ async fn accessory_session(
                             pending.set(None);
                             continue;
                         }
-                        if !ota_characteristic_checked {
-                            ota_characteristic_checked = true;
-                            ota_characteristic = match client
-                                .characteristic_by_uuid(
-                                    &service,
-                                    &Uuid::from(u128::from_be_bytes(marker_control::OTA_UUID)),
-                                )
-                                .await
-                            {
-                                Ok(characteristic) => Some(characteristic),
-                                Err(BleHostError::BleHost(trouble_host::Error::NotFound)) => None,
-                                Err(_) => return Err(Error::Gatt),
-                            };
+                        if ota_characteristic.is_none() {
+                            ota_characteristic =
+                                Some(find_ota_characteristic(&client, &service).await?);
                         }
-                        let Some(characteristic) = ota_characteristic.as_ref() else {
+                        let Some(characteristic) =
+                            ota_characteristic.as_ref().and_then(Option::as_ref)
+                        else {
                             complete(request.id, Err(Error::Unsupported), epoch).await;
                             pending.set(None);
                             continue;
@@ -662,6 +680,7 @@ async fn accessory_session(
                         .await
                         {
                             Err(_) => Err(Error::Timeout),
+                            // An ATT rejection fails this request only; the link is still good.
                             Ok(Err(BleHostError::BleHost(trouble_host::Error::Att(_)))) => {
                                 complete(request.id, Err(Error::Gatt), epoch).await;
                                 pending.set(None);
@@ -673,23 +692,13 @@ async fn accessory_session(
                     }
                     Command::MarkerOtaStatus { .. } => {
                         let read = async {
-                            if !ota_characteristic_checked {
-                                ota_characteristic_checked = true;
-                                ota_characteristic = match client
-                                    .characteristic_by_uuid(
-                                        &service,
-                                        &Uuid::from(u128::from_be_bytes(marker_control::OTA_UUID)),
-                                    )
-                                    .await
-                                {
-                                    Ok(characteristic) => Some(characteristic),
-                                    Err(BleHostError::BleHost(trouble_host::Error::NotFound)) => {
-                                        None
-                                    }
-                                    Err(_) => return Err(Error::Gatt),
-                                };
+                            if ota_characteristic.is_none() {
+                                ota_characteristic =
+                                    Some(find_ota_characteristic(&client, &service).await?);
                             }
-                            let Some(characteristic) = ota_characteristic.as_ref() else {
+                            let Some(characteristic) =
+                                ota_characteristic.as_ref().and_then(Option::as_ref)
+                            else {
                                 return Err(Error::Unsupported);
                             };
                             let mut status = [0; odyssey_protocol::ota::STATUS_LEN];

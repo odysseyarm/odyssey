@@ -10,10 +10,10 @@ mod world;
 
 use std::sync::{Arc, Mutex};
 
-use odyssey_protocol::Packet;
 use odyssey_protocol::control::device::DeviceMsg;
 use odyssey_protocol::control::usb_mux::UsbMuxCtrlMsg;
 use odyssey_protocol::mux::MuxMsg;
+use odyssey_protocol::{MarkersReport, Packet};
 use odyssey_usb::device::{MuxDevice, VmDevice};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, broadcast, mpsc, oneshot, watch};
@@ -179,11 +179,15 @@ impl SensorModel {
         }
     }
 
-    /// Size of the grid this sensor reports marker positions on.
+    /// Size of the grid this sensor reports marker positions on, in report units. The
+    /// PAG7665QN's is its native image at 1/64 px.
     const fn report_grid(self) -> [u32; 2] {
         match self {
-            // The PAG7665QN interpolates 320x240 to 1/64 px.
-            Self::Pag7665qn => [20480, 15360],
+            Self::Pag7665qn => {
+                let (width, height) = self.image_dimensions();
+                let units = MarkersReport::UNITS_PER_PX as u32;
+                [width as u32 * units, height as u32 * units]
+            }
             // shortcut: PAJ units keep the simulator's ideal 640x480 pinhole, not the
             // PAJ7025's 4095 grid; upgrade when the legacy sim models NF/WF optics.
             Self::Paj7025 => [640, 480],

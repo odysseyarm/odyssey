@@ -1,7 +1,17 @@
+//! Decides what a device's firmware row offers, from the manifest and the
+//! device as the hub last reported it.
+//!
+//! [`check_for_update_with_proof`] is called on every render by
+//! `device_firmware_update.rs`. It returns the state to show: nothing, an
+//! update (with held-back or blocked newer releases noted), or "plug in USB".
+//! The click is handled by `update_task.rs`, which re-selects the entry the
+//! same way so the version shown is the version installed.
+
 use odyssey_hub_common::device::{Device, DeviceCapabilities, Transport};
 use odyssey_hub_common::firmware_version::FirmwareVersion;
 use odyssey_hub_server::firmware::{self, FirmwareManifest};
 
+use super::update_manager::RADIO_OTA_MIN_BOOTLOADER;
 use super::update_notes::{HeldBack, NetCoreBlocked};
 use super::update_state::FirmwareUpdateState;
 
@@ -26,6 +36,8 @@ pub(super) fn is_in_bootloader(device: &Device) -> bool {
             .contains(DeviceCapabilities::DFU_RUNTIME_ONLY)
 }
 
+/// The `requires_bootloader` of the manifest entry the device's installed
+/// application came from, or `None` when that entry or version is unknown.
 pub(super) fn installed_bootloader_floor<'a>(
     manifest: &'a FirmwareManifest,
     device_type: &str,
@@ -46,15 +58,27 @@ pub(super) fn installed_bootloader_floor<'a>(
         .map(|entry| &entry.requires_bootloader)
 }
 
+/// The ATS Lite device types, whose Bluetooth updates depend on a stage2
+/// bootloader proof.
+pub(super) fn is_ats_lite(device_type: &str) -> bool {
+    matches!(device_type, "atslite1" | "legacy-atslite1")
+}
+
+/// Whether an ATS Lite has to be updated over USB because Bluetooth is not
+/// allowed for it yet.
+///
+/// Only ATS Lite reached over BLE through the dongle (`Transport::UsbMux`) is
+/// ever forced. It is forced without a bootloader proof; see
+/// `RADIO_OTA_MIN_BOOTLOADER` for why. With one, it is forced when the target
+/// needs a newer bootloader than the proof shows, or carries a net core and the
+/// proof is below that floor.
 fn ats_ble_update_needs_usb(
     device_type: &str,
     device: &Device,
     target: &firmware::FirmwareEntry,
     radio_ota_bootloader: Option<&semver::Version>,
 ) -> bool {
-    if !matches!(device_type, "atslite1" | "legacy-atslite1")
-        || device.transport != Transport::UsbMux
-    {
+    if !is_ats_lite(device_type) || device.transport != Transport::UsbMux {
         return false;
     }
     let Some(installed_bootloader) = radio_ota_bootloader else {
@@ -66,14 +90,10 @@ fn ats_ble_update_needs_usb(
         .get("net-core")
         .and_then(|image| image.release)
         .is_none_or(|release| release > device.netcore_release);
-    let safe_netcore_bootloader = semver::Version::new(0, 2, 0);
-    target_needs_new_bootloader || netcore_update && installed_bootloader < &safe_netcore_bootloader
+    target_needs_new_bootloader
+        || netcore_update && installed_bootloader < &RADIO_OTA_MIN_BOOTLOADER
 }
 
-/// What the manifest offers `device`, as the state its row should show.
-///
-/// `current_state` is only read to log a transition once instead of on every
-/// render.
 #[cfg(test)]
 pub(super) fn check_for_update(
     manifest: &FirmwareManifest,
@@ -82,6 +102,11 @@ pub(super) fn check_for_update(
 ) -> FirmwareUpdateState {
     check_for_update_with_proof(manifest, device, current_state, None)
 }
+
+/// What the manifest offers `device`, as the state its row should show.
+///
+/// `current_state` is only read to log a transition once instead of on every
+/// render. `radio_ota_bootloader` is the device's bootloader proof, if any.
 pub(super) fn check_for_update_with_proof(
     manifest: &FirmwareManifest,
     device: &Device,

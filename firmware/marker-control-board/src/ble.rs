@@ -1,3 +1,18 @@
+//! BLE peripheral of the marker board: advertising and owner pairing, the demand and mode
+//! characteristics that switch the markers, and the OTA characteristic.
+//!
+//! OTA: the hub (directly or through the dongle's `MarkerOta` relay in
+//! `firmware/dongle-fw/src/ble/accessories.rs`) writes one `odyssey_protocol::ota` request frame
+//! to the OTA characteristic with a write-with-response and reads the status back. [`session`]
+//! feeds each write to a `better_ota::Receiver` whose `Slots` backend is [`MarkerSlots`]. A
+//! commit is delegated to the task in `main.rs`, which marks the image for embassy-boot; the
+//! reset comes after the write response has been sent. `firmware/better-ota/src/lib.rs` describes
+//! the whole flow.
+//!
+//! Only the bonded owner may touch the OTA characteristic: reads and writes need an encrypted link
+//! and an owner check, like the demand and mode writes. While an update is staged or in flight
+//! [`crate::OTA_ACTIVE`] keeps the marker outputs off.
+
 use core::cell::RefCell;
 
 use better_ota::{Action, Receiver, Slots};
@@ -17,7 +32,7 @@ use odyssey_protocol::marker_control::{
     DEMAND_UUID, MODE_UUID, Mode, OTA_UUID, PAIRING_STATE_VERSION, SERVICE_UUID, WriteError,
     parse_demand,
 };
-use odyssey_protocol::ota::{Code, Image};
+use odyssey_protocol::ota::{Code, Image, STATUS_LEN, Status};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use trouble_host::att::{AttClient, AttCmd, AttReq};
@@ -102,10 +117,31 @@ struct MarkerService {
     demand: u8,
     #[characteristic(uuid = u128::from_be_bytes(MODE_UUID), read, write, value = 0)]
     mode: u8,
-    #[characteristic(uuid = u128::from_be_bytes(OTA_UUID), read, write, value = [0; 22])]
-    ota: [u8; 22],
+    #[characteristic(uuid = u128::from_be_bytes(OTA_UUID), read, write, value = [0; STATUS_LEN])]
+    ota: [u8; STATUS_LEN],
 }
 
+/// Start of the DFU partition, from `firmware/memory/memory-marker-control-board.kdl`.
+const DFU_START: u32 = 0x48000;
+/// DFU partition size: the application area plus the one page embassy-boot uses as scratch.
+const DFU_LEN: u32 = 224 * 1024;
+/// Largest application image, the size of the `app_flash` region in the memory map.
+const APP_CAPACITY: u32 = 220 * 1024;
+/// Largest OTA frame in one GATT write: the 23-byte default ATT MTU minus the 3-byte header.
+const MAX_OTA_WRITE: usize = 20;
+
+/// Status reported to the hub. The board has one update slot (0), accepts only application
+/// images, and has no net core.
+fn ota_status(receiver: &Receiver) -> Status {
+    receiver.status(
+        0,
+        Image::Application.bit(),
+        odyssey_version::cargo_version!(),
+        0,
+    )
+}
+
+/// Application image staged in the DFU partition for embassy-boot to swap in.
 struct MarkerSlots<'a, 'd> {
     dfu: Partition<'a, NoopRawMutex, mpsl::Flash<'d>>,
 }
@@ -113,7 +149,7 @@ struct MarkerSlots<'a, 'd> {
 impl Slots for MarkerSlots<'_, '_> {
     fn capacity(&self, image: Image) -> u32 {
         match image {
-            Image::Application => 220 * 1024,
+            Image::Application => APP_CAPACITY,
             Image::NetCore => 0,
         }
     }
@@ -124,7 +160,7 @@ impl Slots for MarkerSlots<'_, '_> {
         }
         if offset == 0 {
             self.dfu
-                .erase(0, 220 * 1024)
+                .erase(0, APP_CAPACITY)
                 .await
                 .map_err(|_| Code::Flash)?;
         }
@@ -405,12 +441,9 @@ async fn session<F: NorFlash>(
 ) -> Result<(), Error> {
     let mut receiver = Receiver::new();
     let mut slots = MarkerSlots {
-        dfu: Partition::new(ota_flash, 0x48000, 224 * 1024),
+        dfu: Partition::new(ota_flash, DFU_START, DFU_LEN),
     };
-    let initial_status = receiver
-        .status(0, 1, odyssey_version::cargo_version!(), 0)
-        .encode();
-    server.set(&server.markers.ota, &initial_status)?;
+    server.set(&server.markers.ota, &ota_status(&receiver).encode())?;
     loop {
         let event = match select(conn.next(), ENROLLMENT_CHANGED.wait()).await {
             Either::First(event) => event,
@@ -462,10 +495,7 @@ async fn session<F: NorFlash>(
                         {
                             Some(AttErrorCode::INSUFFICIENT_AUTHORISATION)
                         } else {
-                            let status = receiver
-                                .status(0, 1, odyssey_version::cargo_version!(), 0)
-                                .encode();
-                            server.set(&server.markers.ota, &status)?;
+                            server.set(&server.markers.ota, &ota_status(&receiver).encode())?;
                             None
                         }
                     }
@@ -485,7 +515,7 @@ async fn session<F: NorFlash>(
                         ) {
                             Some(AttErrorCode::WRITE_NOT_PERMITTED)
                         } else if write.handle() == server.markers.ota.handle {
-                            if write.data().len() > 20 {
+                            if write.data().len() > MAX_OTA_WRITE {
                                 Some(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
                             } else {
                                 ota_write = true;
@@ -541,12 +571,9 @@ async fn session<F: NorFlash>(
                             .await
                             .unwrap_or(Action::Continue);
                     }
-                    let status = receiver
-                        .status(0, 1, odyssey_version::cargo_version!(), 0)
-                        .encode();
-                    server.set(&server.markers.ota, &status)?;
-                    let active = receiver.status(0, 1, [0; 3], 0).staged != 0
-                        || receiver.status(0, 1, [0; 3], 0).receiving.is_some();
+                    let status = ota_status(&receiver);
+                    server.set(&server.markers.ota, &status.encode())?;
+                    let active = status.staged != 0 || status.receiving.is_some();
                     crate::OTA_ACTIVE.store(active, core::sync::atomic::Ordering::Release);
                     CHANGED.signal(());
                 }
@@ -571,12 +598,7 @@ async fn session<F: NorFlash>(
                     CHANGED.signal(());
                 }
                 reply.send().await;
-                if ota_write {
-                    let status = receiver
-                        .status(0, 1, odyssey_version::cargo_version!(), 0)
-                        .encode();
-                    server.set(&server.markers.ota, &status)?;
-                }
+                // The reset waits for the write response, so the hub sees the commit acknowledged.
                 if ota_write && ota_action == Action::Reset {
                     crate::OTA_RESET_REQUEST.signal(());
                 }

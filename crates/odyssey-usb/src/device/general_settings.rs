@@ -1,3 +1,11 @@
+//! The device's configuration as one value.
+//!
+//! The wire protocol reads a setting at a time ([`ConfigKind`]). [`GeneralSettings`]
+//! collects all of them, and `read_with` is the one reader behind both
+//! `VmDevice::read_all_config` (`vm_device.rs`) and `read_all_config_ctrl`
+//! (`vm_device/control_endpoint.rs`). Each passes its own single-setting read
+//! (`read_config`, `read_config_ctrl`).
+
 use nalgebra::Isometry3;
 use odyssey_common::ocv_types::{MinimalCameraCalibrationParams, OpenCVMatrix3, OpenCVMatrix5x1};
 use opencv_ros_camera::RosOpenCvIntrinsics;
@@ -66,7 +74,9 @@ impl Default for GeneralSettings {
 
 impl GeneralSettings {
     /// Reads every setting with `read_config`, which asks the device for one
-    /// [`ConfigKind`] over whichever channel the caller has.
+    /// [`ConfigKind`] over whichever channel the caller has. Reads run in
+    /// sequence; a reply of the wrong [`GeneralConfig`] variant is an error, and a
+    /// camera model that does not convert fails with `InvalidCameraModel`.
     pub(super) async fn read_with<Read>(
         mut read_config: impl FnMut(ConfigKind) -> Read,
     ) -> Result<Self>

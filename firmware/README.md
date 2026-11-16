@@ -141,18 +141,24 @@ flow; it verifies bootloader, application and net-core versions after updates.
 ## Adaptive marker exposure
 
 lite1 adjusts the sensor exposure (register 0x67) while tracking so marker spots
-stay bright but unsaturated; the logic is `crates/odyssey-detection`. It measures
+stay bright but unsaturated. The controller is `ExposureController` in
+`odyssey_cv::exposure`, whose module docs describe the whole loop. It measures
 only marker-like spots: round or small, at most 300 px, plus marker-sized
 saturated spots. Windows and light strips are ignored. Exposure moves in small
-steps, at most every 400 ms and within 4× either side of the stored setting,
-because each write needs the sensor in idle mode and drops a frame. Saving
-settings stores the user's exposure, not the adapted one.
+steps, at most every 400 ms and within 8× either side of the stored setting,
+because each write needs the sensor in idle mode and drops a frame. If no spot
+is measurable for 1 s, exposure walks back toward the stored setting, so a
+distractor cannot leave it too low to see the markers again. Saving settings
+stores the user's exposure, not the adapted one.
 
 While the hub is tracking, it sends the image positions of the spots it matched to
 the marker pattern (vendor tag `0xfd`, `odyssey_protocol::marker_hint`) at up to
-10 Hz. For 300 ms after a hint, the firmware measures only spots near those
-positions, which excludes round lamps and reflections. Older firmware ignores the
-tag. Legacy ATS Lite does not adapt its exposure.
+10 Hz. It sends nothing when fewer than four markers are matched, so there are
+no hints while the hub is not tracking. For 300 ms after a hint, the firmware
+measures only spots near those positions, which excludes round lamps and
+reflections; without a live hint it uses the shape rules above. Positions are
+on the sensor's report grid, 1/64 pixel. Older firmware ignores the tag. Legacy
+ATS Lite does not adapt its exposure.
 
 ## Live image inspection and calibration
 

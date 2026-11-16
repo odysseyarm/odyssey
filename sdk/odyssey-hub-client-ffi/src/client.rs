@@ -35,6 +35,8 @@ impl std::fmt::Debug for Client {
 #[derive(Default)]
 struct State {
     client: Option<NativeClient>,
+    /// Shared by every subscription started since the last stop. `client_stop_stream`
+    /// cancels it; the next subscription replaces it (`subscription_snapshot`).
     end_token: CancellationToken,
 }
 
@@ -43,6 +45,12 @@ impl Client {
         self.inner.lock().client.clone()
     }
 
+    /// The connection and the token a new subscription ends on.
+    ///
+    /// A cancelled token is replaced first, so a subscription started after a stop
+    /// is not cancelled on arrival, and a later stop still reaches it. Token and
+    /// reset happen under one lock, so a concurrent stop cancels either the old
+    /// token before the reset or the new one after it.
     fn subscription_snapshot(&self) -> (Option<NativeClient>, CancellationToken) {
         let mut inner = self.inner.lock();
         if inner.end_token.is_cancelled() {

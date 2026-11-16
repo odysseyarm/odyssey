@@ -254,6 +254,8 @@ pub(super) fn gen_release(
     requires_netcore: u32,
     min_desktop: &str,
 ) -> eros::Result<()> {
+    // Applied here too, not only when src/release.rs picks the floor, so a
+    // hand-run `gen-release` cannot write a lower one.
     let requires_bootloader = super::with_ats_ota_bootloader_floor(
         matches!(board.name, "lite1" | "legacy-atslite"),
         requires_bootloader.clone(),

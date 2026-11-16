@@ -1,3 +1,9 @@
+//! Firmware update state shared by the update tasks and the views, plus the
+//! USB-installed proofs that gate Bluetooth updates of ATS Lite units.
+//!
+//! `update_task.rs` runs updates on tokio and writes progress here; the views
+//! (`device_firmware_update.rs`) read it and redraw when the ticker fires.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,6 +16,38 @@ use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
 use crate::hub::HubHandle;
+
+/// Lowest ATS Lite stage2 bootloader that Bluetooth (radio) OTA may rely on:
+/// `0.2.0`, stage2 v3.
+///
+/// The released stage2 bootloaders, v1 and v2, do not bound their net-core
+/// install retries. A net-core update that goes wrong over Bluetooth can leave
+/// such a unit retrying in the bootloader with only USB left to recover it. v3
+/// bounds the retries, so every Bluetooth update of an ATS Lite is allowed only
+/// for a unit known to run v3 or newer.
+///
+/// The radio cannot tell. A bootloader version is readable only while the
+/// bootloader itself enumerates in DFU mode, which only happens over USB
+/// (`DfuSession::ensure_bootloader`). So a USB update that finishes on a
+/// bootloader at or above this floor, running an application whose manifest
+/// entry requires the floor too (`xtask` raises every ATS Lite entry to it),
+/// records a proof of the pair: application and bootloader versions. The proof
+/// is persisted per device address in the UI state file. It counts only while
+/// the unit still reports that same application; with any other one it is
+/// dropped, and the next update has to go over USB again.
+///
+/// The proof is enforced in three places, all reading it through
+/// [`FirmwareUpdateManager::radio_ota_bootloader_version`]:
+///
+/// - `ats_ble_update_needs_usb` in `update_check.rs` shows "Plug in USB"
+///   instead of an update button when there is none.
+/// - `run_radio_ota` in `update_task.rs` refuses to start without one.
+/// - `firmware::ota::send` in odyssey-hub-server receives the proven version as
+///   `known_bootloader_floor` and refuses a release whose `requires_bootloader`
+///   is above it.
+///
+/// The marker has no stage2 and is not subject to this gate.
+pub(super) const RADIO_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(0, 2, 0);
 
 struct DeviceUpdate {
     state: FirmwareUpdateState,
@@ -34,6 +72,8 @@ pub(crate) struct FirmwareUpdateManager {
     /// The hub's device list as last seen, which the tokio update task cannot
     /// read from the GPUI-side hub entity.
     devices: Arc<Mutex<Vec<Device>>>,
+    /// Mirrors `UiState::radio_ota_bootloader_proofs`; see
+    /// [`RADIO_OTA_MIN_BOOTLOADER`].
     radio_ota_proofs:
         Arc<Mutex<HashMap<[u8; 6], odyssey_hub_common::config::RadioOtaBootloaderProof>>>,
     generation: Arc<AtomicU64>,
@@ -153,12 +193,20 @@ impl FirmwareUpdateManager {
         self.devices.lock().clone()
     }
 
+    /// The bootloader version proven for this unit, or `None` when Bluetooth
+    /// updates are not allowed for it. Pass the identity the hub reports for
+    /// the unit; a proof recorded for a different application is deleted here.
+    /// An identity the hub has not read yet (as right after a transport swap)
+    /// keeps the proof.
     pub(super) fn radio_ota_bootloader_version(
         &self,
         uuid: [u8; 6],
         app_version: Option<FirmwareVersion>,
         numeric_core: [u32; 3],
     ) -> Option<semver::Version> {
+        if app_version.is_none() && numeric_core == [0, 0, 0] {
+            return None;
+        }
         let mut proofs = self.radio_ota_proofs.lock();
         let bootloader = proofs
             .get(&uuid)
@@ -190,16 +238,18 @@ impl FirmwareUpdateManager {
         }
         semver::Version::parse(&proof.bootloader_version)
             .ok()
-            .filter(|version| *version >= semver::Version::new(0, 2, 0))
+            .filter(|version| *version >= RADIO_OTA_MIN_BOOTLOADER)
     }
 
+    /// Stores the proof from a USB update, unless the bootloader is below
+    /// [`RADIO_OTA_MIN_BOOTLOADER`].
     pub(super) fn record_radio_ota_proof(
         &self,
         uuid: [u8; 6],
         app_version: FirmwareVersion,
         bootloader_version: &semver::Version,
     ) {
-        if *bootloader_version < semver::Version::new(0, 2, 0) {
+        if *bootloader_version < RADIO_OTA_MIN_BOOTLOADER {
             return;
         }
         let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
@@ -368,6 +418,25 @@ mod tests {
                 [1, 2, 3],
             )
             .is_some()
+        );
+    }
+
+    #[test]
+    fn an_unread_identity_keeps_the_proof() {
+        let manager = FirmwareUpdateManager::new();
+        let uuid = [4; 6];
+        let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
+            app_version: "1.2.3".into(),
+            bootloader_version: "0.2.0".into(),
+        };
+        manager.radio_ota_proofs.lock().insert(uuid, proof);
+        assert_eq!(
+            manager.radio_ota_bootloader_version(uuid, None, [0, 0, 0]),
+            None
+        );
+        assert_eq!(
+            manager.radio_ota_bootloader_version(uuid, None, [1, 2, 3]),
+            Some(RADIO_OTA_MIN_BOOTLOADER)
         );
     }
     #[test]

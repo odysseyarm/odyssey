@@ -1,3 +1,11 @@
+//! The simulated room: the screens, their marker patterns, and what a camera at a given pose
+//! sees of them.
+//!
+//! Projection lands on the sensor's report grid (see `SensorModel::report_grid`), so a
+//! position here is in report units, 1/64 native px for the PAG7665QN. `targets` keeps each
+//! marker's distance for the brightness model in `plant.rs`; `markers` is the ideal report
+//! for units without a plant.
+
 use nalgebra::{Matrix3, Point2, Point3, UnitQuaternion, Vector3};
 use odyssey_common::ScreenCalibration;
 use odyssey_protocol::{GeneralConfig, MarkersReport};

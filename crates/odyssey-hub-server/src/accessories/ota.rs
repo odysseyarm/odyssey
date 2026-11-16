@@ -1,3 +1,17 @@
+//! Over-the-air update of a marker control board.
+//!
+//! This is the marker's half of the radio OTA flow: it picks the firmware
+//! entry, downloads and hashes the images, and hands them to
+//! [`crate::firmware::ota::send`] through [`MarkerOtaTransport`]. `send` is the
+//! same session ATS Lite uses; only the transport differs (see that module for
+//! the comparison).
+//!
+//! [`Link`] is already connected to the marker over whichever radio the user
+//! picked, the host's own adapter or an Odyssey dongle; `accessories/transport.rs`
+//! hides the difference. The marker needs no USB bootstrap: it has one
+//! bootloader, never updated over the radio, so [`MARKER_BOOTLOADER`] is a
+//! constant and not a proof like the ATS Lite one.
+
 use std::time::Duration;
 
 use odyssey_hub_common::accessory::AccessoryInfo;
@@ -7,8 +21,18 @@ use super::Link;
 use crate::firmware::ota::OtaTransport;
 use crate::firmware::{self, FirmwareChannel};
 
+/// How long the marker gets to reboot after the commit and reconnect
+/// reporting the new versions.
 const APP_VERSION_TIMEOUT: Duration = Duration::from_secs(30);
+const RECONNECT_RETRY_DELAY: Duration = Duration::from_millis(500);
 
+/// The marker's bootloader version. Updating it needs SWD, and `cargo xtask
+/// firmware` only publishes marker entries that require exactly this version.
+const MARKER_BOOTLOADER: semver::Version = semver::Version::new(0, 0, 1);
+
+/// Updates the connected marker to the firmware the manifest offers it.
+///
+/// Errors are user-facing text.
 pub(super) async fn update(
     link: &mut Link,
     info: &AccessoryInfo,
@@ -34,8 +58,7 @@ pub(super) async fn update(
     .offered
     .ok_or_else(|| "No marker firmware is installable; connect this marker by USB".to_string())?
     .clone();
-    let known_bootloader_floor = semver::Version::new(0, 0, 1);
-    if entry.requires_bootloader > known_bootloader_floor {
+    if entry.requires_bootloader > MARKER_BOOTLOADER {
         return Err(format!(
             "Marker firmware requires bootloader {}; connect this marker by USB",
             entry.requires_bootloader
@@ -81,13 +104,10 @@ pub(super) async fn update(
     };
     let app_version = firmware::parse_version(&entry.version)
         .ok_or_else(|| "Marker app version is invalid".to_string())?;
-    let app_image = entry
-        .files
-        .get("app")
-        .map(|file| firmware::ota::VerifiedImage {
-            bytes: &app,
-            manifest: file,
-        });
+    let app_image = firmware::ota::VerifiedImage {
+        bytes: &app,
+        manifest: app_file,
+    };
     let netcore_image = netcore
         .as_ref()
         .zip(netcore_file)
@@ -98,13 +118,12 @@ pub(super) async fn update(
         firmware::ota::LinkMtu::Marker,
         &entry,
         firmware::ota::Images {
-            application: app_image,
+            application: Some(app_image),
             app_a: None,
             app_b: None,
             netcore: netcore_image,
             app_version,
-            known_bootloader_floor: &known_bootloader_floor,
-            stage2_bootloader_update: false,
+            known_bootloader_floor: &MARKER_BOOTLOADER,
         },
     )
     .await
@@ -133,7 +152,7 @@ impl OtaTransport for MarkerOtaTransport<'_> {
         let deadline = tokio::time::Instant::now() + APP_VERSION_TIMEOUT;
         loop {
             let _ = self.link.disconnect(false).await;
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(RECONNECT_RETRY_DELAY).await;
             if self.link.connect(self.info, false).await.is_ok()
                 && let Ok(status) = read_status(self.link).await
                 && status.firmware_version == app_version
