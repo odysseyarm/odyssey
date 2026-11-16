@@ -178,6 +178,26 @@ impl SensorModel {
             Self::Paj7025 => (98, 98),
         }
     }
+
+    /// Size of the grid this sensor reports marker positions on.
+    const fn report_grid(self) -> [u32; 2] {
+        match self {
+            // The PAG7665QN interpolates 320x240 to 1/64 px.
+            Self::Pag7665qn => [20480, 15360],
+            // shortcut: PAJ units keep the simulator's ideal 640x480 pinhole, not the
+            // PAJ7025's 4095 grid; upgrade when the legacy sim models NF/WF optics.
+            Self::Paj7025 => [640, 480],
+        }
+    }
+
+    /// Near-field camera matrix a unit ships with, row-major, in report-grid units.
+    const fn camera_matrix(self) -> [f32; 9] {
+        match self {
+            // 78 x 62.7 degrees over the PAG7646J2's 320x240.
+            Self::Pag7665qn => [12645.0, 0.0, 10240.0, 0.0, 12601.0, 7680.0, 0.0, 0.0, 1.0],
+            Self::Paj7025 => [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0],
+        }
+    }
 }
 
 /// Since: Odyssey Desktop 0.7.0.
