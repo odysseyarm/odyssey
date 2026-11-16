@@ -136,6 +136,9 @@ class SelectionTests(unittest.TestCase):
     def test_the_toolchain_reaches_every_suite(self) -> None:
         self.assertEqual(select("rust-toolchain.toml"), set(impact.SUITES))
 
+    def test_nextest_config_reaches_every_suite(self) -> None:
+        self.assertEqual(select(".config/nextest.toml"), set(impact.SUITES))
+
     def test_clippy_config_reaches_linted_workspaces_without_tracking(self) -> None:
         self.assertEqual(
             select("clippy.toml"), {"host", "xtask", "protocols", "ffi", "uniffi"}

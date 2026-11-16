@@ -1,0 +1,11 @@
+[test-groups]
+gui = { max-threads = 1 }
+
+# Matched by test name: a binary() filter fails config parsing in runs whose
+# selection does not build the desktop GUI smoke binary.
+[[profile.default.overrides]]
+filter = 'test(/^calibration_input_dialog_and_sidebar_use_real_widgets$/)'
+test-group = 'gui'
+
+[profile.gui]
+default-filter = 'test(/^calibration_input_dialog_and_sidebar_use_real_widgets$/)'

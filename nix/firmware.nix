@@ -615,8 +615,8 @@ let
     '';
   };
 
-  # Host tests the marker release workflow gates on. Dev profile, as `cargo test`
-  # runs them: debug assertions and overflow checks stay on.
+  # Host tests the marker release workflow gates on. Dev profile keeps debug
+  # assertions and overflow checks enabled.
   testArgs =
     {
       dir,
@@ -636,10 +636,14 @@ let
     };
   hostTest =
     args:
-    craneLib.cargoTest (
+    craneLib.cargoNextest (
       args
       // {
         cargoArtifacts = craneLib.buildDepsOnly (args // { doCheck = false; });
+        cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+        postCheck = lib.optionalString (!lib.hasInfix "--lib" args.cargoExtraArgs) ''
+          cargo test ''${CARGO_PROFILE:+--profile $CARGO_PROFILE} ${args.cargoExtraArgs} --doc
+        '';
       }
     );
 in
@@ -715,13 +719,13 @@ in
     // netcoreDist "legacy-atslite" legacyAtslite.net-core;
 
   checks = {
-    # cargo test --manifest-path firmware/marker-control-board/Cargo.toml --lib --target <host>
+    # Host nextest check with explicit host target for marker-control-board.
     marker-control-board-tests = hostTest (testArgs {
       dir = "firmware/marker-control-board";
       pname = "marker-control-board-tests";
       cargoExtraArgs = "--locked --offline --lib --target ${hostTriple}";
     });
-    # cargo test --manifest-path firmware/better-dfu/Cargo.toml --features dfu,application,embassy-time/std
+    # Host nextest check with dfu/application features enabled.
     better-dfu-tests = hostTest (testArgs {
       dir = "firmware/better-dfu";
       pname = "better-dfu-tests";

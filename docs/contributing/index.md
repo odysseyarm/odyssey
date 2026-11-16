@@ -126,18 +126,20 @@ CBOR and packed legacy codecs retain their separate frozen-wire tests and proofs
 
 ```sh
 nix build .#checks.x86_64-linux.postcard-compatibility
-cargo test --offline -p odyssey-protocol --features schema --test postcard_compatibility
-UPDATE_POSTCARD_COMPATIBILITY=1 cargo test --offline -p odyssey-protocol --features schema --test postcard_compatibility
+cargo nextest run --offline -p odyssey-protocol --features schema --test postcard_compatibility
+UPDATE_POSTCARD_COMPATIBILITY=1 cargo nextest run --offline -p odyssey-protocol --features schema --test postcard_compatibility
 ```
 
-The last command explicitly updates the baseline for a published contract; it is
-disabled in CI. Do not refresh it to hide an incompatible change. Schema derives
-follow Serde conversion types, transparent wrappers and byte-array encoding.
-Nalgebra field overrides describe its actual tuple encoding. Unsupported Serde
-layout overrides fail schema compilation rather than silently using Rust layout.
-Host CI checks host and firmware feature configurations. Firmware omits unused
-image-response decoders by rejecting payloads while retaining enum slots; never
-use `serde(skip)` or `skip_deserializing` to retire a published wire variant.
+Rust tests remain ordinary `#[test]` functions. `cargo nextest run` runs unit and
+integration tests; nextest does not run doctests, so use `cargo test --doc` for
+doctests. The last command explicitly updates the baseline for a published
+contract; it is disabled in CI. Do not refresh it to hide an incompatible change.
+Schema derives follow Serde conversion types, transparent wrappers and byte-array
+encoding. Nalgebra field overrides describe its actual tuple encoding. Unsupported
+Serde layout overrides fail schema compilation rather than silently using Rust
+layout. Host CI checks host and firmware feature configurations. Firmware omits
+unused image-response decoders by rejecting payloads while retaining enum slots;
+never use `serde(skip)` or `skip_deserializing` to retire a published wire variant.
 The same Nix check runs schema-enabled host Clippy with warnings treated as errors.
 
 Pull requests and merge groups select this check from protocol crate dependencies,
@@ -368,8 +370,8 @@ The headless save regression uses isolated simulator storage and covers
 replacement, remembered display settings and preservation after invalid input:
 
 ```sh
-cargo test -p odyssey-desktop --features sim \
-  saving_replaces_a_screen_and_a_rejected_calibration_keeps_it
+cargo nextest run -p odyssey-desktop --features sim \
+  -E 'test(saving_replaces_a_screen_and_a_rejected_calibration_keeps_it)'
 ```
 
 Calibration text beside icons needs `flex_1().min_w_0()` on the text column

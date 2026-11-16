@@ -68,6 +68,16 @@ class SafetyTest(unittest.TestCase):
             data = gzip.compress(data)
         with self.assertRaises(ValueError):
             self.scan(data)
+        payload = self.root / "too-deep.gz"
+        payload.write_bytes(data)
+        with self.assertRaises(ValueError):
+            safety.scan_file(payload, self.fingerprints, public_graph=True)
+
+    def test_unsupported_archive_is_rejected_for_public_graphs(self) -> None:
+        payload = self.root / "unsupported.7z"
+        payload.write_bytes(b"7z\xbc\xaf\x27\x1c")
+        with self.assertRaisesRegex(ValueError, "Unsupported archive format"):
+            safety.scan_file(payload, self.fingerprints, public_graph=True)
 
     def test_public_archive_fixtures_do_not_hide_later_private_members(self) -> None:
         payload = self.root / "fixture.zip"
