@@ -107,6 +107,10 @@ rand_chacha = { version = "0.3", default-features = false }
 embedded-io = "0.7"
 embedded-io-async = "0.7"
 
+[features]
+# Also trust the public development key. Dev and test builds only.
+dev-signing-key = ["atslite-common/dev-signing-key"]
+
 [build-dependencies]
 memory-spec = "0.3.0"
 

@@ -165,7 +165,8 @@ let
         common.privateCheckout packages drv;
   };
   vendorOf = dir: craneLib.vendorCargoDeps (vendorArgs // { cargoLock = lockOf dir; });
-  # Firmware that compiles odyssey-cv: its final build overlays the private source.
+  # Firmware whose lock file names odyssey-cv gets `withPrivateSource` on its final
+  # build only; see "Private-source boundary" in common.nix.
   usesPrivate = dir: lib.hasInfix "odyssey-cv.git" (builtins.readFile (lockOf dir));
   # -Z build-std compiles the standard library from the toolchain's rust-src, whose
   # own dependencies have to be vendored too.
@@ -604,8 +605,8 @@ let
     );
 in
 {
-  # Packages that compile odyssey-cv. Their ELFs keep DWARF for probe-rs, so none of
-  # them may reach the public binary cache.
+  # Firmware packages built from the real odyssey-cv (see common.nix). Their ELFs
+  # keep DWARF for probe-rs, so publicCache in default.nix excludes them.
   privatePackages =
     lib.concatMap
       (board: [
@@ -618,6 +619,7 @@ in
         "lite1"
         "legacy-atslite"
       ];
+  # Stub vendor directories that private-source-boundary inspects.
   privateVendors = [
     (vendorOf "firmware/lite1")
     (stdVendorOf "firmware/legacy-atslite")
@@ -689,7 +691,12 @@ in
     better-ota-tests = hostTest (testArgs {
       dir = "firmware/better-ota";
       pname = "better-ota-tests";
-      cargoExtraArgs = "--locked --offline";
+      cargoExtraArgs = "--locked --offline --features signed,dev-signing-key";
+    });
+    release-signing-tests = hostTest (testArgs {
+      dir = "firmware/release-signing";
+      pname = "release-signing-tests";
+      cargoExtraArgs = "--locked --offline --features dev-signing-key";
     });
   };
 

@@ -8,6 +8,12 @@ selector that guesses wrong must cost time, never coverage.
 A suite is affected by the Cargo path-dependency closure of its crates plus the
 non-Cargo inputs listed in `build_rules`. Cargo.lock files are listed by hand
 because the SDK workspaces carry their own and ignore the root one.
+
+The flow: `load_graph` reads every tracked Cargo.toml into a path-dependency
+graph, `build_rules` turns it into one `Rule` per suite, `affected` matches the
+changed files against the rules, and `render` prints the flags the workflows
+read (`steps.impact.outputs.<suite>`). `select` wraps those steps and falls back
+to running everything.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -65,13 +71,19 @@ HOST_DATA = (
 
 @dataclass
 class Rule:
+    """What makes one suite run.
+
+    A changed path runs the suite if it is inside any of `paths` (or `EVERYWHERE`)
+    and not inside `skip`, or if `match` accepts it.
+    """
+
     paths: list[str]
     skip: tuple[str, ...] = ()
     match: Callable[[str], bool] | None = None
-    reasons: dict[str, str] = field(default_factory=dict)
 
 
 def inside(path: str, prefix: str) -> bool:
+    """Whether `path` is `prefix` or lies below it (whole path components only)."""
     prefix = prefix.rstrip("/")
     return path == prefix or path.startswith(prefix + "/")
 
@@ -79,6 +91,7 @@ def inside(path: str, prefix: str) -> bool:
 def dependency_paths(
     directory: str, data: dict[str, Any], shared: dict[str, str]
 ) -> set[str]:
+    """Directories a manifest depends on by path, directly or through `workspace = true`."""
     tables = [data.get(key, {}) for key in DEPENDENCY_TABLES]
     for target in data.get("target", {}).values():
         tables.extend(target.get(key, {}) for key in DEPENDENCY_TABLES)
@@ -100,6 +113,11 @@ def dependency_paths(
 def load_graph(
     root: Path, manifests: list[str]
 ) -> tuple[dict[str, set[str]], dict[str, Any]]:
+    """Path-dependency graph of the manifests, keyed by crate directory.
+
+    Edges to directories that are not in `manifests` are dropped. Also returns the
+    root manifest's `[workspace]` table. The root manifest itself is not a node.
+    """
     parsed = {
         posixpath.dirname(manifest) or ".": tomllib.loads(
             (root / manifest).read_text(encoding="utf-8-sig")
@@ -123,6 +141,11 @@ def load_graph(
 
 
 def closure(graph: dict[str, set[str]], roots: list[str]) -> list[str]:
+    """The roots plus everything they depend on, sorted.
+
+    Raises LookupError for a root with no manifest, so a renamed crate fails the
+    selector (which then runs everything) instead of silently dropping a suite's inputs.
+    """
     missing = [root for root in roots if root not in graph]
     if missing:
         raise LookupError(f"no Cargo manifest in {missing}")
@@ -173,7 +196,7 @@ def build_rules(
     ffi.paths += [f"{workflow}ffi-build.yml", f"{workflow}ffi-ci.yml"]
     uniffi.paths += [f"{workflow}uniffi-build.yml", f"{workflow}uniffi-ci.yml"]
 
-    def lockfile(path: str) -> bool:
+    def cargo_file(path: str) -> bool:
         return posixpath.basename(path) in ("Cargo.toml", "Cargo.lock")
 
     def formatted(path: str) -> bool:
@@ -196,6 +219,7 @@ def build_rules(
             closure(graph, ["crates/odyssey-protocol"])
             + [
                 "firmware/better-ota",
+                "firmware/release-signing",
                 "Cargo.toml",
                 "Cargo.lock",
                 "clippy.toml",
@@ -226,7 +250,7 @@ def build_rules(
                 "clippy.toml",
                 f"{workflow}host-ci.yml",
             ],
-            match=lockfile,
+            match=cargo_file,
         ),
         "proofs": Rule(
             closure(graph, ["crates/odyssey-protocol", "crates/odyssey-version"])
@@ -312,6 +336,7 @@ def select(environment: dict[str, str]) -> tuple[dict[str, str | None], str]:
 
 
 def render(result: dict[str, str | None]) -> dict[str, bool]:
+    """Per-suite flags plus `host_ci`, which gates the shared host-ci workflow."""
     flags = {suite: result[suite] is not None for suite in SUITES}
     flags["host_ci"] = any(
         flags[suite] for suite in ("host", "xtask", "protocols", "proofs", "cache")

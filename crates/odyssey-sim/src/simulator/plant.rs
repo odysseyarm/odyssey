@@ -3,10 +3,14 @@
 //! Each frame turns the LEDs and distractors in view into the spots the chip
 //! would report from its exposure, gain, light threshold and area registers.
 //! The real [`ExposureController`] closes the loop through register 0x67, so a
-//! simulated unit adapts exactly as the firmware does.
+//! simulated unit adapts exactly as the firmware does. The rest of the loop is
+//! the hub's: `unit.rs` sends [`Frame::report`] as a `MarkersReport`, and the hub's
+//! `MarkerHint` comes back through [`Sensor::hint`]. `odyssey_cv::exposure` describes
+//! the loop in full.
 //!
-//! Spot positions are on the chip's report grid, 1/64 native px, which is what
-//! `MarkersReport`, hub hints and the controller all use.
+//! Spot positions are on the chip's report grid, 1/64 native px
+//! (`MarkersReport::UNITS_PER_PX`), which is what `MarkersReport`, hub hints and the
+//! controller all use. `World::targets` projects markers onto the same grid.
 
 use std::f64::consts::{PI, TAU};
 
@@ -14,6 +18,7 @@ use nalgebra::Point2;
 use odyssey_cv::exposure::{ExposureController, Limits, Spot};
 use odyssey_protocol::MarkersReport;
 
+use super::SensorModel;
 use super::unit::Registers;
 use super::world::Marker;
 
@@ -25,9 +30,12 @@ const AREA_MAX: [(u8, u8); 2] = [(0, 0x70), (0, 0x71)];
 const LED_ALWAYS_ON: u8 = 0x80;
 const EXPOSURE_MASK: u8 = 0x7f;
 
-/// The chip's report grid: 320x240 native px interpolated to 1/64 px.
-const GRID: [f64; 2] = [20480.0, 15360.0];
-const UNITS_PER_PX: f64 = 64.0;
+/// The chip's report grid, which is the native image scaled by `UNITS_PER_PX`.
+const GRID: [f64; 2] = {
+    let grid = SensorModel::Pag7665qn.report_grid();
+    [grid[0] as f64, grid[1] as f64]
+};
+const UNITS_PER_PX: f64 = MarkersReport::UNITS_PER_PX;
 /// Datasheet gain the brightness below is stated for.
 const BASE_GAIN: f64 = 3.0;
 /// Peak pixel value of a unit-intensity LED at 1 m per exposure unit (100 µs) at
@@ -67,6 +75,7 @@ pub(crate) enum Distractor {
     Lamp { px: [f64; 2], intensity: f64 },
 }
 
+/// What produced a spot, so the evaluation can score markers apart from distractors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
     /// Index into the markers the frame was made from.
@@ -185,8 +194,10 @@ pub(crate) struct Sensor {
     /// Scales every marker LED, as battery sag or a brightness setting does.
     pub(crate) led_intensity: f64,
     pub(crate) distractors: Vec<Distractor>,
-    /// `None` keeps whatever exposure the registers hold.
+    /// Whether the exposure controller runs. When false, the exposure the registers
+    /// hold stays fixed: the evaluation's baseline.
     adaptive: bool,
+    /// Created on the first frame, and again whenever the host writes register 0x67.
     controller: Option<ExposureController>,
     blind_until_ms: u64,
 }

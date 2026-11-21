@@ -85,6 +85,8 @@ eros = "0.8"
 hex = "0.4"
 memory-spec = "0.3"
 pure-release = { git = "https://github.com/Abrahamh08/pure-release" }
+release-signing = { path = "../../firmware/release-signing", features = ["dev-signing-key"] }
+salty = { version = "0.3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.11"

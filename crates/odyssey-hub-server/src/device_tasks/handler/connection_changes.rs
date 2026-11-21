@@ -18,7 +18,7 @@ use tracing::{info, warn};
 
 use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, StandbyLink};
 use crate::device_tasks::messages::Message;
-use crate::device_tasks::netcore_probe::spawn_packet_netcore_probe;
+use crate::device_tasks::netcore_probe::spawn_packet_probes;
 use crate::device_tasks::sensor_streams::SensorStreams;
 use crate::device_tasks::tracking::CameraModels;
 use crate::device_tasks::transport_selection::TransportSelection;
@@ -101,8 +101,10 @@ impl DeviceHandler {
 
         // A unit with no cable has no USB control to read the net core
         // through, so ask over the packet stream instead.
-        if self.connections.control_device.is_none() && self.device.netcore_release == 0 {
-            spawn_packet_netcore_probe(&self.self_tx, &events_device, self.protocol_version);
+        if self.connections.control_device.is_none()
+            && (self.device.netcore_release == 0 || self.device.bootloader_version == [0, 0, 0])
+        {
+            spawn_packet_probes(&self.self_tx, &events_device, self.protocol_version);
         }
 
         info!(
@@ -331,6 +333,18 @@ impl DeviceHandler {
         self.send_device_update().await;
     }
 
+    pub(super) async fn on_bootloader_version(&mut self, version: [u32; 3]) {
+        if self.device.bootloader_version == version {
+            return;
+        }
+        info!(
+            "Bootloader of {:02x?} reports version {version:?}",
+            self.device.uuid
+        );
+        self.device.bootloader_version = version;
+        self.send_device_update().await;
+    }
+
     /// Ends the handler unless BLE events can carry on without the cable.
     pub(super) async fn on_remove_control_device(&mut self) -> ControlFlow<()> {
         let uuid = self.device.uuid;
@@ -362,8 +376,11 @@ impl DeviceHandler {
         self.device
             .capabilities
             .remove(DeviceCapabilities::NETCORE_KNOWN);
+        // The bootloader is replaced by a USB DFU, so a reading from before the
+        // cable left is stale too.
+        self.device.bootloader_version = [0, 0, 0];
         if let Some(events) = &self.connections.events_device {
-            spawn_packet_netcore_probe(&self.self_tx, events, self.protocol_version);
+            spawn_packet_probes(&self.self_tx, events, self.protocol_version);
         }
         // USB control is gone, so this is not a direct-USB handler any more. The next
         // USB re-plug must send AddControlDevice.

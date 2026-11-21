@@ -11,6 +11,8 @@
 
 /// Since: Odyssey Desktop 0.7.0.
 pub mod ble;
+/// Since: Unreleased.
+pub mod bootloader_version;
 /// Since: Odyssey Desktop 0.7.1.
 pub mod crash_record;
 /// Since: Odyssey Desktop 0.7.0.

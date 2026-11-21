@@ -92,6 +92,10 @@ pub(crate) enum DeviceTaskMessage {
     /// application only learns it once its BLE controller has answered. Marks the
     /// reading as settled (`NETCORE_KNOWN`), including a settled 0.
     SetNetCoreRelease(u16),
+    /// The installed bootloader's version read back from the application, `[0, 0, 0]`
+    /// when the bootloader predates reporting. Sent by the probe that starts with the
+    /// control endpoint or, for a unit with no cable, the Bluetooth events link.
+    SetBootloaderVersion([u32; 3]),
     /// Clear bonds: an ATS clears its single bond, a dongle clears all of its bonds.
     ClearBond {
         reply: Reply<()>,

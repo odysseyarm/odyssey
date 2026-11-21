@@ -1,6 +1,7 @@
 mod board;
 mod manifest;
 mod release;
+mod signing;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -28,16 +29,24 @@ const BOOT_STATE_PAGES: [&str; 2] = ["0xF9000", "0xFA000"];
 const GUARD_PAGES: [&str; 2] = ["0xFC000", "0xFD000"];
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Raises ATS Lite application release manifests to the bounded-recovery floor.
+/// First stage2 bootloader that bounds net-core install retries (v3); older ones
+/// do not, so an ATS Lite app release must not require less. See the ATS Lite
+/// notes in `firmware/manifests/README.md`.
+const ATS_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(0, 2, 0);
+
+/// Raises the `requires_bootloader` of an ATS Lite application release to
+/// [`ATS_OTA_MIN_BOOTLOADER`]; other boards and higher floors pass through.
+///
+/// A prerelease of the minimum (`0.2.0-rc.1`) is below it by `SemVer` precedence
+/// and is raised.
 ///
 /// Since: Unreleased.
 pub(crate) fn with_ats_ota_bootloader_floor(
     is_ats_lite: bool,
     requested: semver::Version,
 ) -> semver::Version {
-    let minimum = semver::Version::new(0, 2, 0);
-    if is_ats_lite && requested.cmp_precedence(&minimum).is_lt() {
-        minimum
+    if is_ats_lite && requested.cmp_precedence(&ATS_OTA_MIN_BOOTLOADER).is_lt() {
+        ATS_OTA_MIN_BOOTLOADER
     } else {
         requested
     }
@@ -81,6 +90,15 @@ pub(crate) enum Cmd {
     /// crates/odyssey-hub-server/src/firmware/pack.rs), and this runs the same
     /// completeness check before it finishes.
     BuildPack(manifest::PackArgs),
+    /// Print the hex Ed25519 release signature of one image.
+    ///
+    /// `--signer dev` uses the public development seed, which only
+    /// `dev-signing-key` builds trust. Any other `--signer` is a command (split
+    /// on whitespace, no quoting) that reads the 67-byte message on stdin and
+    /// writes the 64 raw signature bytes to stdout. `gen-release` signs its
+    /// files the same way when `ODYSSEY_SIGNER` is set. See "Signed releases"
+    /// in `firmware/manifests/README.md`.
+    Sign(signing::SignArgs),
     /// Copy one release entry from the nightly manifest to the stable one.
     ///
     /// Stable only ever contains entries someone promoted here, so this is the one
@@ -195,6 +213,7 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             Ok(())
         }
         Cmd::BuildPack(args) => manifest::build_pack(&args),
+        Cmd::Sign(args) => signing::sign(&args),
         Cmd::Promote { device, version } => manifest::promote(&device, &version),
     }
 }
@@ -884,7 +903,7 @@ mod tests {
 
     #[test]
     fn ats_ota_release_floor_is_at_least_v3_and_preserves_higher_floors() {
-        let minimum = semver::Version::new(0, 2, 0);
+        let minimum = ATS_OTA_MIN_BOOTLOADER;
         assert_eq!(
             with_ats_ota_bootloader_floor(true, semver::Version::new(0, 0, 0)),
             minimum

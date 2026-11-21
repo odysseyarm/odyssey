@@ -1,3 +1,8 @@
+"""Tests for impact.py: which suites a set of changed paths selects.
+
+Run with `python3 -m unittest discover -s .github/actions/impact`.
+"""
+
 import re
 import tempfile
 import unittest
@@ -5,6 +10,9 @@ from pathlib import Path
 
 import impact
 
+# A miniature workspace: protocol <- protocol-macros, hub-server through
+# `workspace = true`, an excluded SDK that reaches protocol through a target
+# table, and a second SDK with its own `[workspace]`.
 MANIFESTS = {
     "Cargo.toml": """
 [workspace]
@@ -40,6 +48,7 @@ path = "../../crates/odyssey-protocol"
 
 
 def select(*changed: str) -> set[str]:
+    """Suites that `changed` would run against the MANIFESTS workspace."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for name, text in MANIFESTS.items():

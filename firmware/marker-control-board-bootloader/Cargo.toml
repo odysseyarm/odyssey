@@ -56,6 +56,7 @@ unused_workspace_dependencies = "deny"
 
 [dependencies]
 odyssey-version = { path = "../../crates/odyssey-version" }
+bootloader-info = { path = "../bootloader-info" }
 better-dfu = { path = "../better-dfu", features = ["dfu", "cortex-m"] }
 embassy-boot = "0.6.1"
 embassy-nrf = { version = "0.9.0", features = ["nrf52833", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }
@@ -68,6 +69,7 @@ cortex-m-rt = "0.7.5"
 
 [build-dependencies]
 memory-spec = "0.3.0"
+bootloader-info = { path = "../bootloader-info" }
 
 [patch.crates-io]
 embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }

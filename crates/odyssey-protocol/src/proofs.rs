@@ -30,6 +30,9 @@ fn marker_writes_follow_frozen_gatt_layout() {
     assert_eq!(marker_control::parse_pairing_state(data), pairing);
 }
 
+/// Every accepted request has exactly the length its opcode requires, so `Data` never borrows
+/// past the frame and `Begin`, `Query`, `Commit`, `Abort` and `Signature` carry no trailing
+/// bytes.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(10)]
@@ -52,8 +55,48 @@ fn ota_decode_never_accepts_noncanonical_frames_or_out_of_bounds_data() {
     {
         assert_eq!(length, 1);
     }
+    if let Ok(crate::ota::Request::Signature { offset, bytes, .. }) = result {
+        assert!(!bytes.is_empty());
+        assert_eq!(bytes.len() + 3, length);
+        assert!(usize::from(offset) + bytes.len() <= crate::ota::SIGNATURE_RECORD_LEN);
+    }
 }
 
+/// Pins the signature chunk frame (opcode 5, image, record offset, record bytes) the host sends
+/// and every verifying firmware parses, and that decode inverts encode for every in-bounds chunk.
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(80)]
+fn ota_signature_chunk_keeps_frozen_layout_and_roundtrips() {
+    let record: [u8; crate::ota::SIGNATURE_RECORD_LEN] = kani::any();
+    let offset: u8 = kani::any();
+    let length: usize = kani::any();
+    kani::assume(
+        length >= 1 && length <= record.len() && usize::from(offset) + length <= record.len(),
+    );
+    let start = usize::from(offset);
+    let request = crate::ota::Request::Signature {
+        image: crate::ota::Image::NetCore,
+        offset,
+        bytes: &record[start..start + length],
+    };
+    let mut frame = [0; crate::ota::MAX_FRAME];
+    assert_eq!(request.encode(&mut frame), Ok(3 + length));
+    assert_eq!(frame[0], 5);
+    assert_eq!(frame[1], 1);
+    assert_eq!(frame[2], offset);
+    for index in 0..length {
+        assert_eq!(frame[3 + index], record[start + index]);
+    }
+    assert_eq!(
+        crate::ota::Request::decode(&frame[..3 + length]),
+        Ok(request)
+    );
+}
+
+/// Pins the status byte layout (flags byte `0b101_1011` is supported 3, staged 2, receiving
+/// application, signature required) that the host and every firmware parse, and that decode
+/// inverts encode.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(4)]
@@ -69,12 +112,13 @@ fn ota_status_keeps_frozen_flags_and_little_endian_fields() {
         offset,
         firmware_version: version,
         netcore_release: 0xabcd,
+        signature_required: true,
     };
     let bytes = status.encode();
     assert_eq!(bytes[0], crate::ota::PROTOCOL_VERSION);
     assert_eq!(bytes[1], 0);
     assert_eq!(bytes[2], 2);
-    assert_eq!(bytes[3], 0b01_1011);
+    assert_eq!(bytes[3], 0b101_1011);
     assert_eq!(bytes[4], offset as u8);
     assert_eq!(bytes[5], (offset >> 8) as u8);
     assert_eq!(bytes[6], (offset >> 16) as u8);
@@ -96,6 +140,7 @@ fn ota_status_keeps_frozen_flags_and_little_endian_fields() {
     assert_eq!(decoded.supported, status.supported);
     assert_eq!(decoded.staged, status.staged);
     assert_eq!(decoded.receiving, status.receiving);
+    assert_eq!(decoded.signature_required, status.signature_required);
     assert_eq!(decoded.offset, offset);
     for index in 0..3 {
         assert_eq!(decoded.firmware_version[index], version[index]);
@@ -165,6 +210,7 @@ fn device_version_decodes_frozen_unsigned_16_bit_fields() {
     }
 }
 
+/// A hint that decodes is canonical: re-encoding it reproduces the input bytes.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(27)]
@@ -181,6 +227,7 @@ fn marker_hint_decode_never_accepts_noncanonical_bytes() {
     }
 }
 
+/// Encoding then decoding returns the same hint for every point count up to `MAX_POINTS`.
 #[cfg(kani)]
 #[kani::proof]
 #[kani::unwind(27)]

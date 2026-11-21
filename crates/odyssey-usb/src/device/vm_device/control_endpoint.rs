@@ -139,6 +139,48 @@ impl VmDevice {
         }
     }
 
+    /// Read the installed stage2 bootloader's version from the application,
+    /// `[0, 0, 0]` when the bootloader predates reporting.
+    ///
+    /// Needs device protocol 0.2.1 or newer. Older applications cannot decode the
+    /// request, so callers gate on the version.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, or unexpected-property errors.
+    /// Since: Unreleased.
+    pub async fn read_bootloader_version(&self) -> Result<[u32; 3]> {
+        match self
+            .ctrl_request(
+                DeviceMsg::ReadProp(PropKind::BootloaderVersion),
+                REPLY_TIMEOUT,
+                |msg| {
+                    matches!(
+                        msg,
+                        DeviceMsg::ReadPropResponse(Props::BootloaderVersion(_))
+                    )
+                },
+            )
+            .await?
+        {
+            DeviceMsg::ReadPropResponse(Props::BootloaderVersion(version)) => Ok(version),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    /// Read the bootloader version through the packet stream, the path a unit
+    /// reached over Bluetooth through a dongle answers on. Same semantics and
+    /// protocol gate as [`Self::read_bootloader_version`].
+    ///
+    /// # Errors
+    /// Returns packet transport, timeout, or unexpected-property errors.
+    /// Since: Unreleased.
+    pub async fn read_bootloader_version_over_packets(&self) -> Result<[u32; 3]> {
+        match self.read_prop(PropKind::BootloaderVersion).await? {
+            Props::BootloaderVersion(version) => Ok(version),
+            other => Err(Error::unexpected(&other)),
+        }
+    }
+
     /// # Errors
     /// Returns control-transfer, timeout, or unexpected-property errors.
     /// Since: Odyssey Desktop 0.6.0.

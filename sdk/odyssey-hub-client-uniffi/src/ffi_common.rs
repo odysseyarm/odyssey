@@ -485,6 +485,7 @@ impl TryFrom<Device> for common::device::Device {
             product_id: device.product_id.unwrap_or(0),
             name: Self::name_bytes(&device.name),
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         })
     }
 }

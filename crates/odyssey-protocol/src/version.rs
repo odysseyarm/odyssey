@@ -9,9 +9,10 @@ use odyssey_protocol_macros::protocol_type;
 /// new variant on an exhaustive enum, a removed item) bumps it even when no
 /// packet changed. Version 0.2.0 widens firmware version components from `u16`
 /// to `u32`. CBOR arrays keep the same shape, but large values need new consumers.
+/// Version 0.2.1 appends `PropKind::BootloaderVersion`.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 2, 0];
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 2, 1];
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]

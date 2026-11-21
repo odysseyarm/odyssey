@@ -137,6 +137,14 @@ pub trait Platform {
     fn netcore_release() -> u16 {
         0
     }
+
+    /// Stage2 bootloader version, `[0, 0, 0]` when unknown or when the platform has no
+    /// versioned bootloader.
+    ///
+    /// Since: Unreleased.
+    fn bootloader_version() -> [u32; 3] {
+        [0, 0, 0]
+    }
 }
 
 /// Context passed to object_mode containing platform-specific state

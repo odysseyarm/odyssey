@@ -113,6 +113,7 @@ impl UsbDeviceManager {
             },
             name: Device::name_bytes(dev_info.product_string().unwrap_or("")),
             netcore_release: 0,
+            bootloader_version: [0, 0, 0],
         };
         self.dfu_devices
             .insert(direct_usb_id.to_owned(), entry.clone());

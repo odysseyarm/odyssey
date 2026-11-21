@@ -14,19 +14,30 @@ use super::semver::semver_at_least;
 /// applications cannot decode the request.
 const NETCORE_RELEASE_PROTOCOL: [u16; 3] = [0, 1, 5];
 
-/// How a net core release read reaches the application.
-pub(super) enum NetCoreLink {
+/// First device protocol that carries `PropKind::BootloaderVersion`.
+const BOOTLOADER_VERSION_PROTOCOL: [u16; 3] = [0, 2, 1];
+
+/// How a read of a device property reaches the application.
+#[derive(Clone)]
+pub(super) enum ProbeLink {
     /// USB control endpoint: a unit on the cable.
     Control(VmDevice),
     /// The packet stream: a unit reached over Bluetooth through a dongle.
     Packets(VmDevice),
 }
 
-impl NetCoreLink {
+impl ProbeLink {
     async fn read(&self) -> Result<u16> {
         match self {
             Self::Control(device) => device.read_netcore_release().await,
             Self::Packets(device) => device.read_netcore_release_over_packets().await,
+        }
+    }
+
+    async fn read_bootloader_version(&self) -> Result<[u32; 3]> {
+        match self {
+            Self::Control(device) => device.read_bootloader_version().await,
+            Self::Packets(device) => device.read_bootloader_version_over_packets().await,
         }
     }
 }
@@ -111,7 +122,7 @@ enum ProbeMiss {
 /// so only a positive release is reported there. A device protocol that cannot
 /// carry the property never starts a probe and stays unknown.
 pub(super) fn spawn_netcore_probe(
-    link: NetCoreLink,
+    link: ProbeLink,
     device_protocol: Option<[u16; 3]>,
     handler: mpsc::Sender<DeviceTaskMessage>,
 ) {
@@ -119,7 +130,7 @@ pub(super) fn spawn_netcore_probe(
         return;
     }
     tokio::spawn(async move {
-        let over_control = matches!(link, NetCoreLink::Control(_));
+        let over_control = matches!(link, ProbeLink::Control(_));
         let release = probe_net_core(
             &NETCORE_PROBE_DELAYS_S,
             over_control,
@@ -135,17 +146,90 @@ pub(super) fn spawn_netcore_probe(
     });
 }
 
-/// Starts a probe over the packet stream for a unit whose only link is
+/// Poll `read` for the bootloader version. Returns the version to report to
+/// the handler, or `None` when no read ever answered.
+///
+/// Unlike the net core, the application answers from flash at once, so any
+/// answer settles the probe, including `[0, 0, 0]` from a bootloader that
+/// predates the version record. Only a failed or timed-out read is retried.
+async fn probe_bootloader<F, Fut>(
+    delays_s: &[u64],
+    is_closed: impl Fn() -> bool,
+    mut read: F,
+) -> Option<[u32; 3]>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<[u32; 3]>>,
+{
+    let (first_delay_s, later_delays_s) = delays_s.split_first()?;
+    sleep(Duration::from_secs(*first_delay_s)).await;
+    (|| {
+        let pending = (!is_closed()).then(&mut read);
+        async {
+            let Some(pending) = pending else {
+                return Err(ProbeMiss::Closed);
+            };
+            match tokio::time::timeout(Duration::from_secs(3), pending).await {
+                Ok(Ok(version)) => Ok(version),
+                Ok(Err(e)) => {
+                    debug!("Could not read the bootloader version: {e}");
+                    Err(ProbeMiss::NoAnswer)
+                }
+                Err(_) => {
+                    debug!("Reading the bootloader version timed out");
+                    Err(ProbeMiss::NoAnswer)
+                }
+            }
+        }
+    })
+    .retry(later_delays_s.iter().map(|&s| Duration::from_secs(s)))
+    .when(|miss| !matches!(miss, ProbeMiss::Closed))
+    .await
+    .ok()
+}
+
+/// Read the bootloader version over `link` and hand it to the device's handler
+/// task. A device protocol that cannot carry the property never starts a probe
+/// and stays unknown.
+pub(super) fn spawn_bootloader_probe(
+    link: ProbeLink,
+    device_protocol: Option<[u16; 3]>,
+    handler: mpsc::Sender<DeviceTaskMessage>,
+) {
+    if !device_protocol.is_some_and(|p| semver_at_least(p, BOOTLOADER_VERSION_PROTOCOL)) {
+        return;
+    }
+    tokio::spawn(async move {
+        let version = probe_bootloader(
+            &NETCORE_PROBE_DELAYS_S,
+            || handler.is_closed(),
+            || link.read_bootloader_version(),
+        )
+        .await;
+        if let Some(version) = version {
+            let _ = handler
+                .send(DeviceTaskMessage::SetBootloaderVersion(version))
+                .await;
+        }
+    });
+}
+
+/// Starts the net core and bootloader probes over the packet stream for a unit whose only link is
 /// Bluetooth. The handler passes a weak sender so holding it does not keep
 /// its own channel open after every other owner has dropped theirs.
-pub(super) fn spawn_packet_netcore_probe(
+pub(super) fn spawn_packet_probes(
     handler: &mpsc::WeakSender<DeviceTaskMessage>,
     events: &VmDevice,
     device_protocol: [u16; 3],
 ) {
     if let Some(handler) = handler.upgrade() {
         spawn_netcore_probe(
-            NetCoreLink::Packets(events.clone()),
+            ProbeLink::Packets(events.clone()),
+            Some(device_protocol),
+            handler.clone(),
+        );
+        spawn_bootloader_probe(
+            ProbeLink::Packets(events.clone()),
             Some(device_protocol),
             handler,
         );
@@ -223,5 +307,50 @@ mod netcore_probe_tests {
         .await;
         assert_eq!(out, None);
         assert_eq!(*reads.borrow(), 0);
+    }
+
+    async fn probe_bootloader_script(script: Vec<Result<[u32; 3]>>) -> Option<[u32; 3]> {
+        let delays = vec![0u64; script.len()];
+        let script = RefCell::new(VecDeque::from(script));
+        probe_bootloader(
+            &delays,
+            || false,
+            || {
+                let next = script
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("read past the script");
+                async move { next }
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn bootloader_without_a_record_settles_at_zero() {
+        assert_eq!(
+            probe_bootloader_script(vec![Ok([0, 0, 0])]).await,
+            Some([0, 0, 0])
+        );
+    }
+
+    #[tokio::test]
+    async fn bootloader_read_is_retried_after_a_failed_read() {
+        assert_eq!(
+            probe_bootloader_script(vec![failed_version(), Ok([0, 2, 1])]).await,
+            Some([0, 2, 1])
+        );
+    }
+
+    #[tokio::test]
+    async fn bootloader_stays_unknown_when_no_read_answers() {
+        assert_eq!(
+            probe_bootloader_script(vec![failed_version(), failed_version()]).await,
+            None
+        );
+    }
+
+    fn failed_version() -> Result<[u32; 3]> {
+        Err(odyssey_usb::Error::Closed)
     }
 }

@@ -83,6 +83,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bootloader-info"
+version = "0.1.0"
+
+[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -731,6 +735,7 @@ version = "0.2.1"
 dependencies = [
  "better-boot",
  "better-dfu",
+ "bootloader-info",
  "cfg-if",
  "cortex-m",
  "cortex-m-rt",

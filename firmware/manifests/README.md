@@ -16,7 +16,8 @@ somebody promotes it to stable.
 
 Hosts parse a manifest whole or not at all, and take the **first** entry they
 can install, so entries are newest-first and one malformed entry hides every
-update. `cargo test -p odyssey-hub-server --lib firmware` parses both files.
+update. `cargo nextest run -p odyssey-hub-server --lib -E 'test(firmware)'`
+parses both files.
 
 Both files use manifest schema 2. `requires_bootloader` is a SemVer string, and
 `0.0.0` means no minimum. Stage2 bootloader file entries pin a SemVer `version`,
@@ -320,8 +321,8 @@ bootloader floor is above the bootloader stable head carries. Promote bridge
 entries before the entries that require those components, because hosts install
 stable's head.
 
-The xtask unit tests (`cargo test --manifest-path crates/xtask/Cargo.toml`) run
-these refusals against synthetic manifests and leave the committed manifests alone.
+The xtask unit tests (`cargo nextest run --manifest-path crates/xtask/Cargo.toml`)
+run these refusals against synthetic manifests and leave committed manifests alone.
 
 ### Marker control board
 
@@ -370,8 +371,95 @@ Unlike the dual-bank recipes, marker `gen-release` hashes the published
 `app.bin` directly, never a local build or unpublished components.
 Offline packs accept either a single `app` or the complete `app-a`/`app-b`
 layout, and they refuse mixed or incomplete layouts. Single-image entries cannot
-carry net-core/bootloader files or a nonzero net-core requirement. Existing
-checksum and relative-path checks apply unchanged.
+carry net-core/bootloader files or a nonzero net-core requirement. Shared asset
+paths must agree on SHA-256 and size across selected entries.
+Checksums and relative paths are validated before packing.
+
+## Signed releases
+
+lite1 and marker applications require Ed25519 signatures before activating radio
+updates; legacy ATS Lite remains unsigned. The message format, trusted keys and
+verifier live in `firmware/release-signing`, shared by firmware and `xtask`.
+
+**Message.** 67 bytes, little-endian integers:
+
+| Bytes | Content |
+|---|---|
+| 18 | `ODYSSEY-FW-SIG-V1\0` |
+| 1 | component id: 0 lite1 app, 1 lite1 net core, 2 legacy-atslite app, 3 legacy-atslite net core, 4 marker app, 5 dongle app |
+| 4 | image size in bytes (`u32`) |
+| 12 | version as three `u32`: the application `major, minor, patch`, or `release, 0, 0` for a net core |
+| 32 | SHA-256 of the image |
+
+The signature is the 64-byte pure Ed25519 signature of that message. The
+component id keeps a signed image from being moved to another product or role,
+and the version keeps an old signed image from passing as a new one. An
+application's version is the manifest entry's `version` without pre-release
+and build parts. The stage2 bootloader and the dongle's `dfu-*` ZIPs have no
+signed component yet, so `gen-release` does not sign them.
+
+**Signing.** `cargo xtask firmware sign <component> <image> --version <v>
+--signer <signer>` prints the signature as 128 hex characters. Components are
+`lite1-app`, `lite1-netcore`, `legacy-atslite-app`, `legacy-atslite-netcore`,
+`marker-app` and `dongle-app`; a net core's version is its release counter.
+`--signer dev` signs with the development seed. Anything else is a command,
+split on whitespace without quoting, that reads the message on stdin and writes
+the 64 raw signature bytes to stdout. `xtask` verifies each signature against
+the keys in `release-signing` before it prints or stores it, so a signer whose
+public key is not installed (below) is refused.
+
+Set `ODYSSEY_SIGNER` to a production-key signer before `gen-release` (or
+`release publish`) for lite1 or marker. Missing signers, untrusted signatures and
+development-key signatures fail before the manifest is written. Signed file
+entries are `app`, `app-a`, `app-b` and `net-core`. Legacy ATS Lite may omit the
+signer; if supplied, its signatures must also use production keys.
+
+**YubiKey recipe (unverified until the hardware arrives).** Generate an
+Ed25519 key in PIV slot 9c (needs YubiKey firmware 5.7 or newer; OpenPGP's
+`gpg --detach-sign` wraps the signature in a PGP packet and is not raw Ed25519,
+so it does not work here):
+
+```
+ykman piv keys generate --algorithm ED25519 9c pub.pem
+ODYSSEY_SIGNER="yubico-piv-tool -a verify-pin -a sign-data -s 9c -A ED25519" \
+  cargo xtask firmware <board> gen-release ...
+```
+
+The `yubico-piv-tool` flags, its stdin and stdout handling for raw Ed25519 and
+the PIN and touch prompts have not been run against a device. If the tool
+prints anything but the 64 signature bytes, wrap it in a script that does.
+
+**Key slots.** `RELEASE_KEYS` in `firmware/release-signing/src/keys.rs` has four
+slots; slot 0 holds the `matthew@ampotato` key and the rest are empty (all zero).
+A signature from any one trusted key is accepted. To add a key, put its raw
+32-byte public key in a free slot:
+
+```
+ykman piv keys export 9c - | openssl pkey -pubin -outform DER | tail -c 32 | xxd -i
+```
+
+The last 32 bytes of the DER encoding are the key. An all-zero slot never
+matches. Builds with the `dev-signing-key` feature also trust a development key
+whose seed is in `crates/xtask/src/firmware/signing.rs`; the seed is public, so
+such builds accept signatures anyone can make and must never be released.
+Optimized firmware builds with that feature require `ODYSSEY_DEV_SIGNING=1`;
+use it only for firmware you flash yourself. `--signer dev` is for the explicit
+development signing command, not release generation.
+
+**Custody plan.** Two or three publisher YubiKeys each fill a slot, and the
+fourth slot stays free so a lost key can be replaced. An offline backup key
+is generated on a separate YubiKey and stored apart from the publishers.
+To replace a key, release firmware that trusts the new key signed by a
+remaining key, then ship it to units over the normal update path before the old
+key is retired. Losing every key blocks authenticated radio updates. USB DFU
+currently remains an unsigned recovery path; SWD recovery also remains possible.
+
+**Enforcement.** lite1 and marker enable radio verification through dependency
+features; `--no-default-features` cannot disable it. The shared OTA library keeps
+a compile-time split for unsigned legacy ATS Lite. SHA-256 uses Nordic's Oberon
+software implementation on nRF5340 and `sha2` on the marker; Ed25519 uses `salty`.
+Bootloader USB DFU verification (`better-dfu`'s `_verify` path) is not enabled.
+Radio authentication is not secure boot and does not protect USB DFU or SWD.
 
 ## Schema rules
 

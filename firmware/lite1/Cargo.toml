@@ -62,7 +62,7 @@ path = "src/bin/usb_test.rs"
 # Local crates
 pag7665qn = { path = "../pag7665qn" }
 donger-common = { path = "../donger-common", features = ["atslite"] }
-atslite-common = { path = "../atslite-common" }
+atslite-common = { path = "../atslite-common", features = ["signed-ota"] }
 atslite-transport = { path = "../atslite-transport" }
 lite1-boot-api = { path = "../lite1-boot-api", features = ["defmt"] }
 better-dfu = { path = "../better-dfu", features = ["application", "defmt", "cortex-m"] }
@@ -126,6 +126,10 @@ rand_chacha = { version = "0.3", default-features = false }
 # IO traits
 embedded-io = "0.7"
 embedded-io-async = "0.7"
+
+[features]
+# Also trust the public development key. Dev and test builds only.
+dev-signing-key = ["atslite-common/dev-signing-key"]
 
 [build-dependencies]
 memory-spec = "0.3.0"

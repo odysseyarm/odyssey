@@ -58,9 +58,8 @@ pub(super) fn percent_complete(progress: usize, total: usize) -> usize {
 }
 
 impl FirmwareUpdateState {
-    /// The states before any update has started, which the availability check
-    /// owns and may overwrite on every render. Every other state belongs to the
-    /// running update.
+    /// The states before an update starts. The availability check owns these;
+    /// update lifecycle owns every later state, including its final result.
     pub(super) fn is_before_update(&self) -> bool {
         matches!(
             self,

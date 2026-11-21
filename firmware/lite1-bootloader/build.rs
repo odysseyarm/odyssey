@@ -115,9 +115,20 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
     fs::write(out_dir.join("memory.x"), memory_x)
         .unwrap_or_else(|e| panic!("Failed to write memory.x: {}", e));
 
+    // Fixed-address record at the end of the stage2 region (see bootloader-info). It goes
+    // after the last FLASH-loaded section of cortex-m-rt's link.x: lld wants load addresses
+    // to rise in script order, and an earlier slot would also move the packing of .text.
+    let info_x = format!(
+        "SECTIONS {{\n  .bootloader_info {:#010x} : {{ KEEP(*(.bootloader_info)) }} > FLASH\n}}\nINSERT AFTER .gnu.sgstubs;\n",
+        bootloader_info::address(u32::try_from(bootloader.end()).expect("flash addresses fit u32"))
+    );
+    fs::write(out_dir.join("bootloader_info.x"), info_x)
+        .unwrap_or_else(|e| panic!("Failed to write bootloader_info.x: {}", e));
+
     println!("cargo:rustc-link-search={}", out_dir.display());
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
+    println!("cargo:rustc-link-arg-bins=-Tbootloader_info.x");
     if env::var("CARGO_FEATURE_DEFMT").is_ok() {
         println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
     }

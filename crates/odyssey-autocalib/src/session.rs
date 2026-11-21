@@ -483,6 +483,7 @@ pub struct Session {
     screen: Option<ScreenMeasurement>,
     markers: Option<MarkerMeasurement>,
     marker_mode: bool,
+    /// Owner-set stop request; see [`Session::set_cancellation_flag`].
     cancellation: Option<Arc<AtomicBool>>,
     /// Exposure transitions must finish discarding old frames even after a timeout.
     settle_remaining: usize,
@@ -590,8 +591,11 @@ impl Session {
             marker_report_at: None,
         }
     }
-    /// Installs owner-controlled cancellation checked between camera frames.
-    /// An active camera read ends at its configured frame timeout.
+
+    /// Installs a stop flag the owner can raise from another thread. The session
+    /// checks it between camera frames and between measurement stages, and then
+    /// fails with [`SessionError::Cancelled`]. A frame read already in progress
+    /// ends at its configured frame timeout. The session never clears the flag.
     pub fn set_cancellation_flag(&mut self, cancellation: Arc<AtomicBool>) {
         self.cancellation = Some(cancellation);
     }
