@@ -7,6 +7,7 @@ use odyssey_hub_common::device::{Device, DeviceCapabilities};
 use odyssey_hub_server::firmware;
 
 use super::dfu_session::DfuSession;
+use super::downloads::ReleaseImage;
 use super::poll_window::{NotYet, poll_window};
 use super::update_manager::FirmwareUpdateManager;
 use super::update_state::FirmwareUpdateState;
@@ -94,15 +95,28 @@ impl DfuSession<'_> {
     /// The caller continues in that same DFU session without detaching again. Nothing
     /// reports the net core while the device is in the bootloader, so whether the
     /// copy took is only readable once the new application runs.
-    pub(super) async fn flash_netcore(&self, image: &[u8], release: u16) -> eros::Result<()> {
+    pub(super) async fn flash_netcore(&self, image: &ReleaseImage) -> eros::Result<()> {
         self.enter_dfu().await?;
 
         let alt = firmware::find_netcore_alt_for_device(&self.uuid, self.vid, self.pid)
             .context("The net core cannot be updated over DFU")?;
-        tracing::info!("Updating net core to release {} on alt {}", release, alt);
-        self.flash_with_progress("NET", alt, image, "Net core flash", |progress, total| {
-            FirmwareUpdateState::FlashingNetCore { progress, total }
-        })
+        tracing::info!(
+            "Updating net core to release {} on alt {}",
+            image.release,
+            alt
+        );
+        self.flash_with_progress(
+            "NET",
+            alt,
+            &image.data,
+            firmware::DfuSigning {
+                component: image.component,
+                version: [u32::from(image.release), 0, 0],
+                signature: image.signature.as_deref(),
+            },
+            "Net core flash",
+            |progress, total| FirmwareUpdateState::FlashingNetCore { progress, total },
+        )
         .await?;
 
         self.set_state(FirmwareUpdateState::InstallingNetCore);

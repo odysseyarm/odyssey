@@ -88,6 +88,12 @@ let
       installPhaseCommand = "touch $out";
     }
   );
+  slotTableProofs = pkgs.runCommand "slot-table-proofs" { nativeBuildInputs = [ verus ]; } ''
+    cp -r ${../firmware/slot-table} source
+    cd source
+    sh tools/verify-verus.sh
+    touch "$out"
+  '';
   nativeInputs = [
     pkgs.pkg-config
     pkgs.protobuf
@@ -287,6 +293,7 @@ in
     // lib.optionalAttrs (system == "x86_64-linux") {
       release-proofs = releaseProofs;
       wire-proofs = wireProofs;
+      slot-table-proofs = slotTableProofs;
     };
   # What a trusted builder may publish to the public binary cache. Nothing
   # else leaves the machine (.github/actions/push-cache/local.sh). `closures`
@@ -309,6 +316,7 @@ in
       // lib.optionalAttrs (system == "x86_64-linux") {
         release-proofs = releaseProofs;
         wire-proofs = wireProofs;
+        slot-table-proofs = slotTableProofs;
       };
   };
   devShells = {

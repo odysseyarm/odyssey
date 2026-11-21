@@ -7,6 +7,8 @@ use embassy_usb::driver::Driver;
 use embassy_usb::types::{InterfaceNumber, StringIndex};
 use embassy_usb::{Builder, FunctionBuilder, Handler};
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind};
+#[cfg(feature = "signed-dfu")]
+use release_signing::{Component, DFU_HEADER_LEN, DfuVerifier};
 
 use crate::Reset;
 use crate::consts::{
@@ -38,124 +40,61 @@ pub enum DfuTarget {
     Bootloader,
 }
 
-/// Forwards firmware chunks to a target this core cannot flash directly, such as the network core over IPC.
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub trait DfuForwarder {
-    /// Called at the start of a firmware download to the alternate target
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if forwarding cannot start.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    fn start_forward(&mut self, total_size: usize) -> Result<(), ()>;
+/// Writes downloaded firmware to its selected target.
+pub trait FirmwareWriter {
+    const WRITE_SIZE: usize;
+    type Error: Into<Status>;
 
-    /// Called for each chunk of firmware data to be forwarded
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if the chunk cannot be forwarded.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    fn forward_chunk(&mut self, offset: usize, data: &[u8]) -> Result<(), ()>;
+    fn write_for_target(
+        &mut self,
+        target: DfuTarget,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<(), Self::Error>;
 
-    /// Called when firmware download is complete
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if forwarding cannot finish.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    fn finish_forward(&mut self) -> Result<(), ()>;
+    fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), Self::Error>;
 }
 
-/// Writes downloaded firmware to the flash region of a [`DfuTarget`].
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub trait DualBankWriter {
-    /// Writes `data` at byte `offset` within `target`'s region.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if the write fails.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    fn write_for_target(&mut self, target: DfuTarget, offset: usize, data: &[u8])
-    -> Result<(), ()>;
+impl<'d, DFU: NorFlash, STATE: NorFlash> FirmwareWriter
+    for BlockingFirmwareUpdater<'d, DFU, STATE>
+{
+    const WRITE_SIZE: usize = DFU::WRITE_SIZE;
+    type Error = FirmwareUpdaterError;
 
-    /// Marks `target` as updated once the final block has been written.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(())` if the target cannot be marked updated.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()>;
-}
-
-/// Forwarder for app-only DFU; every call fails.
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub struct NullForwarder;
-
-impl DfuForwarder for NullForwarder {
-    fn start_forward(&mut self, _total_size: usize) -> Result<(), ()> {
-        Err(())
-    }
-
-    fn forward_chunk(&mut self, _offset: usize, _data: &[u8]) -> Result<(), ()> {
-        Err(())
-    }
-
-    fn finish_forward(&mut self) -> Result<(), ()> {
-        Err(())
-    }
-}
-
-/// Writer for systems without dual-bank support; every call fails.
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub struct NullDualBankWriter;
-
-impl DualBankWriter for NullDualBankWriter {
     fn write_for_target(
         &mut self,
         _target: DfuTarget,
-        _offset: usize,
-        _data: &[u8],
-    ) -> Result<(), ()> {
-        Err(())
+        offset: usize,
+        data: &[u8],
+    ) -> Result<(), Self::Error> {
+        self.write_firmware(offset, data)
     }
 
-    fn mark_updated_for_target(&mut self, _target: DfuTarget) -> Result<(), ()> {
-        Err(())
+    fn mark_updated_for_target(&mut self, _target: DfuTarget) -> Result<(), Self::Error> {
+        self.mark_updated()
     }
 }
+
+impl From<()> for Status {
+    fn from(_: ()) -> Self {
+        Status::ErrWrite
+    }
+}
+
 /// DFU-mode state machine and USB control handler; [`usb_dfu`] registers it.
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub struct Control<
-    'd,
-    DFU: NorFlash,
-    STATE: NorFlash,
-    RST: Reset,
-    FWD: DfuForwarder,
-    DBW: DualBankWriter,
-    const BLOCK_SIZE: usize,
-> {
-    _updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
+pub struct Control<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> {
+    writer: WRITER,
     attrs: DfuAttributes,
     state: State,
     status: Status,
     offset: usize,
+    wire_block: u16,
+    written_offset: usize,
+    target_changed_during_download: bool,
+    pending: usize,
     buf: AlignedBuffer<BLOCK_SIZE>,
     reset: RST,
-
     target: DfuTarget,
-    _forwarder: FWD,
-    dual_bank_writer: DBW,
-    _total_size: usize,
     active_bank_is_a: bool,
     single_bank_capacity: Option<usize>,
     app_string: Option<StringIndex>,
@@ -168,39 +107,36 @@ pub struct Control<
     firmware_version_string: Option<(StringIndex, &'static str)>,
     download_started_flag: Option<&'d Cell<bool>>,
     interface: Option<InterfaceNumber>,
-
-    #[cfg(feature = "_verify")]
-    public_key: &'static [u8; 32],
+    #[cfg(feature = "signed-dfu")]
+    components: [Component; 3],
+    #[cfg(feature = "signed-dfu")]
+    verifier: Option<DfuVerifier>,
 }
 
-impl<
-    'd,
-    DFU: NorFlash,
-    STATE: NorFlash,
-    RST: Reset,
-    FWD: DfuForwarder,
-    DBW: DualBankWriter,
-    const BLOCK_SIZE: usize,
-> Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
+impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
+    Control<'d, WRITER, RST, BLOCK_SIZE>
 {
     /// The default download target is the app bank that is not running, per `active_bank_is_a`.
+    /// With `signed-dfu`, `components` maps APP, NET and BOOTLOADER targets in that order.
     ///
     /// Since: Odyssey Desktop 0.6.0.
     pub fn new(
-        updater: BlockingFirmwareUpdater<'d, DFU, STATE>,
+        writer: WRITER,
         attrs: DfuAttributes,
         reset: RST,
-        forwarder: FWD,
-        dual_bank_writer: DBW,
         active_bank_is_a: bool,
-        #[cfg(feature = "_verify")] public_key: &'static [u8; 32],
+        #[cfg(feature = "signed-dfu")] components: [Component; 3],
     ) -> Self {
         Self {
-            _updater: updater,
+            writer,
             attrs,
             state: State::DfuIdle,
             status: Status::Ok,
             offset: 0,
+            wire_block: 0,
+            written_offset: 0,
+            target_changed_during_download: false,
+            pending: 0,
             buf: AlignedBuffer([0; BLOCK_SIZE]),
             reset,
             target: if active_bank_is_a {
@@ -208,9 +144,6 @@ impl<
             } else {
                 DfuTarget::AppBankA
             },
-            _forwarder: forwarder,
-            dual_bank_writer,
-            _total_size: 0,
             active_bank_is_a,
             single_bank_capacity: None,
             app_string: None,
@@ -223,9 +156,10 @@ impl<
             state_flagger: None,
             download_started_flag: None,
             interface: None,
-
-            #[cfg(feature = "_verify")]
-            public_key,
+            #[cfg(feature = "signed-dfu")]
+            components,
+            #[cfg(feature = "signed-dfu")]
+            verifier: None,
         }
     }
 
@@ -287,73 +221,106 @@ impl<
         self.state = State::DfuIdle;
         self.status = Status::Ok;
         self.offset = 0;
-        // Default to the inactive app bank.
+        self.wire_block = 0;
+        self.written_offset = 0;
+        self.pending = 0;
+        self.target_changed_during_download = false;
+        self.verifier_reset();
         self.target = if self.active_bank_is_a {
             DfuTarget::AppBankB
         } else {
             DfuTarget::AppBankA
         };
-        self._total_size = 0;
     }
 
     fn reset_state(&mut self) {
-        self.offset = 0;
-        self.state = State::DfuIdle;
-        self.status = Status::Ok;
-        self.target = if self.active_bank_is_a {
-            DfuTarget::AppBankB
-        } else {
-            DfuTarget::AppBankA
-        };
-        self._total_size = 0;
+        self.reset_boot_state();
     }
 
-    fn write_download(&mut self, len: usize) -> Result<(), Status> {
-        if let Some(capacity) = self.single_bank_capacity {
-            let end = self.offset.checked_add(len).ok_or(Status::ErrAddress)?;
-            if end > capacity || !self.offset.is_multiple_of(BLOCK_SIZE) {
+    fn verifier_reset(&mut self) {
+        #[cfg(feature = "signed-dfu")]
+        {
+            self.verifier = None;
+        }
+    }
+
+    fn write_aligned(&mut self, len: usize) -> Result<(), Status> {
+        let end = self
+            .written_offset
+            .checked_add(len)
+            .ok_or(Status::ErrAddress)?;
+        if self
+            .single_bank_capacity
+            .is_some_and(|capacity| end > capacity)
+        {
+            return Err(Status::ErrAddress);
+        }
+        self.writer
+            .write_for_target(self.target, self.written_offset, &self.buf.as_ref()[..len])
+            .map_err(Into::into)?;
+        self.written_offset = end;
+        Ok(())
+    }
+
+    fn write_download(&mut self, mut data: &[u8]) -> Result<(), Status> {
+        let chunk_capacity = BLOCK_SIZE - BLOCK_SIZE % WRITER::WRITE_SIZE;
+        if chunk_capacity == 0 {
+            return Err(Status::ErrAddress);
+        }
+        while !data.is_empty() {
+            let take = data.len().min(BLOCK_SIZE - self.pending);
+            if take == 0 {
                 return Err(Status::ErrAddress);
             }
-            let padded = len.next_multiple_of(DFU::WRITE_SIZE);
-            self.buf.as_mut()[len..padded].fill(0xff);
-            self._updater
-                .write_firmware(self.offset, &self.buf.as_ref()[..padded])
-                .map_err(Status::from)
-        } else {
-            self.dual_bank_writer
-                .write_for_target(self.target, self.offset, &self.buf.as_ref()[..len])
-                .map_err(|()| Status::ErrWrite)
+            self.buf.as_mut()[self.pending..self.pending + take].copy_from_slice(&data[..take]);
+            self.pending += take;
+            data = &data[take..];
+            let writable = self.pending.min(chunk_capacity);
+            let writable = writable - writable % WRITER::WRITE_SIZE;
+            if writable != 0 {
+                self.write_aligned(writable)?;
+                self.pending -= writable;
+                self.buf
+                    .as_mut()
+                    .copy_within(writable..writable + self.pending, 0);
+            }
         }
+        Ok(())
+    }
+
+    fn flush_pending(&mut self) -> Result<(), Status> {
+        if self.pending == 0 {
+            return Ok(());
+        }
+        let padded = self
+            .pending
+            .checked_add(WRITER::WRITE_SIZE - 1)
+            .ok_or(Status::ErrAddress)?
+            / WRITER::WRITE_SIZE
+            * WRITER::WRITE_SIZE;
+        if padded > BLOCK_SIZE {
+            return Err(Status::ErrAddress);
+        }
+        self.buf.as_mut()[self.pending..padded].fill(0xff);
+        self.write_aligned(padded)?;
+        self.pending = 0;
+        Ok(())
     }
 
     fn finish_download(&mut self) -> Result<(), Status> {
-        if self.single_bank_capacity.is_none() {
-            return self
-                .dual_bank_writer
-                .mark_updated_for_target(self.target)
-                .map_err(|()| Status::ErrWrite);
-        }
         if self.offset == 0 {
             return Err(Status::ErrNotDone);
         }
-        #[cfg(not(feature = "_verify"))]
-        return self._updater.mark_updated().map_err(Status::from);
-        #[cfg(feature = "_verify")]
-        {
-            const SIGNATURE_LEN: usize = 64;
-            let len = self
-                .offset
-                .checked_sub(SIGNATURE_LEN)
-                .ok_or(Status::ErrVerify)?;
-            let len = u32::try_from(len).map_err(|_| Status::ErrAddress)?;
-            let mut signature = [0; SIGNATURE_LEN];
-            self._updater
-                .read_dfu(len, &mut signature)
-                .map_err(Status::from)?;
-            self._updater
-                .verify_and_mark_updated(self.public_key, &signature, len)
-                .map_err(Status::from)
-        }
+        #[cfg(feature = "signed-dfu")]
+        self.verifier
+            .take()
+            .ok_or(Status::ErrVerify)?
+            .finish()
+            .map_err(|_| Status::ErrVerify)?;
+        self.flush_pending()?;
+        self.writer
+            .mark_updated_for_target(self.target)
+            .map_err(Into::into)
     }
 
     fn addressed_to_us(&self, req: &embassy_usb::control::Request) -> bool {
@@ -365,13 +332,14 @@ impl<
 }
 
 impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize>
-    Control<'d, DFU, STATE, RST, NullForwarder, NullDualBankWriter, BLOCK_SIZE>
+    Control<'d, BlockingFirmwareUpdater<'d, DFU, STATE>, RST, BLOCK_SIZE>
 {
     /// Writes one application through embassy-boot's scratch-swap updater.
     ///
     /// `active_capacity` excludes the DFU partition's scratch page. Only APP
     /// alternate setting 0 is exposed; the bootloader cannot replace itself.
-    ///
+    /// With `signed-dfu`, `app_component` is the signing role for this image.
+
     /// # Panics
     ///
     /// Panics if the USB block size is zero or not flash-write aligned.
@@ -383,18 +351,16 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize>
         attrs: DfuAttributes,
         reset: RST,
         active_capacity: usize,
-        #[cfg(feature = "_verify")] public_key: &'static [u8; 32],
+        #[cfg(feature = "signed-dfu")] app_component: Component,
     ) -> Self {
         assert!(BLOCK_SIZE != 0 && BLOCK_SIZE.is_multiple_of(DFU::WRITE_SIZE));
         let mut control = Self::new(
             updater,
             attrs,
             reset,
-            NullForwarder,
-            NullDualBankWriter,
             false,
-            #[cfg(feature = "_verify")]
-            public_key,
+            #[cfg(feature = "signed-dfu")]
+            [app_component; 3],
         );
         control.single_bank_capacity = Some(active_capacity);
         control
@@ -415,18 +381,15 @@ impl From<FirmwareUpdaterError> for Status {
     }
 }
 
-impl<
-    'd,
-    DFU: NorFlash,
-    STATE: NorFlash,
-    RST: Reset,
-    FWD: DfuForwarder,
-    DBW: DualBankWriter,
-    const BLOCK_SIZE: usize,
-> Handler for Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>
+impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
+    for Control<'d, WRITER, RST, BLOCK_SIZE>
 {
     fn set_alternate_setting(&mut self, interface: InterfaceNumber, alternate: u8) {
         if self.interface != Some(interface) {
+            return;
+        }
+        if self.state != State::DfuIdle {
+            self.target_changed_during_download = true;
             return;
         }
         if self.single_bank_capacity.is_some() && alternate != 0 {
@@ -502,78 +465,127 @@ impl<
                 if let Some(flag) = self.download_started_flag {
                     flag.set(true);
                 }
-                if self.single_bank_capacity.is_some()
-                    && usize::from(req.value) != self.offset.div_ceil(BLOCK_SIZE)
+                if data.len() > BLOCK_SIZE || data.len() != req.length as usize {
+                    self.status = Status::ErrAddress;
+                    self.state = State::Error;
+                    self.verifier_reset();
+                    return Some(OutResponse::Rejected);
+                }
+                let starting = self.state == State::DfuIdle;
+                if (starting && req.value != 0)
+                    || (!starting
+                        && (self.state != State::Download
+                            || req.value != self.wire_block
+                            || self.target_changed_during_download))
                 {
                     self.status = Status::ErrAddress;
                     self.state = State::Error;
+                    self.verifier_reset();
                     return Some(OutResponse::Rejected);
                 }
-                if req.value == 0 {
-                    info!("Download starting to {:?}", self.target);
-                    self.state = State::Download;
+                if starting {
                     self.offset = 0;
+                    self.wire_block = 0;
+                    self.state = State::Download;
                 }
 
-                if self.state != State::Download {
-                    error!("Unexpected DNLOAD while chip is waiting for a GETSTATUS");
-                    self.status = Status::ErrUnknown;
-                    self.state = State::Error;
-                    return Some(OutResponse::Rejected);
-                }
-
-                if data.len() > BLOCK_SIZE || data.len() != req.length as usize {
-                    error!("USB data length does not match the download request or block size");
-                    self.status = Status::ErrUnknown;
-                    self.state = State::Error;
-                    return Some(OutResponse::Rejected);
-                }
-
-                debug!("Copying {} bytes to buffer", data.len());
-                self.buf.as_mut()[..data.len()].copy_from_slice(data);
-
-                let final_transfer = req.length == 0;
-                if final_transfer {
-                    debug!("Receiving final transfer for {:?}", self.target);
-                    let finished_target = self.target;
+                if data.is_empty() {
                     match self.finish_download() {
-                        Ok(_) => {
+                        Ok(()) => {
                             self.reset_boot_state();
                             self.status = Status::Ok;
                             self.state = State::ManifestSync;
-                            info!("{:?} update complete", finished_target);
                         }
                         Err(status) => {
-                            error!("Error completing {:?} update", self.target);
+                            self.verifier_reset();
                             self.state = State::Error;
                             self.status = status;
                         }
                     }
                 } else {
-                    debug!(
-                        "Writing {} bytes at offset {} to {:?}",
-                        data.len(),
-                        self.offset,
-                        self.target
-                    );
-                    match self.write_download(data.len()) {
-                        Ok(_) => {
-                            debug!("Write successful, new offset: {}", self.offset + data.len());
+                    #[cfg(feature = "signed-dfu")]
+                    let payload = if self.verifier.is_none() {
+                        if data.len() < DFU_HEADER_LEN {
+                            self.status = Status::ErrVerify;
+                            self.state = State::Error;
+                            return Some(OutResponse::Rejected);
+                        }
+                        let component = match self.target {
+                            DfuTarget::AppBankA | DfuTarget::AppBankB => self.components[0],
+                            DfuTarget::NetCore => self.components[1],
+                            DfuTarget::Bootloader => self.components[2],
+                        };
+                        match DfuVerifier::new(component, &data[..DFU_HEADER_LEN]) {
+                            Ok(verifier)
+                                if self.single_bank_capacity.is_none_or(|capacity| {
+                                    usize::try_from(verifier.image_size())
+                                        .is_ok_and(|size| size <= capacity)
+                                }) =>
+                            {
+                                self.verifier = Some(verifier);
+                            }
+                            Ok(_) => {
+                                self.status = Status::ErrAddress;
+                                self.state = State::Error;
+                                return Some(OutResponse::Rejected);
+                            }
+                            Err(_) => {
+                                self.status = Status::ErrVerify;
+                                self.state = State::Error;
+                                return Some(OutResponse::Rejected);
+                            }
+                        }
+                        &data[DFU_HEADER_LEN..]
+                    } else {
+                        data
+                    };
+                    #[cfg(not(feature = "signed-dfu"))]
+                    let payload = data;
+                    let Some(next_offset) = self.offset.checked_add(payload.len()) else {
+                        self.verifier_reset();
+                        self.status = Status::ErrAddress;
+                        self.state = State::Error;
+                        return Some(OutResponse::Rejected);
+                    };
+                    if self
+                        .single_bank_capacity
+                        .is_some_and(|capacity| next_offset > capacity)
+                    {
+                        self.verifier_reset();
+                        self.status = Status::ErrAddress;
+                        self.state = State::Error;
+                        return Some(OutResponse::Rejected);
+                    }
+                    #[cfg(feature = "signed-dfu")]
+                    if let Some(verifier) = self.verifier.as_mut() {
+                        let expected = usize::try_from(verifier.image_size()).unwrap_or(usize::MAX);
+                        if next_offset > expected || verifier.update(payload).is_err() {
+                            self.verifier_reset();
+                            self.status = Status::ErrVerify;
+                            self.state = State::Error;
+                            return Some(OutResponse::Rejected);
+                        }
+                    }
+                    match self.write_download(payload) {
+                        Ok(()) => {
+                            self.offset = next_offset;
+                            let Some(next_block) = self.wire_block.checked_add(1) else {
+                                self.verifier_reset();
+                                self.status = Status::ErrAddress;
+                                self.state = State::Error;
+                                return Some(OutResponse::Rejected);
+                            };
+                            self.wire_block = next_block;
                             self.status = Status::Ok;
                             self.state = State::DlSync;
-                            self.offset += data.len();
                         }
                         Err(status) => {
-                            error!(
-                                "Error writing firmware at offset {}: {:?}",
-                                self.offset, self.target
-                            );
+                            self.verifier_reset();
                             self.state = State::Error;
                             self.status = status;
                         }
                     }
                 }
-
                 Some(OutResponse::Accepted)
             }
             Ok(Request::Detach) => {
@@ -643,10 +655,10 @@ impl<
     }
 
     fn reset(&mut self) {
-        // Only reset after the manifest phase is complete. This keeps normal bus resets
-        // (e.g., re-enumeration) from rebooting the device.
         if matches!(self.state, State::ManifestSync | State::ManifestWaitReset) {
             self.reset.sys_reset()
+        } else {
+            self.reset_state();
         }
     }
 }
@@ -662,18 +674,9 @@ impl<
 /// composite USB device.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub fn usb_dfu<
-    'd,
-    D: Driver<'d>,
-    DFU: NorFlash,
-    STATE: NorFlash,
-    RST: Reset,
-    FWD: DfuForwarder,
-    DBW: DualBankWriter,
-    const BLOCK_SIZE: usize,
->(
+pub fn usb_dfu<'d, D: Driver<'d>, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>(
     builder: &mut Builder<'d, D>,
-    handler: &'d mut Control<'d, DFU, STATE, RST, FWD, DBW, BLOCK_SIZE>,
+    handler: &'d mut Control<'d, WRITER, RST, BLOCK_SIZE>,
     func_modifier: impl Fn(&mut FunctionBuilder<'_, 'd, D>),
 ) {
     // Allocated before builder.function(), whose FunctionBuilder borrows builder mutably until dropped.
@@ -798,39 +801,25 @@ fn firmware_version_string(
 
 #[cfg(test)]
 mod tests {
-    use embassy_boot::FirmwareUpdaterConfig;
-    use embedded_storage::nor_flash::{ErrorType, ReadNorFlash};
+    #[cfg(not(feature = "signed-dfu"))]
+    use release_signing as _;
+    #[cfg(not(feature = "signed-dfu"))]
+    use salty as _;
 
     use super::*;
 
-    struct UnusedFlash;
+    struct Sink;
 
-    impl ErrorType for UnusedFlash {
-        type Error = NorFlashErrorKind;
-    }
-
-    impl ReadNorFlash for UnusedFlash {
-        const READ_SIZE: usize = 1;
-
-        fn read(&mut self, _: u32, _: &mut [u8]) -> Result<(), Self::Error> {
-            panic!("Control must not access its unused updater");
-        }
-
-        fn capacity(&self) -> usize {
-            4096
-        }
-    }
-
-    impl NorFlash for UnusedFlash {
+    impl FirmwareWriter for Sink {
         const WRITE_SIZE: usize = 1;
-        const ERASE_SIZE: usize = 4096;
+        type Error = ();
 
-        fn write(&mut self, _: u32, _: &[u8]) -> Result<(), Self::Error> {
-            panic!("Control must not access its unused updater");
+        fn write_for_target(&mut self, _: DfuTarget, _: usize, _: &[u8]) -> Result<(), ()> {
+            Ok(())
         }
 
-        fn erase(&mut self, _: u32, _: u32) -> Result<(), Self::Error> {
-            panic!("Control must not access its unused updater");
+        fn mark_updated_for_target(&mut self, _: DfuTarget) -> Result<(), ()> {
+            Ok(())
         }
     }
 
@@ -851,23 +840,13 @@ mod tests {
             (0, 0, &[][..]),
         ] {
             let flag = Cell::new(false);
-            let mut aligned = AlignedBuffer([0; 1]);
-            let updater = BlockingFirmwareUpdater::new(
-                FirmwareUpdaterConfig {
-                    dfu: UnusedFlash,
-                    state: UnusedFlash,
-                },
-                aligned.as_mut(),
-            );
-            let mut control = Control::<_, _, _, _, _, 4>::new(
-                updater,
+            let mut control = Control::<_, _, 4>::new(
+                Sink,
                 DfuAttributes::CAN_DOWNLOAD,
                 NoReset,
-                NullForwarder,
-                NullDualBankWriter,
                 true,
-                #[cfg(feature = "_verify")]
-                &[0; 32],
+                #[cfg(feature = "signed-dfu")]
+                [Component::Lite1App; 3],
             );
             control.interface = Some(InterfaceNumber(0));
             control.set_download_started_flag(&flag);
@@ -921,6 +900,10 @@ mod tests {
     }
 }
 
-#[cfg(all(test, not(feature = "_verify")))]
+#[cfg(all(test, not(feature = "signed-dfu")))]
 #[path = "dfu/single_bank_tests.rs"]
 mod single_bank_tests;
+
+#[cfg(all(test, feature = "signed-dfu"))]
+#[path = "dfu/signed_tests.rs"]
+mod signed_tests;

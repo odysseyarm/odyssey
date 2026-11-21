@@ -19,12 +19,22 @@ const PAGE_SIZE: u32 = 4096;
 static CACHED_ACTIVE_SLOT: AtomicU8 = AtomicU8::new(0);
 static CACHED_PENDING_SLOT: AtomicU8 = AtomicU8::new(0);
 
-fn bootloader_state_addr() -> u32 {
+fn boot_state_manager() -> BootStateManager {
     unsafe extern "C" {
         static __bootloader_state_start: u32;
+        static __bootloader_journal_start: u32;
     }
-    // SAFETY: Linker script defines this symbol at the boot-state flash partition.
-    unsafe { &__bootloader_state_start as *const u32 as u32 }
+    BootStateManager::new(
+        &raw const __bootloader_state_start as u32,
+        &raw const __bootloader_journal_start as u32,
+    )
+}
+
+fn running_slot() -> u8 {
+    unsafe extern "C" {
+        static __bootloader_app_b_start: u32;
+    }
+    u8::from(running_slot as *const () as usize >= &raw const __bootloader_app_b_start as usize)
 }
 
 /// Since: Odyssey Desktop 0.7.0.
@@ -37,7 +47,7 @@ impl BootConfirmation {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     pub fn mark_booted(nvmc: &mut Nvmc) -> Result<(), ()> {
-        let manager = BootStateManager::new(bootloader_state_addr());
+        let manager = boot_state_manager();
 
         #[cfg(feature = "defmt")]
         {
@@ -50,7 +60,9 @@ impl BootConfirmation {
             );
         }
 
-        manager.mark_booted(nvmc, PAGE_SIZE).map_err(|_| ())?;
+        manager
+            .mark_running_booted(nvmc, running_slot(), PAGE_SIZE)
+            .map_err(|_| ())?;
 
         let state = manager.read();
         CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
@@ -67,57 +79,9 @@ impl BootConfirmation {
         Ok(())
     }
 
-    /// Confirms the current boot: sets `boot_counter` to 0, makes
-    /// `pending_slot` the active slot, and caches the slots for
-    /// [`Self::request_dfu_with`].
-    ///
-    /// Since: Odyssey Desktop 0.7.0.
+    /// Confirms the running image after its startup checks pass.
     pub fn confirm_boot_with(nvmc: &mut Nvmc) -> Result<(), ()> {
-        let manager = BootStateManager::new(bootloader_state_addr());
-        let mut state = manager.read();
-
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "[boot-api] confirm_boot: read state active={}, pending={}, boot_counter={}",
-            state.active_slot,
-            state.pending_slot,
-            state.boot_counter
-        );
-
-        state.boot_counter = 0;
-        if state.pending_slot != state.active_slot {
-            state.active_slot = state.pending_slot;
-        }
-
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "[boot-api] confirm_boot: writing state active={}, pending={}, boot_counter={}",
-            state.active_slot,
-            state.pending_slot,
-            state.boot_counter
-        );
-
-        CACHED_ACTIVE_SLOT.store(state.active_slot, Ordering::Release);
-        CACHED_PENDING_SLOT.store(state.pending_slot, Ordering::Release);
-
-        let result = manager
-            .write_boot_state(nvmc, &state, PAGE_SIZE)
-            .map_err(|_| ());
-
-        #[cfg(feature = "defmt")]
-        {
-            let verify = manager.read();
-            let magic = manager.read_magic();
-            defmt::info!(
-                "[boot-api] confirm_boot: verified magic={:#010x}, active={}, pending={}, boot_counter={}",
-                magic,
-                verify.active_slot,
-                verify.pending_slot,
-                verify.boot_counter
-            );
-        }
-
-        result
+        Self::mark_booted(nvmc)
     }
 
     /// Requests DFU by writing SWAP_MAGIC to the flash state page, keeping the
@@ -125,7 +89,7 @@ impl BootConfirmation {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     pub fn request_dfu_with(nvmc: &mut Nvmc) -> Result<(), ()> {
-        let manager = BootStateManager::new(bootloader_state_addr());
+        let manager = boot_state_manager();
 
         let active_slot = CACHED_ACTIVE_SLOT.load(Ordering::Acquire);
         let pending_slot = CACHED_PENDING_SLOT.load(Ordering::Acquire);

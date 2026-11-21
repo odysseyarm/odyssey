@@ -3,6 +3,7 @@
   "git+https://github.com/0e4ef622/icmsg-rs#ea048bb93bfec11f83a2e93eefa4b848395bfa58": "sha256-xBVTSoKd2DBhDblbMMvo2qGnnV7+cV5ofiERzfp8Tqc=",
   "git+https://github.com/Abrahamh08/aprilgrid-rs.git?rev=8459e7d245f5c672a3bc316e2205985fae068b25#8459e7d245f5c672a3bc316e2205985fae068b25": "sha256-F681NE6fZG4IiX2w8OtGyfWmrMoeTWPJ2bOHNzx+j+4=",
   "git+https://github.com/Abrahamh08/bmi2?branch=async#7c54df8575c9db97875e2dd6b37044f2cd3f2395": "sha256-SpIWCD3zqdwXmRUT4VmYBDloxcNkFj7BW3xbOa913AU=",
+  "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f": "sha256-vxAoQEHhNF/G1LiAZ3lpFQhPmzr1B4hPDbe1XmR/sGU=",
   "git+https://github.com/Abrahamh08/embassy?branch=usbfs-fix#4a9e58f54a616427cc37bed99cace5bab625a4a5": "sha256-0GqXNeaaPzVktm/MZxlPP6ROPbV6wApQ2MErxYc6ppY=",
   "git+https://github.com/Abrahamh08/icm426xx#87e036392c4cec727cb6e81356f82322629529cc": "sha256-wSjwj4fdGnDkgjjhNoqIIhI8lFalq6+Wp12kTHl7few=",
   "git+https://github.com/Abrahamh08/kdl-rs?rev=bb49e5a671f4186046a2acb2df0342e4c0a498ab#bb49e5a671f4186046a2acb2df0342e4c0a498ab": "sha256-+utT2xiXWR5kYEcb/a0WK9UabFnw33yQXwM7/+ChdvA=",
@@ -10,6 +11,7 @@
   "git+https://github.com/Abrahamh08/npm1300-rs#44c1cd3c2640ce58ee1b74548692d5a621053d5b": "sha256-YkQk9mdKCjYrM0KGbPMF3VxlLoUZXnKiqvwQT9Lp77Q=",
   "git+https://github.com/Abrahamh08/nrf-fuel-gauge#18698eb4d6edd0208bd6986fdaeb36d36f7f9ccf": "sha256-KGXDanCSzmypQP+OIyRznwzaUCzG1VgG5VtfBNikgGU=",
   "git+https://github.com/Abrahamh08/nrf-fuel-gauge#5fc778dd7b1c355b42af1d18c3e08117dd6eacef": "sha256-O8zv8Bir3Cs/clUE8rM0SdKARpNqGjKwmyKP2kzyTZQ=",
+  "git+https://github.com/Abrahamh08/nrfxlib-sys#28d358b5cedb49bf9478ffb93831005d59da01bb": "sha256-AlMhf/G837MpAsyEOJfwcaq6pbbD2LWOm8EyJvjQaEc=",
   "git+https://github.com/Abrahamh08/nrfxlib-sys#9defd3cdac30197c8d5742966e579d674d31d067": "sha256-Q0t84StwobAechMprjrKVLquBOA+hkSV1A079YvzF/c=",
   "git+https://github.com/Abrahamh08/nrfxlib-sys#fafd800475081813a5a11ee2ddc6c555344f94e2": "sha256-Wyg0yZZbpbvFhJxY5vVfwnvFm5iCgeCvNE13RXYkxfA=",
   "git+https://github.com/Abrahamh08/opencv-ros-camera#f105e8a556da7dd3d5ee90556f1582e5c4231588": "sha256-7kSCv29VqZV5lbH+bKNfWHF33o3aEEus7pL2W0Go6Pk=",
@@ -24,5 +26,6 @@
   "git+https://github.com/embassy-rs/trouble#bb5da0aa7e74732ced3432418d9a9d171933d57b": "sha256-sp++/aYZnkN/SBXoXsodUGOX1vZXDwR/AdabL9r3oUM=",
   "git+https://github.com/embassy-rs/trouble#ed3e2233318962300014bceab75ba70b3a00d88f": "sha256-+mkKl9zbboDdfjvs8W58NZc3LGjhOcHO2Ytts3n1NVA=",
   "git+https://github.com/embassy-rs/trouble.git?rev=1212da1#1212da1993c7787edc187999ca0c262ef8477318": "sha256-HSTafayrChWfQF41aVMAf7+RVGNzjEUNRlYB20G5eMU=",
+  "git+https://github.com/embassy-rs/unitrait?rev=bb96601b3d293fa27d1ca2891f6ea148e534e433#bb96601b3d293fa27d1ca2891f6ea148e534e433": "sha256-qp+t10E1xSyBjeWgpQeu5YkxFJbcQ66Ad/ckgCrpuOs=",
   "git+https://github.com/tweedegolf/cfg-noodle?rev=87e468b#87e468b5594b5c57d11aa326c950273713707419": "sha256-EfCMotesefvnPAexbv0O52AY3FuW0L/oVlCoGzDz1TM="
 }

@@ -116,6 +116,7 @@ fn ota_flash_slots(
         static __bootloader_dfu_start: u32;
         static __bootloader_dfu_end: u32;
         static __bootloader_state_start: u32;
+        static __bootloader_journal_start: u32;
         static __netcore_primary_start: u32;
         static __netcore_primary_end: u32;
         static __ota_app_ram_start: u32;
@@ -152,6 +153,7 @@ fn ota_flash_slots(
         netcore_active: netcore,
         netcore_ram,
         boot_state,
+        boot_journal: &raw const __bootloader_journal_start as u32,
         product: atslite_common::ota::Product::LegacyAtslite,
     })
 }

@@ -51,7 +51,7 @@ dependencies = [
  "quote",
  "regex",
  "rustc-hash",
- "shlex",
+ "shlex 1.3.0",
  "syn",
 ]
 
@@ -85,6 +85,25 @@ dependencies = [
  "approx",
  "itertools 0.15.0",
  "nalgebra",
+]
+
+[[package]]
+name = "cc"
+version = "1.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02f0e023adb368345ce0ca6cdfc0f24a06554468d0e8503e14a0841de79bfa69"
+dependencies = [
+ "find-msvc-tools",
+ "shlex 2.0.1",
+]
+
+[[package]]
+name = "cc312-verifier"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "critical-section",
+ "nrfxlib-sys",
 ]
 
 [[package]]
@@ -123,6 +142,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crypto-common"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -157,6 +182,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "glam"
@@ -335,7 +366,7 @@ dependencies = [
 [[package]]
 name = "nrfxlib-sys"
 version = "4.0.0+3.4.0"
-source = "git+https://github.com/Abrahamh08/nrfxlib-sys#fafd800475081813a5a11ee2ddc6c555344f94e2"
+source = "git+https://github.com/Abrahamh08/nrfxlib-sys#28d358b5cedb49bf9478ffb93831005d59da01bb"
 dependencies = [
  "bindgen",
  "llvm-tools",
@@ -504,6 +535,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "release-signing"
 version = "0.0.0"
 dependencies = [
+ "cc312-verifier",
  "nrfxlib-sys",
  "salty",
  "sha2",
@@ -541,6 +573,12 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "shlex"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "simba"
@@ -613,3 +651,8 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "embassy-boot"
+version = "0.7.0"
+source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"

@@ -72,11 +72,14 @@ embassy-time = "0.5.0"
 embassy-usb = { version = "0.5.1", default-features = false }
 embedded-storage = "0.3.1"
 esp32c3-hal = { version = "0.13.0", optional = true, default-features = false }
+release-signing = { path = "../release-signing", optional = true }
 
 [dev-dependencies]
 # Named here so Cargo.lock carries the `std` time driver the tests link; a
 # vendored build cannot fetch what only a command-line feature asks for.
 embassy-time = { version = "0.5.0", features = ["std"] }
+release-signing = { path = "../release-signing", features = ["dev-signing-key"] }
+salty = { version = "0.3", default-features = false }
 
 [features]
 dfu = []
@@ -85,8 +88,5 @@ defmt = ["dep:defmt", "embassy-boot/defmt", "embassy-usb/defmt"]
 log = ["dep:log"]
 cortex-m = ["dep:cortex-m"]
 esp32c3-hal = ["dep:esp32c3-hal"]
-ed25519-dalek = ["embassy-boot/ed25519-dalek", "_verify"]
-ed25519-salty = ["embassy-boot/ed25519-salty", "_verify"]
-
-# Internal features
-_verify = []
+signed-dfu = ["dep:release-signing"]
+signed-dfu-oberon = ["signed-dfu", "release-signing/oberon"]

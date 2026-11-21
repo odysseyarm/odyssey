@@ -149,8 +149,8 @@ repository root.
 
 `marker-control-board` is both the board name and the manifest device key. Its
 nRF52833 has one application image, no net core, and one USB DFU bootloader.
-Manifest `files` contains only `app`, `requires_bootloader` is `"0.0.1"` and
-`requires_netcore` is `0`. Never add `app-a`, `app-b`, `net-core`, or
+Manifest `files` contains only `app`. New releases require bootloader `"1.0.0"`
+and `requires_netcore` is `0`. Older entries keep their historical floor. Never add `app-a`, `app-b`, `net-core`, or
 `stage2-bootloader` to this device. Its bootloader cannot update itself through
 DFU.
 
@@ -276,11 +276,11 @@ cargo xtask firmware <board> gen-release <requires_bootloader> <requires_netcore
   bootloader release, so set this floor from explicit compatibility knowledge.
   `"0.0.0"` does not promise compatibility with every future bootloader version.
 
-  ATS Lite application entries require bootloader `0.2.0` or later. Earlier
-  stage2 bootloaders do not bound net-core install retries; v3, version `0.2.0`,
-  adds the bounded recovery path. `xtask` enforces this floor when generating ATS
-  releases. Install the first OTA-capable app over USB so Desktop updates stage2
-  before the app.
+  Newly generated ATS Lite application entries require bootloader `1.0.0` or
+  later, which authenticates USB DFU. The direct-XIP journal cutover requires
+  the paired SWD provisioning described in `firmware/README.md`; do not ship
+  these bootloaders as standalone upgrades to released units. Historical
+  entries retain their original compatibility floors.
 - `requires_netcore`: the net-core release the unit must already be **running**,
   as it reports, before this entry may be installed. `0` for none. The host
   checks it against the net core the unit runs now and never against the one
@@ -363,7 +363,7 @@ through SWD only.
 Local manifest generation runs **after** publishing application assets:
 
 ```
-cargo xtask firmware marker-control-board gen-release 0.0.1 0 <min_desktop>
+cargo xtask firmware marker-control-board gen-release 1.0.0 0 <min_desktop>
 cargo xtask firmware promote marker-control-board <version>
 ```
 
@@ -377,8 +377,8 @@ Checksums and relative paths are validated before packing.
 
 ## Signed releases
 
-lite1 and marker applications require Ed25519 signatures before activating radio
-updates; legacy ATS Lite remains unsigned. The message format, trusted keys and
+Modern ATS Lite, legacy ATS Lite and marker applications require Ed25519 signatures
+before activating OTA updates. The message format, trusted keys and
 verifier live in `firmware/release-signing`, shared by firmware and `xtask`.
 
 **Message.** 67 bytes, little-endian integers:
@@ -386,7 +386,7 @@ verifier live in `firmware/release-signing`, shared by firmware and `xtask`.
 | Bytes | Content |
 |---|---|
 | 18 | `ODYSSEY-FW-SIG-V1\0` |
-| 1 | component id: 0 lite1 app, 1 lite1 net core, 2 legacy-atslite app, 3 legacy-atslite net core, 4 marker app, 5 dongle app |
+| 1 | component id: 0 lite1 app, 1 lite1 net core, 2 legacy-atslite app, 3 legacy-atslite net core, 4 marker app, 5 dongle app, 6 lite1 stage2, 7 legacy-atslite stage2 |
 | 4 | image size in bytes (`u32`) |
 | 12 | version as three `u32`: the application `major, minor, patch`, or `release, 0, 0` for a net core |
 | 32 | SHA-256 of the image |
@@ -395,13 +395,14 @@ The signature is the 64-byte pure Ed25519 signature of that message. The
 component id keeps a signed image from being moved to another product or role,
 and the version keeps an old signed image from passing as a new one. An
 application's version is the manifest entry's `version` without pre-release
-and build parts. The stage2 bootloader and the dongle's `dfu-*` ZIPs have no
-signed component yet, so `gen-release` does not sign them.
+and build parts. Stage2 uses its own SemVer triple and separate component id.
+The dongle's `dfu-*` ZIPs use Nordic DFU signatures rather than this envelope.
 
 **Signing.** `cargo xtask firmware sign <component> <image> --version <v>
 --signer <signer>` prints the signature as 128 hex characters. Components are
 `lite1-app`, `lite1-netcore`, `legacy-atslite-app`, `legacy-atslite-netcore`,
-`marker-app` and `dongle-app`; a net core's version is its release counter.
+`lite1-bootloader`, `legacy-atslite-bootloader`, `marker-app` and `dongle-app`;
+a net core's version is its release counter.
 `--signer dev` signs with the development seed. Anything else is a command,
 split on whitespace without quoting, that reads the message on stdin and writes
 the 64 raw signature bytes to stdout. `xtask` verifies each signature against
@@ -409,10 +410,9 @@ the keys in `release-signing` before it prints or stores it, so a signer whose
 public key is not installed (below) is refused.
 
 Set `ODYSSEY_SIGNER` to a production-key signer before `gen-release` (or
-`release publish`) for lite1 or marker. Missing signers, untrusted signatures and
-development-key signatures fail before the manifest is written. Signed file
-entries are `app`, `app-a`, `app-b` and `net-core`. Legacy ATS Lite may omit the
-signer; if supplied, its signatures must also use production keys.
+`release publish`) for either ATS Lite or marker. Missing signers, untrusted
+signatures and development-key signatures fail before the manifest is written.
+Signed file entries are `app`, `app-a`, `app-b`, `net-core` and `stage2-bootloader`.
 
 **YubiKey recipe (unverified until the hardware arrives).** Generate an
 Ed25519 key in PIV slot 9c (needs YubiKey firmware 5.7 or newer; OpenPGP's
@@ -451,15 +451,58 @@ fourth slot stays free so a lost key can be replaced. An offline backup key
 is generated on a separate YubiKey and stored apart from the publishers.
 To replace a key, release firmware that trusts the new key signed by a
 remaining key, then ship it to units over the normal update path before the old
-key is retired. Losing every key blocks authenticated radio updates. USB DFU
-currently remains an unsigned recovery path; SWD recovery also remains possible.
+key is retired. Losing every trusted key blocks authenticated OTA and USB DFU
+updates. SWD recovery remains possible unless separately restricted.
 
-**Enforcement.** lite1 and marker enable radio verification through dependency
-features; `--no-default-features` cannot disable it. The shared OTA library keeps
-a compile-time split for unsigned legacy ATS Lite. SHA-256 uses Nordic's Oberon
-software implementation on nRF5340 and `sha2` on the marker; Ed25519 uses `salty`.
-Bootloader USB DFU verification (`better-dfu`'s `_verify` path) is not enabled.
-Radio authentication is not secure boot and does not protect USB DFU or SWD.
+**Enforcement.** Supported ATS Lite and marker applications and bootloaders
+enable verification through dependency features; `--no-default-features` cannot
+disable it. On nRF5340, the `oberon`
+feature uses CryptoCell CC312/PKA for Ed25519 and Oberon for its SHA-512.
+Image digests remain SHA-256 (Oberon on nRF5340, `sha2` on the marker); the
+67-byte signed message and signature format are unchanged. Marker and host
+Ed25519 verification still use `salty`.
+Bootloader 1.0.0 requires a signed DFU envelope for every exposed target,
+including net core and stage2. Earlier bootloaders retain raw-image transfers.
+
+**USB DFU.** The 132-byte prefix is the 67-byte message above, its 64-byte
+signature and one zero byte. Original image bytes follow, with no transport
+padding. Header authentication precedes flash writes; exact image size and hash
+must match before activation. App vector commit is deferred until verification,
+so interrupted or rejected ATS downloads cannot become bootable fallback banks.
+Signed stage2 versions below 1.0.0 are rejected to prevent restoring unsigned DFU.
+
+Desktop wraps manifest signatures according to the running bootloader version.
+For standalone recovery, use the production signer:
+
+```sh
+cargo xtask firmware sign lite1-app app-a.bin --version 0.1.24 --output app-a.dfu
+dfu-util -d 1915:5221 -S <device-serial> -a 0 -D app-a.dfu
+```
+
+Select the image matching the bootloader's advertised APP_A/APP_B slot; slot
+IDs can change after an update. Bootloader and net-core signing names are
+`lite1-bootloader`, `legacy-atslite-bootloader`, `lite1-netcore` and
+`legacy-atslite-netcore`; marker uses `marker-app`. `--signer dev` is only for
+explicit development-key firmware and is never accepted by production builds.
+
+This is authenticated installation, not secure boot. Installed banks are not
+authenticated on every reset, SWD remains unrestricted, and general rollback
+protection is not implemented. Marker bootloader upgrades require SWD; preserve
+owner-bond pages and test signed recovery before locking debug access.
+
+Build nRF5340 firmware inside `nix develop .#firmware`; it pins matching public
+TF-PSA-Crypto headers and the ARM C compiler. The SDK's hash callbacks use a
+separate Oberon context and a bounded 4 KiB scratch arena, not an application heap.
+Only `Ok(true)` authenticates: this SDK also returns hardware error `-147` for
+invalid signatures. Valid empty-message signatures return that error too, so
+the bridge explicitly rejects empty messages; release messages are nonempty.
+
+`firmware/cc312-verifier/test_vectors.rs` retains the hardware self-check:
+include it in a target application and call `check()` before boot confirmation.
+It covers three nonempty RFC 8032 vectors, explicit empty-message
+rejection, malformed R, noncanonical S and changed messages, with a known-good
+verification after each rejection. This matrix passed on ATS `19e3543e7b6e`;
+that unit was restored to published application 0.1.23 afterward.
 
 ## Schema rules
 

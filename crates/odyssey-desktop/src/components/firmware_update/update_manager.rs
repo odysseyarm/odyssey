@@ -301,7 +301,7 @@ mod tests {
         Device {
             uuid: [4; 6],
             transport: Transport::UsbMux,
-            capabilities: DeviceCapabilities::new(0),
+            capabilities: DeviceCapabilities::empty(),
             firmware_identity: FirmwareVersion::default(),
             firmware_version: [1, 2, 3],
             events_transport: EventsTransport::Bluetooth,

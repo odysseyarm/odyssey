@@ -56,7 +56,7 @@ path = "src/main.rs"
 
 [dependencies]
 legacy-common = { path = "../legacy-common" }
-atslite-common = { path = "../atslite-common" }
+atslite-common = { path = "../atslite-common", features = ["signed-ota"] }
 atslite-transport = { path = "../atslite-transport" }
 legacy-atslite-boot-api = { path = "../legacy-atslite-boot-api", features = ["defmt"] }
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }

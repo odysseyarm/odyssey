@@ -6,11 +6,13 @@
 //! section of `firmware/manifests/README.md`.
 #![no_std]
 
+mod dfu;
 mod hash;
 mod keys;
 mod message;
 mod verify;
 
+pub use dfu::{DFU_HEADER_LEN, DfuError, DfuVerifier, dfu_header};
 pub use hash::Sha256;
 pub use keys::{KEY_SLOTS, PublicKey, RELEASE_KEYS, trusted_keys};
 pub use message::{Component, MESSAGE_LEN, message};

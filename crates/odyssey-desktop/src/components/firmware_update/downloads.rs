@@ -3,24 +3,49 @@ use std::collections::HashMap;
 use eros::Context as _;
 use odyssey_hub_server::firmware::{self, FileEntry, FirmwareEntry, UpdateStep};
 
-/// A net-core image, whose release remains a counter.
+/// A downloaded application image and fields bound by its DFU signature.
+pub(super) struct DfuImage {
+    pub(super) data: Vec<u8>,
+    pub(super) component: firmware::DfuComponent,
+    pub(super) version: [u32; 3],
+    pub(super) signature: Option<String>,
+}
+
 pub(super) struct ReleaseImage {
     pub(super) data: Vec<u8>,
     pub(super) release: u16,
+    pub(super) component: firmware::DfuComponent,
+    pub(super) signature: Option<String>,
 }
 
-/// A bootloader image with its independent `SemVer` identity.
 pub(super) struct BootloaderImage {
     pub(super) data: Vec<u8>,
     pub(super) version: semver::Version,
+    pub(super) signed_version: [u32; 3],
+    pub(super) component: firmware::DfuComponent,
+    pub(super) signature: Option<String>,
 }
 
 /// Everything an update writes, fetched before the device is touched.
 pub(super) struct Downloads {
     pub(super) netcore: Option<ReleaseImage>,
     /// Application images by manifest file name (`app` or `app-a` and `app-b`).
-    pub(super) applications: HashMap<&'static str, Vec<u8>>,
+    pub(super) applications: HashMap<&'static str, DfuImage>,
     pub(super) bootloader: Option<BootloaderImage>,
+}
+
+fn component(device_type: &str, role: &str) -> Option<firmware::DfuComponent> {
+    use firmware::DfuComponent;
+    match (device_type, role) {
+        ("atslite1", "app") => Some(DfuComponent::Lite1App),
+        ("atslite1", "net-core") => Some(DfuComponent::Lite1NetCore),
+        ("atslite1", "stage2-bootloader") => Some(DfuComponent::Lite1Bootloader),
+        ("legacy-atslite1", "app") => Some(DfuComponent::LegacyAtsliteApp),
+        ("legacy-atslite1", "net-core") => Some(DfuComponent::LegacyAtsliteNetCore),
+        ("legacy-atslite1", "stage2-bootloader") => Some(DfuComponent::LegacyAtsliteBootloader),
+        ("marker-control-board", "app") => Some(DfuComponent::MarkerApp),
+        _ => None,
+    }
 }
 
 /// Net-core file and release counter.
@@ -90,12 +115,22 @@ impl Downloads {
                     file,
                 )
                 .await?;
-                Some(ReleaseImage { data, release })
+                Some(ReleaseImage {
+                    data,
+                    release,
+                    component: component(device_type, "net-core").ok_or_else(|| {
+                        eros::error!("Unknown net-core component for {device_type}")
+                    })?,
+                    signature: file.signature.clone(),
+                })
             }
             _ => None,
         };
 
         let mut applications = HashMap::new();
+        let app_version = entry
+            .version_parts()
+            .ok_or_else(|| eros::error!("Invalid application version {}", entry.version))?;
         for (slot_file, file) in application_files {
             tracing::info!("Downloading {} for {}", slot_file, entry.version);
             let data = download_image(
@@ -107,7 +142,17 @@ impl Downloads {
                 file,
             )
             .await?;
-            applications.insert(slot_file, data);
+            applications.insert(
+                slot_file,
+                DfuImage {
+                    data,
+                    component: component(device_type, "app").ok_or_else(|| {
+                        eros::error!("Unknown application component for {device_type}")
+                    })?,
+                    version: app_version,
+                    signature: file.signature.clone(),
+                },
+            );
         }
 
         let bootloader = entry
@@ -124,9 +169,22 @@ impl Downloads {
                     file,
                 )
                 .await?;
+                let part = |value: u64| {
+                    u32::try_from(value).context("Bootloader version exceeds signed metadata range")
+                };
+                let signed_version = [
+                    part(version.major)?,
+                    part(version.minor)?,
+                    part(version.patch)?,
+                ];
                 Some(BootloaderImage {
                     data,
                     version: version.clone(),
+                    signed_version,
+                    component: component(device_type, "stage2-bootloader").ok_or_else(|| {
+                        eros::error!("Unknown bootloader component for {device_type}")
+                    })?,
+                    signature: file.signature.clone(),
                 })
             }
             None => None,
@@ -177,5 +235,12 @@ mod tests {
                 "A release with only {present} cannot cover both possible inactive banks"
             );
         }
+    }
+    #[test]
+    fn maps_marker_application_to_its_signature_component() {
+        assert_eq!(
+            component("marker-control-board", "app"),
+            Some(firmware::DfuComponent::MarkerApp)
+        );
     }
 }

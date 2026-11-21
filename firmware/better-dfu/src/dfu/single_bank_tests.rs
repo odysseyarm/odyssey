@@ -92,7 +92,7 @@ impl Reset for NoReset {
     }
 }
 
-type Single<'a> = Control<'a, Flash<32>, Flash<256>, NoReset, NullForwarder, NullDualBankWriter, 4>;
+type Single<'a> = Control<'a, BlockingFirmwareUpdater<'a, Flash<32>, Flash<256>>, NoReset, 4>;
 
 fn control<'a>(aligned: &'a mut [u8], capacity: usize) -> (Single<'a>, Flash<32>, Flash<256>) {
     let dfu = Flash::erased();
@@ -141,12 +141,12 @@ fn single_bank_pads_last_word_and_commits_only_after_final_block() {
     download(&mut handler, 0, &[1, 2, 3, 4]);
     status(&mut handler);
     download(&mut handler, 1, &[5]);
-    assert_eq!(&dfu.0.borrow()[..8], &[1, 2, 3, 4, 5, 0xff, 0xff, 0xff]);
     assert_eq!(&state.0.borrow()[..4], &[0xff; 4]);
     status(&mut handler);
     download(&mut handler, 2, &[]);
+    assert_eq!(&dfu.0.borrow()[..8], &[1, 2, 3, 4, 5, 0xff, 0xff, 0xff]);
     assert!(matches!(
-        handler._updater.get_state(),
+        handler.writer.get_state(),
         Ok(embassy_boot::State::Swap)
     ));
     assert!(matches!(handler.state, State::ManifestSync));

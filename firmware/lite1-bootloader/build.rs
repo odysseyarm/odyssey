@@ -22,6 +22,10 @@ fn main() {
     };
 
     let regions = memoryspec.regions();
+    println!(
+        "cargo:rustc-link-arg-bins=--defsym=__bootloader_journal_start={:#x}",
+        regions["flash"]["boot_journal"].origin()
+    );
 
     let bootloader = &regions["flash"]["stage2_bootloader"];
     let stage1_state = &regions["flash"]["stage1_state"];
@@ -72,6 +76,10 @@ __bootloader_app_b_start = {:#010x};
 __bootloader_app_b_end = {:#010x};
 __bootloader_dfu_region_start = {:#010x};
 __bootloader_dfu_region_end = {:#010x};
+__stage2_bootloader_start = ORIGIN(FLASH);
+__stage2_bootloader_end = ORIGIN(FLASH) + LENGTH(FLASH);
+__netcore_primary_start = {netcore_start:#010x};
+__netcore_primary_end = {netcore_end:#010x};
 
 __locked_ram_start = {:#010x};
 __locked_ram_end = {:#010x};
@@ -108,7 +116,10 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
         dfu.origin(),
         dfu.origin() + dfu.length(),
         locked_ram.origin(),
-        locked_ram.origin() + locked_ram.length()
+        locked_ram.origin() + locked_ram.length(),
+        netcore_start = regions["netcore_flash"]["netcore_primary"].origin(),
+        netcore_end = regions["netcore_flash"]["netcore_primary"].origin()
+            + regions["netcore_flash"]["netcore_primary"].length(),
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

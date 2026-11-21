@@ -27,11 +27,17 @@ fn verify_with<'a>(
     message: &[u8; MESSAGE_LEN],
     signature: &[u8; SIGNATURE_LEN],
 ) -> bool {
+    #[cfg(not(feature = "oberon"))]
     let signature = salty::Signature::from(signature);
     for key in keys {
         if *key == EMPTY_KEY {
             continue;
         }
+        #[cfg(feature = "oberon")]
+        if matches!(cc312_verifier::verify(message, key, signature), Ok(true)) {
+            return true;
+        }
+        #[cfg(not(feature = "oberon"))]
         if let Ok(key) = salty::PublicKey::try_from(key)
             && key.verify(message, &signature).is_ok()
         {

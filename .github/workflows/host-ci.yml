@@ -65,7 +65,7 @@ jobs:
         id: proofs
         if: steps.impact.outputs.proofs == 'true'
         run: |
-          paths=$(nix build -L --no-link --print-out-paths .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs)
+          paths=$(nix build -L --no-link --print-out-paths .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs .#checks.x86_64-linux.slot-table-proofs)
           {
             echo 'paths<<EOF'
             echo "$paths"

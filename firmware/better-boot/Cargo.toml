@@ -63,6 +63,7 @@ unused_workspace_dependencies = "deny"
 [dependencies]
 embedded-storage = "0.3"
 defmt = { version = "0.3", optional = true }
+embassy-boot = "0.7.0"
 
 [features]
 default = []
