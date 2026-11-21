@@ -26,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: bufbuild/buf-breaking-action@v1
         with:
           input: crates/odyssey-hub-server-interface/proto
