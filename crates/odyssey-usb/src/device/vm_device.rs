@@ -217,6 +217,38 @@ impl VmDevice {
         Self::from_transport(PacketTransport::mux(mux, device_addr), None)
     }
 
+    /// Opens a link straight to the unit with BLE address `address` over the host's
+    /// own Bluetooth adapter, without touching the unit's streams.
+    ///
+    /// Like [`Self::open_via_mux`]: a unit whose firmware picks its own transport shares
+    /// one set of stream subscriptions between USB and BLE, so a `DisableAll` here
+    /// could stop reports a cable is carrying. The caller resets streams only for
+    /// firmware that keeps one set per link. The address is little-endian, as on air.
+    ///
+    /// # Errors
+    /// Returns the Bluetooth error when the unit cannot be reached or the host is not
+    /// one of its bonds.
+    /// Since: Unreleased.
+    #[cfg(target_os = "linux")]
+    pub async fn connect_via_l2cap(address: [u8; 6]) -> Result<Self> {
+        debug!(
+            "VmDevice::connect_via_l2cap() opening link to {}",
+            HexAddress(address)
+        );
+        Ok(Self::from_transport(
+            PacketTransport::l2cap(address).await?,
+            None,
+        ))
+    }
+
+    /// Resolves once the link to the unit has closed: the unit disconnected or the
+    /// transport failed.
+    ///
+    /// Since: Unreleased.
+    pub async fn closed(&self) {
+        self.transport.writer.closed().await;
+    }
+
     /// Asks the device to stop every stream, re-sending until it acknowledges.
     async fn disable_all_streams(&self) -> Result<()> {
         let acknowledged = (async || {

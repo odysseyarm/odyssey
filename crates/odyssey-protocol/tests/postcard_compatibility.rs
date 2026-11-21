@@ -29,9 +29,15 @@ fn roots() -> BTreeMap<&'static str, Value> {
     .into()
 }
 
+// Feature unification can turn on serde_json's `preserve_order`, so compare field sets,
+// not field order.
+fn same_fields(old: &serde_json::Map<String, Value>, new: &serde_json::Map<String, Value>) -> bool {
+    old.len() == new.len() && old.keys().all(|key| new.contains_key(key))
+}
+
 fn compatible(old: &Value, new: &Value, path: &str) -> Result<(), String> {
     match (old, new) {
-        (Value::Object(old), Value::Object(new)) if old.keys().eq(new.keys()) => {
+        (Value::Object(old), Value::Object(new)) if same_fields(old, new) => {
             for (key, value) in old {
                 let next = &new[key];
                 let path = format!("{path}.{key}");
@@ -39,7 +45,7 @@ fn compatible(old: &Value, new: &Value, path: &str) -> Result<(), String> {
                     let (Some(old), Some(new)) = (value.as_object(), next.as_object()) else {
                         return Err(format!("{path}: expected enum schema"));
                     };
-                    if !old.keys().eq(new.keys()) {
+                    if !same_fields(old, new) {
                         return Err(format!("{path}: enum schema fields changed"));
                     }
                     for (key, value) in old {

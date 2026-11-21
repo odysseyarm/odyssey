@@ -135,11 +135,15 @@ pub(crate) async fn handle_bond(args: BondArgs) -> eros::Result<()> {
     let (mux, dongle_bd_addr) = pick_mux(args.mux).await?;
     let device = pick_device(args.device).await?;
 
-    // The device UUID is also its BLE address.
-    let device_bd_addr: [u8; 6] = device
+    let uuid: [u8; 6] = device
         .read_uuid()
         .await
         .context("Failed to read device UUID")?;
+    let version = device
+        .read_version()
+        .await
+        .context("Failed to read device version")?;
+    let device_bd_addr = odyssey_protocol::control::ble_address_for(uuid, version.protocol_semver);
 
     println!("Dongle BD addr: {}", format_bd_addr(dongle_bd_addr));
     println!("Device BD addr: {}", format_bd_addr(device_bd_addr));

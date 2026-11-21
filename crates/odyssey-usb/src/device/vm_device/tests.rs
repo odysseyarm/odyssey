@@ -81,6 +81,151 @@ async fn simulated_control_retains_pairing_events_and_closes_pending_requests() 
     assert!(matches!(result, Err(Error::Closed)));
 }
 
+#[cfg(feature = "sim")]
+mod bonds {
+    use odyssey_protocol::control::device::{
+        ClearBondResult, ClearBondsError, DeviceMsg, PairingError, PairingOutcome,
+    };
+    use odyssey_protocol::control::{AddBondError, AddBondResult, BondEntry, BondSlot};
+
+    use super::*;
+
+    struct Link {
+        device: VmDevice,
+        /// Control messages the device sent.
+        requests: mpsc::Receiver<DeviceMsg>,
+        /// Feeds control messages "from the device".
+        replies: mpsc::Sender<DeviceMsg>,
+    }
+
+    fn link() -> Link {
+        let (outgoing, _packets) = mpsc::channel(1);
+        let (_incoming, incoming_rx) = mpsc::channel(1);
+        let (control_outgoing, requests) = mpsc::channel(4);
+        let (replies, control_incoming) = mpsc::channel(4);
+        Link {
+            device: VmDevice::from_simulated_channels(
+                outgoing,
+                incoming_rx,
+                control_outgoing,
+                control_incoming,
+            ),
+            requests,
+            replies,
+        }
+    }
+
+    fn slot(last: u8, connected: bool) -> BondSlot {
+        BondSlot {
+            bd_addr: [1, 2, 3, 4, 5, last],
+            connected,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_bonds_sends_request_and_decodes_slots() {
+        let mut link = link();
+        let slots = [slot(6, true), slot(7, false)];
+        let list = odyssey_protocol::List::from(heapless::Vec::from_slice(&slots).unwrap());
+        link.replies
+            .send(DeviceMsg::ListBondsResponse(list))
+            .await
+            .unwrap();
+        assert_eq!(link.device.list_bonds().await.unwrap(), slots);
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ListBonds())
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_bond_sends_the_address() {
+        let mut link = link();
+        link.replies
+            .send(DeviceMsg::RemoveBondResponse(ClearBondResult::Ok()))
+            .await
+            .unwrap();
+        link.device.remove_bond([1, 2, 3, 4, 5, 6]).await.unwrap();
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::RemoveBond([1, 2, 3, 4, 5, 6]))
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_bond_maps_not_found_and_failure_apart() {
+        let link = link();
+        for (error, want_not_found) in [
+            (ClearBondsError::NotFound, true),
+            (ClearBondsError::Failed, false),
+        ] {
+            link.replies
+                .send(DeviceMsg::RemoveBondResponse(ClearBondResult::Err(error)))
+                .await
+                .unwrap();
+            let result = link.device.remove_bond([0; 6]).await;
+            assert_eq!(
+                matches!(result, Err(Error::BondNotFound)),
+                want_not_found,
+                "{error:?}"
+            );
+            assert!(want_not_found || matches!(result, Err(Error::Refused(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn full_unit_reports_bonds_full_after_start_pairing() {
+        let link = link();
+        link.replies
+            .send(DeviceMsg::StartPairingResponse())
+            .await
+            .unwrap();
+        link.replies
+            .send(DeviceMsg::PairingResult(PairingOutcome::Err(
+                PairingError::BondsFull,
+            )))
+            .await
+            .unwrap();
+        link.device.start_pairing(1000).await.unwrap();
+        assert!(matches!(
+            link.device.wait_pairing_event().await,
+            Err(Error::Pairing(PairingError::BondsFull))
+        ));
+    }
+
+    #[tokio::test]
+    async fn bonds_full_arriving_before_the_ack_is_retained() {
+        let link = link();
+        link.replies
+            .send(DeviceMsg::PairingResult(PairingOutcome::Err(
+                PairingError::BondsFull,
+            )))
+            .await
+            .unwrap();
+        link.device.start_pairing(1000).await.unwrap();
+        assert!(matches!(
+            link.device.wait_pairing_event().await,
+            Err(Error::Pairing(PairingError::BondsFull))
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_bond_full_is_rejected_distinctly() {
+        let link = link();
+        link.replies
+            .send(DeviceMsg::AddBondResponse(AddBondResult::Err(
+                AddBondError::Full,
+            )))
+            .await
+            .unwrap();
+        let entry = BondEntry::default();
+        assert!(matches!(
+            link.device.add_bond(entry).await,
+            Err(Error::BondRejected(AddBondError::Full))
+        ));
+    }
+}
+
 #[tokio::test]
 async fn pending_request_fails_fast_when_transport_closes() {
     let Harness {

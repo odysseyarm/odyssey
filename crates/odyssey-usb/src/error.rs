@@ -127,6 +127,14 @@ pub enum Error {
     /// Since: Odyssey Desktop 0.7.0.
     #[error("the bond was not stored: {0:?}")]
     BondRejected(AddBondError),
+    /// The device holds no bond with the address a removal named.
+    ///
+    /// Since: Unreleased.
+    #[error("the device has no bond with that address")]
+    BondNotFound,
+    /// Since: Unreleased.
+    #[error("Bluetooth link to the unit failed")]
+    Bluetooth(#[from] std::io::Error),
     /// A camera model read from the device is not a valid intrinsics matrix.
     ///
     /// Since: Odyssey Desktop 0.7.0.

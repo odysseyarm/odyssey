@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Fuse, StreamExt as _};
-use odyssey_hub_common::device::{Device, DeviceCapabilities};
+use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport};
 use odyssey_usb::device::{GeneralSettings, MuxDevice, VmDevice};
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::{ReceiverStream, WatchStream};
@@ -344,6 +344,13 @@ impl DeviceHandler {
             }
             DeviceTaskMessage::CancelPairing { reply } => self.on_cancel_pairing(reply).await,
             DeviceTaskMessage::ClearBond { reply } => self.on_clear_bond(reply).await,
+            DeviceTaskMessage::ListBonds { reply } => self.on_list_bonds(reply).await,
+            DeviceTaskMessage::RemoveBond { bd_addr, reply } => {
+                self.on_remove_bond(bd_addr, reply).await;
+            }
+            DeviceTaskMessage::PairSystemBluetooth { timeout_ms, reply } => {
+                self.on_pair_system_bluetooth(timeout_ms, reply);
+            }
             DeviceTaskMessage::SetDeviceName { name, reply } => {
                 self.on_set_device_name(name, reply).await;
             }
@@ -458,6 +465,24 @@ impl DeviceHandler {
             .events_device
             .iter()
             .chain(self.standby.as_ref().map(|link| &link.device))
+            .cloned()
+            .collect()
+    }
+
+    /// The Bluetooth links, standby first. The firmware answers radio update frames only
+    /// on Bluetooth, so one sent over USB would wait out its timeout before failing over.
+    fn radio_links(&self) -> Vec<VmDevice> {
+        let events_over_radio = self.device.events_transport == EventsTransport::Bluetooth;
+        self.standby
+            .as_ref()
+            .map(|link| &link.device)
+            .into_iter()
+            .chain(
+                self.connections
+                    .events_device
+                    .iter()
+                    .filter(|_| events_over_radio),
+            )
             .cloned()
             .collect()
     }

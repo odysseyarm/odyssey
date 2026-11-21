@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use nusb::DeviceInfo;
 use odyssey_protocol::control::device::{
-    ClearBondResult, DeviceMsg, PairingOutcome, StartPairing, TransportMode,
+    ClearBondResult, ClearBondsError, DeviceMsg, PairingOutcome, StartPairing, TransportMode,
 };
-use odyssey_protocol::control::{AddBondResult, BondEntry, BondedDevice};
+use odyssey_protocol::control::{AddBondResult, BondEntry, BondSlot, BondedDevice};
 use odyssey_protocol::{PropKind, Props, SetDeviceNameError, SetDeviceNameResult, Version};
 use tracing::info;
 
@@ -259,8 +259,9 @@ impl VmDevice {
             .await?
         {
             DeviceMsg::StartPairingResponse() => Ok(()),
-            // Retain an immediate completion for wait_pairing_event.
-            DeviceMsg::PairingResult(outcome @ PairingOutcome::Ok(_)) => {
+            // Retain an immediate completion, including a refusal such as
+            // BondsFull, for wait_pairing_event.
+            DeviceMsg::PairingResult(outcome) => {
                 *pending = Some(outcome);
                 Ok(())
             }
@@ -300,7 +301,7 @@ impl VmDevice {
         self.send_ctrl_msg(DeviceMsg::CancelPairing()).await
     }
 
-    /// Clears stored device bond.
+    /// Clears every stored device bond.
     ///
     /// # Errors
     /// Returns control-transfer, timeout, or unexpected-reply errors.
@@ -315,6 +316,55 @@ impl VmDevice {
             DeviceMsg::ClearBondResponse(ClearBondResult::Ok()) => Ok(()),
             DeviceMsg::ClearBondResponse(ClearBondResult::Err(_)) => {
                 Err(Error::Refused("clearing the bond"))
+            }
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    /// Lists the stored bonds, at most [`odyssey_protocol::control::MAX_BONDS`].
+    ///
+    /// Needs device protocol 0.2.2 or newer. Older applications cannot decode the
+    /// request, so callers gate on the version.
+    ///
+    /// # Errors
+    /// Returns control-transfer, timeout, or unexpected-reply errors.
+    /// Since: Unreleased.
+    pub async fn list_bonds(&self) -> Result<Vec<BondSlot>> {
+        match self
+            .ctrl_request(DeviceMsg::ListBonds(), REPLY_TIMEOUT, |msg| {
+                matches!(msg, DeviceMsg::ListBondsResponse(_))
+            })
+            .await?
+        {
+            DeviceMsg::ListBondsResponse(slots) => Ok(slots.to_vec()),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    /// Removes the bond with identity address `bd_addr` (little-endian, as on air),
+    /// dropping that host's link if connected.
+    ///
+    /// Needs device protocol 0.2.2 or newer, like [`Self::list_bonds`].
+    ///
+    /// # Errors
+    /// Returns [`Error::BondNotFound`] when no bond has that address, and
+    /// control-transfer, timeout, refusal, or unexpected-reply errors otherwise.
+    /// Since: Unreleased.
+    pub async fn remove_bond(&self, bd_addr: [u8; 6]) -> Result<()> {
+        match self
+            .ctrl_request(
+                DeviceMsg::RemoveBond(bd_addr),
+                FLASH_WRITE_REPLY_TIMEOUT,
+                |msg| matches!(msg, DeviceMsg::RemoveBondResponse(_)),
+            )
+            .await?
+        {
+            DeviceMsg::RemoveBondResponse(ClearBondResult::Ok()) => Ok(()),
+            DeviceMsg::RemoveBondResponse(ClearBondResult::Err(ClearBondsError::NotFound)) => {
+                Err(Error::BondNotFound)
+            }
+            DeviceMsg::RemoveBondResponse(ClearBondResult::Err(_)) => {
+                Err(Error::Refused("removing the bond"))
             }
             other => Err(unexpected(&other)),
         }

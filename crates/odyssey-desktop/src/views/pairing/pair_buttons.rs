@@ -2,7 +2,8 @@
 //! that run them.
 
 use gpui::{
-    Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Task, Window, div,
+    Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Task,
+    Window, div,
 };
 use odyssey_hub_client::client::Client;
 use tokio::sync::broadcast::error::RecvError;
@@ -34,6 +35,11 @@ async fn call(op: Op, target: PairTarget, client: Client) -> Result<(), String> 
     .map_err(|error| error.to_string())
     .and_then(std::convert::identity)
 }
+
+/// The unit's stored bonds changed: a pairing finished or they were cleared.
+pub(super) struct BondsChanged;
+
+impl EventEmitter<BondsChanged> for PairingControls {}
 
 pub(super) struct PairingControls {
     hub: Entity<Hub>,
@@ -76,6 +82,7 @@ impl PairingControls {
                 };
                 let applied = this.update(cx, |this, cx| {
                     this.state.finished(status);
+                    cx.emit(BondsChanged);
                     cx.notify();
                 });
                 if applied.is_err() {
@@ -223,7 +230,10 @@ impl PairingControls {
             }
             let _ = this.update(cx, |this, cx| {
                 match outcome {
-                    Ok(()) => this.state.bonds_cleared(message),
+                    Ok(()) => {
+                        this.state.bonds_cleared(message);
+                        cx.emit(BondsChanged);
+                    }
                     Err(error) => this.state.error(error),
                 }
                 this.release(cx);

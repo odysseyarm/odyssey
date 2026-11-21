@@ -94,7 +94,7 @@ impl UsbDeviceManager {
         }
 
         info!("Surfacing USB DFU device {:02x?} (PID 0x{:04x})", uuid, pid);
-        let mut capabilities = DeviceCapabilities::new(DeviceCapabilities::DFU);
+        let mut capabilities = DeviceCapabilities::DFU;
         if application_version.is_some() {
             capabilities.insert(DeviceCapabilities::DFU_RUNTIME_ONLY);
         }

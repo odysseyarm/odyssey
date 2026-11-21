@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 arrayvec = { workspace = true }
+bitflags = "2"
 odyssey-common = { path = "../odyssey-common" }
 odyssey-usb = { workspace = true }
 nalgebra = "0.35"

@@ -71,7 +71,7 @@ impl TryFrom<Device> for common::device::Device {
             transport: Transport::try_from(d.transport)
                 .map_err(|_conversion_error| "unknown device transport")?
                 .into(),
-            capabilities: common::device::DeviceCapabilities::new(
+            capabilities: common::device::DeviceCapabilities::from_bits_retain(
                 u8::try_from(d.capabilities)
                     .map_err(|_conversion_error| "device capabilities exceed u8")?,
             ),

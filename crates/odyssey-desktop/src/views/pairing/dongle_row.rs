@@ -120,7 +120,10 @@ impl Render for DongleRow {
                 let label = hub
                     .devices
                     .iter()
-                    .find(|device| device.uuid == *address)
+                    .find(|device| {
+                        device.uuid == *address
+                            || odyssey_protocol::control::ble_address(device.uuid) == *address
+                    })
                     .map_or_else(|| format_address(*address), device_label);
                 list = list.child(
                     div()

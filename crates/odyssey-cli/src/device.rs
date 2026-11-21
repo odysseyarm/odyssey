@@ -22,8 +22,16 @@ pub(crate) enum DeviceCommands {
     },
     /// Cancel pairing mode
     PairCancel,
-    /// Clear bond (for lite devices with single bond)
+    /// Clear every stored bond
     ClearBond,
+    /// List the bonds stored on the unit (firmware with device protocol 0.2.2 or newer)
+    ListBonds,
+    /// Remove one bond (firmware with device protocol 0.2.2 or newer)
+    RemoveBond {
+        /// Address of the bonded host as `list-bonds` prints it: six colon-separated hex
+        /// bytes, most significant first, the order Bluetooth tools display
+        addr: String,
+    },
     /// Calibrate accelerometer
     AccelCalib {
         /// Number of samples per orientation
@@ -229,9 +237,55 @@ async fn cmd_pair_cancel(device: &VmDevice) -> eros::Result<()> {
 
 async fn cmd_clear_bond(device: &VmDevice) -> eros::Result<()> {
     device.clear_bond().await.context("Failed to clear bond")?;
-    println!("Bond cleared successfully");
+    println!("Every bond cleared successfully");
     Ok(())
 }
+/// The unit reports addresses little-endian, as on air. People read and type them
+/// the other way round.
+fn display_bond_addr(mut addr: [u8; 6]) -> String {
+    addr.reverse();
+    format_bd_addr(addr)
+}
+
+fn parse_bond_addr(text: &str) -> eros::Result<[u8; 6]> {
+    let mut addr = [0u8; 6];
+    let mut parts = text.split(':');
+    for byte in addr.iter_mut().rev() {
+        let part = parts
+            .next()
+            .ok_or_else(|| eros::error!("address must have six colon-separated bytes"))?;
+        *byte = u8::from_str_radix(part, 16).context("address byte is not hex")?;
+    }
+    if parts.next().is_some() {
+        return Err(eros::error!("address must have six colon-separated bytes"));
+    }
+    Ok(addr)
+}
+
+async fn cmd_list_bonds(device: &VmDevice) -> eros::Result<()> {
+    let bonds = device.list_bonds().await.context("Failed to list bonds")?;
+    if bonds.is_empty() {
+        println!("No bonds");
+    }
+    for bond in bonds {
+        println!(
+            "{}{}",
+            display_bond_addr(bond.bd_addr),
+            if bond.connected { " (connected)" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+async fn cmd_remove_bond(device: &VmDevice, addr: [u8; 6]) -> eros::Result<()> {
+    device
+        .remove_bond(addr)
+        .await
+        .context("Failed to remove bond")?;
+    println!("Bond removed");
+    Ok(())
+}
+
 pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: DeviceCommands,
@@ -253,6 +307,15 @@ pub(crate) async fn handle_command(
         DeviceCommands::ClearBond => {
             let device = connect_to_device(device_index, false).await?;
             cmd_clear_bond(&device).await
+        }
+        DeviceCommands::ListBonds => {
+            let device = connect_to_device(device_index, false).await?;
+            cmd_list_bonds(&device).await
+        }
+        DeviceCommands::RemoveBond { addr } => {
+            let addr = parse_bond_addr(&addr)?;
+            let device = connect_to_device(device_index, false).await?;
+            cmd_remove_bond(&device, addr).await
         }
         DeviceCommands::AccelCalib {
             samples,

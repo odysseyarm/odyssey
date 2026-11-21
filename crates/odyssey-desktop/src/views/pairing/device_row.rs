@@ -7,7 +7,8 @@ use gpui::{
 use odyssey_hub_common::device::Device;
 
 use super::MONO_FONT;
-use super::pair_buttons::PairingControls;
+use super::bonds_panel::BondsPanel;
+use super::pair_buttons::{BondsChanged, PairingControls};
 use super::pairing_state::PairTarget;
 use crate::hub::Hub;
 use crate::theme::{RADIUS, palette};
@@ -16,14 +17,24 @@ use crate::views::device_label;
 pub(super) struct DeviceRow {
     device: Device,
     controls: Entity<PairingControls>,
+    bonds: Entity<BondsPanel>,
 }
 
 impl DeviceRow {
     pub(super) fn new(hub: Entity<Hub>, device: Device, cx: &mut Context<'_, Self>) -> Self {
         let target = PairTarget::Device(device.clone());
-        let controls = cx.new(|cx| PairingControls::new(hub, target, cx));
+        let controls = cx.new(|cx| PairingControls::new(hub.clone(), target, cx));
         cx.observe(&controls, |_, _, cx| cx.notify()).detach();
-        Self { device, controls }
+        let bonds = cx.new(|cx| BondsPanel::new(hub, device.clone(), cx));
+        cx.subscribe(&controls, |this, _, _: &BondsChanged, cx| {
+            this.bonds.update(cx, BondsPanel::refresh);
+        })
+        .detach();
+        Self {
+            device,
+            controls,
+            bonds,
+        }
     }
 
     /// Follows the hub's latest view of the device, so commands address it as
@@ -33,9 +44,11 @@ impl DeviceRow {
             return;
         }
         let target = PairTarget::Device(device.clone());
-        self.device = device;
+        self.device = device.clone();
         self.controls
             .update(cx, |controls, _| controls.retarget(target));
+        self.bonds
+            .update(cx, |bonds, cx| bonds.set_device(device, cx));
         cx.notify();
     }
 }
@@ -62,14 +75,21 @@ impl Render for DeviceRow {
         }
         div()
             .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_between()
+            .flex_col()
             .gap_2()
             .p_3()
             .rounded(px(RADIUS))
             .bg(p.surface_alt)
-            .child(label)
-            .child(self.controls.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(label)
+                    .child(self.controls.clone()),
+            )
+            .child(self.bonds.clone())
     }
 }
