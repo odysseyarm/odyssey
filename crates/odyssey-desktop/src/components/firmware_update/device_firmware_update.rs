@@ -12,7 +12,7 @@ use odyssey_hub_server::firmware::FirmwareManifest;
 
 use super::update_available::{Offer, update_available};
 use super::update_check::{check_for_update_with_bootloader, format_version};
-use super::update_manager::{FirmwareUpdateManager, radio_ota_bootloader_version};
+use super::update_manager::FirmwareUpdateManager;
 use super::update_notes::{held_back_note, net_core_blocked_note};
 use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
 use crate::components::ui;
@@ -35,12 +35,18 @@ pub(crate) fn device_firmware_update(
     let current_state = manager.get_state(device_uuid);
     if current_state.is_before_update() {
         let next_state = match manifest {
-            Some(manifest) => check_for_update_with_bootloader(
-                manifest,
-                device,
-                &current_state,
-                radio_ota_bootloader_version(device).as_ref(),
-            ),
+            Some(manifest) => {
+                let actual = odyssey_hub_server::firmware::device_info_from_pid(
+                    device.product_id,
+                )
+                .and_then(|(vid, pid, _)| manager.actual_bootloader_version(device, vid, pid));
+                check_for_update_with_bootloader(
+                    manifest,
+                    device,
+                    &current_state,
+                    actual.as_ref(),
+                )
+            }
             None => FirmwareUpdateState::Idle,
         };
         manager.set_before_update_state(device_uuid, next_state);
@@ -78,6 +84,16 @@ pub(crate) fn device_firmware_update(
             )
             .into_any_element(),
         FirmwareUpdateState::NeedsNewerDesktop(held_back) => held_back_note(held_back, p),
+        FirmwareUpdateState::BootloaderUnknown => div()
+            .text_xs()
+            .text_color(p.warning_ink)
+            .child("Checking device bootloader version; firmware unchanged.")
+            .into_any_element(),
+        FirmwareUpdateState::IncompatibleBootloader => div()
+            .text_xs()
+            .text_color(p.warning_ink)
+            .child("Incompatible ATS Lite bootloader. Firmware unchanged; SWD reprovisioning required.")
+            .into_any_element(),
         FirmwareUpdateState::NetCoreBlockedNoPath(blocked) => {
             net_core_blocked_note(blocked, None, p)
         }
@@ -89,6 +105,7 @@ pub(crate) fn device_firmware_update(
             pid,
             held_back,
             net_core_blocked,
+            format_blocked,
         } => update_available(
             device,
             manifest,
@@ -102,6 +119,7 @@ pub(crate) fn device_firmware_update(
                 pid: *pid,
                 held_back: held_back.as_ref(),
                 net_core_blocked: net_core_blocked.as_ref(),
+                format_blocked: format_blocked.as_deref(),
             },
             p,
         ),

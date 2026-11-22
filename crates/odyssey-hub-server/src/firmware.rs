@@ -17,7 +17,8 @@ use futures::io::{AsyncReadExt as _, Cursor};
 use nusb::MaybeFuture as _;
 use odyssey_firmware_manifest::asset_filename;
 pub use odyssey_firmware_manifest::{
-    DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest, ReleaseSource,
+    ats_lite_target_compatible, DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest,
+    ReleaseSource,
 };
 use odyssey_version::legacy_bootloader_version;
 pub use release_signing::Component as DfuComponent;
@@ -27,9 +28,13 @@ use thiserror::Error;
 use crate::policy;
 
 /// Where firmware manifests are published. Promotion from nightly to stable is a
-/// deliberate copy of an entry between the two files.
-const MANIFEST_BASE_URL: &str =
-    "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests";
+/// deliberate copy of an entry between the two files. `cargo xtask desktop build
+/// --deployment dev` sets `ODYSSEY_FIRMWARE_MANIFEST_URL` for HITL hosts; it never
+/// changes which signing keys are trusted.
+const MANIFEST_BASE_URL: &str = match option_env!("ODYSSEY_FIRMWARE_MANIFEST_URL") {
+    Some(url) => url,
+    None => "https://raw.githubusercontent.com/odysseyarm/odyssey/master/firmware/manifests",
+};
 
 /// Which manifest a host follows.
 ///
@@ -301,22 +306,14 @@ pub async fn fetch_manifest(
 /// Since: Odyssey Desktop 0.6.4.
 #[derive(Debug, Clone, Copy)]
 pub struct FirmwareOffer<'a> {
-    /// The newest entry this desktop can install on this unit.
-    ///
-    /// Since: Odyssey Desktop 0.6.4.
+    /// Newest compatible release for this desktop, unit and bootloader.
     pub offered: Option<&'a FirmwareEntry>,
-    /// A newer entry that exists but needs a newer desktop. The user is told so
-    /// and chooses whether to update. Nothing updates the desktop for them.
-    ///
-    /// Since: Odyssey Desktop 0.6.4.
+    /// Newer release held back by minimum desktop version.
     pub held_back: Option<&'a FirmwareEntry>,
-    /// A newer entry the desktop could install, were the unit's net core
-    /// further along. When `offered` is set it is normally the bridge that
-    /// brings the net core up to what this entry requires. When it is unset, the
-    /// unit has no path to this entry from the net core it runs.
-    ///
-    /// Since: Odyssey Desktop 0.6.4.
+    /// Newer release held back by running net-core floor.
     pub net_core_blocked: Option<&'a FirmwareEntry>,
+    /// Newer release blocked by incompatible ATS Lite image format.
+    pub format_blocked: Option<&'a FirmwareEntry>,
 }
 
 /// Choose firmware for a device type.
@@ -337,10 +334,25 @@ pub fn select_firmware<'a>(
     desktop: &semver::Version,
     running_netcore: u16,
 ) -> FirmwareOffer<'a> {
+    select_firmware_with_bootloader(manifest, device_type, desktop, running_netcore, None)
+}
+
+/// Select firmware while enforcing ATS Lite 1 bootloader-format compatibility.
+///
+/// Unknown actual bootloader blocks secure-format targets. Historical targets
+/// remain available unless a secure bootloader is known.
+pub fn select_firmware_with_bootloader<'a>(
+    manifest: &'a FirmwareManifest,
+    device_type: &str,
+    desktop: &semver::Version,
+    running_netcore: u16,
+    actual_bootloader: Option<&semver::Version>,
+) -> FirmwareOffer<'a> {
     let mut offer = FirmwareOffer {
         offered: None,
         held_back: None,
         net_core_blocked: None,
+        format_blocked: None,
     };
     let Some(device) = manifest.devices.get(device_type) else {
         return offer;
@@ -358,6 +370,8 @@ pub fn select_firmware<'a>(
         };
         if !desktop_ok {
             offer.held_back.get_or_insert(entry);
+        } else if !ats_lite_target_compatible(device_type, entry, actual_bootloader) {
+            offer.format_blocked.get_or_insert(entry);
         } else if entry.requires_netcore > running_netcore {
             offer.net_core_blocked.get_or_insert(entry);
         } else {
@@ -627,6 +641,9 @@ pub enum DfuError {
     /// Since: Odyssey Desktop (unreleased).
     #[error("signed DFU image metadata is missing for enforcing bootloader")]
     MissingDfuMetadata,
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("DFU component does not match installed ATS Lite bootloader format")]
+    IncompatibleDfuComponent,
     /// Since: Odyssey Desktop (unreleased).
     #[error("signed DFU image length exceeds protocol limit")]
     DfuImageTooLarge,
@@ -1193,6 +1210,7 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
 /// Flash `firmware` into `slot` (`APP_A` or `APP_B`, written through alt setting `alt`)
 /// of the device with `uuid`, which must already be in its bootloader. Progress is
 /// logged every 10%.
+/// `signing.component` must match image-format generation; the installed version is checked before flash.
 ///
 /// # Errors
 /// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, or
@@ -1205,8 +1223,9 @@ pub async fn flash_firmware(
     slot: &str,
     alt: u8,
     firmware: &[u8],
+    signing: DfuSigning<'_>,
 ) -> Result<(), DfuError> {
-    flash_firmware_with_progress(uuid, vid, pid, slot, alt, firmware, |_, _| {}).await
+    flash_firmware_with_progress(uuid, vid, pid, slot, alt, firmware, signing, |_, _| {}).await
 }
 
 /// Reader that logs download progress every 10% and reports each read to `callback`.
@@ -1284,12 +1303,13 @@ pub async fn flash_firmware_with_progress<F>(
     slot: &str,
     alt: u8,
     firmware: &[u8],
+    signing: DfuSigning<'_>,
     progress_callback: F,
 ) -> Result<(), DfuError>
 where
     F: FnMut(usize, usize) + Unpin,
 {
-    flash_image(uuid, vid, pid, slot, alt, firmware, None, progress_callback).await
+    flash_image(uuid, vid, pid, slot, alt, firmware, Some(signing), progress_callback).await
 }
 
 /// What a signature-enforcing bootloader checks an image against.
@@ -1348,6 +1368,17 @@ where
     .await
 }
 
+fn component_secure_generation(component: release_signing::Component) -> Option<bool> {
+    use release_signing::Component;
+    match component {
+        Component::Lite1App | Component::Lite1NetCore | Component::Lite1Bootloader => Some(false),
+        Component::Lite1SecureApp
+        | Component::Lite1SecureNetCore
+        | Component::Lite1SecureBootloader => Some(true),
+        _ => None,
+    }
+}
+
 fn requires_signed_dfu(version: Option<&semver::Version>) -> bool {
     version.is_some_and(|version| version.major >= 1)
 }
@@ -1381,6 +1412,16 @@ where
     F: FnMut(usize, usize) + Unpin,
 {
     let bootloader_version = read_bootloader_release_for_device(uuid, vid, pid).await?;
+    if let Some(signing) = signing {
+        if let Some(secure_component) = component_secure_generation(signing.component) {
+            let secure_bootloader = bootloader_version
+                .as_ref()
+                .is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
+            if secure_component != secure_bootloader {
+                return Err(DfuError::IncompatibleDfuComponent);
+            }
+        }
+    }
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
     let header = if requires_signed_dfu(bootloader_version.as_ref()) {
@@ -1534,6 +1575,7 @@ pub async fn wait_for_dfu_device(
 ///
 /// Detach it into DFU mode, wait up to 10 seconds for bootloader enumeration, flash
 /// the exposed slot, then allow it to reset into the new firmware.
+/// `actual_bootloader` is checked against `signing.component` before detach.
 ///
 /// # Errors
 /// Returns [`DfuError`] if detach, DFU enumeration, slot selection, or flashing
@@ -1544,9 +1586,18 @@ pub async fn update_firmware(
     vid: u16,
     pid: u16,
     firmware: &[u8],
+    signing: DfuSigning<'_>,
+    actual_bootloader: Option<&semver::Version>,
 ) -> Result<(), DfuError> {
-    tracing::info!("Starting firmware update for {:04x}:{:04x}", vid, pid);
+    if let Some(secure_component) = component_secure_generation(signing.component) {
+        let secure_bootloader = actual_bootloader
+            .is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
+        if secure_component != secure_bootloader {
+            return Err(DfuError::IncompatibleDfuComponent);
+        }
+    }
 
+    tracing::info!("Starting firmware update for {:04x}:{:04x}", vid, pid);
     tracing::info!("Sending DFU detach...");
     send_dfu_detach(uuid, vid, pid).await?;
 
@@ -1564,7 +1615,7 @@ pub async fn update_firmware(
     tracing::info!("Target slot: {} (alt {})", slot_name, alt);
 
     tracing::info!("Flashing firmware...");
-    flash_firmware(uuid, vid, pid, slot_name, alt, firmware).await?;
+    flash_firmware(uuid, vid, pid, slot_name, alt, firmware, signing).await?;
 
     tracing::info!("Firmware update complete!");
     Ok(())
@@ -1968,6 +2019,26 @@ mod tests {
                 0
             )),
             (None, None)
+        );
+    }
+
+    #[test]
+    fn format_gate_selects_historical_release_and_reports_blocked_target() {
+        let mut manifest = manifest_with(&[("2.0.0", "0.1.0"), ("1.9.0", "0.1.0")]);
+        let releases = &mut manifest.devices.get_mut("atslite1").unwrap().firmwares;
+        releases[0].requires_bootloader = semver::Version::new(2, 0, 0);
+        let actual = semver::Version::new(1, 0, 0);
+        let offer = select_firmware_with_bootloader(
+            &manifest,
+            "atslite1",
+            &semver::Version::new(9, 0, 0),
+            0,
+            Some(&actual),
+        );
+        assert_eq!(offer.offered.map(|entry| entry.version.as_str()), Some("1.9.0"));
+        assert_eq!(
+            offer.format_blocked.map(|entry| entry.version.as_str()),
+            Some("2.0.0")
         );
     }
     #[test]

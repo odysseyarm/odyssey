@@ -34,16 +34,25 @@ pub(super) struct Downloads {
     pub(super) bootloader: Option<BootloaderImage>,
 }
 
-fn component(device_type: &str, role: &str) -> Option<firmware::DfuComponent> {
+fn component(
+    device_type: &str,
+    role: &str,
+    requires_bootloader: &semver::Version,
+) -> Option<firmware::DfuComponent> {
     use firmware::DfuComponent;
-    match (device_type, role) {
-        ("atslite1", "app") => Some(DfuComponent::Lite1App),
-        ("atslite1", "net-core") => Some(DfuComponent::Lite1NetCore),
-        ("atslite1", "stage2-bootloader") => Some(DfuComponent::Lite1Bootloader),
-        ("legacy-atslite1", "app") => Some(DfuComponent::LegacyAtsliteApp),
-        ("legacy-atslite1", "net-core") => Some(DfuComponent::LegacyAtsliteNetCore),
-        ("legacy-atslite1", "stage2-bootloader") => Some(DfuComponent::LegacyAtsliteBootloader),
-        ("marker-control-board", "app") => Some(DfuComponent::MarkerApp),
+    let secure = device_type == "atslite1"
+        && requires_bootloader >= &semver::Version::new(2, 0, 0);
+    match (device_type, role, secure) {
+        ("atslite1", "app", true) => Some(DfuComponent::Lite1SecureApp),
+        ("atslite1", "net-core", true) => Some(DfuComponent::Lite1SecureNetCore),
+        ("atslite1", "stage2-bootloader", true) => Some(DfuComponent::Lite1SecureBootloader),
+        ("atslite1", "app", false) => Some(DfuComponent::Lite1App),
+        ("atslite1", "net-core", false) => Some(DfuComponent::Lite1NetCore),
+        ("atslite1", "stage2-bootloader", false) => Some(DfuComponent::Lite1Bootloader),
+        ("legacy-atslite1", "app", _) => Some(DfuComponent::LegacyAtsliteApp),
+        ("legacy-atslite1", "net-core", _) => Some(DfuComponent::LegacyAtsliteNetCore),
+        ("legacy-atslite1", "stage2-bootloader", _) => Some(DfuComponent::LegacyAtsliteBootloader),
+        ("marker-control-board", "app", _) => Some(DfuComponent::MarkerApp),
         _ => None,
     }
 }
@@ -118,9 +127,8 @@ impl Downloads {
                 Some(ReleaseImage {
                     data,
                     release,
-                    component: component(device_type, "net-core").ok_or_else(|| {
-                        eros::error!("Unknown net-core component for {device_type}")
-                    })?,
+                    component: component(device_type, "net-core", &entry.requires_bootloader)
+                        .ok_or_else(|| eros::error!("Unknown net-core component for {device_type}"))?,
                     signature: file.signature.clone(),
                 })
             }
@@ -146,9 +154,8 @@ impl Downloads {
                 slot_file,
                 DfuImage {
                     data,
-                    component: component(device_type, "app").ok_or_else(|| {
-                        eros::error!("Unknown application component for {device_type}")
-                    })?,
+                    component: component(device_type, "app", &entry.requires_bootloader)
+                        .ok_or_else(|| eros::error!("Unknown application component for {device_type}"))?,
                     version: app_version,
                     signature: file.signature.clone(),
                 },
@@ -181,9 +188,12 @@ impl Downloads {
                     data,
                     version: version.clone(),
                     signed_version,
-                    component: component(device_type, "stage2-bootloader").ok_or_else(|| {
-                        eros::error!("Unknown bootloader component for {device_type}")
-                    })?,
+                    component: component(
+                        device_type,
+                        "stage2-bootloader",
+                        &entry.requires_bootloader,
+                    )
+                    .ok_or_else(|| eros::error!("Unknown bootloader component for {device_type}"))?,
                     signature: file.signature.clone(),
                 })
             }
@@ -237,10 +247,28 @@ mod tests {
         }
     }
     #[test]
-    fn maps_marker_application_to_its_signature_component() {
+    fn maps_marker_and_secure_release_to_signature_components() {
+        let legacy = semver::Version::new(1, 9, 9);
+        let secure = semver::Version::new(2, 0, 0);
         assert_eq!(
-            component("marker-control-board", "app"),
+            component("marker-control-board", "app", &legacy),
             Some(firmware::DfuComponent::MarkerApp)
+        );
+        assert_eq!(
+            component("atslite1", "app", &legacy),
+            Some(firmware::DfuComponent::Lite1App)
+        );
+        assert_eq!(
+            component("atslite1", "app", &secure),
+            Some(firmware::DfuComponent::Lite1SecureApp)
+        );
+        assert_eq!(
+            component("atslite1", "net-core", &secure),
+            Some(firmware::DfuComponent::Lite1SecureNetCore)
+        );
+        assert_eq!(
+            component("atslite1", "stage2-bootloader", &secure),
+            Some(firmware::DfuComponent::Lite1SecureBootloader)
         );
     }
 }
