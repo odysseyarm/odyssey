@@ -149,6 +149,17 @@ let
   outputHashes = builtins.fromJSON (builtins.readFile ./firmware-git-hashes.json);
   bootPatch =
     (builtins.fromTOML (builtins.readFile ../firmware/.cargo/config.toml)).patch.crates-io.embassy-boot;
+  # Config patches also affect build-std's synthetic workspace, which has no firmware lock.
+  bootPatchHook =
+    dir:
+    lib.optionalString (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir))) ''
+      cat >> Cargo.toml <<'EOF'
+
+      [patch.crates-io.embassy-boot]
+      git = "${bootPatch.git}"
+      branch = "${bootPatch.branch}"
+      EOF
+    '';
   vendorArgs = {
     inherit outputHashes;
     overrideVendorGitCheckout =
@@ -246,15 +257,7 @@ let
           cargoVendorDir = if buildStd then stdVendorOf dir else vendorOf dir;
           # arm-none-eabi-gcc is what the cc crate picks for the thumb targets.
           nativeBuildInputs = shared.nativeBuildInputs ++ [ arm ];
-          # Config patches also affect build-std's synthetic workspace, which has no firmware lock.
-          postPatch = lib.optionalString (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir))) ''
-            cat >> Cargo.toml <<'EOF'
-
-            [patch.crates-io.embassy-boot]
-            git = "${bootPatch.git}"
-            branch = "${bootPatch.branch}"
-            EOF
-          '';
+          postPatch = bootPatchHook dir;
           doCheck = false;
         };
       deps = craneLib.buildDepsOnly args;
@@ -616,6 +619,7 @@ let
       src = sourceFor { inherit dir; };
       cargoLock = lockFile dir;
       cargoVendorDir = vendorOf dir;
+      postPatch = bootPatchHook dir;
       CARGO_PROFILE = "dev";
     };
   hostTest =
