@@ -34,7 +34,7 @@ struct AlignedMagic([u8; 4]);
 ///
 /// Since: Odyssey Desktop 0.6.0.
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BootState {
     /// [`STATE_MAGIC`] if the state was written by this crate. Anything else
@@ -60,6 +60,9 @@ pub struct BootState {
     pub reserved: u8,
 }
 
+// The net-core record starts at state + 12, right after the magic word and these 8 bytes.
+const _: () = assert!(size_of::<BootState>() == 8);
+
 impl BootState {
     /// Both slots on Bank A, boot counter at zero.
     ///
@@ -80,6 +83,13 @@ impl BootState {
     /// Since: Odyssey Desktop 0.6.0.
     pub fn is_valid(&self) -> bool {
         self.magic == STATE_MAGIC && self.active_slot <= 1 && self.pending_slot <= 1
+    }
+
+    /// The eight bytes written to flash after the partition magic word, in field order.
+    ///
+    /// Since: Odyssey Desktop (unreleased).
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::bytes_of(self)
     }
 }
 
@@ -170,14 +180,7 @@ impl BootStateManager {
         flash.erase(page_start, page_end)?;
         flash.write(base, &BOOT_MAGIC.to_le_bytes())?;
 
-        // SAFETY: `state` is a live reference and `BootState` has repr(C),
-        // alignment 4, and exactly eight initialized bytes with no padding.
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                ptr::from_ref::<BootState>(state).cast::<u8>(),
-                size_of::<BootState>(),
-            )
-        };
+        let bytes = state.as_bytes();
         let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
@@ -206,14 +209,7 @@ impl BootStateManager {
         flash.erase(page_start, page_end)?;
         flash.write(base, &SWAP_MAGIC.to_le_bytes())?;
 
-        // SAFETY: `state` is a live reference and `BootState` has repr(C),
-        // alignment 4, and exactly eight initialized bytes with no padding.
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                ptr::from_ref::<BootState>(state).cast::<u8>(),
-                size_of::<BootState>(),
-            )
-        };
+        let bytes = state.as_bytes();
         let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
@@ -280,10 +276,7 @@ fn write_ota_state_page<F: NorFlash>(
     let page_end = page_start + page_size;
     flash.erase(page_start, page_end)?;
 
-    // SAFETY: BootState has repr(C), alignment 4, and exactly eight initialized bytes.
-    let state_bytes = unsafe {
-        core::slice::from_raw_parts((&raw const state).cast::<u8>(), size_of::<BootState>())
-    };
+    let state_bytes = state.as_bytes();
     flash.write(state_addr + 4, state_bytes)?;
 
     if let Some((address, size)) = netcore {
@@ -328,6 +321,18 @@ mod tests {
         let mut state = BootState::new();
         state.magic ^= 1;
         assert!(!state.is_valid());
+    }
+
+    #[test]
+    fn boot_state_bytes_keep_flash_field_order() {
+        let state = BootState {
+            magic: STATE_MAGIC,
+            active_slot: 1,
+            pending_slot: 0,
+            boot_counter: 3,
+            reserved: 0,
+        };
+        assert_eq!(state.as_bytes(), [0xAD, 0x10, 0x07, 0xB0, 1, 0, 3, 0]);
     }
 
     #[test]

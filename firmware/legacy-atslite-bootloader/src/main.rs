@@ -559,13 +559,7 @@ fn rewrite_state_page_with_netcore(
             .write(state_addr as u32, &flag_bytes)
             .map_err(|_| ())?;
 
-        // SAFETY: BootState is initialized and repr(C) layout has no uninitialized padding.
-        let state_bytes = unsafe {
-            core::slice::from_raw_parts(
-                &state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
-            )
-        };
+        let state_bytes = state.as_bytes();
         flash
             .write(
                 (state_addr + core::mem::size_of::<u32>()) as u32,
@@ -683,13 +677,7 @@ fn flag_dfu_requested(
             return;
         }
 
-        // Restore boot state immediately after the flag word.
-        let state_bytes = unsafe {
-            core::slice::from_raw_parts(
-                &current_state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
-            )
-        };
+        let state_bytes = current_state.as_bytes();
         if let Err(_) = flash.write((state_addr + 4) as u32, state_bytes) {
             defmt::warn!("Failed to rewrite boot state at {:#x}", state_addr + 4);
             return;
