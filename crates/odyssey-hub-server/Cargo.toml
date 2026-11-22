@@ -39,6 +39,7 @@ nusb = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 odyssey-version = { path = "../odyssey-version" }
 odyssey-firmware-manifest = { workspace = true }
+release-signing = { path = "../../firmware/release-signing" }
 nalgebra = "0.35"
 cam-geom = { workspace = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
@@ -80,4 +81,3 @@ winres = "0.1.12"
 odyssey-autocalib = { workspace = true }
 postcard = { workspace = true, features = ["use-std"] }
 better-ota = { path = "../../firmware/better-ota" }
-release-signing = { path = "../../firmware/release-signing" }
