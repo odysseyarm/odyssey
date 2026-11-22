@@ -247,17 +247,14 @@ let
           # arm-none-eabi-gcc is what the cc crate picks for the thumb targets.
           nativeBuildInputs = shared.nativeBuildInputs ++ [ arm ];
           # Config patches also affect build-std's synthetic workspace, which has no firmware lock.
-          postPatch =
-            lib.optionalString
-              (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir)))
-              ''
-                cat >> Cargo.toml <<'EOF'
+          postPatch = lib.optionalString (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir))) ''
+            cat >> Cargo.toml <<'EOF'
 
-                [patch.crates-io.embassy-boot]
-                git = "${bootPatch.git}"
-                branch = "${bootPatch.branch}"
-                EOF
-              '';
+            [patch.crates-io.embassy-boot]
+            git = "${bootPatch.git}"
+            branch = "${bootPatch.branch}"
+            EOF
+          '';
           doCheck = false;
         };
       deps = craneLib.buildDepsOnly args;
