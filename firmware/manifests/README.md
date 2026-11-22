@@ -421,7 +421,7 @@ so it does not work here):
 
 ```
 ykman piv keys generate --algorithm ED25519 9c pub.pem
-ODYSSEY_SIGNER="yubico-piv-tool -a verify-pin -a sign-data -s 9c -A ED25519" \
+ODYSSEY_SIGNER="yubico-piv-tool -a verify-pin --sign -s 9c -A ED25519" \
   cargo xtask firmware <board> gen-release ...
 ```
 
@@ -430,12 +430,13 @@ the PIN and touch prompts have not been run against a device. If the tool
 prints anything but the 64 signature bytes, wrap it in a script that does.
 
 **Key slots.** `RELEASE_KEYS` in `firmware/release-signing/src/keys.rs` has four
-slots; slot 0 holds the `matthew@ampotato` key and the rest are empty (all zero).
+slots; slot 0 holds the `matthew@ampotato` key, slot 1 the `yubikey@kybrdgmr` key
+and the rest are empty (all zero).
 A signature from any one trusted key is accepted. To add a key, put its raw
 32-byte public key in a free slot:
 
 ```
-ykman piv keys export 9c - | openssl pkey -pubin -outform DER | tail -c 32 | xxd -i
+ykman piv keys export 9c - | python3 -c 'import sys,base64;print(base64.b64decode("".join(l for l in sys.stdin if "-----" not in l))[-32:].hex())'
 ```
 
 The last 32 bytes of the DER encoding are the key. An all-zero slot never
