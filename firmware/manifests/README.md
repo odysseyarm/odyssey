@@ -470,7 +470,6 @@ signature and one zero byte. Original image bytes follow, with no transport
 padding. Header authentication precedes flash writes; exact image size and hash
 must match before activation. App vector commit is deferred until verification,
 so interrupted or rejected ATS downloads cannot become bootable fallback banks.
-Signed stage2 versions below 1.0.0 are rejected to prevent restoring unsigned DFU.
 
 Desktop wraps manifest signatures according to the running bootloader version.
 For standalone recovery, use the production signer:

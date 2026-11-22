@@ -23,7 +23,7 @@ impl core::fmt::Display for DfuError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::Header => "invalid signed DFU header",
-            Self::Component => "DFU component or bootloader version is not allowed",
+            Self::Component => "DFU component is not allowed",
             Self::Length => "DFU image is smaller than its vector table",
             Self::Signature => "DFU signature is not trusted",
             Self::Overflow => "DFU image length overflowed",
@@ -71,13 +71,6 @@ impl DfuVerifier {
         }
         let id = header[DOMAIN_LEN];
         if id != component as u8 {
-            return Err(DfuError::Component);
-        }
-        if matches!(
-            component,
-            Component::Lite1Bootloader | Component::LegacyAtsliteBootloader
-        ) && u32::from_le_bytes(header[23..27].try_into().map_err(|_| DfuError::Header)?) < 1
-        {
             return Err(DfuError::Component);
         }
         let size = u32::from_le_bytes(header[19..23].try_into().map_err(|_| DfuError::Header)?);
@@ -211,31 +204,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_tiny_and_old_bootloader_versions() {
+    fn rejects_zero_length_images() {
         let mut header = fixture();
         header[19..23].copy_from_slice(&0u32.to_le_bytes());
         assert_eq!(
             DfuVerifier::new(Component::Lite1App, &header).err(),
             Some(DfuError::Length)
-        );
-        let signature = salty::Keypair::from(&DEV_SEED)
-            .sign(&crate::message::message(
-                Component::Lite1Bootloader,
-                8,
-                [0, 0, 1],
-                &[1; 32],
-            ))
-            .to_bytes();
-        let boot = dfu_header(
-            Component::Lite1Bootloader,
-            8,
-            [0, 0, 1],
-            &[1; 32],
-            &signature,
-        );
-        assert_eq!(
-            DfuVerifier::new(Component::Lite1Bootloader, &boot).err(),
-            Some(DfuError::Component),
         );
     }
     #[cfg(feature = "dev-signing-key")]
