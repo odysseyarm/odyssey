@@ -80,3 +80,4 @@ winres = "0.1.12"
 odyssey-autocalib = { workspace = true }
 postcard = { workspace = true, features = ["use-std"] }
 better-ota = { path = "../../firmware/better-ota" }
+release-signing = { path = "../../firmware/release-signing" }

@@ -110,7 +110,8 @@ pub enum ConfigKind {
 }
 
 /// Since: Odyssey Desktop 0.6.0.
-#[protocol_type(no_cbor)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "schema", derive(odyssey_protocol_macros::PostcardSchema))]
 #[repr(C)]
 // Not a `#[pyclass]`: foreign payloads, converted through `wire::GeneralConfig`.
 #[cfg_attr(
@@ -141,13 +142,48 @@ pub enum GeneralConfig {
     /// Since: Odyssey Desktop 0.6.0.
     ///
     /// Wire baseline: device protocol 0.1.4.
-    CameraModelNf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsicsPod<f32>),
+    CameraModelNf(RosOpenCvIntrinsicsPod<f32>),
     /// Since: Odyssey Desktop 0.6.0.
     ///
     /// Wire baseline: device protocol 0.1.4.
-    CameraModelWf(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] RosOpenCvIntrinsicsPod<f32>),
+    CameraModelWf(RosOpenCvIntrinsicsPod<f32>),
     /// Since: Odyssey Desktop 0.6.0.
     ///
     /// Wire baseline: device protocol 0.1.4.
-    StereoIso(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Isometry3<f32>),
+    StereoIso(Isometry3<f32>),
+}
+
+// Native defmt avoids linking core's float-to-text formatter into firmware.
+#[cfg(feature = "defmt")]
+impl defmt::Format for GeneralConfig {
+    fn format(&self, fmt: defmt::Formatter<'_>) {
+        match self {
+            Self::ImpactThreshold(x) => defmt::write!(fmt, "ImpactThreshold({:?})", x),
+            Self::SuppressMs(x) => defmt::write!(fmt, "SuppressMs({:?})", x),
+            Self::AccelConfig(x) => defmt::write!(fmt, "AccelConfig({:?})", x),
+            Self::GyroConfig(x) => defmt::write!(fmt, "GyroConfig({:?})", x),
+            Self::CameraModelNf(x) => defmt::write!(
+                fmt,
+                "CameraModelNf {{ p: {:?}, k: {:?}, distortion: {:?}, rect: {:?} }}",
+                x.p,
+                x.k,
+                x.distortion,
+                x.rect
+            ),
+            Self::CameraModelWf(x) => defmt::write!(
+                fmt,
+                "CameraModelWf {{ p: {:?}, k: {:?}, distortion: {:?}, rect: {:?} }}",
+                x.p,
+                x.k,
+                x.distortion,
+                x.rect
+            ),
+            Self::StereoIso(x) => defmt::write!(
+                fmt,
+                "StereoIso {{ translation: {:?}, rotation: {:?} }}",
+                x.translation.vector.as_slice(),
+                x.rotation.coords.as_slice()
+            ),
+        }
+    }
 }

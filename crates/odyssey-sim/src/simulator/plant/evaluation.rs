@@ -1,12 +1,12 @@
 //! Fixed exposure against the adaptive loop, with and without the hub's hint, over
 //! scripted scenes. Everything is seeded, so the numbers are the same on every run.
 
-use odyssey_protocol::GeneralConfig;
 use odyssey_protocol::wire::CameraCalibrationParams;
+use odyssey_protocol::{GeneralConfig, MarkersReport};
 
 use super::super::unit::reset_registers;
 use super::super::world::World;
-use super::{Distractor, Sensor, Source};
+use super::{Distractor, EXPOSURE, EXPOSURE_MASK, Sensor, Source};
 use crate::simulator::SensorModel;
 
 const FRAME_MS: u64 = 10;
@@ -73,9 +73,9 @@ impl Metrics {
         f64::from(self.saturated) / f64::from(self.visible.max(1))
     }
 
-    /// Native px; positions are 1/64 px.
+    /// Native px; positions are in report units.
     fn rms_px(&self) -> f64 {
-        (self.squared_error / f64::from(self.detected.max(1))).sqrt() / 64.0
+        (self.squared_error / f64::from(self.detected.max(1))).sqrt() / MarkersReport::UNITS_PER_PX
     }
 }
 
@@ -129,8 +129,8 @@ fn simulate(mode: Mode, distractors: &[Distractor], phases: &[Phase]) -> Run {
                 sensor.hint(&matched, now_ms);
             }
             let frame = sensor.frame(&mut registers, now_ms, &markers);
-            run.exposures.push(registers[&(0, 0x67)] & 0x7f);
-            metrics.exposure = registers[&(0, 0x67)] & 0x7f;
+            run.exposures.push(registers[&EXPOSURE] & EXPOSURE_MASK);
+            metrics.exposure = registers[&EXPOSURE] & EXPOSURE_MASK;
             if let Some(frame) = &frame {
                 run.saw_window |= frame.spots.iter().any(|s| s.source == Source::Window);
                 matched = frame

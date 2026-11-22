@@ -181,15 +181,6 @@ pub struct MonitorKey {
     pub height: u32,
 }
 
-/// An identity pair proven by the USB firmware update flow.
-///
-/// Stored as release strings so the proof retains nightly build identity.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct RadioOtaBootloaderProof {
-    pub app_version: String,
-    pub bootloader_version: String,
-}
-
 /// Desktop app state that is not a setting but should survive a restart.
 ///
 /// Every field defaults when absent, so a file written before a field existed
@@ -221,8 +212,6 @@ pub struct UiState {
     ///
     /// Since: Odyssey Desktop 0.6.7.
     pub prefer_camera_size: bool,
-    /// Bootloader and application identities confirmed by a successful USB update.
-    pub radio_ota_bootloader_proofs: HashMap<String, RadioOtaBootloaderProof>,
 }
 
 /// What a display is, as far as calibration cares: a flat panel has a known
@@ -780,7 +769,6 @@ mod tests {
                 kind: DisplayKind::Projector,
             }],
             prefer_camera_size: true,
-            radio_ota_bootloader_proofs: HashMap::new(),
         };
 
         block_on(async {
@@ -790,6 +778,24 @@ mod tests {
                 other => panic!("expected Success, got {other:?}"),
             }
         });
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ui_state_ignores_the_removed_radio_ota_proofs() {
+        let dir = std::env::temp_dir().join(format!("odyssey-ui-state-old-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ui_state.json");
+        std::fs::write(
+            &path,
+            r#"{"prefer_camera_size":true,"radio_ota_bootloader_proofs":{"010203040506":{"app_version":"1.2.3","bootloader_version":"0.2.0"}}}"#,
+        )
+        .unwrap();
+
+        match block_on(load_ui_state_from(path)) {
+            ConfigLoadResult::Success(loaded) => assert!(loaded.prefer_camera_size),
+            other => panic!("expected Success, got {other:?}"),
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

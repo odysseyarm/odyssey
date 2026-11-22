@@ -125,6 +125,11 @@ message Device {
   // # Since
   // Unreleased.
   optional string firmware_version_string = 10;
+  // Installed stage2 bootloader version, absent when unknown or when the
+  // bootloader predates reporting.
+  // # Since
+  // Unreleased.
+  FirmwareVersion bootloader_version = 11;
 }
 
 // Only the first message's fields are read; later messages are lease renewals.

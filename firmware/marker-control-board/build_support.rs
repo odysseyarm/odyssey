@@ -68,5 +68,19 @@ pub fn build(bootloader: bool) -> io::Result<()> {
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
+    if bootloader {
+        // Fixed-address record at the end of the bootloader region (see bootloader-info). It goes
+        // after the last FLASH-loaded section of cortex-m-rt's link.x: lld wants load addresses
+        // to rise in script order, and an earlier slot would also move the packing of .text.
+        let info_address =
+            bootloader_info::address(u32::try_from(loader.end()).expect("flash addresses fit u32"));
+        fs::write(
+            out.join("bootloader_info.x"),
+            format!(
+                "SECTIONS {{\n  .bootloader_info {info_address:#010x} : {{ KEEP(*(.bootloader_info)) }} > FLASH\n}}\nINSERT AFTER .gnu.sgstubs;\n"
+            ),
+        )?;
+        println!("cargo:rustc-link-arg-bins=-Tbootloader_info.x");
+    }
     Ok(())
 }

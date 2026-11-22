@@ -59,6 +59,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bootloader-info"
+version = "0.1.0"
+
+[[package]]
 name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -470,6 +474,7 @@ name = "marker-control-board-bootloader"
 version = "0.1.1"
 dependencies = [
  "better-dfu",
+ "bootloader-info",
  "cortex-m",
  "cortex-m-rt",
  "embassy-boot",

@@ -50,6 +50,13 @@ struct AppDfuFlag {
 const DEVICE_INTERFACE_GUIDS: &[&str] = &["{9B7AD93A-0A2C-43BF-A0D9-B2C071C30F9F}"];
 
 const VERSION: [u32; 3] = odyssey_version::parse_cargo_version(env!("CARGO_PKG_VERSION"));
+
+// The linker script maps this section to the last bytes of the stage2 flash region,
+// where the application reads the installed bootloader version.
+#[used]
+#[unsafe(link_section = ".bootloader_info")]
+static BOOTLOADER_INFO: bootloader_info::BootloaderInfo =
+    bootloader_info::BootloaderInfo::new(VERSION);
 const BOOTLOADER_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(VERSION[0]);
 const SLOT_A: u8 = 0;
 const SLOT_B: u8 = 1;
@@ -614,6 +621,8 @@ fn stored_boot_state() -> BootState {
     unsafe { core::ptr::read_volatile(address as *const BootState) }
 }
 
+/// Whether `slot`'s bank still has the stack pointer and reset vector of a
+/// bootable application, judged without touching the boot state.
 fn valid_resume_vectors(slot: u8) -> bool {
     // SAFETY: Linker script defines app-bank boundaries in mapped flash.
     unsafe extern "C" {
@@ -640,7 +649,18 @@ fn valid_resume_vectors(slot: u8) -> bool {
     better_boot::valid_vectors(bank, sp, reset)
 }
 
-/// Selects only banks with valid stack and reset vectors; rolls back failed pending slot.
+/// Picks the application bank to jump to and persists the updated boot state.
+///
+/// A bank is bootable only if its stack pointer and reset vector pass
+/// `better_boot::valid_vectors`. `better_boot::select_boot_slot` then applies
+/// the trial-boot rules: it counts an attempt on a pending slot, rolls back to
+/// the active slot once the attempts run out or the pending bank is invalid,
+/// and otherwise prefers the active slot.
+///
+/// Returns the bank's flash address (`None` when neither bank is bootable, which
+/// the caller turns into DFU recovery), a bank name for logs, and the updated
+/// state. A failed state write is logged and boot continues with the in-memory
+/// state.
 fn select_boot_bank(
     flash: &Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'_>>>,
 ) -> (Option<usize>, &'static str, BootState) {
@@ -703,6 +723,7 @@ fn select_boot_bank(
                 (None, "Bank A (DFU)")
             }
         }
+        // INVARIANT: `select_boot_slot` returns only slot 0 or 1.
         Some(_) => unreachable!(),
     };
 
@@ -1021,17 +1042,16 @@ async fn main(spawner: Spawner) -> ! {
     if pcd.status.is_valid() {
         if let Some(status) = pcd.status.get_status() {
             defmt::info!("PCD status from previous net DFU: {}", status as u32);
-            if matches!(
-                status,
-                PcdStatusCode::Success
-                    | PcdStatusCode::FailedCopy
-                    | PcdStatusCode::FailedVerify
-                    | PcdStatusCode::AppConfirmed
-            ) {
+            if matches!(status, PcdStatusCode::Success | PcdStatusCode::AppConfirmed) {
                 if let Err(_) = clear_netcore_dfu_info(&flash) {
                     defmt::warn!("Failed to clear persisted netcore DFU info after status");
                 }
                 pcd.cmd.clear();
+                pcd.status.clear();
+            } else if matches!(
+                status,
+                PcdStatusCode::FailedCopy | PcdStatusCode::FailedVerify
+            ) {
                 pcd.status.clear();
             }
         }
@@ -1071,25 +1091,6 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let netcore_was_pending = netcore_recovery || pcd.copy_pending();
-    // A terminal status from the netcore bootloader settles the update: clear the persisted command and skip DFU.
-    if pcd.status.is_valid() {
-        if let Some(status) = pcd.status.get_status() {
-            defmt::info!("Netcore PCD status pre-check: {}", status as u32);
-            if matches!(
-                status,
-                PcdStatusCode::Success
-                    | PcdStatusCode::FailedCopy
-                    | PcdStatusCode::FailedVerify
-                    | PcdStatusCode::AppConfirmed
-            ) {
-                if let Err(_) = clear_netcore_dfu_info(&flash) {
-                    defmt::warn!("Failed to clear persisted netcore DFU info after status");
-                }
-                pcd.cmd.clear();
-                pcd.status.clear();
-            }
-        }
-    }
 
     // A command nothing has answered yet is pending, whether or not the net core
     // bootloader has written a status. Terminal statuses were settled above.
@@ -1239,12 +1240,7 @@ async fn main(spawner: Spawner) -> ! {
                 };
                 if let Some(status) = status {
                     defmt::info!("Netcore DFU status from net bootloader: {}", status as u32);
-                    if matches!(
-                        status,
-                        PcdStatusCode::Success
-                            | PcdStatusCode::FailedCopy
-                            | PcdStatusCode::FailedVerify
-                    ) {
+                    if status == PcdStatusCode::Success {
                         if let Err(_) = clear_netcore_dfu_info(&flash) {
                             defmt::warn!("Failed to clear persisted netcore DFU info after status");
                         }
@@ -1252,6 +1248,16 @@ async fn main(spawner: Spawner) -> ! {
                         pcd.status.clear();
                         netcore_dfu_pending = false;
                         break;
+                    }
+                    if matches!(
+                        status,
+                        PcdStatusCode::FailedCopy | PcdStatusCode::FailedVerify
+                    ) {
+                        // The destination may be half-written. The staged image and command stay
+                        // so the next boot retries; the attempt limit ends in DFU.
+                        defmt::error!("Netcore copy failed - resetting to retry");
+                        pcd.status.clear();
+                        cortex_m::peripheral::SCB::sys_reset();
                     }
                 }
 
@@ -1312,6 +1318,11 @@ async fn main(spawner: Spawner) -> ! {
         netcore_dfu_pending
     );
 
+    // Judged on the state as stored at entry, before `select_boot_bank` counts a
+    // trial boot or rolls a slot back. A DFU request that nobody answers within
+    // DFU_ENTRY_TIMEOUT may only fall back to an application that was already
+    // confirmed (not on trial), whose own vectors are still intact. The net core
+    // being mid-update or having been given up on rules this out.
     let entry_state = stored_boot_state();
     let confirmed_application = entry_state.is_valid()
         && entry_state.active_slot == entry_state.pending_slot

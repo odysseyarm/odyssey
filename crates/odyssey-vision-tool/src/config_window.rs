@@ -435,7 +435,7 @@ impl ConfigWindow {
         }
     }
 
-    /// The sensor forms that apply to the connected product.
+    /// A copy of the sensor forms, for the apply task that outlives this call.
     fn sensors(&self) -> SensorSettings {
         self.sensors.clone()
     }
@@ -1183,14 +1183,19 @@ struct LoadedSettings {
     config: GeneralSettings,
 }
 
-/// The sensor forms that apply to a product.
+/// The sensor forms for the connected product, which decide the tabs
+/// (`visible_tabs`), what `commit` validates and what it writes to the device.
 #[derive(Clone)]
 enum SensorSettings {
+    /// ATS VM and ATS Lite: one PAJ form per camera.
     Vm {
         wf: Box<PajSensorSettingsForm>,
         nf: Box<PajSensorSettingsForm>,
     },
+    /// ATS Pro: one PAG form.
     Pro(PagSensorSettingsForm),
+    /// No device selected, or a product with no sensor tab. `validate` rejects it,
+    /// so `commit` never reaches `apply` with this variant.
     Unsupported,
 }
 
@@ -1237,7 +1242,7 @@ impl SensorSettings {
         }
     }
 
-    /// Run `validate()` first.
+    /// Writes the forms to the device. `validate` must have passed.
     async fn apply(&self, device: &VmDevice) -> std::result::Result<(), Notice> {
         match self {
             Self::Vm { wf, nf } => {

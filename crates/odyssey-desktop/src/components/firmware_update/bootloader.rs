@@ -27,7 +27,7 @@ impl DfuSession<'_> {
         &self,
         bootloader_image: Option<&BootloaderImage>,
         requires_bootloader: &semver::Version,
-    ) -> eros::Result<Option<semver::Version>> {
+    ) -> eros::Result<()> {
         self.enter_dfu().await?;
 
         let running = firmware::read_bootloader_release_for_device(&self.uuid, self.vid, self.pid)
@@ -40,7 +40,7 @@ impl DfuSession<'_> {
         )?;
         let Some(image) = bootloader_image.filter(|_| flash_bootloader) else {
             tracing::info!("Bootloader {:?} stays as it is", running);
-            return Ok(running);
+            return Ok(());
         };
 
         let alt = firmware::find_bootloader_alt_for_device(&self.uuid, self.vid, self.pid)
@@ -88,6 +88,6 @@ impl DfuSession<'_> {
             );
         }
         tracing::info!("Bootloader now reports {:?}", now);
-        Ok(now)
+        Ok(())
     }
 }

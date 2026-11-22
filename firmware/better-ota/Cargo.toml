@@ -8,3 +8,15 @@ edition = "2024"
 
 [dependencies]
 odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
+release-signing = { path = "../release-signing" }
+
+[dev-dependencies]
+salty = { version = "0.3", default-features = false }
+
+[features]
+# Commit refuses images without a valid signature from a trusted release key.
+signed = []
+# Also trust the public development key. Dev and test builds only.
+dev-signing-key = ["release-signing/dev-signing-key"]
+# Hash with Oberon instead of `sha2` (nRF5340 firmware only).
+oberon = ["release-signing/oberon"]

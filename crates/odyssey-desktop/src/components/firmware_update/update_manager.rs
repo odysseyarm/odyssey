@@ -1,3 +1,9 @@
+//! Firmware update state shared by the update tasks and the views, plus the
+//! bootloader floor that gates Bluetooth updates of ATS Lite units.
+//!
+//! `update_task.rs` runs updates on tokio and writes progress here; the views
+//! (`device_firmware_update.rs`) read it and redraw when the ticker fires.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5,11 +11,44 @@ use std::time::Duration;
 
 use gpui::{App, AppContext as _, Entity, Global};
 use odyssey_hub_common::device::Device;
-use odyssey_hub_common::firmware_version::FirmwareVersion;
 use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
 use crate::hub::HubHandle;
+
+/// Lowest ATS Lite stage2 bootloader that Bluetooth (radio) OTA may rely on:
+/// `0.2.0`, stage2 v3.
+///
+/// The released stage2 bootloaders, v1 and v2, do not bound their net-core
+/// install retries. A net-core update that goes wrong over Bluetooth can leave
+/// such a unit retrying in the bootloader with only USB left to recover it. v3
+/// bounds the retries, so every Bluetooth update of an ATS Lite is allowed only
+/// for a unit that reports v3 or newer.
+///
+/// The unit reports its bootloader through the device's `BootloaderVersion`
+/// property (`Device::bootloader_version`), read from the record the bootloader
+/// leaves in flash. A bootloader that predates the record reports nothing, so
+/// such a unit is updated over USB, which can rewrite the bootloader, until it
+/// runs one that carries the record. [`radio_ota_bootloader_version`] turns the
+/// reading into the version the gates use:
+///
+/// - `ats_ble_update_needs_usb` in `update_check.rs` shows "Plug in USB"
+///   instead of an update button when there is none.
+/// - `run_radio_ota` in `update_task.rs` refuses to start without one.
+/// - `firmware::ota::send` in odyssey-hub-server receives it as
+///   `known_bootloader_floor` and refuses a release whose `requires_bootloader`
+///   is above it.
+///
+/// The marker has no stage2 and is not subject to this gate.
+pub(super) const RADIO_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(0, 2, 0);
+
+/// The bootloader version `device` reports, or `None` when it reports none or
+/// one below [`RADIO_OTA_MIN_BOOTLOADER`].
+pub(super) fn radio_ota_bootloader_version(device: &Device) -> Option<semver::Version> {
+    let [major, minor, patch] = device.bootloader_version;
+    let version = semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch));
+    (version >= RADIO_OTA_MIN_BOOTLOADER).then_some(version)
+}
 
 struct DeviceUpdate {
     state: FirmwareUpdateState,
@@ -34,8 +73,6 @@ pub(crate) struct FirmwareUpdateManager {
     /// The hub's device list as last seen, which the tokio update task cannot
     /// read from the GPUI-side hub entity.
     devices: Arc<Mutex<Vec<Device>>>,
-    radio_ota_proofs:
-        Arc<Mutex<HashMap<[u8; 6], odyssey_hub_common::config::RadioOtaBootloaderProof>>>,
     generation: Arc<AtomicU64>,
     pub(super) dongles: Arc<Mutex<super::dongle_update::DongleUpdates>>,
 }
@@ -79,7 +116,6 @@ impl FirmwareUpdateManager {
         Self {
             states: Arc::new(Mutex::new(HashMap::new())),
             devices: Arc::new(Mutex::new(Vec::new())),
-            radio_ota_proofs: Arc::new(Mutex::new(HashMap::new())),
             generation: Arc::new(AtomicU64::new(0)),
             dongles: Arc::new(Mutex::new(super::dongle_update::DongleUpdates::default())),
         }
@@ -94,23 +130,6 @@ impl FirmwareUpdateManager {
         }
         let manager = Self::new();
         let ticker = cx.new(|_| UpdateTicker);
-        let proof_manager = manager.clone();
-        crate::runtime::spawn(async move {
-            let state = odyssey_hub_common::config::ui_state_async()
-                .await
-                .into_value();
-            let mut proofs = proof_manager.radio_ota_proofs.lock();
-            for (address, proof) in state.radio_ota_bootloader_proofs {
-                if let Ok(address) = hex::decode(address)
-                    && let Ok(address) = <[u8; 6]>::try_from(address)
-                {
-                    proofs.insert(address, proof);
-                }
-            }
-            drop(proofs);
-            proof_manager.bump();
-        });
-
         let hub = cx.global::<HubHandle>().0.clone();
         manager.set_devices(hub.read(cx).devices.clone());
         manager.set_dongle_versions(hub.read(cx).dongles.clone());
@@ -151,73 +170,6 @@ impl FirmwareUpdateManager {
 
     pub(super) fn devices(&self) -> Vec<Device> {
         self.devices.lock().clone()
-    }
-
-    pub(super) fn radio_ota_bootloader_version(
-        &self,
-        uuid: [u8; 6],
-        app_version: Option<FirmwareVersion>,
-        numeric_core: [u32; 3],
-    ) -> Option<semver::Version> {
-        let mut proofs = self.radio_ota_proofs.lock();
-        let bootloader = proofs
-            .get(&uuid)
-            .and_then(|proof| Self::radio_ota_proof_version(proof, app_version, numeric_core));
-        if bootloader.is_none() && proofs.remove(&uuid).is_some() {
-            let address = hex::encode(uuid);
-            crate::runtime::spawn(async move {
-                let _ = odyssey_hub_common::config::ui_state_update_async(move |state| {
-                    state.radio_ota_bootloader_proofs.remove(&address);
-                })
-                .await;
-            });
-        }
-        bootloader
-    }
-
-    fn radio_ota_proof_version(
-        proof: &odyssey_hub_common::config::RadioOtaBootloaderProof,
-        app_version: Option<FirmwareVersion>,
-        numeric_core: [u32; 3],
-    ) -> Option<semver::Version> {
-        let proven_app = proof.app_version.parse::<FirmwareVersion>().ok()?;
-        let identity_matches = match app_version {
-            Some(current) => current.to_string() == proof.app_version,
-            None => numeric_core != [0, 0, 0] && numeric_core == proven_app.core,
-        };
-        if !identity_matches {
-            return None;
-        }
-        semver::Version::parse(&proof.bootloader_version)
-            .ok()
-            .filter(|version| *version >= semver::Version::new(0, 2, 0))
-    }
-
-    pub(super) fn record_radio_ota_proof(
-        &self,
-        uuid: [u8; 6],
-        app_version: FirmwareVersion,
-        bootloader_version: &semver::Version,
-    ) {
-        if *bootloader_version < semver::Version::new(0, 2, 0) {
-            return;
-        }
-        let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
-            app_version: app_version.to_string(),
-            bootloader_version: bootloader_version.to_string(),
-        };
-        self.radio_ota_proofs.lock().insert(uuid, proof.clone());
-        let address = hex::encode(uuid);
-        crate::runtime::spawn(async move {
-            if let Err(error) = odyssey_hub_common::config::ui_state_update_async(move |state| {
-                state.radio_ota_bootloader_proofs.insert(address, proof);
-            })
-            .await
-            {
-                tracing::error!("Could not persist radio OTA compatibility proof: {error}");
-            }
-        });
-        self.bump();
     }
 
     pub(super) fn bump(&self) {
@@ -340,36 +292,47 @@ impl FirmwareUpdateManager {
 
 #[cfg(test)]
 mod tests {
+    use odyssey_hub_common::device::{DeviceCapabilities, EventsTransport, Transport};
+    use odyssey_hub_common::firmware_version::FirmwareVersion;
+
     use super::*;
+
+    fn device_reporting(bootloader_version: [u32; 3]) -> Device {
+        Device {
+            uuid: [4; 6],
+            transport: Transport::UsbMux,
+            capabilities: DeviceCapabilities::new(0),
+            firmware_identity: FirmwareVersion::default(),
+            firmware_version: [1, 2, 3],
+            events_transport: EventsTransport::Bluetooth,
+            events_connected: false,
+            product_id: 0x5211,
+            name: Device::name_bytes(""),
+            netcore_release: 0,
+            bootloader_version,
+        }
+    }
+
     #[test]
-    fn numeric_usb_mux_identity_reuses_only_matching_persisted_proof() {
-        let proof = odyssey_hub_common::config::RadioOtaBootloaderProof {
-            app_version: "1.2.3-nightly.20261111.t010000.g000000000001".into(),
-            bootloader_version: "0.2.0".into(),
-        };
-        assert!(FirmwareUpdateManager::radio_ota_proof_version(&proof, None, [1, 2, 3]).is_some());
-        assert!(FirmwareUpdateManager::radio_ota_proof_version(&proof, None, [1, 2, 4]).is_none());
-        assert!(
-            FirmwareUpdateManager::radio_ota_proof_version(
-                &proof,
-                Some(
-                    "1.2.3-nightly.20261111.t020000.g000000000002"
-                        .parse()
-                        .unwrap()
-                ),
-                [1, 2, 3],
-            )
-            .is_none()
+    fn bluetooth_gate_follows_the_reported_bootloader() {
+        assert_eq!(
+            radio_ota_bootloader_version(&device_reporting([0, 0, 0])),
+            None
         );
-        assert!(
-            FirmwareUpdateManager::radio_ota_proof_version(
-                &proof,
-                Some(proof.app_version.parse().unwrap()),
-                [1, 2, 3],
-            )
-            .is_some()
+        assert_eq!(
+            radio_ota_bootloader_version(&device_reporting([0, 1, 9])),
+            None
+        );
+        assert_eq!(
+            radio_ota_bootloader_version(&device_reporting([0, 2, 0])),
+            Some(RADIO_OTA_MIN_BOOTLOADER)
+        );
+        assert_eq!(
+            radio_ota_bootloader_version(&device_reporting([1, 0, 3])),
+            Some(semver::Version::new(1, 0, 3))
         );
     }
+
     #[test]
     fn retry_preserves_active_transfer_and_resets_only_failure() {
         let manager = FirmwareUpdateManager::new();

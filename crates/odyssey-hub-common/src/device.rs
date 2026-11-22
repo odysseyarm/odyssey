@@ -148,6 +148,13 @@ pub struct Device {
     ///
     /// Since: Odyssey Desktop 0.6.4.
     pub netcore_release: u16,
+    /// `[major, minor, patch]` of the installed stage2 bootloader, `[0, 0, 0]` if unknown.
+    ///
+    /// Unknown covers a device whose application predates the property, a bootloader
+    /// that predates the version record, and a read that has not completed yet.
+    ///
+    /// Since: Unreleased.
+    pub bootloader_version: [u32; 3],
 }
 
 impl Device {

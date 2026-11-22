@@ -1,3 +1,19 @@
+//! One interface over the two radios that can reach an accessory.
+//!
+//! An accessory is reached either through the host's own Bluetooth adapter
+//! (btleplug, [`RadioBackend::Native`]) or through an Odyssey dongle plugged in
+//! over USB ([`RadioBackend::Dongle`], accessory commands over the dongle's mux,
+//! see `crate::dongle_list`). The session code in `accessories.rs` picks the
+//! radio; [`Link`] is the connected end of that choice, and each method matches
+//! on it, so callers such as `accessories/ota.rs` never see which radio it is.
+//!
+//! For marker OTA, [`Link::marker_ota_exchange`] writes the frame to the OTA
+//! GATT characteristic on the native radio, or sends `MarkerOta` and
+//! `MarkerOtaStatus` commands to a dongle that speaks mux
+//! [`odyssey_protocol::ota::MARKER_OTA_MUX_PROTOCOL`] or newer. ATS Lite OTA does
+//! not use this module; its frames go through the hub's vendor-packet RPC
+//! (see `firmware/ota.rs`).
+
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,9 +24,9 @@ use futures::{Stream, StreamExt as _};
 use odyssey_hub_common::accessory::{
     AccessoryInfo, AccessoryRadio, AccessoryType, DiscoveredAccessory,
 };
-use odyssey_protocol::VendorData;
 use odyssey_protocol::accessory::{Capabilities, Command, Event, Profile, Reply};
 use odyssey_protocol::marker_control::{self, Mode};
+use odyssey_protocol::{VendorData, ota};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -19,13 +35,19 @@ use super::{RadioEvent, io, native};
 use crate::dongle_list::DongleList;
 
 const CONNECT_ATTEMPTS: usize = 4;
+/// Pairing, and the secure write that follows it, while enrolling a marker.
+const ENROLL_TIMEOUT: Duration = Duration::from_secs(28);
+/// One acknowledged OTA write, or one OTA status read.
+const OTA_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Which radio an accessory session talks through.
 #[derive(Clone)]
 pub(super) enum RadioBackend {
     Native(Adapter),
     Dongle(DongleList, String),
 }
 
+/// A connection to one accessory over a [`RadioBackend`].
 pub(super) enum Link {
     Native {
         peripheral: Peripheral,
@@ -115,7 +137,7 @@ impl Link {
                 connected?;
                 #[cfg(any(target_os = "linux", target_os = "windows"))]
                 if enroll && info.ty == AccessoryType::MarkerControlBoard {
-                    tokio::time::timeout(Duration::from_secs(28), native::pair(peripheral))
+                    tokio::time::timeout(ENROLL_TIMEOUT, native::pair(peripheral))
                         .await
                         .map_err(|_elapsed| "Bluetooth pairing timed out".to_string())??;
                 }
@@ -137,7 +159,11 @@ impl Link {
                                 .into(),
                         );
                     }
-                    let timeout = Duration::from_secs(if enroll { 28 } else { 1 });
+                    let timeout = if enroll {
+                        ENROLL_TIMEOUT
+                    } else {
+                        Duration::from_secs(1)
+                    };
                     let accepted = tokio::time::timeout(
                         timeout,
                         peripheral.write(&found, &[0], WriteType::WithResponse),
@@ -184,7 +210,14 @@ impl Link {
         }
     }
 
-    pub(super) async fn marker_ota_exchange(&mut self, frame: &[u8]) -> Result<[u8; 22], String> {
+    /// Sends one OTA request frame and returns the marker's status reply.
+    ///
+    /// Both radios take the frame and the status read as separate steps, and a
+    /// dongle too old for marker OTA is refused before anything is sent.
+    pub(super) async fn marker_ota_exchange(
+        &mut self,
+        frame: &[u8],
+    ) -> Result<[u8; ota::STATUS_LEN], String> {
         if frame.len() > VendorData::CAPACITY {
             return Err("Marker OTA frame exceeds transport capacity".into());
         }
@@ -207,17 +240,16 @@ impl Link {
                     );
                 }
                 tokio::time::timeout(
-                    Duration::from_secs(5),
+                    OTA_IO_TIMEOUT,
                     peripheral.write(&characteristic, frame, WriteType::WithResponse),
                 )
                 .await
                 .map_err(|_elapsed| "Marker OTA write timed out".to_string())?
                 .map_err(|error| error.to_string())?;
-                let status =
-                    tokio::time::timeout(Duration::from_secs(5), peripheral.read(&characteristic))
-                        .await
-                        .map_err(|_elapsed| "Marker OTA status read timed out".to_string())?
-                        .map_err(|error| error.to_string())?;
+                let status = tokio::time::timeout(OTA_IO_TIMEOUT, peripheral.read(&characteristic))
+                    .await
+                    .map_err(|_elapsed| "Marker OTA status read timed out".to_string())?
+                    .map_err(|error| error.to_string())?;
                 status.try_into().map_err(|_length_error| {
                     "Marker OTA returned status with invalid length".to_string()
                 })
@@ -226,8 +258,7 @@ impl Link {
                 list, id, address, ..
             } => {
                 if !list.snapshot().iter().any(|dongle| {
-                    dongle.id == *id
-                        && dongle.protocol_version >= odyssey_protocol::ota::MARKER_OTA_MUX_PROTOCOL
+                    dongle.id == *id && dongle.protocol_version >= ota::MARKER_OTA_MUX_PROTOCOL
                 }) {
                     return Err(
                         "Marker OTA requires an Odyssey dongle with mux 0.6.0+; update dongle over USB"

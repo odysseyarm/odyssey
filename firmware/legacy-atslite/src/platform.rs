@@ -41,4 +41,8 @@ impl legacy_common::platform::Platform for AtslitePlatform {
     fn netcore_release() -> u16 {
         crate::ble::netcore::netcore_release()
     }
+
+    fn bootloader_version() -> [u32; 3] {
+        atslite_common::bootloader_version::bootloader_version()
+    }
 }

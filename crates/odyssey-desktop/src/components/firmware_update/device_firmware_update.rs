@@ -1,11 +1,18 @@
+//! The firmware row of one device: status text, progress, and the entry point
+//! to start an update.
+//!
+//! Availability comes from `update_check.rs`, fed with the bootloader the device
+//! reports, read through `update_manager.rs`. Starting an update is
+//! `update_available.rs`, which hands off to `update_task.rs`.
+
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
 use odyssey_hub_client::client::Client;
 use odyssey_hub_common::device::Device;
 use odyssey_hub_server::firmware::FirmwareManifest;
 
 use super::update_available::{Offer, update_available};
-use super::update_check::{check_for_update_with_proof, format_version};
-use super::update_manager::FirmwareUpdateManager;
+use super::update_check::{check_for_update_with_bootloader, format_version};
+use super::update_manager::{FirmwareUpdateManager, radio_ota_bootloader_version};
 use super::update_notes::{held_back_note, net_core_blocked_note};
 use super::update_state::{BYTES_PER_KB, FirmwareUpdateState, percent_complete};
 use crate::components::ui;
@@ -28,17 +35,11 @@ pub(crate) fn device_firmware_update(
     let current_state = manager.get_state(device_uuid);
     if current_state.is_before_update() {
         let next_state = match manifest {
-            Some(manifest) => check_for_update_with_proof(
+            Some(manifest) => check_for_update_with_bootloader(
                 manifest,
                 device,
                 &current_state,
-                manager
-                    .radio_ota_bootloader_version(
-                        device_uuid,
-                        device.firmware_identity.known(),
-                        device.firmware_version,
-                    )
-                    .as_ref(),
+                radio_ota_bootloader_version(device).as_ref(),
             ),
             None => FirmwareUpdateState::Idle,
         };
@@ -150,7 +151,7 @@ pub(crate) fn device_firmware_update(
                 .text_color(p.danger_ink)
                 .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(state.status_text()))
                 .child(error.clone())
-                .child("Reconnect this same device by USB, then check update again. If it remains in recovery mode, retry firmware update.")
+                .child("Reconnect this same device, using USB if it is in recovery mode, then check for update again.")
                 .child(ui::button(
                     gpui::SharedString::from(format!("retry-firmware-{}", hex::encode(device_uuid))),
                     "Check update again",

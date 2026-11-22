@@ -111,6 +111,7 @@ fn ota_flash_slots(
         netcore_active: netcore,
         netcore_ram,
         boot_state,
+        product: atslite_common::ota::Product::Lite1,
     })
 }
 

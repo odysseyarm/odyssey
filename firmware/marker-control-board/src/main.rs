@@ -1,3 +1,12 @@
+//! Marker control board application: marker outputs and status LED, the BLE peripheral in
+//! `ble.rs`, and USB DFU.
+//!
+//! After the boot confirmation at startup, the `detach` future in `main` is the only code that
+//! writes embassy-boot's state. A USB DFU detach and a BLE OTA commit both end there, so they never
+//! write it concurrently: the commit flags below make a DFU request that arrives mid-commit wait
+//! for the commit's outcome.
+//! `firmware/better-ota/src/lib.rs` describes the whole OTA flow.
+
 #![no_std]
 #![no_main]
 #![expect(
@@ -40,13 +49,24 @@ const FIRMWARE_BCD_DEVICE: u16 = odyssey_version::firmware_bcd_device(FIRMWARE_V
 
 struct SafeDfuMarker;
 struct DeferredDfuReset;
+/// A DFU detach or an OTA commit is under way. The outputs task keeps the markers off.
 pub(crate) static DFU_PENDING: AtomicBool = AtomicBool::new(false);
+/// USB DFU detach asked for a reset into the bootloader. Handled by the `detach` future.
 static DFU_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// A BLE session has an OTA transfer in flight or an image staged. Keeps the markers off, and
+/// is cleared when the session ends.
 pub(crate) static OTA_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// The OTA commit has been requested and has not finished. Set by `MarkerSlots::commit` before it
+/// signals, so a DFU request that races the commit already sees it.
 pub(crate) static OTA_COMMITTING: AtomicBool = AtomicBool::new(false);
+/// A DFU request arrived during a commit. Replayed if the commit fails; if it succeeds, the
+/// reset boots the new image instead.
 static DFU_DEFERRED: AtomicBool = AtomicBool::new(false);
+/// BLE session to `detach`: write the embassy-boot update marker.
 pub(crate) static OTA_COMMIT_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// `detach` to the BLE session: whether the marker was written.
 pub(crate) static OTA_COMMIT_RESULT: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+/// BLE session to `detach`: the commit's write response has been sent, reset now.
 pub(crate) static OTA_RESET_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 impl Reset for DeferredDfuReset {

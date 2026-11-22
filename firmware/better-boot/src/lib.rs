@@ -85,6 +85,10 @@ impl Default for BootState {
     }
 }
 /// Validates initial stack pointer and Thumb reset vector against one app bank.
+///
+/// The stack pointer must lie in the nRF5340 application core RAM (0x2000_0000 to 0x2008_0000,
+/// 512 KiB) and be 8-byte aligned as the Arm procedure call standard requires. The reset vector
+/// needs the Thumb bit and must point into `bank`.
 pub fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool {
     (0x2000_0000..=0x2008_0000).contains(&sp)
         && sp.is_multiple_of(8)
@@ -94,6 +98,13 @@ pub fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool
 
 /// Applies pending-slot rollback and picks a valid bank, preferring active slot.
 /// Returns `None` when neither bank is safe to boot.
+///
+/// A pending slot gets `MAX_BOOT_ATTEMPTS` boots, counted in `state.boot_counter`, to be confirmed
+/// by the application (see [`BootStateManager::mark_booted`]). After that, or if its vectors are
+/// invalid, `state` is rolled back to the active slot. When the active slot is invalid too, the
+/// first valid bank wins.
+///
+/// The caller persists the updated `state`.
 pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
     const MAX_BOOT_ATTEMPTS: u8 = 2;
     let active = state.active_slot;
@@ -109,7 +120,7 @@ pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
         }
     }
 
-    if valid.get(active as usize) == Some(&true) {
+    let fallback = if valid.get(active as usize) == Some(&true) {
         Some(active)
     } else if valid[0] {
         Some(0)
@@ -117,7 +128,14 @@ pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
         Some(1)
     } else {
         None
+    };
+    // The fallback bank becomes the confirmed slot, so no stale trial or active slot survives.
+    if let Some(slot) = fallback {
+        state.active_slot = slot;
+        state.pending_slot = slot;
+        state.boot_counter = 0;
     }
+    fallback
 }
 
 /// Reads and writes the boot state partition at `state_addr`: a 4-byte magic
@@ -327,7 +345,24 @@ impl BootStateManager {
 /// Writes app and network-core update commands into the shared boot-state page.
 ///
 /// `pending_slot` is `Some` only when an application image was staged. Network
-/// core commands remain in flash for bootloaders that read the NETD record.
+/// core commands remain in flash for bootloaders that read the NETD record. The
+/// active slot is kept, so a pending slot that never confirms its boot rolls back
+/// (see [`select_boot_slot`]).
+///
+/// Page layout after the call (little endian):
+///
+/// | Offset | Content |
+/// |--------|---------|
+/// | 0      | [`BOOT_MAGIC`], written last |
+/// | 4      | [`BootState`], 8 bytes |
+/// | 12     | NETD record, only if `netcore` is `Some`: tag `"NETD"`, image address, image size, and an attempts word left erased for the bootloader to count with |
+///
+/// `netcore` is `(address, size)` of the staged net core image.
+///
+/// # Errors
+///
+/// Returns the flash driver's error if the erase or a write fails. The page is then
+/// left partially written.
 pub fn write_ota_state<F: NorFlash>(
     state_addr: u32,
     flash: &mut F,
@@ -351,6 +386,7 @@ fn write_ota_state_page<F: NorFlash>(
 ) -> Result<(), F::Error> {
     state.pending_slot = pending_slot.unwrap_or(state.active_slot);
     state.boot_counter = 0;
+    // The whole page is rewritten, so every field has to be written again after the erase.
     let page_start = state_addr & !(page_size - 1);
     let page_end = page_start + page_size;
     flash.erase(page_start, page_end)?;
@@ -367,6 +403,7 @@ fn write_ota_state_page<F: NorFlash>(
     if let Some((address, size)) = netcore {
         #[repr(align(4))]
         struct AlignedRecord([u8; 16]);
+        // Bytes 12..16 are the attempts word and stay erased.
         let mut record = AlignedRecord([0xff; 16]);
         record.0[..4].copy_from_slice(&0x4e45_5444_u32.to_le_bytes());
         record.0[4..8].copy_from_slice(&address.to_le_bytes());
@@ -574,5 +611,39 @@ mod tests {
         );
         assert_eq!(&flash.bytes[..4], &[0xff; 4]);
         assert_eq!(flash.writes[2], 0x1000);
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    #[test]
+    fn fallback_bank_becomes_active_and_clears_trial() {
+        let mut state = BootState::new();
+        state.active_slot = 0;
+        state.pending_slot = 0;
+        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
+        assert_eq!(
+            (state.active_slot, state.pending_slot, state.boot_counter),
+            (1, 1, 0)
+        );
+        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
+    }
+
+    #[test]
+    fn invalid_pending_and_active_falls_back_without_trial() {
+        let mut state = BootState::new();
+        state.active_slot = 0;
+        state.pending_slot = 1;
+        state.boot_counter = 1;
+        assert_eq!(select_boot_slot(&mut state, [false, false]), None);
+
+        state.pending_slot = 1;
+        assert_eq!(select_boot_slot(&mut state, [true, false]), Some(0));
+        assert_eq!(
+            (state.active_slot, state.pending_slot, state.boot_counter),
+            (0, 0, 0)
+        );
     }
 }

@@ -128,6 +128,10 @@ system Bluetooth controller or an Odyssey dongle. ATS Lite boards use an
 Odyssey dongle; the dongle relays packets and is not an OTA receiver. The
 transfer library is shared by the marker and ATS Lite applications.
 
+lite1 and marker applications require a trusted Ed25519 release signature before
+activating radio updates. Legacy ATS Lite remains unsigned. USB DFU signature
+verification is separate and is not enabled; see [signed releases](manifests/README.md#signed-releases).
+
 Incomplete transfers are not activated. A complete image is read back and
 checked before the application or boot state changes. ATS Lite's stage2
 bootloader still performs the net-core install at reset; stage2 bootloader
@@ -138,21 +142,38 @@ bootloader before the app. If a BLE update reports failure or the device enters
 recovery, connect that same unit over USB and use Desktop's firmware update
 flow; it verifies bootloader, application and net-core versions after updates.
 
+An interrupted radio transfer is cleared before the next transfer starts.
+Marker staging erases flash one page at a time so the first data write does
+not wait for the whole slot to erase. Network-core copies include flash-word
+padding; signed image lengths and hashes exclude that padding.
+
+ATS Lite stage2 bootloaders retry failed network-core copies within their
+existing attempt limit, then enter USB DFU. A fallback application bank becomes
+the recorded active bank so the next application update retains trial-boot
+rollback. Battery read failures retain the last published state, and skipped
+samples remain included in the next fuel-gauge elapsed interval.
+
 ## Adaptive marker exposure
 
 lite1 adjusts the sensor exposure (register 0x67) while tracking so marker spots
-stay bright but unsaturated; the logic is `crates/odyssey-detection`. It measures
+stay bright but unsaturated. The controller is `ExposureController` in
+`odyssey_cv::exposure`, whose module docs describe the whole loop. It measures
 only marker-like spots: round or small, at most 300 px, plus marker-sized
 saturated spots. Windows and light strips are ignored. Exposure moves in small
-steps, at most every 400 ms and within 4× either side of the stored setting,
-because each write needs the sensor in idle mode and drops a frame. Saving
-settings stores the user's exposure, not the adapted one.
+steps, at most every 400 ms and within 8× either side of the stored setting,
+because each write needs the sensor in idle mode and drops a frame. If no spot
+is measurable for 1 s, exposure walks back toward the stored setting, so a
+distractor cannot leave it too low to see the markers again. Saving settings
+stores the user's exposure, not the adapted one.
 
 While the hub is tracking, it sends the image positions of the spots it matched to
 the marker pattern (vendor tag `0xfd`, `odyssey_protocol::marker_hint`) at up to
-10 Hz. For 300 ms after a hint, the firmware measures only spots near those
-positions, which excludes round lamps and reflections. Older firmware ignores the
-tag. Legacy ATS Lite does not adapt its exposure.
+10 Hz. It sends nothing when fewer than four markers are matched, so there are
+no hints while the hub is not tracking. For 300 ms after a hint, the firmware
+measures only spots near those positions, which excludes round lamps and
+reflections; without a live hint it uses the shape rules above. Positions are
+on the sensor's report grid, 1/64 pixel. Older firmware ignores the tag. Legacy
+ATS Lite does not adapt its exposure.
 
 ## Live image inspection and calibration
 

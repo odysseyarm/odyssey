@@ -374,6 +374,9 @@ impl DeviceHandler {
             DeviceTaskMessage::SetNetCoreRelease(release) => {
                 self.on_net_core_release(release).await;
             }
+            DeviceTaskMessage::SetBootloaderVersion(version) => {
+                self.on_bootloader_version(version).await;
+            }
         }
         ControlFlow::Continue(())
     }

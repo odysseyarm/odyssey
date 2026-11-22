@@ -1,0 +1,51 @@
+[workspace]
+
+[package]
+name = "release-signing"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Ed25519 release-signature message format and trusted keys shared by firmware and host tooling"
+
+[lints.rust]
+missing_debug_implementations = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+ambiguous_negative_literals = "warn"
+dead_code_pub_in_binary = "warn"
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+redundant_imports = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+cargo_common_metadata = "allow"
+multiple_crate_versions = "allow"
+cast_possible_truncation = "allow"
+must_use_candidate = "allow"
+unwrap_used = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+[lints.cargo]
+unused_dependencies = "deny"
+
+[dependencies]
+salty = { version = "0.3", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf5340"], optional = true }
+
+[features]
+# Hash with Nordic's Oberon library (nRF5340 firmware only): its SHA-256 is about 5 KB smaller than
+# `sha2`, which stays compiled in but unused, so the linker drops it. Signatures use `salty`.
+oberon = ["dep:nrfxlib-sys"]
+# Trusts the development key below. Dev and test builds only: its seed is public.
+dev-signing-key = []

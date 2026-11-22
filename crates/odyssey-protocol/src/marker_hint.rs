@@ -1,6 +1,13 @@
 //! Hub-to-device marker hint, carried in a vendor packet.
 //!
 //! Old firmware ignores unknown vendor tags, so the hint needs no protocol bump.
+//!
+//! The hub builds a hint from the spots it matched to the marker pattern
+//! (`crates/odyssey-hub-server/src/device_tasks/marker_hint_sender.rs`) and sends it as a one-way
+//! vendor packet. The tracker firmware decodes it in `firmware/atslite-common/src/object_mode.rs`
+//! and uses it to restrict its exposure controller to real markers. [`MarkerHint::decode`]
+//! accepts only the exact bytes [`MarkerHint::encode`] produces, so a corrupt packet is dropped
+//! and never half-applied.
 
 /// Vendor tag of a marker hint. [`crate::ota::VENDOR_TAG`] is `0xfe`.
 ///
@@ -8,7 +15,8 @@
 pub const VENDOR_TAG: u8 = 0xfd;
 /// Since: Unreleased.
 pub const MAX_POINTS: usize = 6;
-/// Length byte, then `MAX_POINTS` little-endian `(x, y)` pairs, zero padded.
+/// Wire size: a count byte, then `MAX_POINTS` little-endian `(x, y)` pairs of `u16`, unused pairs
+/// zero.
 ///
 /// Since: Unreleased.
 pub const ENCODED_LEN: usize = 1 + MAX_POINTS * 4;

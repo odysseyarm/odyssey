@@ -116,3 +116,12 @@ On Windows the WinUSB driver is assigned automatically. Images are validated wit
 
 - `firmware/lite1-stage1-bootloader/` holds the first-stage bootloader with the DirectXIP logic.
 - `firmware/memory/memory-lite1.kdl` is the complete memory layout specification.
+
+## Version Record
+
+The last 16 bytes of the stage2 region (0x0000CFF0, the end of the 44K region at 0x00002000 minus 16) hold the bootloader's
+`bootloader_info::BootloaderInfo`: the magic `OBLV` (`0x4F424C56`) and the Cargo version as three
+little-endian `u32` words. `build.rs` places the `.bootloader_info` section there with a linker script,
+so the `.bin` image is padded to the full region. The application reads the record and answers
+`PropKind::BootloaderVersion` with it, `[0, 0, 0]` when the magic is missing (a bootloader without the record).
+

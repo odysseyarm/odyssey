@@ -453,6 +453,7 @@ impl Unit {
             PropKind::Version => Props::Version(Version::new([0, 0, 0])),
             // Zero means no net-core firmware release, not a fabricated real release.
             PropKind::NetCoreRelease => Props::NetCoreRelease(0),
+            PropKind::BootloaderVersion => Props::BootloaderVersion([0, 0, 0]),
         }
     }
 

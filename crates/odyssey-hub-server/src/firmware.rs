@@ -2138,6 +2138,7 @@ mod tests {
                         size: 1,
                         version: None,
                         release: None,
+                        signature: None,
                     },
                 );
             }

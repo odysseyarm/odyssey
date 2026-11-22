@@ -13,7 +13,7 @@ use super::{PresentUsbDevices, UsbDeviceManager};
 use crate::device_tasks::context::{DeviceAddress, RunningDevice};
 use crate::device_tasks::handler::{DeviceConnections, DeviceHandler, DeviceHandlerInit};
 use crate::device_tasks::messages::{DeviceChannels, DeviceTaskMessage, Message};
-use crate::device_tasks::netcore_probe::{NetCoreLink, spawn_netcore_probe};
+use crate::device_tasks::netcore_probe::{ProbeLink, spawn_bootloader_probe, spawn_netcore_probe};
 use crate::device_tasks::transport_selection::TransportSelection;
 use crate::device_tasks::usb_probe::{
     read_events_protocol_version, read_firmware_version, read_transport_mode, read_uuid_with_retry,
@@ -282,7 +282,12 @@ impl UsbDeviceManager {
                         .insert(uuid);
                 }
                 spawn_netcore_probe(
-                    NetCoreLink::Control(probed.vm_device.clone()),
+                    ProbeLink::Control(probed.vm_device.clone()),
+                    probed.control_protocol_version(),
+                    commands.clone(),
+                );
+                spawn_bootloader_probe(
+                    ProbeLink::Control(probed.vm_device.clone()),
                     probed.control_protocol_version(),
                     commands,
                 );
@@ -352,7 +357,7 @@ impl UsbDeviceManager {
         let uuid = probed.uuid;
         let device = direct_usb_device(metadata, &probed);
         let (commands, control_rx) = mpsc::channel(HANDLER_CHANNEL_CAPACITY);
-        let netcore_probe_link = NetCoreLink::Control(probed.vm_device.clone());
+        let netcore_probe_link = ProbeLink::Control(probed.vm_device.clone());
         let control_protocol_version = probed.control_protocol_version();
 
         // A unit in USB transport mode streams events over the same connection it is
@@ -403,6 +408,11 @@ impl UsbDeviceManager {
             .await;
 
         spawn_netcore_probe(
+            netcore_probe_link.clone(),
+            control_protocol_version,
+            netcore_probe_commands.clone(),
+        );
+        spawn_bootloader_probe(
             netcore_probe_link,
             control_protocol_version,
             netcore_probe_commands,
@@ -500,6 +510,7 @@ fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice)
         product_id: metadata.product_id,
         name: Device::name_bytes(metadata.product_name),
         netcore_release: 0,
+        bootloader_version: [0, 0, 0],
     }
 }
 
