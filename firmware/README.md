@@ -164,6 +164,11 @@ update to released units. If a BLE update reports failure or the device enters
 recovery, connect that same unit over USB and use Desktop's firmware update
 flow; it verifies bootloader, application and net-core versions after updates.
 
+After a net-core copy, the network bootloader finishes its state-page write
+before reporting success, then waits for stage2 to stop it. The application
+alone starts the radio and IPC; starting them before that handoff leaves stale
+state on the first boot after an update.
+
 An interrupted radio transfer is cleared before the next transfer starts.
 Marker staging erases flash one page at a time so the first data write does
 not wait for the whole slot to erase. Network-core copies include flash-word
