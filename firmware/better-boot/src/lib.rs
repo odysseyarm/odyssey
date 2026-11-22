@@ -16,16 +16,19 @@ mod journal;
 /// this crate, since embassy-boot has no equivalent.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const STATE_MAGIC: u32 = 0xB00710AD;
+pub const STATE_MAGIC: u32 = 0xB007_10AD;
 /// Partition magic word for a normal boot. Same value as embassy-boot.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const BOOT_MAGIC: u32 = 0xD0D0D0D0;
+pub const BOOT_MAGIC: u32 = 0xD0D0_D0D0;
 /// Partition magic word that requests DFU mode. Same value as embassy-boot's
 /// swap magic.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const SWAP_MAGIC: u32 = 0xF0F0F0F0;
+pub const SWAP_MAGIC: u32 = 0xF0F0_F0F0;
+
+#[repr(align(4))]
+struct AlignedMagic([u8; 4]);
 
 /// Boot state stored in flash right after the 4-byte partition magic word.
 ///
@@ -87,7 +90,7 @@ impl Default for BootState {
 }
 /// Validates initial stack pointer and Thumb reset vector against one app bank.
 ///
-/// The stack pointer must lie in the nRF5340 application core RAM (0x2000_0000 to 0x2008_0000,
+/// The stack pointer must lie in the nRF5340 application core RAM (`0x2000_0000` to `0x2008_0000`,
 /// 512 KiB) and be 8-byte aligned as the Arm procedure call standard requires. The reset vector
 /// needs the Thumb bit and must point into `bank`.
 pub fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool {
@@ -124,8 +127,7 @@ impl BootStateManager {
     ///
     /// Since: Odyssey Desktop 0.6.0.
     pub fn read(&self) -> BootState {
-        let state_ptr =
-            (self.state_addr as usize + core::mem::size_of::<u32>()) as *const BootState;
+        let state_ptr = (self.state_addr as usize + size_of::<u32>()) as *const BootState;
         // SAFETY: Constructor contract guarantees memory-mapped flash. Adding
         // the 4-byte magic offset preserves BootState alignment. Integer fields
         // accept every bit pattern read from flash.
@@ -172,11 +174,11 @@ impl BootStateManager {
         // alignment 4, and exactly eight initialized bytes with no padding.
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
+                ptr::from_ref::<BootState>(state).cast::<u8>(),
+                size_of::<BootState>(),
             )
         };
-        let dst = base + core::mem::size_of::<u32>() as u32;
+        let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
         Ok(())
@@ -208,11 +210,11 @@ impl BootStateManager {
         // alignment 4, and exactly eight initialized bytes with no padding.
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
+                ptr::from_ref::<BootState>(state).cast::<u8>(),
+                size_of::<BootState>(),
             )
         };
-        let dst = base + core::mem::size_of::<u32>() as u32;
+        let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
         Ok(())
@@ -280,10 +282,7 @@ fn write_ota_state_page<F: NorFlash>(
 
     // SAFETY: BootState has repr(C), alignment 4, and exactly eight initialized bytes.
     let state_bytes = unsafe {
-        core::slice::from_raw_parts(
-            &state as *const BootState as *const u8,
-            size_of::<BootState>(),
-        )
+        core::slice::from_raw_parts((&raw const state).cast::<u8>(), size_of::<BootState>())
     };
     flash.write(state_addr + 4, state_bytes)?;
 
@@ -298,8 +297,6 @@ fn write_ota_state_page<F: NorFlash>(
         flash.write(state_addr + 12, &record.0)?;
     }
 
-    #[repr(align(4))]
-    struct AlignedMagic([u8; 4]);
     let magic = AlignedMagic(BOOT_MAGIC.to_le_bytes());
     flash.write(state_addr, &magic.0)
 }

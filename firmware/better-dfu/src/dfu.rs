@@ -42,9 +42,15 @@ pub enum DfuTarget {
 
 /// Writes downloaded firmware to its selected target.
 pub trait FirmwareWriter {
+    /// Smallest flash write the target accepts, in bytes.
     const WRITE_SIZE: usize;
+    /// Failure converted to the DFU status the host sees.
     type Error: Into<Status>;
 
+    /// Writes `data` at `offset` within the image for `target`.
+    ///
+    /// # Errors
+    /// Returns the writer's error when the flash write fails or the range is invalid.
     fn write_for_target(
         &mut self,
         target: DfuTarget,
@@ -52,12 +58,14 @@ pub trait FirmwareWriter {
         data: &[u8],
     ) -> Result<(), Self::Error>;
 
+    /// Makes the completed image for `target` the one to boot or install.
+    ///
+    /// # Errors
+    /// Returns the writer's error when the boot state cannot be updated.
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), Self::Error>;
 }
 
-impl<'d, DFU: NorFlash, STATE: NorFlash> FirmwareWriter
-    for BlockingFirmwareUpdater<'d, DFU, STATE>
-{
+impl<DFU: NorFlash, STATE: NorFlash> FirmwareWriter for BlockingFirmwareUpdater<'_, DFU, STATE> {
     const WRITE_SIZE: usize = DFU::WRITE_SIZE;
     type Error = FirmwareUpdaterError;
 
@@ -76,12 +84,16 @@ impl<'d, DFU: NorFlash, STATE: NorFlash> FirmwareWriter
 }
 
 impl From<()> for Status {
-    fn from(_: ()) -> Self {
+    fn from((): ()) -> Self {
         Status::ErrWrite
     }
 }
 
 /// DFU-mode state machine and USB control handler; [`usb_dfu`] registers it.
+#[expect(
+    missing_debug_implementations,
+    reason = "holds a dyn FnMut state flagger"
+)]
 pub struct Control<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> {
     writer: WRITER,
     attrs: DfuAttributes,
@@ -193,21 +205,21 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
         self.bootloader_label = label;
     }
 
-    /// Exposes full software SemVer through a USB string descriptor.
+    /// Exposes full software `SemVer` through a USB string descriptor.
     ///
     /// Since: Odyssey Desktop (unreleased).
     pub fn set_firmware_version(&mut self, version: &'static str) {
         self.firmware_version = Some(version);
     }
 
-    /// Callback run on DFU_DETACH before the reset, e.g. to write SWAP_MAGIC.
+    /// Callback run on `DFU_DETACH` before the reset, e.g. to write `SWAP_MAGIC`.
     ///
     /// Since: Odyssey Desktop 0.6.0.
     pub fn set_state_flagger(&mut self, f: &'d mut dyn FnMut()) {
         self.state_flagger = Some(f);
     }
 
-    /// Sets a sticky flag on any addressed DNLOAD request when CAN_DOWNLOAD is enabled,
+    /// Sets a sticky flag on any addressed DNLOAD request when `CAN_DOWNLOAD` is enabled,
     /// before validating or writing its contents, including empty or rejected downloads.
     /// This handler never clears the flag, including on Abort, USB reset, errors or alt changes.
     /// Register before serving requests; registration leaves the flag's current value unchanged.
@@ -237,6 +249,10 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
         self.reset_boot_state();
     }
 
+    #[cfg_attr(
+        not(feature = "signed-dfu"),
+        expect(clippy::unused_self, reason = "only signed DFU keeps a verifier")
+    )]
     fn verifier_reset(&mut self) {
         #[cfg(feature = "signed-dfu")]
         {
@@ -327,7 +343,7 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
         (req.request_type, req.recipient) == (RequestType::Class, Recipient::Interface)
             && self
                 .interface
-                .is_some_and(|iface| req.index == u8::from(iface) as u16)
+                .is_some_and(|iface| req.index == u16::from(u8::from(iface)))
     }
 }
 
@@ -339,7 +355,7 @@ impl<'d, DFU: NorFlash, STATE: NorFlash, RST: Reset, const BLOCK_SIZE: usize>
     /// `active_capacity` excludes the DFU partition's scratch page. Only APP
     /// alternate setting 0 is exposed; the bootloader cannot replace itself.
     /// With `signed-dfu`, `app_component` is the signing role for this image.
-
+    ///
     /// # Panics
     ///
     /// Panics if the USB block size is zero or not flash-write aligned.
@@ -381,8 +397,8 @@ impl From<FirmwareUpdaterError> for Status {
     }
 }
 
-impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
-    for Control<'d, WRITER, RST, BLOCK_SIZE>
+impl<WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
+    for Control<'_, WRITER, RST, BLOCK_SIZE>
 {
     fn set_alternate_setting(&mut self, interface: InterfaceNumber, alternate: u8) {
         if self.interface != Some(interface) {
@@ -424,22 +440,22 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
         if let Some(version) = firmware_version_string(index, self.firmware_version_string) {
             return Some(version);
         }
-        if let Some(app_idx) = self.app_string {
-            if index == app_idx {
-                return Some(self.app_label);
-            }
+        if let Some(app_idx) = self.app_string
+            && index == app_idx
+        {
+            return Some(self.app_label);
         }
 
-        if let Some(net_idx) = self.net_string {
-            if index == net_idx {
-                return Some("NET");
-            }
+        if let Some(net_idx) = self.net_string
+            && index == net_idx
+        {
+            return Some("NET");
         }
 
-        if let Some(bootloader_idx) = self.bootloader_string {
-            if index == bootloader_idx {
-                return Some(self.bootloader_label);
-            }
+        if let Some(bootloader_idx) = self.bootloader_string
+            && index == bootloader_idx
+        {
+            return Some(self.bootloader_label);
         }
 
         None
@@ -449,7 +465,7 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
         &mut self,
         req: embassy_usb::control::Request,
         data: &[u8],
-    ) -> Option<embassy_usb::control::OutResponse> {
+    ) -> Option<OutResponse> {
         if !self.addressed_to_us(&req) {
             debug!("Unknown out request: {:?}", req);
             return None;
@@ -611,7 +627,7 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
         &'a mut self,
         req: embassy_usb::control::Request,
         buf: &'a mut [u8],
-    ) -> Option<embassy_usb::control::InResponse<'a>> {
+    ) -> Option<InResponse<'a>> {
         if !self.addressed_to_us(&req) {
             debug!("Unknown in request: {:?}", req);
             return None;
@@ -656,7 +672,7 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
 
     fn reset(&mut self) {
         if matches!(self.state, State::ManifestSync | State::ManifestWaitReset) {
-            self.reset.sys_reset()
+            self.reset.sys_reset();
         } else {
             self.reset_state();
         }
@@ -665,10 +681,10 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
 
 /// Adds the USB DFU 1.1 DFU-mode interface to `builder` and registers `handler` for its control requests.
 ///
-/// Dual-bank handlers expose inactive APP_A/APP_B, NET and BOOTLOADER alternatives.
+/// Dual-bank handlers expose inactive `APP_A/APP_B`, NET and BOOTLOADER alternatives.
 /// [`Control::new_single_bank`] exposes only APP and stages it for scratch swap.
 /// Downloaded blocks go to the configured writer; the final manifestation status
-/// resets the device when WILL_DETACH is set, otherwise the next USB reset does.
+/// resets the device when `WILL_DETACH` is set, otherwise the next USB reset does.
 ///
 /// `func_modifier` can add function-level descriptors such as MSOS headers, for when DFU is part of a
 /// composite USB device.
@@ -783,9 +799,10 @@ pub fn usb_dfu<'d, D: Driver<'d>, WRITER: FirmwareWriter, RST: Reset, const BLOC
         );
     }
 
+    // The descriptor builders borrow `builder`; dropping them ends those borrows.
+    #[expect(clippy::drop_non_drop, reason = "ends the builder borrows")]
     drop(iface);
     drop(func);
-
     builder.handler(handler);
 }
 

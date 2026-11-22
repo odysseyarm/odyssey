@@ -2,9 +2,9 @@
 
 An implementation of the USB DFU 1.1 protocol using embassy-boot. It has 2 components, and the feature you enable picks which one you get.
 
-DFU protocol mode is the `dfu` feature. This is the transfer phase of the DFU protocol as described by the USB IF. It supports DFU_DNLOAD requests if marked by the user, and it resets the chip on its own once a DFU transaction has completed. DFU_GETSTATUS, DFU_GETSTATE, DFU_ABORT, and DFU_CLRSTATUS are answered with no user intervention.
+DFU protocol mode is the `dfu` feature. This is the transfer phase of the DFU protocol as described by the USB IF. It supports `DFU_DNLOAD` requests if marked by the user, and it resets the chip on its own once a DFU transaction has completed. `DFU_GETSTATUS`, `DFU_GETSTATE`, `DFU_ABORT`, and `DFU_CLRSTATUS` are answered with no user intervention.
 
-DFU runtime mode is the `application` feature. With it your USB device exposes a DFU interface. That tells the host the device can DFU over USB, and it lets the host reset the device into its bootloader to complete a DFU operation. Runtime mode supports DFU_GETSTATUS and DFU_DETACH. When the device sees a detach/reset as described by the standard, it writes a new DFU magic number into the bootloader state in flash and resets the system.
+DFU runtime mode is the `application` feature. With it your USB device exposes a DFU interface. That tells the host the device can DFU over USB, and it lets the host reset the device into its bootloader to complete a DFU operation. Runtime mode supports `DFU_GETSTATUS` and `DFU_DETACH`. When the device sees a detach/reset as described by the standard, it writes a new DFU magic number into the bootloader state in flash and resets the system.
 
 `Control` writes through one `FirmwareWriter`. `Control::new_single_bank` uses
 embassy-boot's `BlockingFirmwareUpdater` for a scratch-swap layout; a dual-bank

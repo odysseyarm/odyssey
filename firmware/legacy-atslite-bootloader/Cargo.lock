@@ -51,7 +51,6 @@ dependencies = [
  "embassy-boot 0.6.1",
  "embassy-futures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "embassy-sync 0.7.2",
- "embassy-time",
  "embassy-usb",
  "embedded-storage",
  "release-signing",

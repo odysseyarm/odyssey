@@ -32,7 +32,6 @@ dependencies = [
  "embassy-boot",
  "embassy-futures",
  "embassy-sync",
- "embassy-time",
  "embassy-usb",
  "embedded-storage",
  "release-signing",

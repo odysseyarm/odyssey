@@ -2,6 +2,11 @@
 name = "better-boot"
 version = "0.1.0"
 edition = "2024"
+description = "Dual-bank boot state and direct-XIP trial-boot journal for Odyssey bootloaders"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/odysseyarm/odyssey"
+keywords = ["bootloader", "dfu", "embedded", "no-std"]
+categories = ["embedded", "no-std"]
 
 [lints.rust]
 unsafe_code = "deny"

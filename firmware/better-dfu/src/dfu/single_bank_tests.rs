@@ -94,7 +94,7 @@ impl Reset for NoReset {
 
 type Single<'a> = Control<'a, BlockingFirmwareUpdater<'a, Flash<32>, Flash<256>>, NoReset, 4>;
 
-fn control<'a>(aligned: &'a mut [u8], capacity: usize) -> (Single<'a>, Flash<32>, Flash<256>) {
+fn control(aligned: &mut [u8], capacity: usize) -> (Single<'_>, Flash<32>, Flash<256>) {
     let dfu = Flash::erased();
     let state = Flash::erased();
     let updater = BlockingFirmwareUpdater::new(

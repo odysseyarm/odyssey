@@ -1,6 +1,6 @@
 extern crate std;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::vec::Vec;
 

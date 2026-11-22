@@ -60,6 +60,10 @@ pub struct DfuVerifier {
 }
 
 impl DfuVerifier {
+    /// Starts verifying a download from its signed header.
+    ///
+    /// # Errors
+    /// Returns [`DfuError`] when the header is malformed, names another component or has a bad signature.
     pub fn new(component: Component, header: &[u8]) -> Result<Self, DfuError> {
         let header: &[u8; DFU_HEADER_LEN] = header.try_into().map_err(|_| DfuError::Header)?;
         if &header[..DOMAIN_LEN] != DOMAIN || header[DFU_HEADER_LEN - 1] != 0 {
@@ -103,6 +107,10 @@ impl DfuVerifier {
         self.expected_size
     }
 
+    /// Feeds the next payload chunk into the image hash.
+    ///
+    /// # Errors
+    /// Returns [`DfuError`] when the chunk would exceed the signed image length.
     pub fn update(&mut self, payload: &[u8]) -> Result<(), DfuError> {
         let amount = u32::try_from(payload.len()).map_err(|_| DfuError::Overflow)?;
         let received = self
@@ -117,6 +125,10 @@ impl DfuVerifier {
         Ok(())
     }
 
+    /// Checks that the whole image arrived and matches the signed hash.
+    ///
+    /// # Errors
+    /// Returns [`DfuError`] when the image is short or its hash differs.
     pub fn finish(self) -> Result<(), DfuError> {
         if self.received != self.expected_size {
             return Err(DfuError::Truncated);
