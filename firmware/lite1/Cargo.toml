@@ -62,9 +62,11 @@ path = "src/bin/usb_test.rs"
 # Local crates
 pag7665qn = { path = "../pag7665qn" }
 donger-common = { path = "../donger-common", features = ["atslite"] }
-atslite-common = { path = "../atslite-common", features = ["signed-ota"] }
+atslite-common = { path = "../atslite-common", features = ["signed-ota", "secure-boot"] }
 atslite-transport = { path = "../atslite-transport" }
-lite1-boot-api = { path = "../lite1-boot-api", features = ["defmt"] }
+lite1-boot-api = { path = "../lite1-boot-api" }
+lite1-secure-boot = { path = "../lite1-secure-boot", features = ["hardware", "cc312", "shared-entry"] }
+release-signing = { path = "../release-signing", default-features = false }
 better-dfu = { path = "../better-dfu", features = ["application", "defmt", "cortex-m"] }
 
 # Embassy
@@ -129,7 +131,7 @@ embedded-io-async = "0.7"
 
 [features]
 # Also trust the public development key. Dev and test builds only.
-dev-signing-key = ["atslite-common/dev-signing-key"]
+dev-signing-key = ["atslite-common/dev-signing-key", "lite1-secure-boot/dev-signing-key"]
 
 [build-dependencies]
 memory-spec = "0.3.0"

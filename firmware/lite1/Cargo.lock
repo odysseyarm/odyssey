@@ -211,7 +211,6 @@ checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 name = "better-boot"
 version = "0.1.0"
 dependencies = [
- "defmt 0.3.100",
  "embassy-boot 0.7.0",
  "embedded-storage",
 ]
@@ -1729,6 +1728,7 @@ dependencies = [
  "icm426xx",
  "icmsg",
  "lite1-boot-api",
+ "lite1-secure-boot",
  "memory-spec",
  "nalgebra",
  "npm1300-rs",
@@ -1741,6 +1741,7 @@ dependencies = [
  "postcard",
  "rand_chacha",
  "rand_core 0.6.4",
+ "release-signing",
  "static_cell",
  "trouble-host",
 ]
@@ -1750,9 +1751,16 @@ name = "lite1-boot-api"
 version = "0.1.0"
 dependencies = [
  "better-boot",
- "defmt 0.3.100",
  "embassy-nrf",
  "embedded-storage",
+]
+
+[[package]]
+name = "lite1-secure-boot"
+version = "0.0.0"
+dependencies = [
+ "cc312-verifier",
+ "release-signing",
 ]
 
 [[package]]

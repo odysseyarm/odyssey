@@ -223,6 +223,7 @@ fn release_exists(board: &Board, tag: &str) -> eros::Result<bool> {
 }
 
 struct Published {
+    data: Vec<u8>,
     digest: FileDigest,
     version: semver::Version,
     release: u32,
@@ -239,8 +240,10 @@ fn published(board: &Board, part: Part, device: &str) -> eros::Result<Published>
             part.task()
         )
     })?;
+    let digest = FileDigest::of(&data);
     Ok(Published {
-        digest: FileDigest::of(&data),
+        data,
+        digest,
         release: if matches!(part, Part::NetCore) {
             version.patch as u32
         } else {
@@ -258,10 +261,14 @@ pub(super) fn gen_release(
 ) -> eros::Result<()> {
     // Applied here too, not only when src/release.rs picks the floor, so a
     // hand-run `gen-release` cannot write a lower one.
-    let requires_bootloader = super::with_ats_ota_bootloader_floor(
-        matches!(board.name, "lite1" | "legacy-atslite"),
-        requires_bootloader.clone(),
-    );
+    let requires_bootloader = if board.name == "lite1" {
+        super::with_lite1_secure_boot_floor(requires_bootloader.clone())
+    } else {
+        super::with_ats_ota_bootloader_floor(
+            board.name == "legacy-atslite",
+            requires_bootloader.clone(),
+        )
+    };
     if board.name == "marker-control-board" {
         return gen_single_release(board, &requires_bootloader, requires_netcore, min_desktop);
     }
@@ -345,8 +352,12 @@ pub(super) fn gen_release(
             ),
         ]
     } else {
-        let (app_component, net_component) = match board.name {
-            "lite1" => (Component::Lite1App, Component::Lite1NetCore),
+        let (app_component, net_component, boot_component) = match board.name {
+            "lite1" => (
+                Component::Lite1SecureApp,
+                Component::Lite1SecureNetCore,
+                Component::Lite1SecureBootloader,
+            ),
             name => eros::bail!("no signing components for board {name}"),
         };
         vec![
@@ -355,12 +366,21 @@ pub(super) fn gen_release(
             ("net-core", net_component, [net_core.release, 0, 0]),
             (
                 "stage2-bootloader",
-                Component::Lite1Bootloader,
+                boot_component,
                 signing::app_version(&bootloader.version.to_string())?,
             ),
         ]
     };
     signer.sign_files(&mut entry, &files_to_sign)?;
+    if board.name == "lite1" {
+        super::modern::assemble_release_lite1(
+            &entry,
+            &board.path(OUTPUT_DIR),
+            &bootloader.data,
+            &net_core.data,
+        )
+        .context("could not assemble authenticated Lite1 release image")?;
+    }
     // The manifest lists newest first. check_netcore_floor reads firmwares[0].
     manifest::prepend(&mut manifest, dual.device, entry)?;
     manifest::write(&manifest_path, &manifest)?;
@@ -671,6 +691,7 @@ mod tests {
 
     fn image(sha: &str, version: &str) -> Published {
         Published {
+            data: Vec::new(),
             digest: FileDigest {
                 sha256: sha.to_owned(),
                 size: 1,

@@ -20,6 +20,10 @@ pub enum Component {
     DongleApp = 5,
     Lite1Bootloader = 6,
     LegacyAtsliteBootloader = 7,
+    Lite1TrustList = 8,
+    Lite1SecureApp = 9,
+    Lite1SecureNetCore = 10,
+    Lite1SecureBootloader = 11,
 }
 
 /// Bytes covered by a release signature.
@@ -75,6 +79,10 @@ mod tests {
             (Component::DongleApp, 5),
             (Component::Lite1Bootloader, 6),
             (Component::LegacyAtsliteBootloader, 7),
+            (Component::Lite1TrustList, 8),
+            (Component::Lite1SecureApp, 9),
+            (Component::Lite1SecureNetCore, 10),
+            (Component::Lite1SecureBootloader, 11),
         ];
         for (component, id) in ids {
             assert_eq!(

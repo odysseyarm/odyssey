@@ -276,11 +276,11 @@ cargo xtask firmware <board> gen-release <requires_bootloader> <requires_netcore
   bootloader release, so set this floor from explicit compatibility knowledge.
   `"0.0.0"` does not promise compatibility with every future bootloader version.
 
-  Newly generated ATS Lite application entries require bootloader `1.0.0` or
-  later, which authenticates USB DFU. The direct-XIP journal cutover requires
-  the paired SWD provisioning described in `firmware/README.md`; do not ship
-  these bootloaders as standalone upgrades to released units. Historical
-  entries retain their original compatibility floors.
+  Newly generated modern Lite1 application entries require stage2 `2.0.0` or
+  later for secure boot. Historical entries retain their original floors.
+  Newly generated legacy ATS Lite entries retain the signed-DFU floor `1.0.0`.
+  The modern-layout cutover requires paired SWD provisioning; do not ship its
+  stage2 as a standalone upgrade to deployed units.
 - `requires_netcore`: the net-core release the unit must already be **running**,
   as it reports, before this entry may be installed. `0` for none. The host
   checks it against the net core the unit runs now and never against the one
@@ -414,26 +414,89 @@ Set `ODYSSEY_SIGNER` to a production-key signer before `gen-release` (or
 signatures and development-key signatures fail before the manifest is written.
 Signed file entries are `app`, `app-a`, `app-b`, `net-core` and `stage2-bootloader`.
 
-**YubiKey recipe (unverified until the hardware arrives).** Generate an
-Ed25519 key in PIV slot 9c (needs YubiKey firmware 5.7 or newer; OpenPGP's
-`gpg --detach-sign` wraps the signature in a PGP packet and is not raw Ed25519,
-so it does not work here):
+**Modern Lite1 threshold policy.** Trust policy v2 has up to four active image
+keys and four root slots. Empty root slots use 64 zero hex characters. Create
+unsigned record, then pass it between root holders; each holder appends a
+signature over the same payload. No root private key needs to be present on
+the assembly machine:
 
 ```
-ykman piv keys generate --algorithm ED25519 9c pub.pem
-ODYSSEY_SIGNER="yubico-piv-tool -a verify-pin --sign -s 9c -A ED25519" \
+cargo xtask firmware trust-list create --generation 1 \
+  --key <image-key-hex> \
+  --root <root-a-hex> --root <root-b-hex> --root <root-c-hex> \
+  --root 0000000000000000000000000000000000000000000000000000000000000000 \
+  --threshold 2 --output policy.payload
+```
+```
+cargo xtask firmware trust-list sign --input policy.payload --output policy.record \
+  --public-key <root-a-hex> --signer "python3 firmware/release-signing/ledger-sign.py --device /dev/hidrawN"
+cargo xtask firmware trust-list sign --input policy.record --output policy.record \
+  --public-key <root-b-hex> --signer "<root-b signer command>"
+cargo xtask firmware trust-list wrap --input policy.record --output policy.dfu \
+  --public-key <root-a-hex> --signer "python3 firmware/release-signing/ledger-sign.py --device /dev/hidrawN"
+python3 firmware/release-signing/ledger-sign.py --self-test
+```
+
+`sign` appends signer entry and verifies explicit public key. Feed output to
+next signer; keep root private keys with their owners. `wrap` signs transport
+envelope with one current root. Ledger signer uses OpenPGP signature slot 1,
+requires Linux HID access, and prompts PIN on device. `--self-test` checks
+frame/TLV handling without hardware.
+
+Factory generation 1 must preserve stage1 immutable root slots and threshold
+exactly. Production stage1 uses threshold 2. Assemble command accepts raw signed
+policy record; it checks root authorization and exact factory baseline before
+placing erased 132-byte transport prefix plus record in `trust_a`. Trust policy
+record authorizes policy independently of outer transport header. Release
+pipeline keeps `ODYSSEY_LITE1_TRUST_DFU` input path; point it at reviewed
+generation-1 signed record.
+
+```
+cargo xtask firmware assemble-lite1 \
+  --stage1 build/stage1-bootloader.hex \
+  --stage1-netboot-hash build/stage1-netcore-bootloader.sha256 \
+  --netboot build/netcore-bootloader.bin --trust policy.record \
+  --stage2 stage2.dfu --app-a app-a.dfu --app-b app-b.dfu --net-core net-core.dfu \
+  --output merged.hex --trace merged.trace
+```
+
+Ordinary policy updates require current root threshold signatures. Root
+rotation requires both current-root threshold and new-root threshold signatures.
+Stage1 anchors are immutable: changing initial baseline requires new factory
+stage1 firmware and newly manufactured/provisioned units. After the first boot
+stage1 keeps the accepted roots in locked flash, so root rotations are not limited.
+A revoked root counts for nothing in any later policy.
+
+`assemble-lite1` verifies production signatures, signed component identifiers,
+exact payload lengths and SHA-256 before writing. App, stage2 and net-core slots
+contain signed header, 380 erased bytes, then payload; net-core capacity excludes
+its final 4 KiB state page. Netboot padded region remains checked against stage1
+embedded hash. Trace records each component version and SHA-256.
+
+**YubiKey signer.** Generate an Ed25519 key in PIV slot 9c (needs YubiKey
+firmware 5.7 or newer; OpenPGP's `gpg --detach-sign` wraps the signature in a
+PGP packet and is not raw Ed25519, so it does not work here), then sign with
+`firmware/release-signing/piv-sign.py`. It needs Python with
+`yubikey-manager`, asks for the PIV PIN on the terminal and prints only the 64
+signature bytes:
+
+```
+ykman piv keys generate --algorithm ED25519 --pin-policy ALWAYS --touch-policy ALWAYS 9c pub.pem
+ODYSSEY_SIGNER="python3 firmware/release-signing/piv-sign.py" \
   cargo xtask firmware <board> gen-release ...
 ```
 
-The `yubico-piv-tool` flags, its stdin and stdout handling for raw Ed25519 and
-the PIN and touch prompts have not been run against a device. If the tool
-prints anything but the 64 signature bytes, wrap it in a script that does.
+The signer command is split on whitespace, so `python3` must be an interpreter
+that can import `yubikit`. Every signature needs the PIN and a touch.
 
-**Key slots.** `RELEASE_KEYS` in `firmware/release-signing/src/keys.rs` has four
-slots; slot 0 holds the `matthew@ampotato` key, slot 1 the `yubikey@kybrdgmr` key
-and the rest are empty (all zero).
-A signature from any one trusted key is accepted. To add a key, put its raw
-32-byte public key in a free slot:
+**Key slots.** `RELEASE_KEYS` in `firmware/release-signing/src/keys.rs` supplies
+the initial root slots: 0 `matthew@ampotato`, 1 `yubikey@kybrdgmr`, 2 the Ledger
+Flex key, and 3 empty (all zero), reserved for a second YubiKey. Stage1 embeds
+that initial set, not every future set. A dual-threshold root rotation can fill
+the empty slot or replace a root on already-provisioned units.
+
+Everyday firmware needs one signature from an active image key; trust-policy
+changes need the current root threshold. To obtain a raw YubiKey public key:
 
 ```
 ykman piv keys export 9c - | python3 -c 'import sys,base64;print(base64.b64decode("".join(l for l in sys.stdin if "-----" not in l))[-32:].hex())'
@@ -447,13 +510,13 @@ Optimized firmware builds with that feature require `ODYSSEY_DEV_SIGNING=1`;
 use it only for firmware you flash yourself. `--signer dev` is for the explicit
 development signing command, not release generation.
 
-**Custody plan.** Two or three publisher YubiKeys each fill a slot, and the
-fourth slot stays free so a lost key can be replaced. An offline backup key
-is generated on a separate YubiKey and stored apart from the publishers.
-To replace a key, release firmware that trusts the new key signed by a
-remaining key, then ship it to units over the normal update path before the old
-key is retired. Losing every trusted key blocks authenticated OTA and USB DFU
-updates. SWD recovery remains possible unless separately restricted.
+**Custody plan.** Production starts with three independent roots and threshold
+2. Keep roots on separate devices and retain the Ledger seed backup offline.
+One lost root can be replaced using the other two; losing two roots blocks
+policy changes until destructive SWD recovery. Everyday image keys are managed
+separately: first add a replacement through a threshold-signed policy, install
+images signed by it, then remove the old image key through another policy.
+Root replacement additionally requires the proposed set's threshold signatures.
 
 **Enforcement.** Supported ATS Lite and marker applications and bootloaders
 enable verification through dependency features; `--no-default-features` cannot
@@ -462,8 +525,10 @@ feature uses CryptoCell CC312/PKA for Ed25519 and Oberon for its SHA-512.
 Image digests remain SHA-256 (Oberon on nRF5340, `sha2` on the marker); the
 67-byte signed message and signature format are unchanged. Marker and host
 Ed25519 verification still use `salty`.
-Bootloader 1.0.0 requires a signed DFU envelope for every exposed target,
-including net core and stage2. Earlier bootloaders retain raw-image transfers.
+Legacy ATS Lite and pre-secure-boot Lite1 bootloader 1.0.0 require signed DFU
+envelopes for every exposed target. Modern Lite1 stage2 2.0.0 authenticates
+fixed signed slots and trust records; earlier bootloaders retain raw-image
+transfers.
 
 **USB DFU.** The 132-byte prefix is the 67-byte message above, its 64-byte
 signature and one zero byte. Original image bytes follow, with no transport

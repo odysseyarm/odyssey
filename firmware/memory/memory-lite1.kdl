@@ -3,33 +3,46 @@
 
 vars {
     page_size "4K"
-    stage1_bootloader_size "8K"   // stage1 only orchestrates stage2 swaps
-    stage2_bootloader_size "44K"  // stage2 is the DFU handler
-    stage1_state_size "page_size" // stage1's record of a pending stage2 swap
+    stage1_bootloader_size "32K"
+    stage2_bootloader_size "28K"
+    stage1_state_size "page_size" // stage1's record of a pending stage2 swap; stage2 writes it to request one, so it stays unlocked
     stage2_state_size "page_size" // stage2's record of the active app bank
-    app_bank_size "376K"          // per bank; the app is about 368 KB
+    app_bank_size "368K"
     dfu_size "176K"               // shared staging; holds the ~167 KB net core plus a 4K scratch page
     settings_size "8K"            // the settings module needs at least 8 KB
 }
 
 regions {
     flash origin=0x0000_0000 length="1M" {
-        stage1_bootloader origin=0x0000_0000 length="stage1_bootloader_size"
-        stage2_bootloader origin=0x0000_2000 length="stage2_bootloader_size"
-        app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
+        stage1_bootloader origin=0x0000_0000 length="stage1_bootloader_size" {
+            recovery_threshold origin=0x0000_7F4C length=4
+            recovery_anchors origin=0x0000_7F50 length=128
+        }
+        stage2_bootloader origin=0x0000_8000 length="stage2_bootloader_size"
+        app_bank_a        origin=0x0000_F000 length="app_bank_size" align="page_size"
         app_bank_b        origin=0x0006_B000 length="app_bank_size" align="page_size"
+        trust_a           origin=0x000C_7000 length="page_size" // unprotected staging page for the next signed trust record
+        stage1_state      origin=0x000C_8000 length="stage1_state_size" align="page_size"
         dfu               origin=0x000C_9000 length="dfu_size" align="page_size"
+        stage2_state      origin=0x000F_5000 length="stage2_state_size" align="page_size"
         boot_journal      origin=0x000F_6000 length="8K" align="page_size"
-        // Boot state sits far from settings because settings writes have corrupted neighbouring pages.
-        stage1_state      origin=0x000F_9000 length="stage1_state_size" align="page_size"
-        stage2_state      origin=0x000F_A000 length="stage2_state_size" align="page_size"
-        // 0xFB000, 0xFC000 and 0xFD000 are left empty as guard pages between boot state and settings.
+        // 0xF8000..0xFBFFF is one 16 KiB SPU flash unit that stage1 locks read-only before
+        // handing off. It holds only the two trust-state pages, which stage1 alone writes.
+        trust_state_a     origin=0x000F_8000 length="page_size" align="page_size"
+        trust_state_b     origin=0x000F_9000 length="page_size"
+        // 0xFA000 and 0xFB000 are spare locked pages; 0xFC000 and 0xFD000 are guard pages
+        // between boot state and settings, which sits at the end.
         settings          origin=0x000F_E000 length="settings_size" align="page_size"
     }
 
     ram origin=0x2000_0000 length="512K" {
-        low_ram  origin=0x2000_0000 length="256K"
-        high_ram origin=0x2004_0000 length="256K" {
+        shared_verifier origin=0x2000_0000 length="8K" {
+            policy_handoff origin=0x2000_1E00 length=0x200
+        }
+        // low_ram keeps the app's original 256K (its stack needs it); the 8K for
+        // the shared verifier comes out of high_ram, which only uses its top.
+        low_ram  origin=0x2000_2000 length="256K"
+        high_ram origin=0x2004_2000 length="248K" {
             locked_ram origin=0x2006_FF00 length=0x100  // app to bootloader mailbox
             icmsg_rx origin=0x2007_0000 length=0x2000
             icmsg_tx origin=0x2007_8000 length=0x2000
@@ -77,4 +90,17 @@ symbols {
     __netcore_bootloader_end   "netcore_flash.netcore_bootloader.end"
     __netcore_primary_start    "netcore_flash.netcore_primary.origin"
     __netcore_primary_end      "netcore_flash.netcore_primary.end"
+    __trust_a_start           "flash.trust_a.origin"
+    __trust_a_end             "flash.trust_a.end"
+    __trust_state_a_start     "flash.trust_state_a.origin"
+    __trust_state_a_end       "flash.trust_state_a.end"
+    __trust_state_b_start     "flash.trust_state_b.origin"
+    __trust_state_b_end       "flash.trust_state_b.end"
+    __shared_verifier_start   "ram.shared_verifier.origin"
+    __shared_verifier_end     "ram.shared_verifier.end"
+    __stage1_recovery_anchors_start "flash.stage1_bootloader.recovery_anchors.origin"
+    __stage1_recovery_anchors_end "flash.stage1_bootloader.recovery_anchors.end"
+    __stage1_recovery_threshold "flash.stage1_bootloader.recovery_threshold.origin"
+    __policy_handoff_start "ram.shared_verifier.policy_handoff.origin"
+    __policy_handoff_end "ram.shared_verifier.policy_handoff.end"
 }

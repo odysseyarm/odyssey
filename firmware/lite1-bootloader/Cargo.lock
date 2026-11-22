@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "lite1-bootloader"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "better-boot",
  "better-dfu",
@@ -861,6 +861,7 @@ dependencies = [
  "embedded-hal-async",
  "embedded-storage",
  "lite1-pcd",
+ "lite1-secure-boot",
  "memory-spec",
  "odyssey-version",
  "panic-probe",
@@ -871,6 +872,14 @@ dependencies = [
 [[package]]
 name = "lite1-pcd"
 version = "0.1.0"
+
+[[package]]
+name = "lite1-secure-boot"
+version = "0.0.0"
+dependencies = [
+ "cc312-verifier",
+ "release-signing",
+]
 
 [[package]]
 name = "litrs"

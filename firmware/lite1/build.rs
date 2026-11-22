@@ -39,6 +39,8 @@ fn main() {
         ),
     };
     println!("cargo:info=Building for {}", app_bank);
+    let app_payload_origin = app_flash.origin() + 512;
+    let app_payload_length = app_flash.length() - 512;
 
     let stage2_state = &regions["flash"]["stage2_state"];
     let settings = &regions["flash"]["settings"];
@@ -74,8 +76,8 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
 ",
         stage2_state.origin(),
         stage2_state.length(),
-        app_flash.origin(),
-        app_flash.length(),
+        app_payload_origin,
+        app_payload_length,
         settings.origin(),
         settings.length(),
         low_ram.origin(),
@@ -94,15 +96,42 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+    let app_a = &regions["flash"]["app_bank_a"];
+    let app_b = &regions["flash"]["app_bank_b"];
+    let dfu = &regions["flash"]["dfu"];
+    let netcore_primary = &regions["netcore_flash"]["netcore_primary"];
     let netcore_ram = &regions["netcore_ram"];
     for (name, address) in [
         ("__ota_app_ram_start", low_ram.origin()),
         ("__ota_app_ram_end", low_ram.origin() + low_ram.length()),
         ("__ota_netcore_ram_start", netcore_ram.origin()),
+        ("__ota_netcore_ram_end", netcore_ram.origin() + netcore_ram.length()),
+        ("__ota_app_a_slot_start", app_a.origin()),
+        ("__ota_app_a_slot_end", app_a.origin() + app_a.length()),
+        ("__ota_app_a_payload_start", app_a.origin() + 512),
+        ("__ota_app_a_payload_end", app_a.origin() + app_a.length()),
+        ("__ota_app_b_slot_start", app_b.origin()),
+        ("__ota_app_b_slot_end", app_b.origin() + app_b.length()),
+        ("__ota_app_b_payload_start", app_b.origin() + 512),
+        ("__ota_app_b_payload_end", app_b.origin() + app_b.length()),
+        ("__ota_netcore_slot_start", netcore_primary.origin()),
         (
-            "__ota_netcore_ram_end",
-            netcore_ram.origin() + netcore_ram.length(),
+            "__ota_netcore_slot_end",
+            netcore_primary.origin() + netcore_primary.length() - 4096,
         ),
+        ("__ota_netcore_payload_start", netcore_primary.origin() + 512),
+        (
+            "__ota_netcore_payload_end",
+            netcore_primary.origin() + netcore_primary.length() - 4096,
+        ),
+        ("__ota_dfu_slot_start", dfu.origin()),
+        ("__ota_dfu_slot_end", dfu.origin() + dfu.length()),
+        ("__ota_dfu_payload_start", dfu.origin() + 512),
+        ("__ota_dfu_payload_end", dfu.origin() + dfu.length()),
+        ("__ota_netcore_stage_slot_start", dfu.origin()),
+        ("__ota_netcore_stage_slot_end", dfu.origin() + netcore_primary.length() - 4096),
+        ("__ota_netcore_stage_payload_start", dfu.origin() + 512),
+        ("__ota_netcore_stage_payload_end", dfu.origin() + netcore_primary.length() - 4096),
     ] {
         println!("cargo:rustc-link-arg-bins=--defsym={name}={address:#x}");
     }

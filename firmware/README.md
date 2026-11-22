@@ -297,8 +297,10 @@ flash region.
 The ATS Lite direct-XIP development port uses `embassy-boot` from the fork's
 `integration` branch, patched by `firmware/.cargo/config.toml`. Application
 trials use a two-page journal at `0xF6000..0xF8000`; DFU requests and net-core
-commands stay at `0xFA000`. Bank addresses and the three settings guard pages
-are unchanged. An unconfirmed application gets one boot before rollback.
+commands stay in the stage2 state page (`0xFA000` on legacy ATS Lite, `0xF5000` on
+modern). An unconfirmed application gets one boot before
+rollback. Modern secure-boot images use the layout below; legacy bank addresses
+and settings guard pages remain unchanged.
 Application-bank writes are rejected while an update is pending or on trial.
 
 This state format requires a paired bootloader/application installation.
@@ -306,7 +308,133 @@ Provision both through SWD and erase `0xF6000..0xF8000` when switching formats.
 An empty journal prefers valid bank A, so install the matching new bank-A app
 or erase that bank when provisioning bank B. Older app/bootloader combinations
 are unsupported after this cutover. Do not publish these builds as standalone
-updates for released firmware. Stage1 and net-core swap formats remain unchanged.
+updates for released firmware.
+
+### Modern ATS Lite secure-boot cutover
+
+Modern stage2 `2.0.0` requires a matching immutable stage1 and signed-slot layout.
+Existing modern units require SWD reprovisioning; legacy ATS Lite keeps its
+existing format and authenticated-download path. Do not install stage2 `2.0.0`
+as a standalone update on a unit with the old stage1.
+
+`memory/memory-lite1.kdl` defines the complete layout. Stage1 occupies
+`0x00000..0x08000`; stage2 occupies `0x08000..0x0F000`; each application bank is
+368 KiB. Stage2, application and network application slots begin with the
+132-byte signed DFU envelope, followed by erased bytes through offset 512.
+The vector table starts at offset 512. Signatures cover the raw executable,
+not this prefix. Swaps preserve the prefix and executable together.
+Secure-format signatures use distinct component IDs: application 9, network
+application 10, stage2 11. Historical raw-image IDs 0, 1 and 6 remain unchanged
+and cannot authorize secure slots, even when their vector addresses overlap.
+
+Stage2's 28 KiB slot includes the 512-byte prefix. Release builds keep boot/DFU
+entry logs, warnings and errors; detailed state dumps use debug level to fit.
+
+Before verifying anything, stage1 runs power-up known-answer tests (FIPS 140-3):
+SHA-256 of `abc`, an Ed25519 verification of a fixed vector, and rejection of the
+same signature with one bit flipped. The test key is a fixed test vector and is
+never trusted for firmware.
+
+Every fatal stage1 error (self-test, trust policy, stage2 verification) retries
+the boot three times, counting in uninitialized RAM that survives a soft reset
+but not power loss, then halts in a low-power wait with the network core held
+off. A transient glitch recovers on its own; a persistent fault neither boots
+unverified code nor drains the battery in a reset loop. A manual reset or power
+cycle starts three fresh attempts. Stage1 never writes flash or OTP to count.
+
+Stage1 owns the verifier code and reserves `0x20000000..0x20002000` for its
+mutable state and policy handoff. The handoff at `0x20001E00` carries the accepted
+generation, everyday keys, current root keys and staging-page address;
+stage2 and the app never read the policy state pages. Later images use the fixed
+verifier ABI instead of linking a second implementation. Never initialize or
+reuse reserved RAM from another image. The app core cannot read network-core
+flash, so stage1 does not hash the network bootloader at boot. Instead the
+network bootloader blocks writes to its
+own 60 KiB with the network core's ACL before anything else runs; the lock lasts
+until reset. Stage1 still embeds the bootloader's hash, which the assembler
+checks so a stage1 is only provisioned with the network bootloader it was built
+with. During a network-core update, stage2 marks only the SPU regions covering
+DFU staging non-secure; stage1, stage2 and both app banks stay secure. Stage1
+verifies stage2 after swap or rollback. Stage2 verifies application slots before
+execution and network images before staging them for the network bootloader;
+missing or invalid metadata never enables an old-unit bypass.
+
+`assemble-lite1` marks the factory stage2 as confirmed (`BOOT_MAGIC` in stage1's
+state page at `0xC8000`); without it stage1 would never accept a new trust policy
+on a freshly provisioned unit. Stage1's state page stays outside the locked
+policy unit below because stage2 writes it to request a swap.
+
+Stage1's immutable 128-byte table at `0x7F50` and threshold word at `0x7F4C` (2 in
+production, 1 in development builds) are the root set a fresh unit starts with.
+Empty slots in that table stay empty, but signed root rotations can replace the
+entire active root set without replacing stage1.
+
+The staged trust-policy record occupies `0xC7000`, after a 132-byte transport
+prefix. Each record binds a generation, everyday keys, four root slots and their
+threshold. Every policy change needs threshold signatures from current roots.
+A root-set or threshold change also needs threshold signatures from proposed
+roots, so a revoked root cannot authorize anything. Duplicate signatures never
+count twice. Field uploads use an outer DFU envelope signed by one current root;
+stage1 independently checks the inner threshold signatures at boot. Factory
+assembly leaves the transport prefix erased.
+
+The accepted policy lives in two 4 KiB state pages at `0xF8000` and `0xF9000`,
+one 16 KiB flash unit that holds nothing else. Each page holds one record: magic,
+sequence number, the trust-list payload (generation, everyday keys, roots,
+threshold) and a SHA-256 over them. Only stage1 writes the pages, and it sets the
+unit read-only in the SPU before handing off; the lock lasts until reset. A unit
+with both pages blank takes the factory generation-1 record, which must be signed
+by the immutable root set. Afterwards stage1 accepts a staged record only when it
+is the next generation with threshold signatures from the stored roots. It
+programs the page not holding the current record, so a power cut leaves the old
+record in force and the next boot repeats the commit; a page failing its hash is
+ignored. Root rotations and key changes have no lifetime limit (generation is 16
+bit, sequence 32 bit). Rollback protection rests on the lock: software cannot
+rewrite the pages, but SWD can. Full chip recovery (CTRL-AP ERASEALL) erases them,
+so a recovered unit starts again from its factory roots and must be re-provisioned.
+
+Before accepting a new policy, stage1 requires confirmed stage2 and at least one
+application bank usable under its everyday keys. The network bootloader protects
+its own flash and the network application slot; the app core cannot directly
+recheck their contents.
+
+An everyday-key rotation first adds the replacement key, then installs
+replacement-signed images, then removes the old key: two trust generations, not
+one generation per firmware release. Firmware downgrades remain allowed when
+format and current trust policy permit them.
+
+Production provisioning must use verified signed `merged.hex`, read back the
+complete programmed image, and verify normal boot and update recovery before
+locking debug. Keep ERASEPROTECT disabled: destructive CTRL-AP recovery remains
+available and erases settings and bonds. Manufacturing and signature commands
+are documented in [the release instructions](manifests/README.md).
+
+Program an assembled image over SWD from the firmware shell, which provides
+`nrfjprog`:
+
+```sh
+cargo xtask firmware provision-lite1 --image merged.hex --backup-dir <new dir> [--keep-settings]
+```
+
+It backs up both cores (owner-only directory, since the settings page holds bond
+keys), recovers the network core and then the application core, programs and
+verifies each core, re-verifies the network core and resets. `--keep-settings`
+carries the settings page over from the backup. It keeps the access ports open
+and writes nothing else; debug lock is a separate step. probe-rs 0.31
+cannot unlock a network core held in reset, so this uses `nrfjprog`.
+
+Lock debug as the last step, once the unit has booted and updated:
+
+```sh
+cargo xtask firmware lock-debug-lite1 --yes
+```
+
+It programs APPROTECT, SECUREAPPROTECT and the network core's APPROTECT to the
+locked value and resets; SWD can then neither read nor write either core, so the
+locked trust pages and stage1 cannot be changed over the debug port. `nrfjprog
+--recover` still unlocks a unit by erasing it, including settings and bonds, the
+trust state (back to factory roots) and stage1; reprovision afterwards. Do not
+lock development units.
 
 Desktop treats a USB reset during the final DFU status poll as expected only
 after the device acknowledges the zero-length download terminator and advertises
@@ -327,9 +455,9 @@ Both ATS Lite application and stage2 bootloader builds rebuild the standard
 library with size optimization; stage2 also uses fat LTO and
 `-C panic=immediate-abort`. A stage2 panic therefore traps without a message;
 only the unexpected-interrupt handler still logs its IRQ number through defmt.
-With CC312 Ed25519 and Oberon hashing linked, the modern stage2 leaves about
-1 KiB of its 44 KiB region and the legacy one about 1.5 KiB, so measure before
-adding code or log statements there.
+Modern stage2 calls stage1's shared verifier; legacy stage2 links its own verifier.
+Region bounds are enforced by each linker script. Measure linked image size and
+stack use before adding code or log statements.
 
 Modern ATSlite keeps its object-mode packet queues in static storage. Built as
 locals they inflate `main`'s poll frame, and spawning `ble_task` (whose future

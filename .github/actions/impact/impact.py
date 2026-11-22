@@ -220,6 +220,7 @@ def build_rules(
             + [
                 "firmware/better-ota",
                 "firmware/release-signing",
+                "firmware/lite1-secure-boot",
                 "Cargo.toml",
                 "Cargo.lock",
                 "clippy.toml",

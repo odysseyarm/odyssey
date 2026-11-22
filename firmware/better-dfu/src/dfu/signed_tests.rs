@@ -37,17 +37,20 @@ impl FirmwareWriter for Writer {
         if end > self.capacity {
             return Err(());
         }
-        let mut bytes = self.bytes.borrow_mut();
-        if offset > bytes.len() {
-            return Err(());
-        }
-        if end > bytes.len() {
-            bytes.resize(end, 0xff);
-        }
-        bytes[offset..end].copy_from_slice(data);
+        let physical_offset = 512 + offset;
+        self.bytes.borrow_mut()[physical_offset..physical_offset + data.len()]
+            .copy_from_slice(data);
         Ok(())
     }
 
+    fn commit_signed_header(
+        &mut self,
+        _: DfuTarget,
+        header: &[u8; DFU_HEADER_LEN],
+    ) -> Result<(), ()> {
+        self.bytes.borrow_mut()[..DFU_HEADER_LEN].copy_from_slice(header);
+        Ok(())
+    }
     fn mark_updated_for_target(&mut self, _: DfuTarget) -> Result<(), ()> {
         self.marked.set(true);
         Ok(())
@@ -58,7 +61,7 @@ type Signed<'a> = Control<'a, Writer, NoReset, 256>;
 
 fn control(capacity: usize) -> (Signed<'static>, Writer) {
     let writer = Writer {
-        bytes: Rc::new(RefCell::new(Vec::new())),
+        bytes: Rc::new(RefCell::new(std::vec![0xff; 512 + capacity])),
         marked: Rc::new(Cell::new(false)),
         capacity,
     };
@@ -142,12 +145,17 @@ fn signed_image_activates_and_header_does_not_consume_bank_capacity() {
         Some(OutResponse::Accepted)
     ));
     assert!(!writer.marked.get());
+    assert!(writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
     assert!(matches!(
         finalize(&mut handler, 1),
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(writer.bytes.borrow().as_slice(), image);
+    assert_eq!(&writer.bytes.borrow()[..DFU_HEADER_LEN], &transfer[..DFU_HEADER_LEN]);
+    assert!(writer.bytes.borrow()[DFU_HEADER_LEN..512]
+        .iter()
+        .all(|byte| *byte == 0xff));
+    assert_eq!(&writer.bytes.borrow()[512..], &image);
 }
 
 #[test]
@@ -160,7 +168,7 @@ fn header_only_block_authenticates_without_writing_empty_payload() {
         dnload(&mut handler, 0, &transfer[..DFU_HEADER_LEN]),
         Some(OutResponse::Accepted)
     ));
-    assert!(writer.bytes.borrow().is_empty());
+    assert!(writer.bytes.borrow().iter().all(|byte| *byte == 0xff));
     assert!(!writer.marked.get());
     assert!(matches!(
         dnload(&mut handler, 1, &transfer[DFU_HEADER_LEN..]),
@@ -171,7 +179,11 @@ fn header_only_block_authenticates_without_writing_empty_payload() {
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(writer.bytes.borrow().as_slice(), image);
+    assert_eq!(&writer.bytes.borrow()[..DFU_HEADER_LEN], &transfer[..DFU_HEADER_LEN]);
+    assert!(writer.bytes.borrow()[DFU_HEADER_LEN..512]
+        .iter()
+        .all(|byte| *byte == 0xff));
+    assert_eq!(&writer.bytes.borrow()[512..], &image);
 }
 
 #[test]
@@ -196,6 +208,7 @@ fn unsigned_tampered_wrong_role_and_truncated_images_never_activate() {
         Some(OutResponse::Accepted)
     ));
     assert!(!tampered_writer.marked.get());
+    assert!(tampered_writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
 
     let (mut wrong_role, role_writer) = control(32);
     wrong_role.set_alternate_setting(InterfaceNumber(0), 1);
@@ -217,6 +230,7 @@ fn unsigned_tampered_wrong_role_and_truncated_images_never_activate() {
         Some(OutResponse::Accepted)
     ));
     assert!(!truncated_writer.marked.get());
+    assert!(truncated_writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
 }
 
 #[test]
@@ -266,5 +280,8 @@ fn rejected_order_and_target_switch_recover_after_abort() {
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(writer.bytes.borrow().as_slice(), image);
+    assert_eq!(
+        &writer.bytes.borrow()[512..512 + image.len()],
+        &image
+    );
 }

@@ -1,0 +1,25 @@
+[workspace]
+
+[package]
+name = "lite1-secure-boot"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+release-signing = { path = "../release-signing", default-features = false }
+
+[features]
+default = []
+cc312 = ["release-signing/oberon"]
+shared-entry = ["cc312-verifier/shared-entry"]
+hardware = []
+dev-signing-key = ["release-signing/dev-signing-key"]
+
+[dependencies.cc312-verifier]
+path = "../cc312-verifier"
+default-features = false
+optional = true
+
+[dev-dependencies]
+salty = { version = "0.3", default-features = false }

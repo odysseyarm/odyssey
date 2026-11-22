@@ -124,6 +124,14 @@ PROVIDE(__pcd_region_end = {:#010x});
         "cargo:rustc-link-arg-bins=--defsym=__pcd_region_end={:#x}",
         pcd_region.origin() + pcd_region.length()
     );
+    println!(
+        "cargo:rustc-link-arg-bins=--defsym=__netboot_start={:#x}",
+        netcore_bootloader.origin()
+    );
+    println!(
+        "cargo:rustc-link-arg-bins=--defsym=__netboot_end={:#x}",
+        netcore_bootloader.origin() + netcore_bootloader.length()
+    );
 
     println!("cargo:rustc-link-search={}", out_dir.display());
     println!("cargo:rustc-link-arg-bins=--nmagic");

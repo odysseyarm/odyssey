@@ -1,5 +1,7 @@
 mod board;
 mod manifest;
+mod modern;
+mod provision;
 mod release;
 mod signing;
 
@@ -21,9 +23,12 @@ use crate::cmd;
 
 /// Where `build`, `build-dual-bank` and `flash-app` put their images, inside the board directory.
 const OUTPUT_DIR: &str = "build";
-/// `stage1_state` and `stage2_state` in `memory-*.kdl`. Erased so both bootloaders
+/// `stage1_state` and `stage2_state` in `memory-atslite.kdl`. Erased so both bootloaders
 /// start from `0xFFFFFFFF`.
 const BOOT_STATE_PAGES: [&str; 2] = ["0xF9000", "0xFA000"];
+/// The same pages in `memory-lite1.kdl`. The trust-state pages are not among them: erasing
+/// those would reset the unit's trust policy to its factory roots.
+const LITE1_BOOT_STATE_PAGES: [&str; 2] = ["0xC8000", "0xF5000"];
 /// Guard pages between boot state and settings in `memory-*.kdl`, erased after a
 /// chip erase or recover, which have already cleared the boot state pages.
 const GUARD_PAGES: [&str; 2] = ["0xFC000", "0xFD000"];
@@ -31,20 +36,30 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// First stage2 release requiring authenticated USB DFU images.
 const ATS_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(1, 0, 0);
+/// First modern Lite1 stage2 release providing secure boot.
+const LITE1_SECURE_BOOT_MIN_BOOTLOADER: semver::Version = semver::Version::new(2, 0, 0);
 
-/// Raises the `requires_bootloader` of an ATS Lite application release to
-/// [`ATS_OTA_MIN_BOOTLOADER`]; other boards and higher floors pass through.
+/// Raises ATS Lite OTA compatibility floor to the first signed-DFU bootloader.
 ///
-/// A prerelease of the minimum (`1.0.0-rc.1`) is below it by `SemVer` precedence
-/// and is raised.
-///
-/// Since: Unreleased.
+/// A prerelease of 1.0.0 is below it by SemVer precedence and is raised.
 pub(crate) fn with_ats_ota_bootloader_floor(
     is_ats_lite: bool,
     requested: semver::Version,
 ) -> semver::Version {
     if is_ats_lite && requested.cmp_precedence(&ATS_OTA_MIN_BOOTLOADER).is_lt() {
         ATS_OTA_MIN_BOOTLOADER
+    } else {
+        requested
+    }
+}
+
+/// Raises modern Lite1 application floor to first secure-boot stage2 release.
+pub(super) fn with_lite1_secure_boot_floor(requested: semver::Version) -> semver::Version {
+    if requested
+        .cmp_precedence(&LITE1_SECURE_BOOT_MIN_BOOTLOADER)
+        .is_lt()
+    {
+        LITE1_SECURE_BOOT_MIN_BOOTLOADER
     } else {
         requested
     }
@@ -71,6 +86,18 @@ pub(crate) enum Cmd {
         /// The main.rs to read.
         source: PathBuf,
     },
+    /// Create and sign threshold-authorized trust policies.
+    #[command(subcommand)]
+    TrustList(modern::TrustListArgs),
+    AssembleLite1(modern::AssembleLite1Args),
+    /// Back up, erase and program a modern ATS Lite over SWD with an assembled
+    /// image. Needs `nrfjprog` and exactly one connected J-Link. Does not lock
+    /// debug.
+    ProvisionLite1(provision::ProvisionArgs),
+    /// Lock debug access on a provisioned modern ATS Lite: SWD can no longer read
+    /// or write either core. Erase-all over the debug port still recovers the unit
+    /// but wipes settings and bonds. Run only after the unit has booted.
+    LockDebugLite1(provision::LockArgs),
     /// Build an offline firmware pack: everything an Odyssey in offline mode needs
     /// to update devices, in one folder, laid out like GitHub so nothing has to be
     /// named by hand.
@@ -210,6 +237,10 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             }
             Ok(())
         }
+        Cmd::TrustList(args) => modern::trust_list(&args),
+        Cmd::AssembleLite1(args) => modern::assemble_lite1(&args),
+        Cmd::ProvisionLite1(args) => provision::provision_lite1(&args),
+        Cmd::LockDebugLite1(args) => provision::lock_debug_lite1(&args),
         Cmd::BuildPack(args) => manifest::build_pack(&args),
         Cmd::Sign(args) => signing::sign(&args),
         Cmd::Promote { device, version } => manifest::promote(&device, &version),
@@ -380,6 +411,81 @@ impl Images {
     }
 }
 
+fn build_netcore_bootloader(board: &Board, krate: &Crate) -> eros::Result<PathBuf> {
+    build(krate)?;
+    create_dir(&board.path(OUTPUT_DIR))?;
+    let binary = board.path(&output("netcore-bootloader.bin"));
+    objcopy(
+        board,
+        &cmd::llvm_objcopy()?,
+        "binary",
+        &krate.elf(),
+        &binary,
+    )?;
+    Ok(binary)
+}
+
+fn build_stage1(board: &Board, stage1: &Crate, netboot: &Path) -> eros::Result<()> {
+    let sidecar = board.path(&output("stage1-netcore-bootloader.sha256"));
+    if prebuilt().is_some() {
+        require_prebuilt(&stage1.elf())?;
+    } else {
+        cmd::run(
+            cmd::at(stage1.dir, "cargo")
+                .env("ODYSSEY_NETCORE_BOOTLOADER", netboot)
+                .env("ODYSSEY_NETCORE_BOOTLOADER_HASH_OUT", &sidecar)
+                .arg("build")
+                .args(stage1.build),
+        )?;
+    }
+    let mut padded = [0xff; 60 * 1024];
+    let image = fs::read(netboot)
+        .with_context(|| format!("could not read network bootloader {}", netboot.display()))?;
+    if image.len() > padded.len() {
+        eros::bail!("network bootloader exceeds 60 KiB stage1 authentication region");
+    }
+    padded[..image.len()].copy_from_slice(&image);
+    let expected = hex::encode(Sha256::digest(&padded[..]));
+    if prebuilt().is_some() {
+        let embedded_hex = board.path(&output("stage1-binding-check.hex"));
+        objcopy(
+            board,
+            &cmd::llvm_objcopy()?,
+            "ihex",
+            &stage1.elf(),
+            &embedded_hex,
+        )?;
+        let hex = read_to_string(&embedded_hex)?;
+        let bytes: BTreeMap<_, _> = hex_bytes(&hex)?.into_iter().collect();
+        let memory = fs::read_to_string(cmd::root().join("firmware/memory/memory-lite1.kdl"))?
+            .parse::<memory_spec::MemorySpec>()
+            .map_err(|error| eros::error!("invalid lite1 memory layout: {error}"))?;
+        let stage1_region = memory.regions()["flash"]["stage1_bootloader"].region();
+        let digest_start = stage1_region
+            .end()
+            .checked_sub(48)
+            .context("stage1 region lacks hash record")?;
+        for (offset, byte) in Sha256::digest(&padded[..]).iter().enumerate() {
+            let address = u32::try_from(digest_start + u64::try_from(offset)?)
+                .context("stage1 hash address exceeds u32")?;
+            if bytes.get(&address) != Some(byte) {
+                eros::bail!("prebuilt stage1 does not authenticate current padded netboot image");
+            }
+        }
+        fs::write(&sidecar, format!("{expected}\n"))
+            .with_context(|| format!("could not write {}", sidecar.display()))?;
+    } else {
+        let actual = fs::read_to_string(&sidecar)
+            .with_context(|| format!("stage1 hash sidecar missing: {}", sidecar.display()))?;
+        if actual.trim() != expected {
+            eros::bail!(
+                "stage1 net-core bootloader hash sidecar does not match current 60 KiB FF-padded binary"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn build_full(board: &Board) -> eros::Result<()> {
     let Cores::Dual(dual) = &board.cores else {
         build(&board.app)?;
@@ -400,13 +506,18 @@ fn build_full(board: &Board) -> eros::Result<()> {
                 },
             },
         ];
-        return package(board, &images, Images::Full.merged());
+        return package(board, &images, Some(Images::Full.merged()));
     };
-    build(&dual.stage1)?;
+    if board.name == "lite1" {
+        let netboot_bin = build_netcore_bootloader(board, &dual.netcore_bootloader)?;
+        build_stage1(board, &dual.stage1, &netboot_bin)?;
+    } else {
+        build(&dual.stage1)?;
+        build(&dual.netcore_bootloader)?;
+    }
     build_bank(board, Bank::A)?;
     build_bank(board, Bank::B)?;
     build(&board.bootloader)?;
-    build(&dual.netcore_bootloader)?;
     build(&dual.net_core)?;
     let images = [
         Image {
@@ -440,16 +551,24 @@ fn build_full(board: &Board) -> eros::Result<()> {
             formats: Formats::HexAndBin,
         },
     ];
-    package(board, &images, Images::Full.merged())
+    package(
+        board,
+        &images,
+        (board.name != "lite1").then_some(Images::Full.merged()),
+    )
 }
 
 fn build_dual_bank(board: &Board) -> eros::Result<()> {
     let dual = board.dual_core()?;
-    build(&dual.stage1)?;
+    if board.name == "lite1" {
+        let netboot_bin = build_netcore_bootloader(board, &dual.netcore_bootloader)?;
+        build_stage1(board, &dual.stage1, &netboot_bin)?;
+    } else {
+        build(&dual.stage1)?;
+    }
     build_bank(board, Bank::A)?;
     build_bank(board, Bank::B)?;
     build(&board.bootloader)?;
-    build(&dual.net_core)?;
     let images = [
         Image {
             name: "stage1-bootloader",
@@ -477,11 +596,15 @@ fn build_dual_bank(board: &Board) -> eros::Result<()> {
             formats: Formats::HexAndBin,
         },
     ];
-    package(board, &images, Images::DualBank.merged())
+    package(
+        board,
+        &images,
+        (board.name != "lite1").then_some(Images::DualBank.merged()),
+    )
 }
 
 /// Copy each image into build/, convert it, and merge the hex files in `images` order.
-fn package(board: &Board, images: &[Image], merged: &str) -> eros::Result<()> {
+fn package(board: &Board, images: &[Image], merged: Option<&str>) -> eros::Result<()> {
     create_dir(&board.path(OUTPUT_DIR))?;
     let tool = cmd::llvm_objcopy()?;
     let mut hexes = Vec::new();
@@ -494,9 +617,22 @@ fn package(board: &Board, images: &[Image], merged: &str) -> eros::Result<()> {
             let bin = output(&format!("{}.bin", image.name));
             objcopy(board, &tool, "binary", Path::new(&elf), Path::new(&bin))?;
         }
-        hexes.push(read_to_string(&board.path(&hex))?);
+        if merged.is_some() {
+            hexes.push(read_to_string(&board.path(&hex))?);
+        }
     }
-    write(&board.path(&output(merged)), merge_hex(&hexes)?)
+    if let Some(merged) = merged {
+        write(&board.path(&output(merged)), merge_hex(&hexes)?)?;
+    } else {
+        for name in ["merged.hex", "merged-dual.hex"] {
+            let path = board.path(&output(name));
+            if path.is_file() {
+                fs::remove_file(&path)
+                    .with_context(|| format!("could not remove obsolete {}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The bytes of `parts`, in order, as one Intel HEX file the way `mergehex -m`
@@ -688,8 +824,9 @@ enum Erase {
 }
 
 impl Erase {
-    fn pages(self) -> [&'static str; 2] {
+    fn pages(self, board: &Board) -> [&'static str; 2] {
         match self {
+            Self::Sector if board.name == "lite1" => LITE1_BOOT_STATE_PAGES,
             Self::Sector => BOOT_STATE_PAGES,
             Self::Chip | Self::Recover => GUARD_PAGES,
         }
@@ -735,7 +872,7 @@ fn flash(board: &Board, images: Images, erase: Erase) -> eros::Result<()> {
 fn erase_pages(board: &Board, erase: Erase) -> eros::Result<()> {
     let blank = output("erased-page.bin");
     fs::write(board.path(&blank), [0xff; 4096]).context("could not write erased flash page")?;
-    for page in erase.pages() {
+    for page in erase.pages(board) {
         cmd::run(
             cmd::at(board.dir, "probe-rs")
                 .args([

@@ -18,7 +18,9 @@ core::arch::global_asm!(
     "bx lr",
 );
 
-/// Opens every flash region, EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core.
+/// Opens EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core. Without
+/// `secure-boot`, also every app flash region; secure-boot units keep app flash secure,
+/// since only stage2 needs to share DFU staging, during network updates.
 unsafe fn configure_spu_for_network_core() {
     use embassy_nrf::pac::spu::vals;
 
@@ -33,6 +35,7 @@ unsafe fn configure_spu_for_network_core() {
     const RAM_REGION_SIZE: u32 = 8 * 1024; // 8 KiB per SPU RAM region (nRF53)
     // Engineering A silicon has 32 flash regions of 32 KiB, later revisions 64 of 16 KiB.
     // Writing 64 covers both.
+    #[cfg(not(feature = "secure-boot"))]
     const NUM_FLASH_REGIONS: usize = 64;
 
     #[inline]
@@ -44,6 +47,7 @@ unsafe fn configure_spu_for_network_core() {
 
     // Make all flash non-secure so the network core can reach it: app flash at 0x0000_0000
     // and network core flash at 0x0100_0000.
+    #[cfg(not(feature = "secure-boot"))]
     for i in 0..NUM_FLASH_REGIONS {
         spu.flashregion(i).perm().write(|w| {
             w.set_read(true);

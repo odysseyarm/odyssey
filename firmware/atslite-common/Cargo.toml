@@ -132,6 +132,8 @@ default = []
 signed-ota = ["better-ota/signed", "better-ota/oberon"]
 # Also trust the public development key. Dev and test builds only.
 dev-signing-key = ["better-ota/dev-signing-key"]
+# Modern ATS Lite secure boot: keep app flash secure from the network core.
+secure-boot = []
 
 [patch.crates-io]
 minicbor = { git = "https://github.com/Abrahamh08/minicbor" }

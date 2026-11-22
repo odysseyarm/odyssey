@@ -48,6 +48,26 @@ pub trait Slots {
     /// Component id the image is signed as. Binds a signature to this board and image, so a
     /// signed image for another product does not verify here.
     fn component(&self, image: Image) -> Component;
+    #[cfg(feature = "signed")]
+    fn verify_signature(
+        &self,
+        component: Component,
+        size: u32,
+        version: [u32; 3],
+        hash: &[u8; 32],
+        signature: &[u8; SIGNATURE_LEN],
+    ) -> bool {
+        let message = release_signing::message(component, size, version, hash);
+        release_signing::verify(&message, signature)
+    }
+    #[cfg(feature = "signed")]
+    fn write_header(
+        &mut self,
+        _image: Image,
+        _header: &[u8; release_signing::DFU_HEADER_LEN],
+    ) -> impl core::future::Future<Output = Result<(), Code>> {
+        async { Ok(()) }
+    }
     /// Checks image vectors and target-specific constraints. Runs after the CRC-32 matched.
     fn valid(
         &mut self,
@@ -372,11 +392,14 @@ impl Receiver {
                 hash.update(&bytes[..count]);
                 offset += count as u32;
             }
-            let message =
-                release_signing::message(slots.component(image), size, version, &hash.finalize());
-            if !release_signing::verify(&message, signature) {
+            let digest = hash.finalize();
+            let component = slots.component(image);
+            if !slots.verify_signature(component, size, version, &digest, signature) {
                 return Err(Code::Signature);
             }
+            let header =
+                release_signing::dfu_header(component, size, version, &digest, signature);
+            slots.write_header(image, &header).await?;
         }
         Ok(())
     }
@@ -413,6 +436,10 @@ mod tests {
         fail_commit: bool,
         writes: std::vec::Vec<(Image, u32, std::vec::Vec<u8>)>,
         committed: Option<(Option<u32>, Option<u32>)>,
+        headers: std::vec::Vec<[u8; release_signing::DFU_HEADER_LEN]>,
+        use_test_verifier: bool,
+        accept_signature: bool,
+        secure_format: bool,
     }
     impl Flash {
         fn new() -> Self {
@@ -426,6 +453,10 @@ mod tests {
                 fail_commit: false,
                 writes: std::vec::Vec::new(),
                 committed: None,
+                headers: std::vec::Vec::new(),
+                use_test_verifier: false,
+                accept_signature: false,
+                secure_format: false,
             }
         }
         fn region(&mut self, image: Image) -> &mut [u8; 256] {
@@ -465,10 +496,37 @@ mod tests {
             }
         }
         fn component(&self, image: Image) -> Component {
-            match image {
-                Image::Application => Component::Lite1App,
-                Image::NetCore => Component::Lite1NetCore,
+            match (self.secure_format, image) {
+                (false, Image::Application) => Component::Lite1App,
+                (false, Image::NetCore) => Component::Lite1NetCore,
+                (true, Image::Application) => Component::Lite1SecureApp,
+                (true, Image::NetCore) => Component::Lite1SecureNetCore,
             }
+        }
+        #[cfg(feature = "signed")]
+        fn verify_signature(
+            &self,
+            component: Component,
+            size: u32,
+            version: [u32; 3],
+            hash: &[u8; 32],
+            signature: &[u8; ota::SIGNATURE_LEN],
+        ) -> bool {
+            if self.use_test_verifier {
+                self.accept_signature
+            } else {
+                let message = release_signing::message(component, size, version, hash);
+                release_signing::verify(&message, signature)
+            }
+        }
+        #[cfg(feature = "signed")]
+        async fn write_header(
+            &mut self,
+            _image: Image,
+            header: &[u8; release_signing::DFU_HEADER_LEN],
+        ) -> Result<(), Code> {
+            self.headers.push(*header);
+            Ok(())
         }
         async fn commit(&mut self, app: Option<u32>, netcore: Option<u32>) -> Result<(), Code> {
             if self.fail_commit {
@@ -924,6 +982,67 @@ mod tests {
         );
         assert_eq!(flash.committed, None);
     }
+    #[cfg(feature = "signed")]
+    #[test]
+    fn complete_payload_hash_is_written_in_signed_header_before_activation() {
+        let bytes = [0x2a; 73];
+        let version = [2, 3, 4];
+        let signature = [0x6b; ota::SIGNATURE_LEN];
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        flash.secure_format = true;
+        flash.use_test_verifier = true;
+        flash.accept_signature = true;
+        stage_with_signature(
+            &mut receiver,
+            &mut flash,
+            Image::Application,
+            &bytes,
+            version,
+            signature,
+        );
+        assert!(flash.headers.is_empty());
+        assert_eq!(
+            request(&mut receiver, &mut flash, Request::Commit),
+            Ok(Action::Reset)
+        );
+        let mut hash = release_signing::Sha256::new();
+        hash.update(&bytes);
+        let expected = release_signing::dfu_header(
+            Component::Lite1SecureApp,
+            bytes.len() as u32,
+            version,
+            &hash.finalize(),
+            &signature,
+        );
+        assert_eq!(flash.headers.as_slice(), &[expected]);
+        assert!(flash.committed.is_some());
+    }
+
+    #[cfg(feature = "signed")]
+    #[test]
+    fn retired_operational_signer_cannot_write_header_or_activate() {
+        let mut receiver = Receiver::new();
+        let mut flash = Flash::new();
+        flash.secure_format = true;
+        flash.use_test_verifier = true;
+        flash.accept_signature = false;
+        stage_with_signature(
+            &mut receiver,
+            &mut flash,
+            Image::Application,
+            &[1; 8],
+            [1, 0, 0],
+            [0; ota::SIGNATURE_LEN],
+        );
+        assert_eq!(
+            request(&mut receiver, &mut flash, Request::Commit),
+            Err(Code::Signature)
+        );
+        assert!(flash.headers.is_empty());
+        assert_eq!(flash.committed, None);
+    }
+
 
     #[cfg(all(feature = "signed", feature = "dev-signing-key"))]
     mod dev_signed {

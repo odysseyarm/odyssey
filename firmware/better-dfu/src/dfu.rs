@@ -38,6 +38,9 @@ pub enum DfuTarget {
     ///
     /// Since: Odyssey Desktop 0.6.0.
     Bootloader,
+    /// Signed trust policy record; enabled only when explicitly configured.
+    #[cfg(feature = "trust-list")]
+    TrustList,
 }
 
 /// Writes downloaded firmware to its selected target.
@@ -57,6 +60,27 @@ pub trait FirmwareWriter {
         offset: usize,
         data: &[u8],
     ) -> Result<(), Self::Error>;
+
+    /// Starts signed transfer, allowing modern writers to authenticate against current policy.
+    #[cfg(feature = "signed-dfu")]
+    fn start_signed_download(
+        &mut self,
+        _target: DfuTarget,
+        component: Component,
+        header: &[u8],
+    ) -> Result<DfuVerifier, Status> {
+        DfuVerifier::new(component, header).map_err(|_| Status::ErrVerify)
+    }
+
+    /// Commits preserved envelope after payload verification.
+    #[cfg(feature = "signed-dfu")]
+    fn commit_signed_header(
+        &mut self,
+        _target: DfuTarget,
+        _header: &[u8; DFU_HEADER_LEN],
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// Makes the completed image for `target` the one to boot or install.
     ///
@@ -122,6 +146,10 @@ pub struct Control<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usi
     #[cfg(feature = "signed-dfu")]
     components: [Component; 3],
     #[cfg(feature = "signed-dfu")]
+    signed_header: [u8; DFU_HEADER_LEN],
+    #[cfg(feature = "trust-list")]
+    trust_component: Option<Component>,
+    #[cfg(feature = "signed-dfu")]
     verifier: Option<DfuVerifier>,
 }
 
@@ -170,6 +198,10 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
             interface: None,
             #[cfg(feature = "signed-dfu")]
             components,
+            #[cfg(feature = "signed-dfu")]
+            signed_header: [0; DFU_HEADER_LEN],
+            #[cfg(feature = "trust-list")]
+            trust_component: None,
             #[cfg(feature = "signed-dfu")]
             verifier: None,
         }
@@ -227,6 +259,12 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
     /// Since: Odyssey Desktop 0.7.4.
     pub fn set_download_started_flag(&mut self, flag: &'d Cell<bool>) {
         self.download_started_flag = Some(flag);
+    }
+
+    /// Enables trust-list alternate setting 3 for modern secure boot.
+    #[cfg(feature = "trust-list")]
+    pub fn set_trust_component(&mut self, component: Component) {
+        self.trust_component = Some(component);
     }
 
     fn reset_boot_state(&mut self) {
@@ -328,12 +366,18 @@ impl<'d, WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize>
             return Err(Status::ErrNotDone);
         }
         #[cfg(feature = "signed-dfu")]
-        self.verifier
-            .take()
-            .ok_or(Status::ErrVerify)?
-            .finish()
-            .map_err(|_| Status::ErrVerify)?;
+        {
+            self.verifier
+                .take()
+                .ok_or(Status::ErrVerify)?
+                .finish()
+                .map_err(|_| Status::ErrVerify)?;
+        }
         self.flush_pending()?;
+        #[cfg(feature = "signed-dfu")]
+        self.writer
+            .commit_signed_header(self.target, &self.signed_header)
+            .map_err(Into::into)?;
         self.writer
             .mark_updated_for_target(self.target)
             .map_err(Into::into)
@@ -429,6 +473,10 @@ impl<WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
             2 => {
                 info!("Alt setting 2 selected: Bootloader");
                 self.target = DfuTarget::Bootloader;
+            }
+            #[cfg(feature = "trust-list")]
+            3 if self.trust_component.is_some() => {
+                self.target = DfuTarget::TrustList;
             }
             _ => {
                 warn!("Unknown alt setting {}", alternate);
@@ -530,8 +578,15 @@ impl<WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
                             DfuTarget::AppBankA | DfuTarget::AppBankB => self.components[0],
                             DfuTarget::NetCore => self.components[1],
                             DfuTarget::Bootloader => self.components[2],
+                            #[cfg(feature = "trust-list")]
+                            DfuTarget::TrustList => self.trust_component.unwrap_or(self.components[2]),
                         };
-                        match DfuVerifier::new(component, &data[..DFU_HEADER_LEN]) {
+                        self.signed_header.copy_from_slice(&data[..DFU_HEADER_LEN]);
+                        match self.writer.start_signed_download(
+                            self.target,
+                            component,
+                            &self.signed_header,
+                        ) {
                             Ok(verifier)
                                 if self.single_bank_capacity.is_none_or(|capacity| {
                                     usize::try_from(verifier.image_size())
@@ -545,8 +600,8 @@ impl<WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
                                 self.state = State::Error;
                                 return Some(OutResponse::Rejected);
                             }
-                            Err(_) => {
-                                self.status = Status::ErrVerify;
+                            Err(status) => {
+                                self.status = status;
                                 self.state = State::Error;
                                 return Some(OutResponse::Rejected);
                             }
@@ -705,6 +760,8 @@ pub fn usb_dfu<'d, D: Driver<'d>, WRITER: FirmwareWriter, RST: Reset, const BLOC
     } else {
         Some((builder.string(), builder.string()))
     };
+    #[cfg(feature = "trust-list")]
+    let trust_string = handler.trust_component.map(|_| builder.string());
 
     let mut func = builder.function(
         USB_CLASS_APPN_SPEC,
@@ -797,6 +854,27 @@ pub fn usb_dfu<'d, D: Driver<'d>, WRITER: FirmwareWriter, RST: Reset, const BLOC
                 0x01, // DFU 1.1
             ],
         );
+        #[cfg(feature = "trust-list")]
+        if let Some(trust_string) = trust_string {
+            let mut alt = iface.alt_setting(
+                USB_CLASS_APPN_SPEC,
+                APPN_SPEC_SUBCLASS_DFU,
+                DFU_PROTOCOL_DFU,
+                Some(trust_string),
+            );
+            alt.descriptor(
+                DESC_DFU_FUNCTIONAL,
+                &[
+                    handler.attrs.bits(),
+                    0xc4,
+                    0x09,
+                    (BLOCK_SIZE & 0xff) as u8,
+                    ((BLOCK_SIZE & 0xff00) >> 8) as u8,
+                    0x10,
+                    0x01,
+                ],
+            );
+        }
     }
 
     // The descriptor builders borrow `builder`; dropping them ends those borrows.
