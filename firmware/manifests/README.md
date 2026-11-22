@@ -505,6 +505,17 @@ rejection, malformed R, noncanonical S and changed messages, with a known-good
 verification after each rejection. This matrix passed on ATS `19e3543e7b6e`;
 that unit was restored to published application 0.1.23 afterward.
 
+Hardware DFU checks on ATS `63db8ec382ad` accepted a production-key application,
+rejected unsigned and tampered-signature images, and recovered after rejection.
+An application transfer interrupted after 49,152 bytes left the confirmed app
+bootable after reset; a matching signed image then installed successfully.
+A signed stage2 1.0.0 self-update rebooted into the app and exposed working DFU
+again. This was a same-version update, without a final flash read-back.
+Signed net-core installation reported release 4 on its first boot after the
+handoff fix; an unconfirmed application trial rolled back through the watchdog.
+Legacy ATS Lite handoff was compiled but not hardware-tested; marker hardware
+was not tested.
+
 ## Schema rules
 
 - Hosts that predate a field ignore it. Adding a field never stops them parsing,
