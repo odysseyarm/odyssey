@@ -11,10 +11,12 @@ use odyssey_protocol_macros::protocol_type;
 /// to `u32`. CBOR arrays keep the same shape, but large values need new consumers.
 /// Version 0.2.1 appends `PropKind::BootloaderVersion`. Version 0.2.2 appends
 /// multi-bond messages (`ListBonds`, `RemoveBond`) and the `BondsFull` and
-/// `NotFound` errors.
+/// `NotFound` errors. Version 0.3.0 appends the `OtaRequest`, `OtaStatus`,
+/// `MarkerHint` and `DeviceControl` packets; OTA frames and marker hints no
+/// longer travel in vendor packets.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 2, 2];
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 3, 0];
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]

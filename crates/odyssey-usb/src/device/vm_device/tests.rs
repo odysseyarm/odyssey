@@ -706,3 +706,104 @@ async fn report_with_an_id_from_another_link_reaches_the_stream_of_its_type() {
         "the object stream must not see impact reports"
     );
 }
+
+#[cfg(target_os = "linux")]
+mod packet_control {
+    use odyssey_protocol::control::device::{
+        ClearBondResult, DeviceMsg, PairingError, PairingOutcome, TransportMode,
+    };
+
+    use super::*;
+    use crate::device::packet_transport::LinkKind;
+
+    fn ble_harness() -> Harness {
+        let (writer, sent) = mpsc::channel::<Packet>(64);
+        let (incoming_tx, incoming_rx) = mpsc::channel::<Packet>(8);
+        let mut transport = PacketTransport::from_channels(writer, incoming_rx);
+        transport.kind = LinkKind::Ble;
+        Harness {
+            device: VmDevice::from_transport(transport, None),
+            sent,
+            incoming_tx,
+        }
+    }
+
+    #[tokio::test]
+    async fn control_requests_ride_device_control_packets_and_match_by_id() {
+        let Harness {
+            device,
+            mut sent,
+            incoming_tx,
+        } = ble_harness();
+        let request = tokio::spawn(async move { device.get_transport_mode().await });
+        let packet = sent.recv().await.expect("request was written");
+        assert!(matches!(
+            packet.data,
+            PacketData::DeviceControl(DeviceMsg::GetTransportMode())
+        ));
+        incoming_tx
+            .send(Packet {
+                id: packet.id,
+                data: PacketData::DeviceControl(DeviceMsg::TransportModeStatus(TransportMode::Ble)),
+            })
+            .await
+            .unwrap();
+        assert_eq!(request.await.unwrap().unwrap(), TransportMode::Ble);
+    }
+
+    #[tokio::test]
+    async fn clear_bond_succeeds_on_the_reply_alone() {
+        let Harness {
+            device,
+            mut sent,
+            incoming_tx,
+        } = ble_harness();
+        let request = tokio::spawn(async move { device.clear_bond().await });
+        let packet = sent.recv().await.expect("request was written");
+        incoming_tx
+            .send(Packet {
+                id: packet.id,
+                data: PacketData::DeviceControl(
+                    DeviceMsg::ClearBondResponse(ClearBondResult::Ok()),
+                ),
+            })
+            .await
+            .unwrap();
+        // The unit drops the link right after the reply.
+        drop(incoming_tx);
+        request.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pairing_result_after_the_start_reply_reaches_the_waiter() {
+        let Harness {
+            device,
+            mut sent,
+            incoming_tx,
+        } = ble_harness();
+        let start = tokio::spawn({
+            let device = device.clone();
+            async move { device.start_pairing(1000).await }
+        });
+        let packet = sent.recv().await.expect("request was written");
+        let reply = |data| Packet {
+            id: packet.id,
+            data: PacketData::DeviceControl(data),
+        };
+        incoming_tx
+            .send(reply(DeviceMsg::StartPairingResponse()))
+            .await
+            .unwrap();
+        start.await.unwrap().unwrap();
+        incoming_tx
+            .send(reply(DeviceMsg::PairingResult(PairingOutcome::Err(
+                PairingError::Cancelled,
+            ))))
+            .await
+            .unwrap();
+        assert!(matches!(
+            device.wait_pairing_event().await,
+            Err(Error::Pairing(PairingError::Cancelled))
+        ));
+    }
+}

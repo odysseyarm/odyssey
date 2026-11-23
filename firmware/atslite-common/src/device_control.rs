@@ -1,9 +1,9 @@
-//! Device control messages carried over USB vendor requests: pairing, bond management and
-//! version queries on lite/vm devices.
+//! Device control messages carried over USB vendor requests and the BLE L2CAP control channel:
+//! pairing, bond management and version queries on lite/vm devices.
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use odyssey_protocol::control::device::DeviceMsg;
 use static_cell::StaticCell;
@@ -95,5 +95,55 @@ pub async fn recv_cmd() -> DeviceMsg {
             return ch.receive().await;
         }
         embassy_time::Timer::after_millis(1).await;
+    }
+}
+
+/// Where a command came from, and so where its replies go.
+///
+/// Since: Unreleased.
+#[derive(Clone, Copy, Debug)]
+pub enum Origin {
+    /// Replies go to the USB event queue.
+    Usb,
+    /// Replies go to the L2CAP control channel with the request's packet id.
+    Ble {
+        /// Packet id of the request.
+        id: u8,
+        /// BLE session the request arrived in. `None` delivers to whichever session is up, for
+        /// results that outlive the link that asked, such as a pairing that drops it.
+        session: Option<u32>,
+    },
+}
+
+impl Origin {
+    /// The same origin, delivered to whichever BLE session is up.
+    pub(crate) fn detached(self) -> Self {
+        match self {
+            Self::Ble { id, .. } => Self::Ble { id, session: None },
+            Self::Usb => Self::Usb,
+        }
+    }
+}
+
+static BLE_CMD_CH: Channel<CriticalSectionRawMutex, (DeviceMsg, Origin), 4> = Channel::new();
+
+/// Queues a command that arrived over BLE. Drops it if the queue is full.
+///
+/// Since: Unreleased.
+pub fn try_send_ble_cmd(cmd: DeviceMsg, id: u8, session: u32) {
+    let origin = Origin::Ble {
+        id,
+        session: Some(session),
+    };
+    let _ = BLE_CMD_CH.try_send((cmd, origin));
+}
+
+/// Waits for the next command from either transport.
+///
+/// Since: Unreleased.
+pub async fn recv_any_cmd() -> (DeviceMsg, Origin) {
+    match embassy_futures::select::select(recv_cmd(), BLE_CMD_CH.receive()).await {
+        embassy_futures::select::Either::First(cmd) => (cmd, Origin::Usb),
+        embassy_futures::select::Either::Second(cmd) => cmd,
     }
 }

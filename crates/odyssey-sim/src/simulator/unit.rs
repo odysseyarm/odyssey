@@ -4,12 +4,11 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use odyssey_protocol::control::device::{self, ClearBondsError, DeviceMsg, TransportMode};
 use odyssey_protocol::control::{AddBondError, AddBondResult, BondEntry, BondSlot, MAX_BONDS};
 use odyssey_protocol::image::{IMAGE_LEASE_TIMEOUT_MS, ImageCommand, ImageStatus, ImageStatusCode};
-use odyssey_protocol::marker_hint::{self, MarkerHint};
 use odyssey_protocol::mux::{DevicePacket, MuxMsg};
 use odyssey_protocol::{
     AccelReport, BatteryReport, ConfigKind, DeviceName, GeneralConfig, ImpactReport, List, Packet,
     PacketData, PacketType, ProductId, PropKind, Props, ReadRegisterResponse, SetDeviceNameResult,
-    StreamUpdateAction, Version,
+    StreamUpdateAction, Version, ota,
 };
 use tokio::sync::mpsc;
 
@@ -144,6 +143,9 @@ pub(crate) struct Unit {
     pub(crate) link: Option<Uuid>,
     pub(crate) usb: Option<mpsc::Sender<Packet>>,
     pub(crate) control: Option<mpsc::Sender<DeviceMsg>>,
+    /// Replies to a `DeviceControl` packet, collected while it is handled so they go back
+    /// over the link it came in on instead of the USB control endpoint.
+    capture: Option<Vec<DeviceMsg>>,
     /// The bond the simulated dongle link uses.
     pub(crate) bond: Option<BondEntry>,
     /// Bonds of other hosts, such as the desktop's own adapter. Together with `bond`
@@ -206,6 +208,7 @@ impl Unit {
             link: None,
             usb: None,
             control: None,
+            capture: None,
             bond: None,
             host_bonds: Vec::new(),
             pairing_deadline: None,
@@ -283,6 +286,10 @@ impl Unit {
     }
 
     pub(crate) fn event(&mut self, event: DeviceMsg, errors: &mut Errors) {
+        if let Some(captured) = &mut self.capture {
+            captured.push(event);
+            return;
+        }
         if let Err(error) = send(self.control.as_ref(), event) {
             errors.report(error);
         }
@@ -556,10 +563,9 @@ impl Unit {
                     data,
                 }))
             }
-            PacketData::Vendor(marker_hint::VENDOR_TAG, data) if self.sensor.is_some() => {
-                let payload = &data.data[..usize::from(data.len).min(data.data.len())];
-                match MarkerHint::decode(payload) {
-                    Ok(hint) => {
+            PacketData::MarkerHint(hint) if self.sensor.is_some() => {
+                match hint.validate() {
+                    Ok(()) => {
                         if let Some(sensor) = &mut self.sensor {
                             sensor.hint(hint.points(), io.now_ms);
                         }
@@ -567,6 +573,38 @@ impl Unit {
                     Err(_) => io
                         .errors
                         .report(SimError::InvalidInput("malformed marker hint")),
+                }
+                None
+            }
+            // The simulator has no update slot to stage an image in.
+            PacketData::OtaRequest(_) => Some(PacketData::OtaStatus(
+                ota::Status {
+                    error: ota::Code::Unsupported,
+                    app_slot: 0,
+                    supported: 0,
+                    staged: 0,
+                    receiving: None,
+                    offset: 0,
+                    firmware_version: [0, 0, 0],
+                    netcore_release: 0,
+                    signature_required: false,
+                }
+                .encode(),
+            )),
+            PacketData::DeviceControl(message) => {
+                self.capture = Some(Vec::new());
+                self.handle_control(message, io.now_ms, io.errors);
+                for reply in self.capture.take().unwrap_or_default() {
+                    if id != 255 {
+                        self.reply(
+                            Packet {
+                                id,
+                                data: PacketData::DeviceControl(reply),
+                            },
+                            ble,
+                            io,
+                        );
+                    }
                 }
                 None
             }
@@ -611,21 +649,24 @@ impl Unit {
             return;
         }
         if let Some(data) = response {
-            let packet = Packet { id, data };
-            let result = if ble {
-                send(
-                    io.ble,
-                    MuxMsg::DevicePacket(DevicePacket {
-                        dev: self.uuid,
-                        pkt: packet,
-                    }),
-                )
-            } else {
-                send(self.usb.as_ref(), packet)
-            };
-            if let Err(error) = result {
-                io.errors.report(error);
-            }
+            self.reply(Packet { id, data }, ble, io);
+        }
+    }
+
+    fn reply(&self, packet: Packet, ble: bool, io: &mut Io<'_>) {
+        let result = if ble {
+            send(
+                io.ble,
+                MuxMsg::DevicePacket(DevicePacket {
+                    dev: self.uuid,
+                    pkt: packet,
+                }),
+            )
+        } else {
+            send(self.usb.as_ref(), packet)
+        };
+        if let Err(error) = result {
+            io.errors.report(error);
         }
     }
 
@@ -702,6 +743,10 @@ impl Unit {
         if !self.plugged {
             return;
         }
+        self.handle_control(message, now_ms, errors);
+    }
+
+    fn handle_control(&mut self, message: DeviceMsg, now_ms: u64, errors: &mut Errors) {
         match message {
             DeviceMsg::ReadProp(kind) => {
                 self.event(DeviceMsg::ReadPropResponse(self.prop(kind)), errors);
@@ -968,7 +1013,8 @@ fn timestamp(now_ms: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use odyssey_protocol::{StreamUpdate, VendorData};
+    use odyssey_protocol::StreamUpdate;
+    use odyssey_protocol::marker_hint::MarkerHint;
     use tokio::sync::broadcast;
 
     use super::super::model::Model;
@@ -978,18 +1024,10 @@ mod tests {
 
     const EXPOSURE_REGISTER: (u8, u8) = (0, 0x67);
 
-    fn vendor(tag: u8, payload: &[u8]) -> Packet {
-        let mut data = [0; VendorData::CAPACITY];
-        data[..payload.len()].copy_from_slice(payload);
+    fn hint_packet(hint: MarkerHint) -> Packet {
         Packet {
             id: 255,
-            data: PacketData::Vendor(
-                tag,
-                VendorData {
-                    len: payload.len() as u8,
-                    data,
-                },
-            ),
+            data: PacketData::MarkerHint(hint),
         }
     }
 
@@ -1041,8 +1079,7 @@ mod tests {
                 }
             }
             if hint && time % 100 == 0 && !markers.is_empty() {
-                let hint = MarkerHint::new(&markers).encode();
-                model.unit_packet(UNIT_UUID, vendor(marker_hint::VENDOR_TAG, &hint));
+                model.unit_packet(UNIT_UUID, hint_packet(MarkerHint::new(&markers)));
             }
         }
         model
@@ -1053,7 +1090,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hint_vendor_packet_keeps_the_unit_from_chasing_a_lamp() {
+    fn a_hint_packet_keeps_the_unit_from_chasing_a_lamp() {
         let stock = exposure(&Model::new(broadcast::channel(1).0, SensorModel::Pag7665qn));
         let chased = exposure(&model_beside_a_lamp(false, broadcast::channel(16).0, 3000));
         let hinted = exposure(&model_beside_a_lamp(true, broadcast::channel(16).0, 3000));
@@ -1066,7 +1103,9 @@ mod tests {
     fn a_malformed_hint_is_reported_and_ignored() {
         let (errors, mut reported) = broadcast::channel(16);
         let mut model = model_beside_a_lamp(false, errors, 10);
-        model.unit_packet(UNIT_UUID, vendor(marker_hint::VENDOR_TAG, &[1, 2, 3]));
+        let mut hint = MarkerHint::new(&[[1, 2]]);
+        hint.points[3] = [9, 9];
+        model.unit_packet(UNIT_UUID, hint_packet(hint));
         assert!(matches!(
             reported.try_recv(),
             Ok(SimError::InvalidInput("malformed marker hint"))
@@ -1157,5 +1196,30 @@ mod tests {
                 ClearBondsError::NotFound
             )))
         ));
+    }
+
+    #[test]
+    fn device_control_packets_are_answered_with_the_request_id() {
+        let mut model = Model::new(broadcast::channel(16).0, SensorModel::Pag7665qn);
+        let (sender, mut packets) = mpsc::channel(16);
+        let unit = model.units.get_mut(&UNIT_UUID).unwrap();
+        unit.usb = Some(sender);
+        unit.plugged = true;
+        unit.clear_bonds();
+        for data in [
+            PacketData::DeviceControl(DeviceMsg::ListBonds()),
+            PacketData::OtaRequest(ota::Frame::default()),
+        ] {
+            model.unit_packet(UNIT_UUID, Packet { id: 7, data });
+        }
+        let first = packets.try_recv().expect("ListBonds is answered");
+        assert_eq!(first.id, 7);
+        assert!(matches!(
+            first.data,
+            PacketData::DeviceControl(DeviceMsg::ListBondsResponse(_))
+        ));
+        let second = packets.try_recv().expect("the OTA request is answered");
+        assert_eq!(second.id, 7);
+        assert!(matches!(second.data, PacketData::OtaStatus(_)));
     }
 }

@@ -1,4 +1,5 @@
-//! Handles device control commands from the host CLI over the USB control endpoint.
+//! Handles device control commands from the host over the USB control endpoint and the BLE
+//! L2CAP control channel.
 
 use defmt::info;
 use embassy_futures::select::{Either, select};
@@ -7,10 +8,11 @@ use odyssey_protocol::control::AddBondResult;
 use odyssey_protocol::control::device::{
     ClearBondResult, ClearBondsError, DeviceMsg, PairingError, PairingOutcome, TransportMode,
 };
-use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
+use odyssey_protocol::{Packet, PacketData, PropKind, Props, SetDeviceNameResult};
 
-use crate::ble::peripheral;
-use crate::{device_control, settings};
+use crate::ble::{l2cap_bridge, peripheral};
+use crate::device_control::{self, Origin};
+use crate::settings;
 
 /// Serves device control commands forever. `active_transport` names the transport currently
 /// carrying reports. `GetTransportMode` and `SetTransportMode` both answer with it.
@@ -25,10 +27,10 @@ pub async fn device_control_task(
     info!("Device control task started");
 
     // Set while pairing runs, so the loop can keep serving commands until it completes or expires.
-    let mut pairing_deadline: Option<Instant> = None;
+    let mut pairing: Option<Pairing> = None;
 
     loop {
-        let deadline = pairing_deadline;
+        let deadline = pairing.map(|p| p.deadline);
         let pairing_end = async move {
             let Some(deadline) = deadline else {
                 return core::future::pending().await;
@@ -38,34 +40,68 @@ pub async fn device_control_task(
                 Either::Second(()) => PairingOutcome::Err(PairingError::Timeout),
             }
         };
-        match select(device_control::recv_cmd(), pairing_end).await {
-            Either::First(cmd) => {
+        match select(device_control::recv_any_cmd(), pairing_end).await {
+            Either::First((cmd, origin)) => {
                 info!("Received control command: {:?}", cmd);
                 handle_cmd(
                     cmd,
-                    &mut pairing_deadline,
+                    origin,
+                    &mut pairing,
                     firmware_version,
                     product_id,
                     active_transport,
                 )
                 .await;
             }
-            Either::Second(outcome) => end_pairing(&mut pairing_deadline, outcome),
+            Either::Second(outcome) => end_pairing(&mut pairing, outcome, Origin::Usb).await,
         }
     }
 }
 
-/// Closes the pairing window and reports `outcome` to the host.
-fn end_pairing(pairing_deadline: &mut Option<Instant>, outcome: PairingOutcome) {
+/// An open pairing window and the host that asked for it.
+#[derive(Clone, Copy)]
+struct Pairing {
+    deadline: Instant,
+    origin: Origin,
+}
+
+/// Sends `msg` to the host that sent the command. With `flushed`, a BLE reply has left on
+/// L2CAP before this returns, for commands that drop the link next.
+async fn reply(origin: Origin, msg: DeviceMsg, flushed: bool) {
+    match origin {
+        Origin::Usb => device_control::try_send_event(msg),
+        Origin::Ble { id, session } => {
+            if session.is_some_and(|s| s != l2cap_bridge::session_generation()) {
+                info!("BLE session changed before the device control reply, dropping it");
+                return;
+            }
+            let pkt = Packet {
+                id,
+                data: PacketData::DeviceControl(msg),
+            };
+            if flushed {
+                l2cap_bridge::send_control_flushed(pkt).await;
+            } else if l2cap_bridge::channels().try_send(pkt).is_err() {
+                info!("BLE control queue full, dropping the device control reply");
+            }
+        }
+    }
+}
+
+/// Closes the pairing window and reports `outcome` to the pairing host. The report goes out before
+/// leaving pairing mode, which can drop the link.
+async fn end_pairing(pairing: &mut Option<Pairing>, outcome: PairingOutcome, idle_origin: Origin) {
     info!("Pairing ended: {:?}", outcome);
-    *pairing_deadline = None;
+    // A cancel with no window open still answers whoever asked.
+    let origin = pairing.take().map_or(idle_origin, |p| p.origin);
+    reply(origin, DeviceMsg::PairingResult(outcome), true).await;
     peripheral::cancel_pairing_mode();
-    device_control::try_send_event(DeviceMsg::PairingResult(outcome));
 }
 
 async fn handle_cmd(
     cmd: DeviceMsg,
-    pairing_deadline: &mut Option<Instant>,
+    origin: Origin,
+    pairing: &mut Option<Pairing>,
     firmware_version: [u32; 3],
     product_id: u16,
     active_transport: fn() -> TransportMode,
@@ -96,24 +132,35 @@ async fn handle_cmd(
                     Props::BootloaderVersion(crate::bootloader_version::bootloader_version())
                 }
             };
-            device_control::try_send_event(DeviceMsg::ReadPropResponse(prop));
+            reply(origin, DeviceMsg::ReadPropResponse(prop), false).await;
         }
 
         DeviceMsg::ClearBond() => {
             info!("Clearing every bond...");
-            let result = if settings::is_initialized() {
+            let initialized = settings::is_initialized();
+            if initialized {
                 settings::with_settings(settings::Settings::bonds_clear);
-                // The next advertising cycle removes the old bonds from the BLE host too.
-                peripheral::request_disconnect();
+            }
+            let result = if initialized {
                 ClearBondResult::Ok()
             } else {
                 ClearBondResult::Err(ClearBondsError::Failed)
             };
-            device_control::try_send_event(DeviceMsg::ClearBondResponse(result));
+            // A BLE requester is dropped next, so its answer must leave first.
+            reply(origin, DeviceMsg::ClearBondResponse(result), true).await;
+            if initialized {
+                // The next advertising cycle removes the old bonds from the BLE host too.
+                peripheral::request_disconnect();
+            }
         }
 
         DeviceMsg::ListBonds() => {
-            device_control::try_send_event(DeviceMsg::ListBondsResponse(peripheral::bond_slots()));
+            reply(
+                origin,
+                DeviceMsg::ListBondsResponse(peripheral::bond_slots()),
+                false,
+            )
+            .await;
         }
 
         DeviceMsg::RemoveBond(bd_addr) => {
@@ -121,32 +168,41 @@ async fn handle_cmd(
             let result = if !settings::is_initialized() {
                 ClearBondResult::Err(ClearBondsError::Failed)
             } else if settings::with_settings(|s| s.bond_remove(bd_addr)) {
-                if peripheral::is_connected_peer(bd_addr) {
-                    peripheral::request_disconnect();
-                } else {
-                    peripheral::reload_bonds();
-                }
                 ClearBondResult::Ok()
             } else {
                 ClearBondResult::Err(ClearBondsError::NotFound)
             };
-            device_control::try_send_event(DeviceMsg::RemoveBondResponse(result));
+            let removed = matches!(result, ClearBondResult::Ok());
+            let drops_link = removed && peripheral::is_connected_peer(bd_addr);
+            reply(origin, DeviceMsg::RemoveBondResponse(result), drops_link).await;
+            if drops_link {
+                peripheral::request_disconnect();
+            } else if removed {
+                peripheral::reload_bonds();
+            }
         }
 
         DeviceMsg::StartPairing(params) => {
             let deadline = Instant::now() + Duration::from_millis(params.timeout_ms.into());
             // A repeated StartPairing only restarts the timeout.
-            if pairing_deadline.replace(deadline).is_some() {
+            let started = Pairing {
+                deadline,
+                origin: origin.detached(),
+            };
+            if pairing.replace(started).is_some() {
                 info!("Pairing timeout reset to {} ms", params.timeout_ms);
-                device_control::try_send_event(DeviceMsg::StartPairingResponse());
+                reply(origin, DeviceMsg::StartPairingResponse(), false).await;
                 return;
             }
-            device_control::try_send_event(DeviceMsg::StartPairingResponse());
+            // Entering pairing mode drops the current link.
+            reply(origin, DeviceMsg::StartPairingResponse(), true).await;
             if settings::is_initialized() && settings::with_settings(|s| s.bonds_full()) {
                 end_pairing(
-                    pairing_deadline,
+                    pairing,
                     PairingOutcome::Err(PairingError::BondsFull),
-                );
+                    origin,
+                )
+                .await;
                 return;
             }
             info!("Starting pairing mode for {} ms", params.timeout_ms);
@@ -155,9 +211,11 @@ async fn handle_cmd(
 
         DeviceMsg::CancelPairing() => {
             end_pairing(
-                pairing_deadline,
+                pairing,
                 PairingOutcome::Err(PairingError::Cancelled),
-            );
+                origin,
+            )
+            .await;
         }
 
         // The transport follows the USB state and cannot be chosen. A set request only
@@ -165,12 +223,12 @@ async fn handle_cmd(
         DeviceMsg::GetTransportMode() | DeviceMsg::SetTransportMode(_) => {
             let mode = active_transport();
             info!("Reporting transport mode: {:?}", mode);
-            device_control::try_send_event(DeviceMsg::TransportModeStatus(mode));
+            reply(origin, DeviceMsg::TransportModeStatus(mode), false).await;
         }
 
         DeviceMsg::Reboot() => {
             info!("Reboot requested, sending ack then resetting");
-            device_control::try_send_event(DeviceMsg::RebootAck());
+            reply(origin, DeviceMsg::RebootAck(), false).await;
             // Give the host time to poll the RebootAck.
             embassy_time::Timer::after_millis(50).await;
             // The host reboots straight after changing a setting, and the
@@ -201,18 +259,18 @@ async fn handle_cmd(
                     ConfigKind::StereoIso => GeneralConfig::StereoIso(g.stereo_iso.clone().into()),
                 }
             });
-            device_control::try_send_event(DeviceMsg::ReadConfigResponse(config));
+            reply(origin, DeviceMsg::ReadConfigResponse(config), false).await;
         }
 
         DeviceMsg::WriteConfig(config) => {
             let wire_config = odyssey_protocol::wire::GeneralConfig::from(config);
             settings::with_settings(|s| s.general.set_general_config(&wire_config));
-            device_control::try_send_event(DeviceMsg::WriteConfigAck());
+            reply(origin, DeviceMsg::WriteConfigAck(), false).await;
         }
 
         DeviceMsg::FlashSettings() => {
             settings::with_settings(|s| s.general_write());
-            device_control::try_send_event(DeviceMsg::FlashSettingsAck());
+            reply(origin, DeviceMsg::FlashSettingsAck(), false).await;
         }
 
         DeviceMsg::SetDeviceName(name) => {
@@ -225,9 +283,12 @@ async fn handle_cmd(
             }
             // No ADV_RESTART_SIGNAL: the dongle may be connected, and a restart would drop it.
             peripheral::set_device_name_initial(name.as_str());
-            device_control::try_send_event(DeviceMsg::SetDeviceNameResponse(
-                SetDeviceNameResult::Ok(),
-            ));
+            reply(
+                origin,
+                DeviceMsg::SetDeviceNameResponse(SetDeviceNameResult::Ok()),
+                false,
+            )
+            .await;
         }
 
         DeviceMsg::AddBond(entry) => {
@@ -243,7 +304,7 @@ async fn handle_cmd(
             } else {
                 AddBondResult::Err(AddBondError::Full)
             };
-            device_control::try_send_event(DeviceMsg::AddBondResponse(result));
+            reply(origin, DeviceMsg::AddBondResponse(result), false).await;
         }
         _ => {
             // Responses sent to us as commands are ignored.

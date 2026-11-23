@@ -8,6 +8,19 @@ use odyssey_protocol::{
 use postcard_schema_ng::Schema as _;
 use postcard_schema_ng::schema::{Data, DataModelType};
 
+/// The unit's BLE host reassembles a received L2CAP SDU in one 251-byte pool packet and drops the
+/// link on anything larger; a full OTA data frame with the largest packet id must still fit.
+#[test]
+fn largest_ota_request_fits_the_units_reassembly_buffer() {
+    let frame = heapless::Vec::from_slice(&[0xab; odyssey_protocol::ota::MAX_FRAME])
+        .expect("max frame fits");
+    let packet = odyssey_protocol::Packet {
+        id: u8::MAX,
+        data: odyssey_protocol::PacketData::OtaRequest(frame.into()),
+    };
+    assert!(postcard::to_stdvec(&packet).expect("encodes").len() <= 251);
+}
+
 #[test]
 fn nalgebra_fields_keep_tuple_encoding() {
     let points =

@@ -597,9 +597,8 @@ impl DeviceClient {
         let reply = self
             .rpc
             .clone()
-            .exchange_vendor(proto::ExchangeVendorRequest {
+            .exchange_ota(proto::ExchangeOtaRequest {
                 device: Some(self.device.clone()),
-                tag: u32::from(odyssey_protocol::ota::VENDOR_TAG),
                 data: frame,
             })
             .await?

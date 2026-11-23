@@ -7,7 +7,7 @@
 //!   the only one that can bring a unit's bootloader up to what Bluetooth updates
 //!   need (`RADIO_OTA_MIN_BOOTLOADER` in `update_manager.rs`).
 //! - ATS Lite over BLE through a mux dongle (`Transport::UsbMux`): radio OTA,
-//!   [`run_radio_ota`]. Frames travel as vendor packets through the hub
+//!   [`run_radio_ota`]. Frames travel as OTA packets through the hub
 //!   (`DeviceClient::exchange_ota`). It needs the unit to report a bootloader at
 //!   that floor.
 //!
@@ -275,7 +275,7 @@ async fn run_radio_ota(
     };
     host_ota::send(
         &mut transport,
-        LinkMtu::Vendor,
+        LinkMtu::Packet,
         entry,
         Images {
             application: application("app"),
@@ -291,7 +291,7 @@ async fn run_radio_ota(
     Ok(())
 }
 
-/// Carries OTA frames through the hub's `exchange_vendor` RPC and watches the
+/// Carries OTA frames through the hub's `exchange_ota` RPC and watches the
 /// hub's device list for the unit to come back on the new versions.
 struct RadioOtaTransport {
     client: Client,

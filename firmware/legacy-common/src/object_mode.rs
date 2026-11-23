@@ -452,28 +452,21 @@ async fn usb_rcv_loop<L: L2capChannels>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
-            PacketData::Vendor(tag, data)
-                if tag == odyssey_protocol::ota::VENDOR_TAG && matches!(src, PacketSource::Ble) =>
-            {
-                let len = usize::from(data.len);
-                let Some(payload) = data.data.get(..len) else {
-                    continue;
-                };
-                if let Some(reply) = ota.request(payload).await {
+            PacketData::OtaRequest(frame) if matches!(src, PacketSource::Ble) => {
+                if let Some(reply) = ota.request(&frame).await {
                     reset_after_reply = reply.reset;
-                    let mut body = odyssey_protocol::VendorData {
-                        len: odyssey_protocol::ota::STATUS_LEN as u8,
-                        data: [0; odyssey_protocol::VendorData::CAPACITY],
-                    };
-                    body.data[..odyssey_protocol::ota::STATUS_LEN].copy_from_slice(&reply.status);
                     Some(Packet {
                         id: pkt.id,
-                        data: PacketData::Vendor(tag, body),
+                        data: PacketData::OtaStatus(reply.status),
                     })
                 } else {
                     None
                 }
             }
+            PacketData::OtaRequest(_) => None,
+            PacketData::OtaStatus(_) => None,
+            PacketData::MarkerHint(_) => None,
+            PacketData::DeviceControl(_) => None,
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
             PacketData::ReadVersionResponse(_) => None,

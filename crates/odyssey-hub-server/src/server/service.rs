@@ -6,17 +6,16 @@ use odyssey_hub_server_interface::service_server::Service;
 use odyssey_hub_server_interface::{
     AccessoryInfoMap, AccessoryMapReply, AccessoryMapRequest, Bond, CancelDonglePairingRequest,
     CancelPairingRequest, ClearBondRequest, ClearDongleBondsRequest, Device, DeviceListReply,
-    DeviceListRequest, DongleListReply, EmptyReply, EmptyRequest, Event, ExchangeVendorReply,
-    ExchangeVendorRequest, FlashSettingsRequest, GetShotDelayReply, ListBondsReply,
-    ListBondsRequest, MarkerOtaReply, MarkerOtaRequest, PairSystemBluetoothReply,
-    PairSystemBluetoothRequest, ReadConfigReply, ReadConfigRequest, ReadRegisterReply,
-    ReadRegisterRequest, RemoveBondRequest, ResetShotDelayReply, ScreenBounds,
-    ScreenInfoByIdRequest, ScreenInfoReply, SetDeviceNameRequest, SetShotDelayRequest,
-    SetTransportModeRequest, StartDonglePairingRequest, StartPairingRequest,
-    SubscribeAccessoryMapRequest, SubscribeDeviceListRequest, SubscribeDongleListRequest,
-    SubscribeEventsRequest, SubscribeShotDelayRequest, SystemPairingResult, TransportModeReply,
-    Vector2, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest, ZeroRequest,
-    device_event,
+    DeviceListRequest, DongleListReply, EmptyReply, EmptyRequest, Event, ExchangeOtaReply,
+    ExchangeOtaRequest, FlashSettingsRequest, GetShotDelayReply, ListBondsReply, ListBondsRequest,
+    MarkerOtaReply, MarkerOtaRequest, PairSystemBluetoothReply, PairSystemBluetoothRequest,
+    ReadConfigReply, ReadConfigRequest, ReadRegisterReply, ReadRegisterRequest, RemoveBondRequest,
+    ResetShotDelayReply, ScreenBounds, ScreenInfoByIdRequest, ScreenInfoReply,
+    SetDeviceNameRequest, SetShotDelayRequest, SetTransportModeRequest, StartDonglePairingRequest,
+    StartPairingRequest, SubscribeAccessoryMapRequest, SubscribeDeviceListRequest,
+    SubscribeDongleListRequest, SubscribeEventsRequest, SubscribeShotDelayRequest,
+    SystemPairingResult, TransportModeReply, Vector2, WriteConfigRequest, WriteRegisterRequest,
+    WriteVendorRequest, ZeroRequest, device_event,
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::StreamExt as _;
@@ -546,21 +545,18 @@ impl Service for HubServer {
         Ok(ok_empty())
     }
 
-    async fn exchange_vendor(
+    async fn exchange_ota(
         &self,
-        request: tonic::Request<ExchangeVendorRequest>,
-    ) -> Result<Response<ExchangeVendorReply>, Status> {
-        let ExchangeVendorRequest { device, tag, data } = request.into_inner();
-        if request_byte(tag, 0xfe, "vendor tag")? != odyssey_protocol::ota::VENDOR_TAG {
-            return Err(Status::invalid_argument("unexpected vendor tag"));
-        }
+        request: tonic::Request<ExchangeOtaRequest>,
+    ) -> Result<Response<ExchangeOtaReply>, Status> {
+        let ExchangeOtaRequest { device, data } = request.into_inner();
         odyssey_protocol::ota::Request::decode(&data)
             .map_err(|_decode_error| Status::invalid_argument("malformed OTA frame"))?;
-        let task = self.device_task("exchange_vendor", requested_uuid(device)?)?;
+        let task = self.device_task("exchange_ota", requested_uuid(device)?)?;
         let status = task
             .request(|reply| DeviceTaskMessage::OtaExchange { frame: data, reply })
             .await?;
-        Ok(Response::new(ExchangeVendorReply {
+        Ok(Response::new(ExchangeOtaReply {
             data: status.to_vec(),
         }))
     }

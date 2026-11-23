@@ -194,12 +194,13 @@ distractor cannot leave it too low to see the markers again. Saving settings
 stores the user's exposure, not the adapted one.
 
 While the hub is tracking, it sends the image positions of the spots it matched to
-the marker pattern (vendor tag `0xfd`, `odyssey_protocol::marker_hint`) at up to
+the marker pattern (`MarkerHint` packets, `odyssey_protocol::marker_hint`) at up to
 10 Hz. It sends nothing when fewer than four markers are matched, so there are
 no hints while the hub is not tracking. For 300 ms after a hint, the firmware
 measures only spots near those positions, which excludes round lamps and
 reflections; without a live hint it uses the shape rules above. Positions are
-on the sensor's report grid, 1/64 pixel. Older firmware ignores the tag. Legacy
+on the sensor's report grid, 1/64 pixel. The hub sends hints only to units on
+device protocol 0.3.0 or newer. Legacy
 ATS Lite does not adapt its exposure.
 
 ## Live image inspection and calibration

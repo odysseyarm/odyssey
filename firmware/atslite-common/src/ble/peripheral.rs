@@ -578,6 +578,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 .await
                 {
                     Ok(Ok(())) => {
+                        crate::ble::l2cap_bridge::control_sent(tx_queue.is_empty());
                         let duration_ms = send_start.elapsed().as_millis();
                         defmt::info!(
                             "[control_tx_task] TX control: send complete (id={}, duration={}ms)",
@@ -833,6 +834,13 @@ pub fn bond_slots() -> odyssey_protocol::List<
         });
     }
     slots
+}
+
+/// Whether an encrypted, bonded L2CAP session is up.
+///
+/// Since: Unreleased.
+pub fn is_connected() -> bool {
+    CONNECTED_PEER.lock(|peer| peer.get().is_some())
 }
 
 /// Whether the host with identity address `bd_addr` holds the BLE link.

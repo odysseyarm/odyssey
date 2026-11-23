@@ -26,6 +26,7 @@ use crate::device_tasks::handler::{DeviceConnections, DeviceHandler, DeviceHandl
 use crate::device_tasks::messages::{DeviceChannels, DeviceTaskMessage, Message};
 use crate::device_tasks::native_ble::BondedUnits;
 use crate::device_tasks::netcore_probe::spawn_packet_probes;
+use crate::device_tasks::semver::semver_at_least;
 use crate::device_tasks::transport_selection::TransportSelection;
 
 /// Capacity of a handler's control channel.
@@ -38,6 +39,10 @@ const RELINK_BACKOFF: Duration = Duration::from_secs(10);
 /// The first packet a fresh link carries is sometimes lost, so the version read is re-sent.
 const VERSION_READ_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const VERSION_READ_ATTEMPTS: usize = 3;
+
+/// First device protocol that carries pairing, bond and mode control as `DeviceControl`
+/// packets, so the unit needs no USB cable for them.
+const DEVICE_CONTROL_PROTOCOL: [u16; 3] = [0, 3, 0];
 
 /// What the manager remembers between scans.
 #[derive(Default)]
@@ -170,6 +175,10 @@ async fn register(
     if selection == TransportSelection::Automatic {
         capabilities.insert(DeviceCapabilities::AUTO_TRANSPORT);
     }
+    let packet_control = semver_at_least(version.protocol_semver, DEVICE_CONTROL_PROTOCOL);
+    if packet_control {
+        capabilities.insert(DeviceCapabilities::CONTROL);
+    }
     // No `Transport` value names the system adapter: the units' OTA and device-list
     // handling for a Bluetooth-only unit keys on `UsbMux`.
     let device = Device {
@@ -196,7 +205,8 @@ async fn register(
     }
     let task = DeviceHandler::spawn(DeviceHandlerInit {
         connections: DeviceConnections {
-            control_device: None,
+            // The link is both: device control rides the packet link for units that carry it.
+            control_device: packet_control.then(|| vm_device.clone()),
             events_device: Some(vm_device.clone()),
         },
         device: device.clone(),

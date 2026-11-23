@@ -60,6 +60,8 @@ pub(crate) enum DeviceTaskMessage {
     /// Send a vendor packet. The USB layer rejects invalid tags and payloads over
     /// `VendorData::CAPACITY` bytes.
     WriteVendor(u8, Vec<u8>),
+    /// Send a marker hint on the events link, for units whose protocol carries it.
+    MarkerHint(odyssey_protocol::marker_hint::MarkerHint),
     /// Send one acknowledged OTA frame and return the device's raw OTA status.
     OtaExchange {
         frame: Vec<u8>,

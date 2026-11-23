@@ -341,12 +341,9 @@ async fn ota_busy_reply<L: L2capChannels>(
     ota: atslite_common::ota::OtaHandle,
     packet: Packet,
 ) {
-    let PacketData::Vendor(tag, _) = packet.data else {
+    let PacketData::OtaRequest(_) = packet.data else {
         return;
     };
-    if tag != odyssey_protocol::ota::VENDOR_TAG {
-        return;
-    }
     let Some(reply) = ota.request(&[0]).await else {
         return;
     };
@@ -354,14 +351,9 @@ async fn ota_busy_reply<L: L2capChannels>(
         return;
     };
     status.error = odyssey_protocol::ota::Code::Busy;
-    let mut body = odyssey_protocol::VendorData {
-        len: odyssey_protocol::ota::STATUS_LEN as u8,
-        data: [0; odyssey_protocol::VendorData::CAPACITY],
-    };
-    body.data[..odyssey_protocol::ota::STATUS_LEN].copy_from_slice(&status.encode());
     let response = Packet {
         id: packet.id,
-        data: PacketData::Vendor(tag, body),
+        data: PacketData::OtaStatus(status.encode()),
     };
     if response.is_control() {
         l2cap.control_tx().send(response).await;

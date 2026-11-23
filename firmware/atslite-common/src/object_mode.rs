@@ -29,13 +29,14 @@ use odyssey_protocol::image::{
     IMAGE_CHUNK_CAPACITY, IMAGE_LEASE_TIMEOUT_MS, ImageChunk, ImageCommand, ImageStatus,
     ImageStatusCode, ImageStreamConfig,
 };
-use odyssey_protocol::marker_hint::{self, MarkerHint};
+use odyssey_protocol::marker_hint::MarkerHint;
 use odyssey_protocol::wire::GeneralConfig;
 use odyssey_protocol::{
     BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse,
 };
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
+use crate::device_control;
 use crate::settings::PagSettings;
 
 mod image_state;
@@ -802,42 +803,35 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
-            PacketData::Vendor(marker_hint::VENDOR_TAG, data) => {
-                match data
-                    .data
-                    .get(..usize::from(data.len))
-                    .map(MarkerHint::decode)
-                {
-                    Some(Ok(hint)) => MARKER_HINT.signal((hint, now_ms())),
-                    _ => defmt::warn!("[object_mode] Rejected malformed marker hint"),
+            PacketData::MarkerHint(hint) => {
+                match hint.validate() {
+                    Ok(()) => MARKER_HINT.signal((hint, now_ms())),
+                    Err(_) => defmt::warn!("[object_mode] Rejected invalid marker hint"),
                 }
                 None
             }
-            PacketData::Vendor(tag, data)
-                if tag == odyssey_protocol::ota::VENDOR_TAG
-                    && request_transport == TransportMode::Ble =>
-            {
-                let len = usize::from(data.len);
-                let Some(payload) = data.data.get(..len) else {
-                    continue;
-                };
-                if let Some(reply) = ota.request(payload).await {
+            PacketData::OtaRequest(frame) if request_transport == TransportMode::Ble => {
+                if let Some(reply) = ota.request(&frame).await {
                     reset_after_reply = reply.reset;
                     if reply.reset {
                         image_state.abort.signal(());
                     }
-                    let mut body = odyssey_protocol::VendorData {
-                        len: odyssey_protocol::ota::STATUS_LEN as u8,
-                        data: [0; odyssey_protocol::VendorData::CAPACITY],
-                    };
-                    body.data[..odyssey_protocol::ota::STATUS_LEN].copy_from_slice(&reply.status);
                     Some(Packet {
                         id: pkt.id,
-                        data: PacketData::Vendor(tag, body),
+                        data: PacketData::OtaStatus(reply.status),
                     })
                 } else {
                     None
                 }
+            }
+            PacketData::OtaRequest(_) => None,
+            PacketData::OtaStatus(_) => None,
+            PacketData::DeviceControl(msg) => {
+                // USB has its own control transfers; only BLE carries device control as packets.
+                if request_transport == TransportMode::Ble {
+                    device_control::try_send_ble_cmd(msg, pkt.id, ble_session);
+                }
+                None
             }
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
