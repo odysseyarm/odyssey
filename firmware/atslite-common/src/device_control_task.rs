@@ -194,9 +194,8 @@ async fn handle_cmd(
                 reply(origin, DeviceMsg::StartPairingResponse(), false).await;
                 return;
             }
-            // Entering pairing mode drops the current link.
-            reply(origin, DeviceMsg::StartPairingResponse(), true).await;
             if settings::is_initialized() && settings::with_settings(|s| s.bonds_full()) {
+                reply(origin, DeviceMsg::StartPairingResponse(), true).await;
                 end_pairing(
                     pairing,
                     PairingOutcome::Err(PairingError::BondsFull),
@@ -206,7 +205,24 @@ async fn handle_cmd(
                 return;
             }
             info!("Starting pairing mode for {} ms", params.timeout_ms);
-            peripheral::enter_pairing_mode();
+            match origin {
+                // Entering pairing mode drops a BLE requester's link, so its answer must leave
+                // first.
+                Origin::Ble { .. } => {
+                    reply(origin, DeviceMsg::StartPairingResponse(), true).await;
+                    peripheral::enter_pairing_mode();
+                }
+                // A USB host pairs right after the answer, so answer once a new peer can connect.
+                Origin::Usb => {
+                    peripheral::enter_pairing_mode();
+                    let _ = embassy_time::with_timeout(
+                        Duration::from_secs(2),
+                        peripheral::wait_for_pairing_advertising(),
+                    )
+                    .await;
+                    reply(origin, DeviceMsg::StartPairingResponse(), false).await;
+                }
+            }
         }
 
         DeviceMsg::CancelPairing() => {
