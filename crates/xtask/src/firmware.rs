@@ -29,15 +29,13 @@ const BOOT_STATE_PAGES: [&str; 2] = ["0xF9000", "0xFA000"];
 const GUARD_PAGES: [&str; 2] = ["0xFC000", "0xFD000"];
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// First stage2 bootloader that bounds net-core install retries (v3); older ones
-/// do not, so an ATS Lite app release must not require less. See the ATS Lite
-/// notes in `firmware/manifests/README.md`.
-const ATS_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(0, 2, 0);
+/// First stage2 release requiring authenticated USB DFU images.
+const ATS_OTA_MIN_BOOTLOADER: semver::Version = semver::Version::new(1, 0, 0);
 
 /// Raises the `requires_bootloader` of an ATS Lite application release to
 /// [`ATS_OTA_MIN_BOOTLOADER`]; other boards and higher floors pass through.
 ///
-/// A prerelease of the minimum (`0.2.0-rc.1`) is below it by `SemVer` precedence
+/// A prerelease of the minimum (`1.0.0-rc.1`) is below it by `SemVer` precedence
 /// and is raised.
 ///
 /// Since: Unreleased.
@@ -902,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn ats_ota_release_floor_is_at_least_v3_and_preserves_higher_floors() {
+    fn ats_ota_release_floor_requires_signed_dfu_and_preserves_higher_floors() {
         let minimum = ATS_OTA_MIN_BOOTLOADER;
         assert_eq!(
             with_ats_ota_bootloader_floor(true, semver::Version::new(0, 0, 0)),
@@ -911,13 +909,13 @@ mod tests {
         assert_eq!(
             with_ats_ota_bootloader_floor(
                 true,
-                semver::Version::parse("0.2.0-rc.1").expect("valid prerelease"),
+                semver::Version::parse("1.0.0-rc.1").expect("valid prerelease"),
             ),
             minimum
         );
         assert_eq!(
-            with_ats_ota_bootloader_floor(true, semver::Version::new(0, 3, 0)),
-            semver::Version::new(0, 3, 0)
+            with_ats_ota_bootloader_floor(true, semver::Version::new(1, 1, 0)),
+            semver::Version::new(1, 1, 0)
         );
         assert_eq!(
             with_ats_ota_bootloader_floor(false, semver::Version::new(0, 0, 0)),

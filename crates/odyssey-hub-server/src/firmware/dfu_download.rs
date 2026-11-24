@@ -125,7 +125,7 @@ mod tests {
 
     use dfu_core::State;
     use dfu_core::memory_layout::MemoryLayout;
-    use futures::io::Cursor;
+    use futures::io::{AsyncReadExt as _, Cursor};
 
     use super::*;
 
@@ -145,6 +145,9 @@ mod tests {
         failure: FailurePoint,
         error: TransferError,
         last_block: Mutex<Option<u16>>,
+        expected_payload: Option<Vec<u8>>,
+        payload_offset: Mutex<usize>,
+        manifest_started: Mutex<bool>,
     }
 
     impl Device {
@@ -163,6 +166,16 @@ mod tests {
                 failure,
                 error,
                 last_block: Mutex::new(None),
+                expected_payload: None,
+                payload_offset: Mutex::new(0),
+                manifest_started: Mutex::new(false),
+            }
+        }
+
+        fn expecting(payload: Vec<u8>) -> Self {
+            Self {
+                expected_payload: Some(payload),
+                ..Self::new(FailurePoint::None, TransferError::Fault)
             }
         }
     }
@@ -192,12 +205,26 @@ mod tests {
             {
                 return Err(dfu_nusb::Error::Transfer(self.error));
             }
-            let state = match block {
-                None => State::DfuIdle,
-                Some(0 | 1) => State::DfuDnloadIdle,
-                Some(2) if self.failure == FailurePoint::DfuStatus => State::DfuError,
-                Some(2) => State::DfuManifest,
-                _ => panic!("unexpected block {block:?}"),
+            let state = if let Some(expected) = &self.expected_payload {
+                if block.is_none() {
+                    State::DfuIdle
+                } else if *self.manifest_started.lock().expect("test device lock") {
+                    assert_eq!(
+                        *self.payload_offset.lock().expect("test device lock"),
+                        expected.len()
+                    );
+                    State::DfuManifest
+                } else {
+                    State::DfuDnloadIdle
+                }
+            } else {
+                match block {
+                    None => State::DfuIdle,
+                    Some(0 | 1) => State::DfuDnloadIdle,
+                    Some(2) if self.failure == FailurePoint::DfuStatus => State::DfuError,
+                    Some(2) => State::DfuManifest,
+                    _ => panic!("unexpected block {block:?}"),
+                }
             };
             buffer[..6].copy_from_slice(&[0, 0, 0, 0, u8::from(state), 0]);
             Ok(6)
@@ -214,6 +241,31 @@ mod tests {
                 return Err(dfu_nusb::Error::Transfer(TransferError::Disconnected));
             }
             assert_eq!((request_type, request), (CLASS_INTERFACE_OUT, DFU_DNLOAD));
+            if let Some(expected) = &self.expected_payload {
+                let mut offset = self.payload_offset.lock().expect("test device lock");
+                let expected_block = if buffer.is_empty() {
+                    expected
+                        .len()
+                        .div_ceil(self.descriptor.transfer_size as usize)
+                } else {
+                    *offset / self.descriptor.transfer_size as usize
+                };
+                let expected_block =
+                    u16::try_from(expected_block).expect("test payload fits DFU block numbering");
+                assert_eq!(value, expected_block);
+                if buffer.is_empty() {
+                    assert_eq!(*offset, expected.len());
+                    *self.manifest_started.lock().expect("test device lock") = true;
+                } else {
+                    let end = offset
+                        .checked_add(buffer.len())
+                        .expect("test payload length");
+                    assert_eq!(expected.get(*offset..end), Some(buffer));
+                    *offset = end;
+                }
+                *self.last_block.lock().expect("test device lock") = Some(value);
+                return Ok(buffer.len());
+            }
             let expected = match value {
                 0 => &[1, 2, 3, 4, 5, 6][..],
                 1 => &[7][..],
@@ -309,6 +361,32 @@ mod tests {
         assert_eq!(
             *device.last_block.lock().expect("test device lock"),
             Some(2)
+        );
+    }
+    #[tokio::test]
+    async fn chained_signed_header_and_image_reach_dfu_as_complete_payload() {
+        let header: [u8; release_signing::DFU_HEADER_LEN] =
+            core::array::from_fn(|index| index as u8);
+        let image = b"image bytes cross several DFU blocks";
+        let expected = header
+            .iter()
+            .copied()
+            .chain(image.iter().copied())
+            .collect::<Vec<_>>();
+        let device = Device::expecting(expected.clone());
+        let reader = Cursor::new(header).chain(Cursor::new(image));
+
+        download(&device, reader, expected.len() as u32)
+            .await
+            .expect("signed DFU payload transfer");
+
+        assert_eq!(
+            *device.payload_offset.lock().expect("test device lock"),
+            expected.len()
+        );
+        assert!(
+            *device.manifest_started.lock().expect("test device lock"),
+            "complete image and header must precede manifestation"
         );
     }
 }

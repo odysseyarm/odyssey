@@ -115,6 +115,7 @@ better-ota = { path = "../better-ota" }
 better-boot = { path = "../better-boot" }
 bootloader-info = { path = "../bootloader-info" }
 release-signing = { path = "../release-signing" }
+slot-table = { path = "../slot-table" }
 embedded-storage = "0.3"
 
 # Settings persistence
@@ -128,7 +129,6 @@ rand_chacha = { version = "0.3", default-features = false }
 
 [features]
 default = []
-# Shared with unsigned legacy firmware; lite1 enables this dependency feature unconditionally.
 signed-ota = ["better-ota/signed", "better-ota/oberon"]
 # Also trust the public development key. Dev and test builds only.
 dev-signing-key = ["better-ota/dev-signing-key"]

@@ -55,6 +55,11 @@ impl DfuSession<'_> {
             "BOOTLOADER",
             alt,
             &image.data,
+            firmware::DfuSigning {
+                component: image.component,
+                version: image.signed_version,
+                signature: image.signature.as_deref(),
+            },
             "Bootloader flash",
             |progress, total| FirmwareUpdateState::Flashing { progress, total },
         )

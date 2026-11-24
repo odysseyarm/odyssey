@@ -58,6 +58,12 @@ the Odyssey dongle, and enrollment succeeds only when the board acknowledges the
 OFF write, which happens after the owner bond is committed to flash and read
 back. A new owner replaces the old one only after that commit.
 
+Hold the button for **10 seconds** to clear the owner bond (flash and the BLE
+host's table), then open a fresh enrollment window. The LED turns red from the
+3 second mark until the clear, flashes white four times when it is done, then
+shows blue. Releasing before 10 seconds keeps the bond; the enrollment window
+from the 3 second mark stays open.
+
 Locked boards remain discoverable. The advertisement carries 128-bit service
 data (AD type `0x21`) for the marker service UUID: version `1`, followed by one
 byte of remaining enrollment seconds (`0..=30`, where zero means closed). The
@@ -67,7 +73,8 @@ changes and at each countdown boundary. Desktop enrollment goes by the deadline
 the selected radio reports. Discovering a board is not enough.
 
 The RGB status LED (PCAL6408A P5 red, P6 green, P7 blue, per schematic 117-27606
-rev B) shows **blue** while the enrollment window is open. Otherwise it is
+rev B) shows **blue** while the enrollment window is open and **red** while the button
+is held toward a bond clear. Otherwise it is
 **green** while outputs are on from hub demand, **yellow** in manual On,
 **magenta** in manual Off, and dark in idle Auto. The expander has no PWM, so
 colours are on/off mixes. If markers stay lit or dark while the hub shows Idle,
@@ -95,8 +102,10 @@ clears its boot-state page, so confirm ownership before flashing. `flash-app`
 preserves the bootloader but clears swap state. Use it only with the matching
 memory map.
 
-Later application updates use `build/app.bin` through Odyssey Desktop **0.7.3+**
-or `dfu-util -d 1915:5223 -a 0 -D firmware/marker-control-board/build/app.bin`.
+Application updates use `build/app.bin` through Desktop with signed-DFU support.
+For `dfu-util`, first create a signed `.dfu` envelope as described in
+[signed releases](manifests/README.md#signed-releases), then download it with
+`dfu-util -d 1915:5223 -a 0 -D app.dfu`. Older bootloaders still take raw `.bin`.
 Desktop sends a runtime detach. For physical recovery, hold the power button
 (P0_11 low) while powering or resetting with USB attached. Missing or invalid
 application vectors also leave the board in DFU. The application USB PID is
@@ -113,8 +122,9 @@ application `0x11000..0x48000` (220 KiB), and DFU `0x48000..0x80000`
 A full-chip erase clears the owner and requires physical re-enrollment.
 Interrupted swaps resume. A trial image is confirmed only after the outputs and
 the current driver initialize successfully, and an unconfirmed image reverts on
-reset. Vector checks validate address ranges and Thumb entry. They say nothing
-about image authenticity or integrity, and DFU images are unsigned.
+reset. Vector checks validate address ranges and Thumb entry; they do not prove
+authenticity. Bootloader 1.0.0 additionally requires a trusted release signature
+and matching image hash before activating a USB DFU download.
 
 Release tags, compatibility floors, channel promotion and immutable published
 hashes follow [firmware manifest instructions](manifests/README.md#marker-control-board).
@@ -125,22 +135,39 @@ Odyssey Desktop downloads the app and, for ATS Lite, net-core assets from the
 firmware manifest, verifies their published size and SHA-256, then stages them
 over an encrypted, owner-authorized BLE link. Marker control boards accept a
 system Bluetooth controller or an Odyssey dongle. ATS Lite boards use an
-Odyssey dongle; the dongle relays packets and is not an OTA receiver. The
-transfer library is shared by the marker and ATS Lite applications.
+Odyssey dongle or, on Linux, the computer's own Bluetooth adapter once it is
+paired from Desktop ("Pair this computer"); the dongle relays packets and is
+not an OTA receiver. The transfer library is shared by the marker and ATS Lite
+applications.
 
-lite1 and marker applications require a trusted Ed25519 release signature before
-activating radio updates. Legacy ATS Lite remains unsigned. USB DFU signature
-verification is separate and is not enabled; see [signed releases](manifests/README.md#signed-releases).
+ATS Lite firmware with device protocol 0.2.2 or later stores up to four bonds
+and refuses a fifth host until one is removed. The slot choice is
+[`slot-table`](slot-table/src/lib.rs), proved with Verus
+(`nix build .#checks.x86_64-linux.slot-table-proofs`). The same firmware
+advertises with a static random address: its uuid with the top two bits of the
+last byte set (`odyssey_protocol::control::ble_address`). Linux only stores
+bonds for a random address of that form. A unit whose uuid did not already have
+those bits set changes address when it is updated, so a dongle bonded to it
+before the update has to be paired again.
+
+Modern ATS Lite, legacy ATS Lite and marker applications require trusted Ed25519
+release signatures before activating OTA updates. Their 1.0.0 bootloaders also
+authenticate USB DFU; see [signed releases](manifests/README.md#signed-releases).
 
 Incomplete transfers are not activated. A complete image is read back and
 checked before the application or boot state changes. ATS Lite's stage2
 bootloader still performs the net-core install at reset; stage2 bootloader
-updates themselves remain USB-only. ATS Lite's OTA-capable application requires
-stage2 bootloader `0.2.0` or later. Install that first OTA-capable release
-through Desktop over USB so the updater can install the recovery-capable
-bootloader before the app. If a BLE update reports failure or the device enters
+updates themselves remain USB-only. Newly generated ATS Lite releases require
+stage2 bootloader `1.0.0` or later. The direct-XIP journal cutover below still
+requires a paired SWD installation; do not offer it as a standalone bootloader
+update to released units. If a BLE update reports failure or the device enters
 recovery, connect that same unit over USB and use Desktop's firmware update
 flow; it verifies bootloader, application and net-core versions after updates.
+
+After a net-core copy, the network bootloader finishes its state-page write
+before reporting success, then waits for stage2 to stop it. The application
+alone starts the radio and IPC; starting them before that handoff leaves stale
+state on the first boot after an update.
 
 An interrupted radio transfer is cleared before the next transfer starts.
 Marker staging erases flash one page at a time so the first data write does
@@ -267,6 +294,20 @@ existing release 4 units still need their firmware update completed through
 Desktop. The modern bootloader release profile uses size optimization to fit its
 flash region.
 
+The ATS Lite direct-XIP development port uses `embassy-boot` from the fork's
+`integration` branch, patched by `firmware/.cargo/config.toml`. Application
+trials use a two-page journal at `0xF6000..0xF8000`; DFU requests and net-core
+commands stay at `0xFA000`. Bank addresses and the three settings guard pages
+are unchanged. An unconfirmed application gets one boot before rollback.
+Application-bank writes are rejected while an update is pending or on trial.
+
+This state format requires a paired bootloader/application installation.
+Provision both through SWD and erase `0xF6000..0xF8000` when switching formats.
+An empty journal prefers valid bank A, so install the matching new bank-A app
+or erase that bank when provisioning bank B. Older app/bootloader combinations
+are unsupported after this cutover. Do not publish these builds as standalone
+updates for released firmware. Stage1 and net-core swap formats remain unchanged.
+
 Desktop treats a USB reset during the final DFU status poll as expected only
 after the device acknowledges the zero-length download terminator and advertises
 self-detach without manifestation tolerance. Linux can report this reset as
@@ -282,6 +323,13 @@ while keeping DWARF debug information for probe-rs. Build with the pinned
 nightly and `cargo xtask firmware legacy-atslite build-app-a` / `build-app-b`,
 which rebuild the standard library with size optimization. No bank boundaries or
 BLE features are changed.
+Both ATS Lite application and stage2 bootloader builds rebuild the standard
+library with size optimization; stage2 also uses fat LTO and
+`-C panic=immediate-abort`. A stage2 panic therefore traps without a message;
+only the unexpected-interrupt handler still logs its IRQ number through defmt.
+With CC312 Ed25519 and Oberon hashing linked, the modern stage2 leaves about
+1 KiB of its 44 KiB region and the legacy one about 1.5 KiB, so measure before
+adding code or log statements there.
 
 Modern ATSlite keeps its object-mode packet queues in static storage. Built as
 locals they inflate `main`'s poll frame, and spawning `ble_task` (whose future

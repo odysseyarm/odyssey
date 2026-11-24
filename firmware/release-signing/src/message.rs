@@ -1,4 +1,4 @@
-const DOMAIN: &[u8; 18] = b"ODYSSEY-FW-SIG-V1\0";
+pub(crate) const DOMAIN: &[u8; 18] = b"ODYSSEY-FW-SIG-V1\0";
 
 /// Length of [`message`]: domain tag, component, size, version, image hash.
 ///
@@ -18,6 +18,8 @@ pub enum Component {
     LegacyAtsliteNetCore = 3,
     MarkerApp = 4,
     DongleApp = 5,
+    Lite1Bootloader = 6,
+    LegacyAtsliteBootloader = 7,
 }
 
 /// Bytes covered by a release signature.
@@ -71,6 +73,8 @@ mod tests {
             (Component::LegacyAtsliteNetCore, 3),
             (Component::MarkerApp, 4),
             (Component::DongleApp, 5),
+            (Component::Lite1Bootloader, 6),
+            (Component::LegacyAtsliteBootloader, 7),
         ];
         for (component, id) in ids {
             assert_eq!(

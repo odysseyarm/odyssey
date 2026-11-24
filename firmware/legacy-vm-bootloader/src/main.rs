@@ -8,7 +8,7 @@
 use core::cell::RefCell;
 
 use better_dfu::consts::DfuAttributes;
-use better_dfu::{Control, NullDualBankWriter, NullForwarder, ResetImmediate, usb_dfu};
+use better_dfu::{Control, ResetImmediate, usb_dfu};
 use cortex_m_rt::{entry, exception};
 #[cfg(feature = "defmt")]
 use defmt_rtt as _;
@@ -68,12 +68,10 @@ fn main() -> ! {
         let mut bos_descriptor = [0; 256];
         let mut msos_descriptor = [0; 256];
         let mut control_buf = [0; 4096];
-        let mut state = Control::new(
+        let mut state = Control::<_, _, 4096>::new(
             updater,
             DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH,
             ResetImmediate,
-            NullForwarder,
-            NullDualBankWriter,
             false, // active_bank_is_a, irrelevant for a single-bank layout
         );
         state.set_firmware_version(env!("CARGO_PKG_VERSION"));
@@ -96,7 +94,7 @@ fn main() -> ! {
             msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
         ));
 
-        usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |func| {
+        usb_dfu::<_, _, _, 4096>(&mut builder, &mut state, |func| {
             // Function-level headers matter only for a composite device.
             func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
             func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(

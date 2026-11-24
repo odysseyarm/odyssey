@@ -13,7 +13,7 @@ mod valid_vectors;
 use core::cell::RefCell;
 
 use better_dfu::consts::DfuAttributes;
-use better_dfu::{Control, NullDualBankWriter, NullForwarder, ResetImmediate, usb_dfu};
+use better_dfu::{Control, ResetImmediate, usb_dfu};
 use cortex_m_rt::entry;
 use embassy_boot::{
     AlignedBuffer, BlockingFirmwareUpdater, BootLoader, BootLoaderConfig, FirmwareUpdaterConfig,
@@ -110,11 +110,12 @@ fn main() -> ! {
     let mut bos_descriptor = [0; 256];
     let mut msos_descriptor = [0; 512];
     let mut control_buf = [0; 4096];
-    let mut state = Control::<_, _, _, NullForwarder, NullDualBankWriter, 4096>::new_single_bank(
+    let mut state = Control::<_, _, 4096>::new_single_bank(
         updater,
         DfuAttributes::CAN_DOWNLOAD | DfuAttributes::WILL_DETACH,
         ResetImmediate,
         (ACTIVE_END - ACTIVE_START) as usize,
+        release_signing::Component::MarkerApp,
     );
     state.set_firmware_version(env!("CARGO_PKG_VERSION"));
     let mut builder = Builder::new(
@@ -131,7 +132,7 @@ fn main() -> ! {
         "DeviceInterfaceGUIDs",
         msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
     ));
-    usb_dfu::<_, _, _, _, _, _, 4096>(&mut builder, &mut state, |func| {
+    usb_dfu::<_, _, _, 4096>(&mut builder, &mut state, |func| {
         func.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
         func.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
             "DeviceInterfaceGUIDs",

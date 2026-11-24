@@ -26,16 +26,20 @@ pub trait DfuMarker {
     fn mark_dfu(&mut self);
 }
 
-impl<'d, STATE: NorFlash> DfuMarker for BlockingFirmwareState<'d, STATE> {
+impl<STATE: NorFlash> DfuMarker for BlockingFirmwareState<'_, STATE> {
     fn mark_dfu(&mut self) {
         self.mark_dfu()
-            .expect("Failed to mark DFU mode in bootloader")
+            .expect("Failed to mark DFU mode in bootloader");
     }
 }
 
 /// DFU runtime state and USB control handler; [`usb_dfu`] registers it.
 ///
 /// Since: Odyssey Desktop 0.6.0.
+#[expect(
+    missing_debug_implementations,
+    reason = "holds a generic marker and reset handler"
+)]
 pub struct Control<MARK: DfuMarker, RST: Reset> {
     dfu_marker: MARK,
     attrs: DfuAttributes,
@@ -71,7 +75,7 @@ impl<MARK: DfuMarker, RST: Reset> Control<MARK, RST> {
             return false;
         }
         match self.interface {
-            Some(iface) => req.index == u8::from(iface) as u16,
+            Some(iface) => req.index == u16::from(u8::from(iface)),
             // The descriptor has not been built yet, so nothing can legitimately
             // be addressed here.
             None => false,
@@ -83,7 +87,9 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
     fn reset(&mut self) {
         if let Some(start) = self.detach_start {
             let delta = Instant::now() - start;
-            let timeout = self.timeout.unwrap();
+            let timeout = self
+                .timeout
+                .expect("a detach start always records its timeout");
             trace!(
                 "Received RESET with delta = {}, timeout = {}",
                 delta.as_millis(),
@@ -91,16 +97,12 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
             );
             if delta < timeout {
                 self.dfu_marker.mark_dfu();
-                self.reset.sys_reset()
+                self.reset.sys_reset();
             }
         }
     }
 
-    fn control_out(
-        &mut self,
-        req: embassy_usb::control::Request,
-        _: &[u8],
-    ) -> Option<embassy_usb::control::OutResponse> {
+    fn control_out(&mut self, req: embassy_usb::control::Request, _: &[u8]) -> Option<OutResponse> {
         if !self.addressed_to_us(&req) {
             return None;
         }
@@ -116,7 +118,7 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
                     self.reset.sys_reset();
                 } else {
                     self.detach_start = Some(Instant::now());
-                    self.timeout = Some(Duration::from_millis(req.value as u64));
+                    self.timeout = Some(Duration::from_millis(u64::from(req.value)));
                     trace!("Received DETACH, awaiting USB reset");
                 }
                 Some(OutResponse::Accepted)
@@ -129,7 +131,7 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
         &'a mut self,
         req: embassy_usb::control::Request,
         buf: &'a mut [u8],
-    ) -> Option<embassy_usb::control::InResponse<'a>> {
+    ) -> Option<InResponse<'a>> {
         if !self.addressed_to_us(&req) {
             return None;
         }
@@ -152,8 +154,8 @@ impl<MARK: DfuMarker, RST: Reset> Handler for Control<MARK, RST> {
 /// Adds a USB DFU 1.1 runtime interface to `builder` and registers `handler` for it. The builder can be used as
 /// normal afterwards.
 ///
-/// The handler answers DFU_GETSTATUS and DFU_DETACH. A USB reset that arrives within the DETACH request's wTimeout
-/// (immediately, if WILL_DETACH is set) calls [`DfuMarker::mark_dfu`] and resets the system. The bootloader must
+/// The handler answers `DFU_GETSTATUS` and `DFU_DETACH`. A USB reset that arrives within the DETACH request's `wTimeout`
+/// (immediately, if `WILL_DETACH` is set) calls [`DfuMarker::mark_dfu`] and resets the system. The bootloader must
 /// recognise that mark and expose a DFU-mode device to carry out the transfer with the host.
 ///
 /// `timeout` is advertised as wDetachTimeOut in the functional descriptor, in milliseconds truncated to `u16`.

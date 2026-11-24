@@ -177,8 +177,14 @@ pub(super) fn check_for_update_with_bootloader(
         };
     }
 
+    // A unit reached only over the radio has no control connection; `update_task.rs`
+    // updates it over that link.
+    let radio_ota = is_ats_lite(device_type)
+        && device.transport == Transport::UsbMux
+        && device.events_connected;
     if device.capabilities.contains(DeviceCapabilities::DFU)
         || device.capabilities.contains(DeviceCapabilities::CONTROL)
+        || radio_ota
     {
         if !matches!(current_state, FirmwareUpdateState::Available { .. }) {
             if is_dfu_device {
@@ -386,6 +392,21 @@ mod tests {
             &device,
             target,
             Some(&reported_bootloader),
+        ));
+
+        device.capabilities = DeviceCapabilities::new(DeviceCapabilities::EVENTS);
+        assert!(matches!(
+            check_for_update_with_bootloader(
+                &manifest,
+                &device,
+                &FirmwareUpdateState::Idle,
+                Some(&reported_bootloader),
+            ),
+            FirmwareUpdateState::Available { .. }
+        ));
+        assert!(matches!(
+            check_for_update(&manifest, &device, &FirmwareUpdateState::Idle),
+            FirmwareUpdateState::NeedsUsbConnection { .. }
         ));
     }
 }

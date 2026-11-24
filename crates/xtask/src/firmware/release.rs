@@ -327,38 +327,40 @@ pub(super) fn gen_release(
         },
         "released": today,
     });
-    if board.name == "legacy-atslite" {
-        if let Some(signer) = Signer::from_env()? {
-            let app_version = signing::app_version(&version)?;
-            signer.sign_files(
-                &mut entry,
-                &[
-                    ("app-a", Component::LegacyAtsliteApp, app_version),
-                    ("app-b", Component::LegacyAtsliteApp, app_version),
-                    (
-                        "net-core",
-                        Component::LegacyAtsliteNetCore,
-                        [net_core.release, 0, 0],
-                    ),
-                ],
-            )?;
-        }
+    let signer = Signer::required_from_env()?;
+    let app_version = signing::app_version(&version)?;
+    let files_to_sign: Vec<(&str, Component, [u32; 3])> = if board.name == "legacy-atslite" {
+        vec![
+            ("app-a", Component::LegacyAtsliteApp, app_version),
+            ("app-b", Component::LegacyAtsliteApp, app_version),
+            (
+                "net-core",
+                Component::LegacyAtsliteNetCore,
+                [net_core.release, 0, 0],
+            ),
+            (
+                "stage2-bootloader",
+                Component::LegacyAtsliteBootloader,
+                signing::app_version(&bootloader.version.to_string())?,
+            ),
+        ]
     } else {
-        let signer = Signer::required_from_env()?;
         let (app_component, net_component) = match board.name {
             "lite1" => (Component::Lite1App, Component::Lite1NetCore),
             name => eros::bail!("no signing components for board {name}"),
         };
-        let app_version = signing::app_version(&version)?;
-        signer.sign_files(
-            &mut entry,
-            &[
-                ("app-a", app_component, app_version),
-                ("app-b", app_component, app_version),
-                ("net-core", net_component, [net_core.release, 0, 0]),
-            ],
-        )?;
-    }
+        vec![
+            ("app-a", app_component, app_version),
+            ("app-b", app_component, app_version),
+            ("net-core", net_component, [net_core.release, 0, 0]),
+            (
+                "stage2-bootloader",
+                Component::Lite1Bootloader,
+                signing::app_version(&bootloader.version.to_string())?,
+            ),
+        ]
+    };
+    signer.sign_files(&mut entry, &files_to_sign)?;
     // The manifest lists newest first. check_netcore_floor reads firmwares[0].
     manifest::prepend(&mut manifest, dual.device, entry)?;
     manifest::write(&manifest_path, &manifest)?;
@@ -390,9 +392,10 @@ fn gen_single_release(
     requires_netcore: u32,
     min_desktop: &str,
 ) -> eros::Result<()> {
-    if requires_netcore != 0 || requires_bootloader != &semver::Version::new(0, 0, 1) {
+    let marker_floor = semver::Version::new(1, 0, 0);
+    if requires_netcore != 0 || requires_bootloader != &marker_floor {
         eros::bail!(
-            "marker-control-board requires bootloader 0.0.1 and requires_netcore 0; bootloader updates require SWD"
+            "marker-control-board requires bootloader 1.0.0 and requires_netcore 0; bootloader updates require SWD"
         );
     }
     if !is_plain_version(min_desktop) {

@@ -46,6 +46,10 @@ const APP_MODE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Allow the hub's control connection to read the returning application's version.
 const APP_VERSION_TIMEOUT: Duration = Duration::from_secs(15);
 const APP_VERSION_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// A unit updated over the radio has to be found and linked again after it reboots: the
+/// hub backs off 10 s after a link ends, scans every few seconds, and a link takes up to
+/// 30 s to open. Measured over the system adapter: 18 s.
+const RADIO_RECONNECT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Start a firmware update on the tokio runtime, outside any component's
 /// lifetime. Does nothing when an update for the device is already running.
@@ -180,7 +184,7 @@ async fn run_firmware_update(
                 let image = downloads.netcore.as_ref().ok_or_else(|| {
                     eros::error!("The update plan flashes the net core but no image was downloaded")
                 })?;
-                session.flash_netcore(&image.data, image.release).await?;
+                session.flash_netcore(image).await?;
             }
             firmware::UpdateStep::VerifyNetCore => {
                 let image = downloads.netcore.as_ref().ok_or_else(|| {
@@ -231,8 +235,8 @@ async fn run_radio_ota(
             .applications
             .get(name)
             .zip(entry.files.get(name))
-            .map(|(bytes, file)| VerifiedImage {
-                bytes,
+            .map(|(image, file)| VerifiedImage {
+                bytes: &image.data,
                 manifest: file,
             })
     };
@@ -291,7 +295,7 @@ impl OtaTransport for RadioOtaTransport {
         app_version: [u32; 3],
         netcore_release: u16,
     ) -> Result<bool, String> {
-        let deadline = tokio::time::Instant::now() + APP_VERSION_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + RADIO_RECONNECT_TIMEOUT;
         loop {
             if let Ok(devices) = self.client.get_device_list().await
                 && devices.iter().any(|device| {
@@ -343,7 +347,12 @@ impl DfuSession<'_> {
         self.flash_with_progress(
             slot_name,
             alt,
-            &firmware_data,
+            &firmware_data.data,
+            firmware::DfuSigning {
+                component: firmware_data.component,
+                version: firmware_data.version,
+                signature: firmware_data.signature.as_deref(),
+            },
             "Flash",
             |progress, total| FirmwareUpdateState::Flashing { progress, total },
         )

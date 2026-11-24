@@ -13,13 +13,14 @@ use std::time::Duration;
 use backon::{ConstantBuilder, Retryable as _};
 use dfu_core::DfuIo as _;
 use dfu_nusb::DfuNusb;
-use futures::io::Cursor;
+use futures::io::{AsyncReadExt as _, Cursor};
 use nusb::MaybeFuture as _;
 use odyssey_firmware_manifest::asset_filename;
 pub use odyssey_firmware_manifest::{
     DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest, ReleaseSource,
 };
 use odyssey_version::legacy_bootloader_version;
+pub use release_signing::Component as DfuComponent;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
@@ -620,6 +621,15 @@ pub enum DfuError {
     /// Since: Odyssey Desktop (unreleased).
     #[error("invalid bootloader version")]
     InvalidBootloaderVersion(#[from] semver::Error),
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("release signature is missing or invalid for enforcing bootloader")]
+    SignatureRejected,
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("signed DFU image metadata is missing for enforcing bootloader")]
+    MissingDfuMetadata,
+    /// Since: Odyssey Desktop (unreleased).
+    #[error("signed DFU image length exceeds protocol limit")]
+    DfuImageTooLarge,
     /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
     #[error("DFU error: {0}")]
     Dfu(#[from] dfu_nusb::Error),
@@ -1279,16 +1289,137 @@ pub async fn flash_firmware_with_progress<F>(
 where
     F: FnMut(usize, usize) + Unpin,
 {
+    flash_image(uuid, vid, pid, slot, alt, firmware, None, progress_callback).await
+}
+
+/// What a signature-enforcing bootloader checks an image against.
+///
+/// Since: Odyssey Desktop (unreleased).
+#[derive(Debug, Clone, Copy)]
+pub struct DfuSigning<'a> {
+    /// Since: Odyssey Desktop (unreleased).
+    pub component: DfuComponent,
+    /// Application `SemVer`, or `[release, 0, 0]` for a net core.
+    ///
+    /// Since: Odyssey Desktop (unreleased).
+    pub version: [u32; 3],
+    /// Hex signature from the manifest, when the release carries one.
+    ///
+    /// Since: Odyssey Desktop (unreleased).
+    pub signature: Option<&'a str>,
+}
+
+/// [`flash_firmware_with_progress`] for bootloaders that may enforce signatures:
+/// a bootloader 1.0.0 or newer receives the signed header ahead of the image.
+///
+/// # Errors
+/// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, if
+/// an enforcing bootloader is given no signature a production key made, or if the
+/// DFU transfer fails.
+///
+/// Since: Odyssey Desktop (unreleased).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "extends flash_firmware_with_progress, whose device and slot arguments are public API"
+)]
+pub async fn flash_firmware_signed_with_progress<F>(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    slot: &str,
+    alt: u8,
+    firmware: &[u8],
+    signing: DfuSigning<'_>,
+    progress_callback: F,
+) -> Result<(), DfuError>
+where
+    F: FnMut(usize, usize) + Unpin,
+{
+    flash_image(
+        uuid,
+        vid,
+        pid,
+        slot,
+        alt,
+        firmware,
+        Some(signing),
+        progress_callback,
+    )
+    .await
+}
+
+fn requires_signed_dfu(version: Option<&semver::Version>) -> bool {
+    version.is_some_and(|version| version.major >= 1)
+}
+
+fn dfu_message(
+    firmware: &[u8],
+    component: release_signing::Component,
+    version: [u32; 3],
+) -> Result<(u32, [u8; 32], [u8; release_signing::MESSAGE_LEN]), DfuError> {
+    let size = u32::try_from(firmware.len()).map_err(|_overflow| DfuError::DfuImageTooLarge)?;
+    let hash: [u8; 32] = Sha256::digest(firmware).into();
+    let message = release_signing::message(component, size, version, &hash);
+    Ok((size, hash, message))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared body of the two public flash functions, which take these separately"
+)]
+async fn flash_image<F>(
+    uuid: &[u8; 6],
+    vid: u16,
+    pid: u16,
+    slot: &str,
+    alt: u8,
+    firmware: &[u8],
+    signing: Option<DfuSigning<'_>>,
+    mut progress_callback: F,
+) -> Result<(), DfuError>
+where
+    F: FnMut(usize, usize) + Unpin,
+{
+    let bootloader_version = read_bootloader_release_for_device(uuid, vid, pid).await?;
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;
     let device = info.open().wait()?;
-
+    let header = if requires_signed_dfu(bootloader_version.as_ref()) {
+        let DfuSigning {
+            component,
+            version,
+            signature: Some(signature),
+        } = signing.ok_or(DfuError::MissingDfuMetadata)?
+        else {
+            return Err(DfuError::MissingDfuMetadata);
+        };
+        let signature: [u8; release_signing::SIGNATURE_LEN] = hex::decode(signature)
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(DfuError::SignatureRejected)?;
+        let (size, image_hash, message) = dfu_message(firmware, component, version)?;
+        if !release_signing::verify_production(&message, &signature) {
+            return Err(DfuError::SignatureRejected);
+        }
+        Some(release_signing::dfu_header(
+            component,
+            size,
+            version,
+            &image_hash,
+            &signature,
+        ))
+    } else {
+        None
+    };
+    let header_len = header
+        .as_ref()
+        .map_or(0, |_| release_signing::DFU_HEADER_LEN);
+    let total_size = firmware.len() + header_len;
+    let transfer_length =
+        u32::try_from(total_size).map_err(|_overflow| DfuError::DfuImageTooLarge)?;
     let interface_num = find_dfu_interface(&device)?;
-
     let interface = device.claim_interface(interface_num).wait()?;
     let dfu = DfuNusb::open(device, interface, alt)?;
     let transfer_size = dfu.functional_descriptor().transfer_size as usize;
-
-    let total_size = firmware.len();
 
     tracing::info!(
         "Flashing {} bytes to slot {} (alt {}), transfer_size={}",
@@ -1298,9 +1429,21 @@ where
         transfer_size
     );
 
-    let cursor = ProgressReader::new(Cursor::new(firmware), total_size, Some(progress_callback));
-    dfu_download::download(&dfu, cursor, total_size as u32).await?;
-
+    if let Some(header) = header {
+        let reader = Cursor::new(header).chain(Cursor::new(firmware));
+        let callback = move |written: usize, _total: usize| {
+            progress_callback(
+                written.saturating_sub(release_signing::DFU_HEADER_LEN),
+                firmware.len(),
+            );
+        };
+        let cursor = ProgressReader::new(reader, total_size, Some(callback));
+        dfu_download::download(&dfu, cursor, transfer_length).await?;
+    } else {
+        let cursor =
+            ProgressReader::new(Cursor::new(firmware), total_size, Some(progress_callback));
+        dfu_download::download(&dfu, cursor, transfer_length).await?;
+    }
     Ok(())
 }
 
@@ -1433,6 +1576,50 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn signed_dfu_selection_uses_running_bootloader_major() {
+        for version in [
+            None,
+            Some(semver::Version::new(0, 0, 1)),
+            Some(semver::Version::new(0, 0, 5)),
+            Some(semver::Version::new(0, 9, 9)),
+        ] {
+            assert!(!requires_signed_dfu(version.as_ref()), "{version:?}");
+        }
+        for version in [semver::Version::new(1, 0, 0), semver::Version::new(2, 0, 0)] {
+            assert!(requires_signed_dfu(Some(&version)), "{version}");
+        }
+    }
+
+    #[test]
+    fn signed_dfu_message_binds_component_version_and_image() {
+        let image = b"exact image bytes";
+        let base = dfu_message(image, release_signing::Component::Lite1App, [2, 3, 4])
+            .unwrap()
+            .2;
+        assert_ne!(
+            base,
+            dfu_message(image, release_signing::Component::Lite1NetCore, [2, 3, 4])
+                .unwrap()
+                .2
+        );
+        assert_ne!(
+            base,
+            dfu_message(image, release_signing::Component::Lite1App, [2, 3, 5])
+                .unwrap()
+                .2
+        );
+        assert_ne!(
+            base,
+            dfu_message(
+                b"changed image bytes",
+                release_signing::Component::Lite1App,
+                [2, 3, 4]
+            )
+            .unwrap()
+            .2
+        );
+    }
     #[test]
     fn test_version_newer() {
         assert!(version_newer([0, 1, 0], [0, 1, 1]));

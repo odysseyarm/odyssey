@@ -19,6 +19,7 @@ regions {
         app_bank_a        origin=0x0000_D000 length="app_bank_size" align="page_size"
         app_bank_b        origin=0x0006_B000 length="app_bank_size" align="page_size"
         dfu               origin=0x000C_9000 length="dfu_size" align="page_size"
+        boot_journal      origin=0x000F_6000 length="8K" align="page_size"
         // Boot state sits far from settings because settings writes have corrupted neighbouring pages.
         stage1_state      origin=0x000F_9000 length="stage1_state_size" align="page_size"
         stage2_state      origin=0x000F_A000 length="stage2_state_size" align="page_size"
@@ -53,6 +54,8 @@ symbols {
     // __bootloader_state is the older name for stage2_state.
     __bootloader_state_start  "flash.stage2_state.origin"
     __bootloader_state_end    "flash.stage2_state.end"
+    __bootloader_journal_start "flash.boot_journal.origin"
+    __bootloader_journal_end   "flash.boot_journal.end"
 
     __bootloader_app_a_start  "flash.app_bank_a.origin"
     __bootloader_app_a_end    "flash.app_bank_a.end"

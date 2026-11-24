@@ -943,7 +943,9 @@ mod tests {
         const NETCORE: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
         fn sign(component: Component, bytes: &[u8], version: [u32; 3]) -> [u8; ota::SIGNATURE_LEN] {
-            let digest = Sha256::digest(bytes);
+            let mut hash = Sha256::new();
+            hash.update(bytes);
+            let digest = hash.finalize();
             let message = release_signing::message(component, bytes.len() as u32, version, &digest);
             salty::Keypair::from(&DEV_SEED).sign(&message).to_bytes()
         }

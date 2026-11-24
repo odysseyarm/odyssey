@@ -122,6 +122,10 @@ const fn net_core(dir: &'static str, bin: &'static str, build: &'static [&'stati
 
 const APP_CORE_RELEASE: &[&str] = &["--release", "--target", APP_CORE_TARGET];
 const APP_CORE_BOOTLOADER: &[&str] = &[
+    "-Z",
+    "build-std",
+    "-Z",
+    "build-std-features=optimize_for_size",
     "--release",
     "--target",
     APP_CORE_TARGET,
@@ -132,7 +136,7 @@ const NET_CORE_RELEASE: &[&str] = &["--release", "--target", NET_CORE_TARGET];
 /// The net core's `.cargo/config.toml` already names its target.
 const CONFIGURED_RELEASE: &[&str] = &["--release"];
 
-const LITE1_APP: Crate = app_core("firmware/lite1", "app", APP_CORE_RELEASE);
+const LITE1_APP: Crate = app_core("firmware/lite1", "app", APP_CORE_SIZE_OPTIMIZED);
 const LITE1_BOOTLOADER: Crate = app_core(
     "firmware/lite1-bootloader",
     "lite1-bootloader",
@@ -186,7 +190,7 @@ pub(super) const LITE1: Board = Board {
 
 /// The standard library rebuilt for size (see firmware/README.md). The bank
 /// boundaries are fixed.
-const LEGACY_APP_RELEASE: &[&str] = &[
+const APP_CORE_SIZE_OPTIMIZED: &[&str] = &[
     "-Z",
     "build-std",
     "-Z",
@@ -196,7 +200,8 @@ const LEGACY_APP_RELEASE: &[&str] = &[
     APP_CORE_TARGET,
 ];
 
-const LEGACY_ATSLITE_APP: Crate = app_core("firmware/legacy-atslite", "app", LEGACY_APP_RELEASE);
+const LEGACY_ATSLITE_APP: Crate =
+    app_core("firmware/legacy-atslite", "app", APP_CORE_SIZE_OPTIMIZED);
 const LEGACY_ATSLITE_BOOTLOADER: Crate = app_core(
     "firmware/legacy-atslite-bootloader",
     "legacy-atslite-bootloader",

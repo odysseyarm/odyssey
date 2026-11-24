@@ -42,10 +42,10 @@ unused_dependencies = "deny"
 salty = { version = "0.3", default-features = false }
 sha2 = { version = "0.11", default-features = false }
 nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", features = ["nrf5340"], optional = true }
+cc312-verifier = { path = "../cc312-verifier", optional = true }
 
 [features]
-# Hash with Nordic's Oberon library (nRF5340 firmware only): its SHA-256 is about 5 KB smaller than
-# `sha2`, which stays compiled in but unused, so the linker drops it. Signatures use `salty`.
-oberon = ["dep:nrfxlib-sys"]
+# nRF5340: CryptoCell Ed25519 with Oberon SHA-512, and Oberon image SHA-256.
+oberon = ["dep:nrfxlib-sys", "dep:cc312-verifier"]
 # Trusts the development key below. Dev and test builds only: its seed is public.
 dev-signing-key = []

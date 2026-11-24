@@ -86,6 +86,7 @@ impl DfuSession<'_> {
         slot: &str,
         alt: u8,
         data: &[u8],
+        signing: firmware::DfuSigning<'_>,
         what: &str,
         progress_state: fn(usize, usize) -> FirmwareUpdateState,
     ) -> eros::Result<()> {
@@ -104,13 +105,14 @@ impl DfuSession<'_> {
             }
         };
 
-        let flash_result = firmware::flash_firmware_with_progress(
+        let flash_result = firmware::flash_firmware_signed_with_progress(
             &self.uuid,
             self.vid,
             self.pid,
             slot,
             alt,
             data,
+            signing,
             progress_callback,
         )
         .await;

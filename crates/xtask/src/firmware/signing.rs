@@ -32,6 +32,8 @@ pub(crate) enum SignedComponent {
     LegacyAtsliteNetcore,
     MarkerApp,
     DongleApp,
+    Lite1Bootloader,
+    LegacyAtsliteBootloader,
 }
 
 impl SignedComponent {
@@ -42,6 +44,8 @@ impl SignedComponent {
             Self::LegacyAtsliteApp => Component::LegacyAtsliteApp,
             Self::LegacyAtsliteNetcore => Component::LegacyAtsliteNetCore,
             Self::MarkerApp => Component::MarkerApp,
+            Self::Lite1Bootloader => Component::Lite1Bootloader,
+            Self::LegacyAtsliteBootloader => Component::LegacyAtsliteBootloader,
             Self::DongleApp => Component::DongleApp,
         }
     }
@@ -64,6 +68,9 @@ pub(crate) struct SignArgs {
     /// bytes to stdout. Defaults to `ODYSSEY_SIGNER`.
     #[arg(long)]
     signer: Option<String>,
+    /// Write complete 132-byte header followed by original image bytes.
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 pub(crate) enum Signer {
@@ -251,9 +258,34 @@ pub(crate) fn sign(args: &SignArgs) -> eros::Result<()> {
     };
     let data = fs::read(&args.image)
         .with_context(|| format!("could not read {}", args.image.display()))?;
-    let signature =
-        signer.sign_digest(args.component.component(), &FileDigest::of(&data), version)?;
-    println!("{signature}");
+    let digest = FileDigest::of(&data);
+    let signature = signer.sign_digest(args.component.component(), &digest, version)?;
+    if let Some(path) = &args.output {
+        let mut sha256 = [0; 32];
+        hex::decode_to_slice(&digest.sha256, &mut sha256).context("invalid image SHA-256")?;
+        let size = u32::try_from(data.len()).context("image exceeds u32 size field")?;
+        let signature: [u8; SIGNATURE_LEN] = hex::decode(signature)
+            .context("invalid signature encoding")?
+            .try_into()
+            .map_err(|_bytes| eros::error!("signature is not 64 bytes"))?;
+        let header = release_signing::dfu_header(
+            args.component.component(),
+            size,
+            version,
+            &sha256,
+            &signature,
+        );
+        let mut output = fs::File::create(path)
+            .with_context(|| format!("could not create {}", path.display()))?;
+        output
+            .write_all(&header)
+            .context("could not write DFU header")?;
+        output
+            .write_all(&data)
+            .context("could not write DFU image")?;
+    } else {
+        println!("{signature}");
+    }
     Ok(())
 }
 

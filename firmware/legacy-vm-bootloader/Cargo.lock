@@ -32,7 +32,6 @@ dependencies = [
  "embassy-boot",
  "embassy-futures",
  "embassy-sync",
- "embassy-time",
  "embassy-usb",
  "embedded-storage",
 ]
@@ -309,31 +308,6 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "heapless",
-]
-
-[[package]]
-name = "embassy-time"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4fa65b9284d974dad7a23bb72835c4ec85c0b540d86af7fc4098c88cff51d65"
-dependencies = [
- "cfg-if",
- "critical-section",
- "document-features",
- "embassy-time-driver",
- "embedded-hal 0.2.7",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "futures-core",
-]
-
-[[package]]
-name = "embassy-time-driver"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0a244c7dc22c8d0289379c8d8830cae06bb93d8f990194d0de5efb3b5ae7ba6"
-dependencies = [
- "document-features",
 ]
 
 [[package]]
@@ -825,3 +799,8 @@ checksum = "c8d71a593cc5c42ad7876e2c1fda56f314f3754c084128833e64f1345ff8a03a"
 dependencies = [
  "memchr",
 ]
+
+[[patch.unused]]
+name = "embassy-boot"
+version = "0.7.0"
+source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"

@@ -1,5 +1,4 @@
-//! Dual-bank boot state kept at a flash address chosen at runtime, instead of
-//! the fixed linker symbols embassy-boot requires.
+//! Embassy direct-XIP boot journal and separate DFU/network-core command page.
 
 #![no_std]
 #![expect(
@@ -11,20 +10,25 @@ use core::ptr;
 
 use embedded_storage::nor_flash::NorFlash;
 
+mod journal;
+
 /// Value of [`BootState::magic`] once the state has been written. Specific to
 /// this crate, since embassy-boot has no equivalent.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const STATE_MAGIC: u32 = 0xB00710AD;
+pub const STATE_MAGIC: u32 = 0xB007_10AD;
 /// Partition magic word for a normal boot. Same value as embassy-boot.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const BOOT_MAGIC: u32 = 0xD0D0D0D0;
+pub const BOOT_MAGIC: u32 = 0xD0D0_D0D0;
 /// Partition magic word that requests DFU mode. Same value as embassy-boot's
 /// swap magic.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const SWAP_MAGIC: u32 = 0xF0F0F0F0;
+pub const SWAP_MAGIC: u32 = 0xF0F0_F0F0;
+
+#[repr(align(4))]
+struct AlignedMagic([u8; 4]);
 
 /// Boot state stored in flash right after the 4-byte partition magic word.
 ///
@@ -86,7 +90,7 @@ impl Default for BootState {
 }
 /// Validates initial stack pointer and Thumb reset vector against one app bank.
 ///
-/// The stack pointer must lie in the nRF5340 application core RAM (0x2000_0000 to 0x2008_0000,
+/// The stack pointer must lie in the nRF5340 application core RAM (`0x2000_0000` to `0x2008_0000`,
 /// 512 KiB) and be 8-byte aligned as the Arm procedure call standard requires. The reset vector
 /// needs the Thumb bit and must point into `bank`.
 pub fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool {
@@ -96,54 +100,14 @@ pub fn valid_vectors(bank: core::ops::Range<usize>, sp: u32, reset: u32) -> bool
         && bank.contains(&((reset & !1) as usize))
 }
 
-/// Applies pending-slot rollback and picks a valid bank, preferring active slot.
-/// Returns `None` when neither bank is safe to boot.
-///
-/// A pending slot gets `MAX_BOOT_ATTEMPTS` boots, counted in `state.boot_counter`, to be confirmed
-/// by the application (see [`BootStateManager::mark_booted`]). After that, or if its vectors are
-/// invalid, `state` is rolled back to the active slot. When the active slot is invalid too, the
-/// first valid bank wins.
-///
-/// The caller persists the updated `state`.
-pub fn select_boot_slot(state: &mut BootState, valid: [bool; 2]) -> Option<u8> {
-    const MAX_BOOT_ATTEMPTS: u8 = 2;
-    let active = state.active_slot;
-
-    if state.pending_slot != active {
-        let pending_valid = valid.get(state.pending_slot as usize) == Some(&true);
-        if state.boot_counter >= MAX_BOOT_ATTEMPTS || !pending_valid {
-            state.pending_slot = active;
-            state.boot_counter = 0;
-        } else {
-            state.boot_counter = state.boot_counter.saturating_add(1);
-            return Some(state.pending_slot);
-        }
-    }
-
-    let fallback = if valid.get(active as usize) == Some(&true) {
-        Some(active)
-    } else if valid[0] {
-        Some(0)
-    } else if valid[1] {
-        Some(1)
-    } else {
-        None
-    };
-    // The fallback bank becomes the confirmed slot, so no stale trial or active slot survives.
-    if let Some(slot) = fallback {
-        state.active_slot = slot;
-        state.pending_slot = slot;
-        state.boot_counter = 0;
-    }
-    fallback
-}
-
 /// Reads and writes the boot state partition at `state_addr`: a 4-byte magic
 /// word ([`BOOT_MAGIC`] or [`SWAP_MAGIC`]) followed by a [`BootState`].
 ///
 /// Since: Odyssey Desktop 0.6.0.
+#[derive(Debug)]
 pub struct BootStateManager {
     state_addr: u32,
+    journal_addr: u32,
 }
 
 impl BootStateManager {
@@ -151,8 +115,11 @@ impl BootStateManager {
     /// memory-mapped flash containing the magic word and [`BootState`].
     ///
     /// Since: Odyssey Desktop 0.6.0.
-    pub const fn new(state_addr: u32) -> Self {
-        Self { state_addr }
+    pub const fn new(state_addr: u32, journal_addr: u32) -> Self {
+        Self {
+            state_addr,
+            journal_addr,
+        }
     }
 
     /// Reads the state stored after the magic word, or [`BootState::new`] if
@@ -160,8 +127,7 @@ impl BootStateManager {
     ///
     /// Since: Odyssey Desktop 0.6.0.
     pub fn read(&self) -> BootState {
-        let state_ptr =
-            (self.state_addr as usize + core::mem::size_of::<u32>()) as *const BootState;
+        let state_ptr = (self.state_addr as usize + size_of::<u32>()) as *const BootState;
         // SAFETY: Constructor contract guarantees memory-mapped flash. Adding
         // the 4-byte magic offset preserves BootState alignment. Integer fields
         // accept every bit pattern read from flash.
@@ -208,11 +174,11 @@ impl BootStateManager {
         // alignment 4, and exactly eight initialized bytes with no padding.
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
+                ptr::from_ref::<BootState>(state).cast::<u8>(),
+                size_of::<BootState>(),
             )
         };
-        let dst = base + core::mem::size_of::<u32>() as u32;
+        let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
         Ok(())
@@ -244,11 +210,11 @@ impl BootStateManager {
         // alignment 4, and exactly eight initialized bytes with no padding.
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                state as *const BootState as *const u8,
-                core::mem::size_of::<BootState>(),
+                ptr::from_ref::<BootState>(state).cast::<u8>(),
+                size_of::<BootState>(),
             )
         };
-        let dst = base + core::mem::size_of::<u32>() as u32;
+        let dst = base + size_of::<u32>() as u32;
         flash.write(dst, bytes)?;
 
         Ok(())
@@ -260,94 +226,13 @@ impl BootStateManager {
     pub fn is_dfu_requested(&self) -> bool {
         self.read_magic() == SWAP_MAGIC
     }
-
-    /// Clears the boot counter and promotes the pending slot to active. The
-    /// application calls this once it has booted successfully, like
-    /// embassy-boot's `mark_booted()`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the flash driver's error if erase or either write fails.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn mark_booted<F: NorFlash>(&self, flash: &mut F, page_size: u32) -> Result<(), F::Error> {
-        let mut state = self.read();
-        state.boot_counter = 0;
-        if state.pending_slot != state.active_slot {
-            state.active_slot = state.pending_slot;
-        }
-        self.write_boot_state(flash, &state, page_size)
-    }
-
-    /// Makes `bank_slot` the pending slot booted on the next reset and clears
-    /// the boot counter.
-    ///
-    /// # Errors
-    ///
-    /// Returns the flash driver's error if erase or either write fails.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn mark_bank_updated<F: NorFlash>(
-        &self,
-        flash: &mut F,
-        bank_slot: u8,
-        page_size: u32,
-    ) -> Result<(), F::Error> {
-        let mut state = self.read();
-        state.pending_slot = bank_slot;
-        state.boot_counter = 0;
-        self.write_boot_state(flash, &state, page_size)
-    }
-
-    /// Called by the bootloader each time it boots the pending slot. Saturates
-    /// at 255.
-    ///
-    /// # Errors
-    ///
-    /// Returns the flash driver's error if erase or either write fails.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn increment_boot_counter<F: NorFlash>(
-        &self,
-        flash: &mut F,
-        page_size: u32,
-    ) -> Result<(), F::Error> {
-        let mut state = self.read();
-        state.boot_counter = state.boot_counter.saturating_add(1);
-        self.write_boot_state(flash, &state, page_size)
-    }
-
-    /// True if a pending slot has been booted `max_attempts` times without a
-    /// [`Self::mark_booted`].
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn needs_rollback(&self, max_attempts: u8) -> bool {
-        let state = self.read();
-        state.pending_slot != state.active_slot && state.boot_counter >= max_attempts
-    }
-
-    /// Abandons the pending slot by setting it back to the active slot and
-    /// clears the boot counter.
-    ///
-    /// # Errors
-    ///
-    /// Returns the flash driver's error if erase or either write fails.
-    ///
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn rollback<F: NorFlash>(&self, flash: &mut F, page_size: u32) -> Result<(), F::Error> {
-        let mut state = self.read();
-        state.pending_slot = state.active_slot;
-        state.boot_counter = 0;
-        self.write_boot_state(flash, &state, page_size)
-    }
 }
 
 /// Writes app and network-core update commands into the shared boot-state page.
 ///
 /// `pending_slot` is `Some` only when an application image was staged. Network
-/// core commands remain in flash for bootloaders that read the NETD record. The
-/// active slot is kept, so a pending slot that never confirms its boot rolls back
-/// (see [`select_boot_slot`]).
+/// core commands remain in the metadata page; application trials use the
+/// separate Embassy journal.
 ///
 /// Page layout after the call (little endian):
 ///
@@ -365,15 +250,19 @@ impl BootStateManager {
 /// left partially written.
 pub fn write_ota_state<F: NorFlash>(
     state_addr: u32,
+    journal_addr: u32,
     flash: &mut F,
     pending_slot: Option<u8>,
     netcore: Option<(u32, u32)>,
     page_size: u32,
-) -> Result<(), F::Error> {
-    let manager = BootStateManager::new(state_addr);
+) -> Result<(), embassy_boot::DirectXipError> {
+    let manager = BootStateManager::new(state_addr, journal_addr);
     let state = manager.read();
-
-    write_ota_state_page(state_addr, flash, state, pending_slot, netcore, page_size)
+    write_ota_state_page(state_addr, flash, state, pending_slot, netcore, page_size)?;
+    if let Some(pending) = pending_slot {
+        manager.mark_updated_journal(flash, pending)?;
+    }
+    Ok(())
 }
 
 fn write_ota_state_page<F: NorFlash>(
@@ -393,10 +282,7 @@ fn write_ota_state_page<F: NorFlash>(
 
     // SAFETY: BootState has repr(C), alignment 4, and exactly eight initialized bytes.
     let state_bytes = unsafe {
-        core::slice::from_raw_parts(
-            &state as *const BootState as *const u8,
-            size_of::<BootState>(),
-        )
+        core::slice::from_raw_parts((&raw const state).cast::<u8>(), size_of::<BootState>())
     };
     flash.write(state_addr + 4, state_bytes)?;
 
@@ -411,8 +297,6 @@ fn write_ota_state_page<F: NorFlash>(
         flash.write(state_addr + 12, &record.0)?;
     }
 
-    #[repr(align(4))]
-    struct AlignedMagic([u8; 4]);
     let magic = AlignedMagic(BOOT_MAGIC.to_le_bytes());
     flash.write(state_addr, &magic.0)
 }
@@ -447,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_vectors_and_selects_only_valid_banks() {
+    fn validates_application_vectors() {
         for (sp, reset, expected) in [
             (0x2008_0000, 0x10001, true),
             (0x2000_0000, 0x1ffff, true),
@@ -457,27 +341,6 @@ mod tests {
         ] {
             assert_eq!(valid_vectors(0x10000..0x20000, sp, reset), expected);
         }
-
-        let mut state = BootState::new();
-        state.pending_slot = 1;
-        assert_eq!(select_boot_slot(&mut state, [true, true]), Some(1));
-        assert_eq!(state.boot_counter, 1);
-
-        state.boot_counter = 2;
-        assert_eq!(select_boot_slot(&mut state, [true, true]), Some(0));
-        assert_eq!(state.pending_slot, 0);
-        assert_eq!(state.boot_counter, 0);
-
-        state.active_slot = 1;
-        state.pending_slot = 1;
-        assert_eq!(select_boot_slot(&mut state, [true, false]), Some(0));
-        assert_eq!(select_boot_slot(&mut state, [false, false]), None);
-
-        state.active_slot = 0;
-        state.pending_slot = 1;
-        assert_eq!(select_boot_slot(&mut state, [true, false]), Some(0));
-        assert_eq!(state.pending_slot, 0);
-        assert_eq!(state.boot_counter, 0);
     }
     struct OtaFlash {
         bytes: [u8; 4096],
@@ -611,39 +474,5 @@ mod tests {
         );
         assert_eq!(&flash.bytes[..4], &[0xff; 4]);
         assert_eq!(flash.writes[2], 0x1000);
-    }
-}
-
-#[cfg(test)]
-mod fallback_tests {
-    use super::*;
-
-    #[test]
-    fn fallback_bank_becomes_active_and_clears_trial() {
-        let mut state = BootState::new();
-        state.active_slot = 0;
-        state.pending_slot = 0;
-        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
-        assert_eq!(
-            (state.active_slot, state.pending_slot, state.boot_counter),
-            (1, 1, 0)
-        );
-        assert_eq!(select_boot_slot(&mut state, [false, true]), Some(1));
-    }
-
-    #[test]
-    fn invalid_pending_and_active_falls_back_without_trial() {
-        let mut state = BootState::new();
-        state.active_slot = 0;
-        state.pending_slot = 1;
-        state.boot_counter = 1;
-        assert_eq!(select_boot_slot(&mut state, [false, false]), None);
-
-        state.pending_slot = 1;
-        assert_eq!(select_boot_slot(&mut state, [true, false]), Some(0));
-        assert_eq!(
-            (state.active_slot, state.pending_slot, state.boot_counter),
-            (0, 0, 0)
-        );
     }
 }

@@ -259,6 +259,7 @@ def build_rules(
                 "Cargo.lock",
                 "crates/xtask/Cargo.toml",
                 "crates/xtask/Cargo.lock",
+                "firmware/slot-table",
                 f"{workflow}host-ci.yml",
             ]
         ),

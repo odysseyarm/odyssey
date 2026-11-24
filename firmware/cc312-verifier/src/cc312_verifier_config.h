@@ -1,0 +1,1 @@
+#define PSA_WANT_ALG_SHA_512 1

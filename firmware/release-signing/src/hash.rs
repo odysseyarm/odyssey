@@ -88,15 +88,3 @@ impl Default for Sha256 {
         Self::new()
     }
 }
-
-impl Sha256 {
-    /// The digest of `bytes` in one call.
-    ///
-    /// Since: Unreleased.
-    #[must_use]
-    pub fn digest(bytes: &[u8]) -> [u8; 32] {
-        let mut hash = Self::new();
-        hash.update(bytes);
-        hash.finalize()
-    }
-}

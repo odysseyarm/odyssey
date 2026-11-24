@@ -79,11 +79,12 @@ async fn main(_spawner: embassy_executor::Spawner) {
             Ok(()) => {
                 #[cfg(feature = "defmt")]
                 defmt::info!("Update copy/verify complete");
-                pcd.status.set_status(PcdStatusCode::Success);
-                // The app core must see the status before anything else happens.
-                cortex_m::asm::dsb();
-                cortex_m::asm::isb();
                 clear_state_flag(&flash);
+                pcd.status.set_status(PcdStatusCode::Success);
+                // Stage2 stops this core; only the application may start the radio and IPC.
+                loop {
+                    cortex_m::asm::wfe();
+                }
             }
             Err(()) => {
                 #[cfg(feature = "defmt")]

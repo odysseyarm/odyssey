@@ -122,6 +122,8 @@ pub struct Layout {
     pub netcore_ram: core::ops::Range<u32>,
     /// Address of the boot-state page that `better_boot::write_ota_state` rewrites.
     pub boot_state: u32,
+    /// Start of the separate two-page Embassy direct-XIP journal.
+    pub boot_journal: u32,
     /// Product this firmware is built for.
     pub product: Product,
 }
@@ -208,6 +210,15 @@ impl Slots for FlashSlots {
         let erase_start = self.erased_until[index];
         self.layout.flash.lock(|cell| {
             let mut flash = cell.borrow_mut();
+            if let Image::Application = image {
+                let manager = better_boot::BootStateManager::new(
+                    self.layout.boot_state,
+                    self.layout.boot_journal,
+                );
+                if manager.update_slot(&mut *flash).map_err(|_| Code::Busy)? != self.target_app {
+                    return Err(Code::Busy);
+                }
+            }
             if erase_start < erase_end {
                 flash
                     .erase(base + erase_start, base + erase_end)
@@ -290,6 +301,7 @@ impl Slots for FlashSlots {
         self.layout.flash.lock(|cell| {
             better_boot::write_ota_state(
                 self.layout.boot_state,
+                self.layout.boot_journal,
                 &mut *cell.borrow_mut(),
                 app_size.map(|_| self.target_app),
                 netcore,

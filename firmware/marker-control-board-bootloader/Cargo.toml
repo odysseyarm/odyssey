@@ -1,6 +1,6 @@
 [package]
 name = "marker-control-board-bootloader"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 
 license = "MIT"
@@ -57,8 +57,9 @@ unused_workspace_dependencies = "deny"
 [dependencies]
 odyssey-version = { path = "../../crates/odyssey-version" }
 bootloader-info = { path = "../bootloader-info" }
-better-dfu = { path = "../better-dfu", features = ["dfu", "cortex-m"] }
+better-dfu = { path = "../better-dfu", features = ["dfu", "cortex-m", "signed-dfu"] }
 embassy-boot = "0.6.1"
+release-signing = { path = "../release-signing" }
 embassy-nrf = { version = "0.9.0", features = ["nrf52833", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }
 embassy-time = "0.5.0"
 embassy-usb = { version = "0.5.1", default-features = false }
