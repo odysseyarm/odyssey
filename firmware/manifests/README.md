@@ -429,19 +429,42 @@ cargo xtask firmware trust-list create --generation 1 \
 ```
 ```
 cargo xtask firmware trust-list sign --input policy.payload --output policy.record \
-  --public-key <root-a-hex> --signer "python3 firmware/release-signing/ledger-sign.py --device /dev/hidrawN"
+  --public-key <root-a-hex> --signer "python3 firmware/release-signing/openpgp-sign.py --device /dev/hidrawN"
 cargo xtask firmware trust-list sign --input policy.record --output policy.record \
   --public-key <root-b-hex> --signer "<root-b signer command>"
 cargo xtask firmware trust-list wrap --input policy.record --output policy.dfu \
-  --public-key <root-a-hex> --signer "python3 firmware/release-signing/ledger-sign.py --device /dev/hidrawN"
-python3 firmware/release-signing/ledger-sign.py --self-test
+  --public-key <root-a-hex> --signer "python3 firmware/release-signing/openpgp-sign.py --device /dev/hidrawN"
+python3 firmware/release-signing/openpgp-sign.py --self-test
 ```
 
 `sign` appends signer entry and verifies explicit public key. Feed output to
 next signer; keep root private keys with their owners. `wrap` signs transport
-envelope with one current root. Ledger signer uses OpenPGP signature slot 1,
-requires Linux HID access, and prompts PIN on device. `--self-test` checks
-frame/TLV handling without hardware.
+envelope with one current root.
+
+**OpenPGP signer.** `openpgp-sign.py` uses signature slot 1 on Ledger over
+Linux HID (`--device /dev/hidrawN`) or a PC/SC card such as Token2
+(`--reader INDEX`). Both need Python with `cryptography`; PC/SC additionally
+needs `pyscard` and a running PC/SC service. List reader indices with that
+interpreter:
+
+```
+python3 -c 'from smartcard.System import readers; print(*enumerate(readers()), sep="\n")'
+ODYSSEY_SIGNER="python3 firmware/release-signing/openpgp-sign.py --reader 0" \
+  cargo xtask firmware <board> gen-release ...
+```
+
+Reader indices can change when devices reconnect; check the list before signing.
+Ledger keeps PIN entry on-device. PC/SC asks for the OpenPGP user PIN on the
+terminal without echo and opens an exclusive, reset-on-disconnect session.
+Neither transport retries failed PIN or signing commands. Configure the card's
+touch policy during provisioning; the signer does not enable or enforce it.
+
+The PC/SC path assumes a provisioned Ed25519 OpenPGP signing key and standard
+OpenPGP APDUs; Token2 hardware has not been tested. Returned signatures must
+verify as plain Ed25519 over the original message before anything is written to
+stdout. `xtask` separately verifies authorization against trusted public keys.
+`--self-test` checks HID framing, TLV parsing, PIN lengths, APDU errors and
+signature verification without hardware.
 
 Factory generation 1 must preserve stage1 immutable root slots and threshold
 exactly. Production stage1 uses threshold 2. Assemble command accepts raw signed
