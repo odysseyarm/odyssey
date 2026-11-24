@@ -11,6 +11,7 @@ impl legacy_common::platform::Platform for VmPlatform {
     type Timer = embassy_nrf::peripherals::TIMER1;
 
     const NAME: &'static str = "VM (nRF52840)";
+    const OTA: Option<ota_channel::OtaHandle> = None;
 
     // BMI270 with 16g range: 2048 LSB/g
     const ACC_LSB_PER_G: f32 = 2048.0;
@@ -33,5 +34,9 @@ impl legacy_common::platform::Platform for VmPlatform {
 
     fn device_id() -> [u8; 8] {
         crate::utils::device_id()
+    }
+
+    async fn settings_wait_settled(timeout: embassy_time::Duration) {
+        legacy_common::settings::settings_wait_settled(timeout).await;
     }
 }

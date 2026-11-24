@@ -184,6 +184,7 @@ dependencies = [
  "nrfxlib-sys",
  "odyssey-cv",
  "odyssey-protocol",
+ "ota-channel",
  "pag7665qn",
  "postcard",
  "release-signing",
@@ -2216,6 +2217,15 @@ dependencies = [
  "cam-geom",
  "nalgebra",
  "serde",
+]
+
+[[package]]
+name = "ota-channel"
+version = "0.1.0"
+dependencies = [
+ "better-ota",
+ "embassy-sync 0.8.0",
+ "odyssey-protocol",
 ]
 
 [[package]]

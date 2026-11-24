@@ -527,7 +527,7 @@ async fn main(spawner: Spawner) {
         usb_snd,
         usb_rcv,
         usb_configured: usb_cfg,
-        ota: atslite_common::ota::OtaHandle,
+        ota: ota_channel::OtaHandle,
     };
 
     object_mode::run(ctx).await;

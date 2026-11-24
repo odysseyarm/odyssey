@@ -11,6 +11,7 @@ impl legacy_common::platform::Platform for AtslitePlatform {
     type Timer = embassy_nrf::peripherals::TIMER0;
 
     const NAME: &'static str = "ATSlite (nRF5340)";
+    const OTA: Option<ota_channel::OtaHandle> = Some(ota_channel::OtaHandle);
 
     // Scale carried over from the earlier firmware. It does not match the
     // ICM42688's 16-bit table (±2 g is 16384 LSB/g, ±16 g is 2048), so check it
@@ -36,6 +37,10 @@ impl legacy_common::platform::Platform for AtslitePlatform {
 
     fn device_id() -> [u8; 8] {
         crate::utils::device_id()
+    }
+
+    async fn settings_wait_settled(timeout: embassy_time::Duration) {
+        atslite_common::settings::settings_wait_settled(timeout).await;
     }
 
     fn netcore_release() -> u16 {

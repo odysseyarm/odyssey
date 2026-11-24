@@ -389,6 +389,7 @@ async fn main(spawner: Spawner) {
     let vbus = embassy_nrf::usb::vbus_detect::HardwareVbusDetect::new(Irqs);
     let (usb_dev, usb_snd, usb_rcv, usb_cfg) = usb::usb_device(
         0x5210, // Atslite PID
+        utils::device_id(),
         FIRMWARE_VERSION,
         odyssey_version::cargo_semver!(),
         DEVICE_INTERFACE_GUID,
@@ -548,7 +549,6 @@ async fn main(spawner: Spawner) {
         version: FIRMWARE_VERSION,
         battery_soc: &legacy_atslite::power_state::SOC_PERCENT,
         battery_charging: &legacy_atslite::power_state::VBUS_PRESENT,
-        ota: atslite_common::ota::OtaHandle,
     };
 
     defmt::info!("Initialization complete; entering object mode");

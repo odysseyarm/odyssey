@@ -1,10 +1,6 @@
-//! OTA for the lite1 and legacy-atslite trackers: a task that owns the `better_ota::Receiver`,
-//! and the flash backend that stages images for the bootloader.
+//! nRF5340 OTA flash backend for lite1 and legacy-atslite.
 //!
-//! The packet handlers in `object_mode.rs` (and `legacy-common`) receive OTA request packets from
-//! the hub and call [`OtaHandle::request`]. The request goes through a channel to [`run`], which
-//! feeds the single `Receiver` and answers with the encoded status. One exchange at a time:
-//! both channels hold one item and `request` waits for its own reply.
+//! [`ota_channel`] owns the transport-independent receiver task and request/reply channels.
 //!
 //! [`FlashSlots`] implements `better_ota::Slots`. The application goes into the bank that is not
 //! running, the net core into a staging region. `commit` writes the boot-state page through
@@ -12,79 +8,9 @@
 //! `firmware/legacy-atslite-bootloader` read it on the next reset. `firmware/better-ota/src/lib.rs`
 //! describes the whole flow.
 
-use better_ota::{Action, Receiver, Slots};
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::channel::Channel;
-use odyssey_protocol::ota::{Code, Image, MAX_FRAME, STATUS_LEN};
+use better_ota::Slots;
+use odyssey_protocol::ota::{Code, Image};
 use release_signing::Component;
-
-const QUEUE: usize = 1;
-
-static REQUESTS: Channel<ThreadModeRawMutex, Frame, QUEUE> = Channel::new();
-static REPLIES: Channel<ThreadModeRawMutex, Reply, QUEUE> = Channel::new();
-
-#[derive(Clone, Copy)]
-struct Frame {
-    len: u16,
-    bytes: [u8; MAX_FRAME],
-}
-
-/// Status for the hub, and whether to reset after the reply is sent.
-#[derive(Clone, Copy, Debug)]
-pub struct Reply {
-    /// Encoded `odyssey_protocol::ota::Status`.
-    pub status: [u8; STATUS_LEN],
-    /// A commit succeeded; the caller resets the device once the reply has gone out.
-    pub reset: bool,
-}
-
-/// Sends OTA frames to [`run`]. Zero-sized; every copy talks to the same task.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct OtaHandle;
-
-impl OtaHandle {
-    /// Returns the reply to `bytes`, or `None` if the frame is over [`MAX_FRAME`].
-    pub async fn request(&self, bytes: &[u8]) -> Option<Reply> {
-        let Ok(len) = u16::try_from(bytes.len()) else {
-            return None;
-        };
-        if bytes.len() > MAX_FRAME {
-            return None;
-        }
-        let mut frame = Frame {
-            len,
-            bytes: [0; MAX_FRAME],
-        };
-        frame.bytes[..bytes.len()].copy_from_slice(bytes);
-        REQUESTS.send(frame).await;
-        Some(REPLIES.receive().await)
-    }
-}
-
-/// Owns the receiver for the life of the firmware. `app_slot` and `supported` are reported in
-/// every status; `netcore_release` is read per reply because an asynchronous query to the net
-/// core (`ble/netcore.rs`) fills it in after boot.
-pub async fn run(
-    mut slots: impl Slots,
-    app_slot: u8,
-    supported: u8,
-    firmware_version: [u32; 3],
-    netcore_release: fn() -> u16,
-) -> ! {
-    let mut receiver = Receiver::new();
-    loop {
-        let frame = REQUESTS.receive().await;
-        let input = &frame.bytes[..usize::from(frame.len)];
-        let action = receiver.handle(&mut slots, input).await;
-        let status = receiver.status(app_slot, supported, firmware_version, netcore_release());
-        REPLIES
-            .send(Reply {
-                status: status.encode(),
-                reset: matches!(action, Ok(Action::Reset)),
-            })
-            .await;
-    }
-}
 
 /// nRF5340 flash page, the erase unit.
 const PAGE_SIZE: u32 = 4096;
@@ -381,7 +307,7 @@ pub async fn task(
     netcore_release: fn() -> u16,
 ) -> ! {
     let app_slot = slots.app_slot();
-    run(slots, app_slot, 3, firmware_version, netcore_release).await
+    ota_channel::run(slots, app_slot, 3, firmware_version, netcore_release).await
 }
 #[cfg(test)]
 mod tests {

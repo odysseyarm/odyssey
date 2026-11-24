@@ -98,6 +98,7 @@ static USB_ACTIVE: UsbActiveWatch = Watch::new_with(false);
 /// Since: Odyssey Desktop 0.7.0.
 pub fn usb_device<Irqs>(
     pid: u16,
+    device_id: [u8; 8],
     firmware_version: [u32; 3],
     firmware_version_string: &'static str,
     guid: &'static str,
@@ -120,19 +121,7 @@ where
 
     static SERIAL_BUF: ConstStaticCell<[u8; 12]> = ConstStaticCell::new([0; 12]);
     let serial_buf = SERIAL_BUF.take();
-    let ficr = embassy_nrf::pac::FICR;
-    #[cfg(feature = "nrf52840")]
-    let (low, high) = (
-        ficr.deviceid(0).read().to_le_bytes(),
-        ficr.deviceid(1).read().to_le_bytes(),
-    );
-    #[cfg(not(feature = "nrf52840"))]
-    let (low, high) = (
-        ficr.info().deviceid(0).read().to_le_bytes(),
-        ficr.info().deviceid(1).read().to_le_bytes(),
-    );
-    let id_bytes = [low[0], low[1], low[2], low[3], high[0], high[1]];
-    for (i, &b) in id_bytes.iter().enumerate() {
+    for (i, &b) in device_id[..6].iter().enumerate() {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         serial_buf[i * 2] = HEX[(b >> 4) as usize];
         serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];

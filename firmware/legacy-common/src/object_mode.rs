@@ -84,7 +84,6 @@ pub struct ObjectModeContext<'a, 'd, P: Platform> {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     pub battery_charging: &'static AtomicBool,
-    pub ota: atslite_common::ota::OtaHandle,
 }
 
 /// Runs tracking until the host requests image mode. The chosen sensor is then switched to
@@ -111,7 +110,7 @@ pub async fn object_mode<P: Platform>(
     let near = ctx.paj7025r2;
     let wide = ctx.paj7025r3;
 
-    let a = usb_rcv_loop(
+    let a = usb_rcv_loop::<P>(
         pid,
         near,
         wide,
@@ -122,7 +121,6 @@ pub async fn object_mode<P: Platform>(
         ctx.settings,
         &ctx.l2cap_channels,
         P::device_id(),
-        ctx.ota,
         ctx.version,
         P::netcore_release,
         P::bootloader_version,
@@ -177,7 +175,7 @@ pub async fn object_mode<P: Platform>(
         usb_rcv: ctx.usb_rcv,
         usb_configured: ctx.usb_configured,
         l2cap_channels: ctx.l2cap_channels,
-        ota: ctx.ota,
+        ota: P::OTA,
     })
 }
 
@@ -187,7 +185,7 @@ enum PacketSource {
     Ble,
 }
 
-async fn usb_rcv_loop<'d, L: L2capChannels>(
+async fn usb_rcv_loop<'d, P: Platform>(
     pid: u16,
     paj7025r2: &AsyncMutex<NoopRawMutex, Paj<'d>>,
     paj7025r3: &AsyncMutex<NoopRawMutex, Paj<'d>>,
@@ -196,9 +194,8 @@ async fn usb_rcv_loop<'d, L: L2capChannels>(
     pkt_rcv: &mut PacketReader<'_>,
     usb_configured: UsbConfigHandle,
     settings: &mut Settings,
-    l2cap_channels: &L,
+    l2cap_channels: &P::L2capChannels,
     device_id: [u8; 8],
-    ota: atslite_common::ota::OtaHandle,
     version: [u32; 3],
     netcore_release: fn() -> u16,
     bootloader_version: fn() -> [u32; 3],
@@ -460,7 +457,9 @@ async fn usb_rcv_loop<'d, L: L2capChannels>(
                 PacketData::AccelReport(_) => None,
                 PacketData::ImpactReport(_) => None,
                 PacketData::OtaRequest(frame) if matches!(src, PacketSource::Ble) => {
-                    if let Some(reply) = ota.request(&frame).await {
+                    if let Some(ota) = P::OTA
+                        && let Some(reply) = ota.request(&frame).await
+                    {
                         reset_after_reply = reply.reset;
                         Some(Packet {
                             id: pkt.id,
@@ -508,10 +507,8 @@ async fn usb_rcv_loop<'d, L: L2capChannels>(
                         // the new central a response belonging to the old session.
                         if ble_generation != Some(l2cap_channels.session_generation()) {
                             if reset_after_reply {
-                                atslite_common::settings::settings_wait_settled(
-                                    embassy_time::Duration::from_millis(500),
-                                )
-                                .await;
+                                P::settings_wait_settled(embassy_time::Duration::from_millis(500))
+                                    .await;
                                 cortex_m::peripheral::SCB::sys_reset();
                             }
                             continue;
@@ -532,10 +529,7 @@ async fn usb_rcv_loop<'d, L: L2capChannels>(
             }
             if reset_after_reply {
                 embassy_time::Timer::after_millis(100).await;
-                atslite_common::settings::settings_wait_settled(
-                    embassy_time::Duration::from_millis(500),
-                )
-                .await;
+                P::settings_wait_settled(embassy_time::Duration::from_millis(500)).await;
                 cortex_m::peripheral::SCB::sys_reset();
             }
         }
