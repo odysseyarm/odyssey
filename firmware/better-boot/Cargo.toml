@@ -66,6 +66,7 @@ unused_dependencies = "deny"
 unused_workspace_dependencies = "deny"
 
 [dependencies]
+bytemuck = { version = "1.24.0", features = ["derive"] }
 embedded-storage = "0.3"
 defmt = { version = "0.3", optional = true }
 embassy-boot = "0.7.0"
