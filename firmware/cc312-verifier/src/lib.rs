@@ -12,9 +12,9 @@ use core::cell::RefCell;
 use core::fmt;
 #[cfg(not(feature = "shared-entry"))]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "export-entry")]
 use core::sync::atomic::AtomicU8;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(feature = "shared-entry"))]
 use critical_section::Mutex;
@@ -119,7 +119,8 @@ pub fn verify(message: &[u8], key: &[u8; 32], sig: &[u8; 64]) -> Result<bool, Er
     }
     let _guard = VerifyGuard::acquire()?;
     #[cfg(feature = "shared-entry")]
-    let status = unsafe { shared_entry_call(message.as_ptr(), message.len(), key.as_ptr(), sig.as_ptr()) };
+    let status =
+        unsafe { shared_entry_call(message.as_ptr(), message.len(), key.as_ptr(), sig.as_ptr()) };
     #[cfg(not(feature = "shared-entry"))]
     // SAFETY: inputs stay alive for synchronous C reads; C does not retain them.
     let status = unsafe {

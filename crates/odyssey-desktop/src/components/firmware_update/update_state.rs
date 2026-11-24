@@ -96,7 +96,9 @@ impl FirmwareUpdateState {
             Self::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop",
             Self::NetCoreBlockedNoPath(_) => "No update path from this net core",
             Self::BootloaderUnknown => "Checking device bootloader; firmware unchanged",
-            Self::IncompatibleBootloader => "Incompatible ATS Lite bootloader; SWD reprovisioning required",
+            Self::IncompatibleBootloader => {
+                "Incompatible ATS Lite bootloader; SWD reprovisioning required"
+            }
             Self::Available { .. } => "Update available",
             Self::Downloading => "Downloading...",
             Self::Detaching => "Preparing device...",

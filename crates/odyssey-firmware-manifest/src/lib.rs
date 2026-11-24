@@ -178,8 +178,7 @@ impl ReleaseSource<'_> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FirmwareEntry, FirmwareManifest, ReleaseSource, asset_filename,
-        ats_lite_target_compatible,
+        FirmwareEntry, FirmwareManifest, ReleaseSource, asset_filename, ats_lite_target_compatible,
     };
 
     fn release(requires_bootloader: &str) -> FirmwareEntry {
@@ -199,9 +198,21 @@ mod tests {
         let secure = release("2.0.0");
         let old_bootloader = semver::Version::new(1, 0, 0);
         let secure_bootloader = semver::Version::new(2, 0, 0);
-        assert!(!ats_lite_target_compatible("atslite1", &secure, Some(&old_bootloader)));
-        assert!(!ats_lite_target_compatible("atslite1", &old, Some(&secure_bootloader)));
-        assert!(ats_lite_target_compatible("atslite1", &secure, Some(&secure_bootloader)));
+        assert!(!ats_lite_target_compatible(
+            "atslite1",
+            &secure,
+            Some(&old_bootloader)
+        ));
+        assert!(!ats_lite_target_compatible(
+            "atslite1",
+            &old,
+            Some(&secure_bootloader)
+        ));
+        assert!(ats_lite_target_compatible(
+            "atslite1",
+            &secure,
+            Some(&secure_bootloader)
+        ));
         assert!(!ats_lite_target_compatible("atslite1", &secure, None));
         assert!(ats_lite_target_compatible("legacy-atslite1", &secure, None));
         assert!(ats_lite_target_compatible("atslite1", &old, None));

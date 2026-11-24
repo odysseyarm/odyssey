@@ -105,7 +105,10 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
         ("__ota_app_ram_start", low_ram.origin()),
         ("__ota_app_ram_end", low_ram.origin() + low_ram.length()),
         ("__ota_netcore_ram_start", netcore_ram.origin()),
-        ("__ota_netcore_ram_end", netcore_ram.origin() + netcore_ram.length()),
+        (
+            "__ota_netcore_ram_end",
+            netcore_ram.origin() + netcore_ram.length(),
+        ),
         ("__ota_app_a_slot_start", app_a.origin()),
         ("__ota_app_a_slot_end", app_a.origin() + app_a.length()),
         ("__ota_app_a_payload_start", app_a.origin() + 512),
@@ -119,7 +122,10 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
             "__ota_netcore_slot_end",
             netcore_primary.origin() + netcore_primary.length() - 4096,
         ),
-        ("__ota_netcore_payload_start", netcore_primary.origin() + 512),
+        (
+            "__ota_netcore_payload_start",
+            netcore_primary.origin() + 512,
+        ),
         (
             "__ota_netcore_payload_end",
             netcore_primary.origin() + netcore_primary.length() - 4096,
@@ -129,9 +135,15 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
         ("__ota_dfu_payload_start", dfu.origin() + 512),
         ("__ota_dfu_payload_end", dfu.origin() + dfu.length()),
         ("__ota_netcore_stage_slot_start", dfu.origin()),
-        ("__ota_netcore_stage_slot_end", dfu.origin() + netcore_primary.length() - 4096),
+        (
+            "__ota_netcore_stage_slot_end",
+            dfu.origin() + netcore_primary.length() - 4096,
+        ),
         ("__ota_netcore_stage_payload_start", dfu.origin() + 512),
-        ("__ota_netcore_stage_payload_end", dfu.origin() + netcore_primary.length() - 4096),
+        (
+            "__ota_netcore_stage_payload_end",
+            dfu.origin() + netcore_primary.length() - 4096,
+        ),
     ] {
         println!("cargo:rustc-link-arg-bins=--defsym={name}={address:#x}");
     }

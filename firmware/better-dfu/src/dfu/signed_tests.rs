@@ -145,16 +145,25 @@ fn signed_image_activates_and_header_does_not_consume_bank_capacity() {
         Some(OutResponse::Accepted)
     ));
     assert!(!writer.marked.get());
-    assert!(writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
+    assert!(
+        writer.bytes.borrow()[..512]
+            .iter()
+            .all(|byte| *byte == 0xff)
+    );
     assert!(matches!(
         finalize(&mut handler, 1),
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(&writer.bytes.borrow()[..DFU_HEADER_LEN], &transfer[..DFU_HEADER_LEN]);
-    assert!(writer.bytes.borrow()[DFU_HEADER_LEN..512]
-        .iter()
-        .all(|byte| *byte == 0xff));
+    assert_eq!(
+        &writer.bytes.borrow()[..DFU_HEADER_LEN],
+        &transfer[..DFU_HEADER_LEN]
+    );
+    assert!(
+        writer.bytes.borrow()[DFU_HEADER_LEN..512]
+            .iter()
+            .all(|byte| *byte == 0xff)
+    );
     assert_eq!(&writer.bytes.borrow()[512..], &image);
 }
 
@@ -179,10 +188,15 @@ fn header_only_block_authenticates_without_writing_empty_payload() {
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(&writer.bytes.borrow()[..DFU_HEADER_LEN], &transfer[..DFU_HEADER_LEN]);
-    assert!(writer.bytes.borrow()[DFU_HEADER_LEN..512]
-        .iter()
-        .all(|byte| *byte == 0xff));
+    assert_eq!(
+        &writer.bytes.borrow()[..DFU_HEADER_LEN],
+        &transfer[..DFU_HEADER_LEN]
+    );
+    assert!(
+        writer.bytes.borrow()[DFU_HEADER_LEN..512]
+            .iter()
+            .all(|byte| *byte == 0xff)
+    );
     assert_eq!(&writer.bytes.borrow()[512..], &image);
 }
 
@@ -208,7 +222,11 @@ fn unsigned_tampered_wrong_role_and_truncated_images_never_activate() {
         Some(OutResponse::Accepted)
     ));
     assert!(!tampered_writer.marked.get());
-    assert!(tampered_writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
+    assert!(
+        tampered_writer.bytes.borrow()[..512]
+            .iter()
+            .all(|byte| *byte == 0xff)
+    );
 
     let (mut wrong_role, role_writer) = control(32);
     wrong_role.set_alternate_setting(InterfaceNumber(0), 1);
@@ -230,7 +248,11 @@ fn unsigned_tampered_wrong_role_and_truncated_images_never_activate() {
         Some(OutResponse::Accepted)
     ));
     assert!(!truncated_writer.marked.get());
-    assert!(truncated_writer.bytes.borrow()[..512].iter().all(|byte| *byte == 0xff));
+    assert!(
+        truncated_writer.bytes.borrow()[..512]
+            .iter()
+            .all(|byte| *byte == 0xff)
+    );
 }
 
 #[test]
@@ -280,8 +302,5 @@ fn rejected_order_and_target_switch_recover_after_abort() {
         Some(OutResponse::Accepted)
     ));
     assert!(writer.marked.get());
-    assert_eq!(
-        &writer.bytes.borrow()[512..512 + image.len()],
-        &image
-    );
+    assert_eq!(&writer.bytes.borrow()[512..512 + image.len()], &image);
 }

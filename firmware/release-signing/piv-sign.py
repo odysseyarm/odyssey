@@ -19,7 +19,9 @@ MESSAGE_LEN = 67
 def main() -> int:
     message = sys.stdin.buffer.read()
     if len(message) != MESSAGE_LEN:
-        print(f"expected {MESSAGE_LEN} message bytes, got {len(message)}", file=sys.stderr)
+        print(
+            f"expected {MESSAGE_LEN} message bytes, got {len(message)}", file=sys.stderr
+        )
         return 1
     devices = list_all_devices()
     if len(devices) != 1:

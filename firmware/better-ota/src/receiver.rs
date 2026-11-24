@@ -397,8 +397,7 @@ impl Receiver {
             if !slots.verify_signature(component, size, version, &digest, signature) {
                 return Err(Code::Signature);
             }
-            let header =
-                release_signing::dfu_header(component, size, version, &digest, signature);
+            let header = release_signing::dfu_header(component, size, version, &digest, signature);
             slots.write_header(image, &header).await?;
         }
         Ok(())
@@ -1042,7 +1041,6 @@ mod tests {
         assert!(flash.headers.is_empty());
         assert_eq!(flash.committed, None);
     }
-
 
     #[cfg(all(feature = "signed", feature = "dev-signing-key"))]
     mod dev_signed {

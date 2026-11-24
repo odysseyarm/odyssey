@@ -17,8 +17,8 @@ use futures::io::{AsyncReadExt as _, Cursor};
 use nusb::MaybeFuture as _;
 use odyssey_firmware_manifest::asset_filename;
 pub use odyssey_firmware_manifest::{
-    ats_lite_target_compatible, DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest,
-    ReleaseSource,
+    DeviceManifest, FileEntry, FirmwareEntry, FirmwareManifest, ReleaseSource,
+    ats_lite_target_compatible,
 };
 use odyssey_version::legacy_bootloader_version;
 pub use release_signing::Component as DfuComponent;
@@ -1309,7 +1309,17 @@ pub async fn flash_firmware_with_progress<F>(
 where
     F: FnMut(usize, usize) + Unpin,
 {
-    flash_image(uuid, vid, pid, slot, alt, firmware, Some(signing), progress_callback).await
+    flash_image(
+        uuid,
+        vid,
+        pid,
+        slot,
+        alt,
+        firmware,
+        Some(signing),
+        progress_callback,
+    )
+    .await
 }
 
 /// What a signature-enforcing bootloader checks an image against.
@@ -1590,8 +1600,8 @@ pub async fn update_firmware(
     actual_bootloader: Option<&semver::Version>,
 ) -> Result<(), DfuError> {
     if let Some(secure_component) = component_secure_generation(signing.component) {
-        let secure_bootloader = actual_bootloader
-            .is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
+        let secure_bootloader =
+            actual_bootloader.is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
         if secure_component != secure_bootloader {
             return Err(DfuError::IncompatibleDfuComponent);
         }
@@ -2035,7 +2045,10 @@ mod tests {
             0,
             Some(&actual),
         );
-        assert_eq!(offer.offered.map(|entry| entry.version.as_str()), Some("1.9.0"));
+        assert_eq!(
+            offer.offered.map(|entry| entry.version.as_str()),
+            Some("1.9.0")
+        );
         assert_eq!(
             offer.format_blocked.map(|entry| entry.version.as_str()),
             Some("2.0.0")

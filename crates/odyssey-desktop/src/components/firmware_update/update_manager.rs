@@ -12,9 +12,10 @@ use std::time::Duration;
 use gpui::{App, AppContext as _, Entity, Global};
 use odyssey_hub_common::device::Device;
 use parking_lot::Mutex;
+
 use super::update_state::FirmwareUpdateState;
-use crate::runtime;
 use crate::hub::HubHandle;
+use crate::runtime;
 
 /// Lowest ATS Lite stage2 bootloader that Bluetooth (radio) OTA may rely on:
 /// `0.2.0`, stage2 v3.
@@ -63,7 +64,6 @@ impl Default for DeviceUpdate {
         }
     }
 }
-
 
 #[derive(Default)]
 struct BootloaderCache {
@@ -276,9 +276,8 @@ impl FirmwareUpdateManager {
             return None;
         }
         let [major, minor, patch] = device.bootloader_version;
-        (device.bootloader_version != [0, 0, 0]).then(|| {
-            semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch))
-        })
+        (device.bootloader_version != [0, 0, 0])
+            .then(|| semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch)))
     }
 
     /// Availability is computed during render and may already be stale when it
@@ -495,14 +494,13 @@ mod tests {
         let mut cache = BootloaderCache::default();
         let old_epoch = cache.begin(uuid).expect("first session starts read");
         cache.invalidate(uuid);
-        let new_epoch = cache.begin(uuid).expect("new DFU session starts a fresh read");
+        let new_epoch = cache
+            .begin(uuid)
+            .expect("new DFU session starts a fresh read");
 
         cache.finish(uuid, old_epoch, Some(semver::Version::new(1, 0, 0)));
         assert_eq!(cache.get(&uuid), None);
         cache.finish(uuid, new_epoch, Some(semver::Version::new(2, 0, 0)));
-        assert_eq!(
-            cache.get(&uuid),
-            Some(Some(semver::Version::new(2, 0, 0)))
-        );
+        assert_eq!(cache.get(&uuid), Some(Some(semver::Version::new(2, 0, 0))));
     }
 }

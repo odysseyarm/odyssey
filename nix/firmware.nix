@@ -382,11 +382,14 @@ let
       target = triple.appCore;
       buildStd = true;
       buildEnv.ODYSSEY_NETCORE_BOOTLOADER =
-        pkgs.runCommand "lite1-immutable-netboot.bin" { nativeBuildInputs = [ arm ]; } ''
-          arm-none-eabi-objcopy -O binary \
-            ${lite1Crates.netcoreBootloader.elf { }}/firmware/lite1-netcore-bootloader/target/${triple.netCore}/release/lite1-netcore-bootloader \
-            "$out"
-        '';
+        pkgs.runCommand "lite1-immutable-netboot.bin" { nativeBuildInputs = [ arm ]; }
+          ''
+            arm-none-eabi-objcopy -O binary \
+              ${
+                lite1Crates.netcoreBootloader.elf { }
+              }/firmware/lite1-netcore-bootloader/target/${triple.netCore}/release/lite1-netcore-bootloader \
+              "$out"
+          '';
     };
     netcoreBootloader = mkCrate {
       dir = "firmware/lite1-netcore-bootloader";

@@ -134,9 +134,8 @@ async fn run_firmware_update(
             .map_err(|error| eros::error!("Could not read DFU bootloader version: {error}"))?
     } else {
         let [major, minor, patch] = device.bootloader_version;
-        (device.bootloader_version != [0, 0, 0]).then(|| {
-            semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch))
-        })
+        (device.bootloader_version != [0, 0, 0])
+            .then(|| semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch)))
     };
     if is_in_bootloader(&device) && device_type == "atslite1" && reported_bootloader.is_none() {
         eros::bail!("Could not verify ATS Lite bootloader version; firmware unchanged.");
@@ -154,7 +153,9 @@ async fn run_firmware_update(
                 "This firmware requires a different ATS Lite bootloader format. Firmware unchanged; SWD reprovisioning required."
             );
         }
-        eros::bail!("No firmware for this device type is installable by this unit and this version of Odyssey Desktop");
+        eros::bail!(
+            "No firmware for this device type is installable by this unit and this version of Odyssey Desktop"
+        );
     };
     let expected: FirmwareVersion = firmware_entry.version.parse().map_err(|error| {
         eros::error!("Firmware release has an unreadable application version: {error}")

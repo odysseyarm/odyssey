@@ -40,8 +40,7 @@ fn component(
     requires_bootloader: &semver::Version,
 ) -> Option<firmware::DfuComponent> {
     use firmware::DfuComponent;
-    let secure = device_type == "atslite1"
-        && requires_bootloader >= &semver::Version::new(2, 0, 0);
+    let secure = device_type == "atslite1" && requires_bootloader >= &semver::Version::new(2, 0, 0);
     match (device_type, role, secure) {
         ("atslite1", "app", true) => Some(DfuComponent::Lite1SecureApp),
         ("atslite1", "net-core", true) => Some(DfuComponent::Lite1SecureNetCore),
@@ -128,7 +127,9 @@ impl Downloads {
                     data,
                     release,
                     component: component(device_type, "net-core", &entry.requires_bootloader)
-                        .ok_or_else(|| eros::error!("Unknown net-core component for {device_type}"))?,
+                        .ok_or_else(|| {
+                            eros::error!("Unknown net-core component for {device_type}")
+                        })?,
                     signature: file.signature.clone(),
                 })
             }
@@ -155,7 +156,9 @@ impl Downloads {
                 DfuImage {
                     data,
                     component: component(device_type, "app", &entry.requires_bootloader)
-                        .ok_or_else(|| eros::error!("Unknown application component for {device_type}"))?,
+                        .ok_or_else(|| {
+                            eros::error!("Unknown application component for {device_type}")
+                        })?,
                     version: app_version,
                     signature: file.signature.clone(),
                 },
@@ -193,7 +196,9 @@ impl Downloads {
                         "stage2-bootloader",
                         &entry.requires_bootloader,
                     )
-                    .ok_or_else(|| eros::error!("Unknown bootloader component for {device_type}"))?,
+                    .ok_or_else(|| {
+                        eros::error!("Unknown bootloader component for {device_type}")
+                    })?,
                     signature: file.signature.clone(),
                 })
             }

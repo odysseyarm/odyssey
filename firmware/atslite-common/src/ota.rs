@@ -330,7 +330,10 @@ impl Slots for FlashSlots {
             ),
             Image::NetCore => (&self.layout.netcore_ram, &self.layout.netcore_active),
         };
-        let payload_start = execution.start.checked_add(self.prefix()).ok_or(Code::Image)?;
+        let payload_start = execution
+            .start
+            .checked_add(self.prefix())
+            .ok_or(Code::Image)?;
         let execution_end = payload_start.checked_add(size).ok_or(Code::Image)?;
         let reset_address = reset & !1;
         if sp < ram.start

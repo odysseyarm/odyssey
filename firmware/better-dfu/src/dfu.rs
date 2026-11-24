@@ -579,7 +579,9 @@ impl<WRITER: FirmwareWriter, RST: Reset, const BLOCK_SIZE: usize> Handler
                             DfuTarget::NetCore => self.components[1],
                             DfuTarget::Bootloader => self.components[2],
                             #[cfg(feature = "trust-list")]
-                            DfuTarget::TrustList => self.trust_component.unwrap_or(self.components[2]),
+                            DfuTarget::TrustList => {
+                                self.trust_component.unwrap_or(self.components[2])
+                            }
                         };
                         self.signed_header.copy_from_slice(&data[..DFU_HEADER_LEN]);
                         match self.writer.start_signed_download(

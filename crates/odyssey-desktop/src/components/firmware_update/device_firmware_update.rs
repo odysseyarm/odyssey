@@ -36,16 +36,9 @@ pub(crate) fn device_firmware_update(
     if current_state.is_before_update() {
         let next_state = match manifest {
             Some(manifest) => {
-                let actual = odyssey_hub_server::firmware::device_info_from_pid(
-                    device.product_id,
-                )
-                .and_then(|(vid, pid, _)| manager.actual_bootloader_version(device, vid, pid));
-                check_for_update_with_bootloader(
-                    manifest,
-                    device,
-                    &current_state,
-                    actual.as_ref(),
-                )
+                let actual = odyssey_hub_server::firmware::device_info_from_pid(device.product_id)
+                    .and_then(|(vid, pid, _)| manager.actual_bootloader_version(device, vid, pid));
+                check_for_update_with_bootloader(manifest, device, &current_state, actual.as_ref())
             }
             None => FirmwareUpdateState::Idle,
         };

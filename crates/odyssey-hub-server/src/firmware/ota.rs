@@ -63,7 +63,9 @@ pub enum OtaError {
     InvalidImage(&'static str),
     #[error("target bootloader floor {floor} exceeds known compatible floor {known}")]
     BootloaderFloor { floor: String, known: String },
-    #[error("ATS Lite image format is incompatible with installed bootloader; SWD reprovisioning required")]
+    #[error(
+        "ATS Lite image format is incompatible with installed bootloader; SWD reprovisioning required"
+    )]
     IncompatibleBootloaderFormat,
     #[error("device staged bitmap does not include {0:?}")]
     NotStaged(Image),
@@ -336,16 +338,22 @@ pub async fn send<T: OtaTransport>(
             known: images.known_bootloader_floor.to_string(),
         });
     }
-    let secure_format = link == LinkMtu::Vendor
-        && entry.requires_bootloader >= semver::Version::new(2, 0, 0);
+    let secure_format =
+        link == LinkMtu::Vendor && entry.requires_bootloader >= semver::Version::new(2, 0, 0);
     if secure_format {
         let component = release_signing::Component::Lite1SecureApp;
-        for image in [images.application, images.app_a, images.app_b].into_iter().flatten() {
+        for image in [images.application, images.app_a, images.app_b]
+            .into_iter()
+            .flatten()
+        {
             ensure_image(image, "application")?;
             verify_secure_signature(image, component, images.app_version, "application")?;
         }
         if let Some(netcore) = images.netcore {
-            let release = netcore.manifest.release.ok_or(OtaError::InvalidImage("net-core"))?;
+            let release = netcore
+                .manifest
+                .release
+                .ok_or(OtaError::InvalidImage("net-core"))?;
             ensure_image(netcore, "net-core")?;
             verify_secure_signature(
                 netcore,
@@ -642,7 +650,6 @@ mod tests {
         }
     }
 
-
     #[tokio::test]
     async fn secure_radio_target_requires_component_bound_signature_before_query() {
         let app = b"secure application";
@@ -668,7 +675,10 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(OtaError::MissingSignature("application"))));
+        assert!(matches!(
+            result,
+            Err(OtaError::MissingSignature("application"))
+        ));
         assert_eq!(device.flash.commits, 0);
     }
     #[tokio::test]
