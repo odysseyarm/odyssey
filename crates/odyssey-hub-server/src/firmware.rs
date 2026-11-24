@@ -1207,9 +1207,10 @@ pub async fn send_dfu_detach(uuid: &[u8; 6], vid: u16, pid: u16) -> Result<(), D
     Ok(())
 }
 
-/// Flash `firmware` into `slot` (`APP_A` or `APP_B`, written through alt setting `alt`)
-/// of the device with `uuid`, which must already be in its bootloader. Progress is
-/// logged every 10%.
+/// Flashes `firmware` into `slot` on the device with `uuid`.
+///
+/// The device must already be in its bootloader. `slot` is `APP_A` or `APP_B`,
+/// written through alt setting `alt`. Progress is logged every 10%.
 /// `signing.component` must match image-format generation; the installed version is checked before flash.
 ///
 /// # Errors
@@ -1296,6 +1297,10 @@ impl<R: futures::io::AsyncRead + Unpin, F: FnMut(usize, usize) + Unpin> futures:
 /// Returns [`DfuError`] if the bootloader cannot be found, opened, or claimed, or
 /// if the DFU transfer fails.
 /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Adds a progress callback to the existing flash_firmware parameters"
+)]
 pub async fn flash_firmware_with_progress<F>(
     uuid: &[u8; 6],
     vid: u16,
@@ -1422,14 +1427,14 @@ where
     F: FnMut(usize, usize) + Unpin,
 {
     let bootloader_version = read_bootloader_release_for_device(uuid, vid, pid).await?;
-    if let Some(signing) = signing {
-        if let Some(secure_component) = component_secure_generation(signing.component) {
-            let secure_bootloader = bootloader_version
-                .as_ref()
-                .is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
-            if secure_component != secure_bootloader {
-                return Err(DfuError::IncompatibleDfuComponent);
-            }
+    if let Some(signing) = signing
+        && let Some(secure_component) = component_secure_generation(signing.component)
+    {
+        let secure_bootloader = bootloader_version
+            .as_ref()
+            .is_some_and(|version| version >= &semver::Version::new(2, 0, 0));
+        if secure_component != secure_bootloader {
+            return Err(DfuError::IncompatibleDfuComponent);
         }
     }
     let info = find_bootloader_by_uuid(uuid, vid, pid)?;

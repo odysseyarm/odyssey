@@ -203,7 +203,7 @@ fn verify_secure_signature(
                 .and_then(|bytes| bytes.try_into().ok())
                 .ok_or(OtaError::InvalidSignature(name))
         })?;
-    let size = u32::try_from(image.bytes.len()).map_err(|_| OtaError::InvalidImage(name))?;
+    let size = u32::try_from(image.bytes.len()).map_err(|_error| OtaError::InvalidImage(name))?;
     let hash: [u8; 32] = sha2::Sha256::digest(image.bytes).into();
     let message = release_signing::message(component, size, version, &hash);
     if release_signing::verify_production(&message, &signature) {

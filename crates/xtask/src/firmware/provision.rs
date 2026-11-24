@@ -257,7 +257,7 @@ fn read_word(address: u32) -> eros::Result<u32> {
 mod tests {
     use super::*;
 
-    const SETTINGS: Range<u32> = 0xFE000..0x100000;
+    const SETTINGS: Range<u32> = 0xFE000..0x0010_0000;
     const NET: u32 = 0x0100_0000;
 
     #[test]
@@ -285,6 +285,6 @@ mod tests {
 
     #[test]
     fn refuses_image_that_overwrites_settings() {
-        assert!(split_image(&[(0xFE010, 0)], None, SETTINGS, NET).is_err());
+        split_image(&[(0xFE010, 0)], None, SETTINGS, NET).unwrap_err();
     }
 }

@@ -466,7 +466,7 @@ fn write_manifest_signed(
     )
     .with_context(|| format!("manifest file {key} signature is malformed"))?
     .try_into()
-    .map_err(|_| eros::error!("{key} signature is not 64 bytes"))?;
+    .map_err(|bytes: Vec<u8>| eros::error!("{key} signature is {} bytes, not 64", bytes.len()))?;
     let header = dfu_header(
         component,
         u32::try_from(image.len()).context("image exceeds DFU size field")?,
@@ -775,9 +775,7 @@ mod tests {
             DfuVerifier::new_with_keys(Component::Lite1SecureApp, &header, &[public]).unwrap();
         verifier.update(&tampered).unwrap();
         assert!(verifier.finish().is_err());
-        assert!(
-            DfuVerifier::new_with_keys(Component::Lite1SecureNetCore, &header, &[public]).is_err()
-        );
+        DfuVerifier::new_with_keys(Component::Lite1SecureNetCore, &header, &[public]).unwrap_err();
         assert_eq!(SLOT_PREFIX, 512);
     }
 
@@ -807,15 +805,13 @@ mod tests {
         one_signature.extend_from_slice(&[1, 0, 0, 0]);
         one_signature.extend_from_slice(&key_a.public.to_bytes());
         one_signature.extend_from_slice(&key_a.sign(&message).to_bytes());
-        assert!(validate_factory_trust(&one_signature, roots.roots(), roots.threshold()).is_err());
+        validate_factory_trust(&one_signature, roots.roots(), roots.threshold()).unwrap_err();
         let mut malformed = record.clone();
         malformed[release_signing::TRUST_LIST_LEN] = 0;
-        assert!(validate_factory_trust(&malformed, roots.roots(), roots.threshold()).is_err());
+        validate_factory_trust(&malformed, roots.roots(), roots.threshold()).unwrap_err();
         let other_roots =
             RootSet::new(1, [key_a.public.to_bytes(), [0; 32], [0; 32], [0; 32]]).unwrap();
-        assert!(
-            validate_factory_trust(&record, other_roots.roots(), other_roots.threshold()).is_err()
-        );
+        validate_factory_trust(&record, other_roots.roots(), other_roots.threshold()).unwrap_err();
         let digest: [u8; 32] = Sha256::digest(&record).into();
         let outer_message = release_signing::message(
             Component::Lite1TrustList,

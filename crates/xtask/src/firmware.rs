@@ -41,7 +41,7 @@ const LITE1_SECURE_BOOT_MIN_BOOTLOADER: semver::Version = semver::Version::new(2
 
 /// Raises ATS Lite OTA compatibility floor to the first signed-DFU bootloader.
 ///
-/// A prerelease of 1.0.0 is below it by SemVer precedence and is raised.
+/// A prerelease of 1.0.0 is below it by semantic-version precedence and is raised.
 pub(crate) fn with_ats_ota_bootloader_floor(
     is_ats_lite: bool,
     requested: semver::Version,
@@ -438,14 +438,14 @@ fn build_stage1(board: &Board, stage1: &Crate, netboot: &Path) -> eros::Result<(
                 .args(stage1.build),
         )?;
     }
-    let mut padded = [0xff; 60 * 1024];
+    let mut padded = vec![0xff_u8; 60 * 1024];
     let image = fs::read(netboot)
         .with_context(|| format!("could not read network bootloader {}", netboot.display()))?;
     if image.len() > padded.len() {
         eros::bail!("network bootloader exceeds 60 KiB stage1 authentication region");
     }
     padded[..image.len()].copy_from_slice(&image);
-    let expected = hex::encode(Sha256::digest(&padded[..]));
+    let expected = hex::encode(Sha256::digest(&padded));
     if prebuilt().is_some() {
         let embedded_hex = board.path(&output("stage1-binding-check.hex"));
         objcopy(
@@ -465,7 +465,7 @@ fn build_stage1(board: &Board, stage1: &Crate, netboot: &Path) -> eros::Result<(
             .end()
             .checked_sub(48)
             .context("stage1 region lacks hash record")?;
-        for (offset, byte) in Sha256::digest(&padded[..]).iter().enumerate() {
+        for (offset, byte) in Sha256::digest(&padded).iter().enumerate() {
             let address = u32::try_from(digest_start + u64::try_from(offset)?)
                 .context("stage1 hash address exceeds u32")?;
             if bytes.get(&address) != Some(byte) {

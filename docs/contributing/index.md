@@ -191,10 +191,11 @@ bash .github/actions/push-cache/local.sh --flush
 bash .github/actions/push-cache/local.sh --push --bookmark BRANCH
 ```
 
-The push entrypoint asks `jj git push --dry-run` what would move, registers
-every outgoing revision, flushes pending uploads, then pushes. Upload failure
+The push entrypoint asks `jj git push --dry-run` what would move, builds
+`host-lint` and `host-lint-bins` for each distinct target revision, registers
+outgoing revisions, flushes pending uploads, then pushes. Lint or upload failure
 blocks the push. Configure the local `jj push` alias to use this entrypoint;
-plain `jj git push` bypasses it. A cache miss is not an instruction to build:
+plain `jj git push` bypasses it. Uploads never build missing cache outputs:
 commit first, build the relevant checks/packages, then push.
 
 The queue uses SQLite transactions and GC roots for pending output and

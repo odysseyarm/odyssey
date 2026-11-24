@@ -79,10 +79,6 @@ impl BootloaderCache {
         self.versions.remove(&uuid);
     }
 
-    fn get(&self, uuid: &[u8; 6]) -> Option<Option<semver::Version>> {
-        self.versions.get(uuid).cloned()
-    }
-
     fn begin(&mut self, uuid: [u8; 6]) -> Option<u64> {
         if self.versions.contains_key(&uuid) || self.pending.contains_key(&uuid) {
             return None;
@@ -255,12 +251,10 @@ impl FirmwareUpdateManager {
         if super::update_check::is_in_bootloader(device) {
             let uuid = device.uuid;
             let mut cache = self.bootloader_cache.lock();
-            if let Some(version) = cache.get(&uuid) {
-                return version;
+            if let Some(version) = cache.versions.get(&uuid) {
+                return version.clone();
             }
-            let Some(epoch) = cache.begin(uuid) else {
-                return None;
-            };
+            let epoch = cache.begin(uuid)?;
             drop(cache);
             let manager = self.clone();
             runtime::spawn(async move {
@@ -499,8 +493,11 @@ mod tests {
             .expect("new DFU session starts a fresh read");
 
         cache.finish(uuid, old_epoch, Some(semver::Version::new(1, 0, 0)));
-        assert_eq!(cache.get(&uuid), None);
+        assert_eq!(cache.versions.get(&uuid), None);
         cache.finish(uuid, new_epoch, Some(semver::Version::new(2, 0, 0)));
-        assert_eq!(cache.get(&uuid), Some(Some(semver::Version::new(2, 0, 0))));
+        assert_eq!(
+            cache.versions.get(&uuid),
+            Some(&Some(semver::Version::new(2, 0, 0)))
+        );
     }
 }

@@ -57,11 +57,14 @@ def check(shell: str, private: str) -> None:
             (repo / "flake.nix").write_text(f'''{{
   inputs.odyssey-cv = {{ url = "path:{private}"; flake = false; }};
   outputs = inputs: let drv = builtins.derivation {{
-    name = "{name}"; system = "{system}"; builder = builtins.storePath "{shell}";
+    name = "{name}"; system = "{system}";
+    builder = builtins.appendContext "{shell}" {{ "{Path(shell).parent.parent}" = {{ path = true; }}; }};
     outputs = [ "out" ];
     args = [ "-c" "printf fixture > $out" ];
   }}; in {{
     packages.{system}.xtask = drv;
+    checks.{system}.host-lint = drv;
+    checks.{system}.host-lint-bins = drv;
     {f"legacyPackages.{system}.publicCache = {{ closures.xtask = drv; outputs = {{}}; }};" if policy else ""}
   }};
 }}''')
@@ -90,6 +93,21 @@ def check(shell: str, private: str) -> None:
             f"git+file://{repo}?rev={second}#xtask",
         )
         run("jj", "bookmark", "create", "cache-test")
+        run("jj", "new", "-m", "test: Failing lint revision")
+        write_flake("cache-revision-lint-failure", True)
+        flake = repo / "flake.nix"
+        flake.write_text(flake.read_text().replace("printf fixture > $out", "exit 17"))
+        run("jj", "bookmark", "create", "lint-failure")
+        lint_failed = run(
+            "bash", str(SCRIPTS / "push.sh"), "--bookmark", "lint-failure", check=False
+        )
+        assert lint_failed.returncode != 0, lint_failed.stdout + lint_failed.stderr
+        assert not (state / "queue.sqlite").exists()
+        assert not run(
+            "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
+        ).stdout
+        run("jj", "bookmark", "delete", "lint-failure")
+        run("jj", "new", "-r", second, "-m", "test: Push linted revision")
 
         dry = run(
             "bash", str(SCRIPTS / "push.sh"), "--bookmark", "cache-test", "--dry-run"

@@ -344,9 +344,9 @@ mod tests {
             manifest_override(Deployment::Official, url("https://hitl")).unwrap(),
             None
         );
-        assert!(manifest_override(Deployment::Dev, None).is_err());
-        assert!(manifest_override(Deployment::Dev, url("http://hitl.ts.net")).is_err());
-        assert!(manifest_override(Deployment::Dev, url("https://")).is_err());
+        manifest_override(Deployment::Dev, None).unwrap_err();
+        manifest_override(Deployment::Dev, url("http://hitl.ts.net")).unwrap_err();
+        manifest_override(Deployment::Dev, url("https://")).unwrap_err();
         assert_eq!(
             manifest_override(Deployment::Dev, url("https://hitl.ts.net/manifests/")).unwrap(),
             url("https://hitl.ts.net/manifests")
