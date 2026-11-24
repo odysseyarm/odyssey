@@ -17,7 +17,7 @@ def frames(apdu: bytes) -> list[bytes]:
     if len(apdu) > 65535:
         raise ValueError("APDU too large")
     remaining = len(apdu).to_bytes(2, "big") + apdu
-    result = []
+    result: list[bytes] = []
     while remaining:
         sequence = len(result)
         part, remaining = remaining[:59], remaining[59:]
