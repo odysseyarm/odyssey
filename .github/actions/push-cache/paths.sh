@@ -8,15 +8,15 @@ public_closure=
 if [ -n "${PUBLIC_BUILDS:-}" ]; then
   # Only public workspaces: private builds must use approved output paths instead.
   derivations=$(nix path-info --derivation $PUBLIC_BUILDS)
-  public_paths=$(nix-store --query --requisites --include-outputs $derivations)
-  public_closure=$(nix path-info -r $public_paths)
+  public_paths=$(xargs nix-store --query --requisites --include-outputs <<<"$derivations")
+  public_closure=$(nix path-info -r --stdin <<<"$public_paths")
   paths="$paths $public_paths"
 fi
 if [ -z "$paths" ]; then
   echo "No cache paths supplied" >&2
   exit 1
 fi
-closure=$(nix path-info -r $paths)
+closure=$(nix path-info -r --stdin <<<"$paths")
 
 # The explicit source set is persisted with queued immutable revisions. CI without
 # it falls back to its checked-out lock file.
@@ -34,11 +34,11 @@ for path in $paths; do
   esac
 done
 if [ -n "$outputs" ]; then
-  derivations="$derivations $(nix-store --query --valid-derivers $outputs)"
+  derivations="$derivations $(xargs nix-store --query --valid-derivers <<<"$outputs")"
 fi
 provenance=
 if [ -n "$derivations" ]; then
-  provenance=$(nix-store --query --requisites --include-outputs $derivations)
+  provenance=$(xargs nix-store --query --requisites --include-outputs <<<"$derivations")
 fi
 cache_action_path=$(dirname "$(realpath "$0")")
 printf '%s\0' "$closure" "$provenance" "$private_sources" "$public_closure" | python3 "$cache_action_path/safety.py"
