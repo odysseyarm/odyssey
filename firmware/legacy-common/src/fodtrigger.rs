@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use embassy_nrf::Peri;
-use embassy_nrf::gpio::{AnyPin, Level, OutputDrive};
+use embassy_nrf::gpio::{Level, OutputDrive};
 use embassy_nrf::gpiote::{self, OutputChannel, OutputChannelPolarity};
 use embassy_nrf::interrupt::typelevel::Interrupt;
 use embassy_nrf::ppi::{self, Ppi};
@@ -15,8 +15,8 @@ pub static FOD_TICK_SIG: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Since: Odyssey Desktop 0.7.0.
 pub struct FodTrigger<'d, T: Instance> {
     timer: Timer<'d>,
-    ppi_set: Ppi<'d, ppi::AnyConfigurableChannel, 1, 2>,
-    ppi_clr: Ppi<'d, ppi::AnyConfigurableChannel, 1, 2>,
+    ppi_set: Ppi<'d, 1, 2>,
+    ppi_clr: Ppi<'d, 1, 2>,
     _nf_ch: gpiote::OutputChannel<'d>,
     _wf_ch: gpiote::OutputChannel<'d>,
     running: bool,
@@ -30,14 +30,14 @@ impl<'d, T: Instance> FodTrigger<'d, T> {
         reason = "Constructor takes each pin and timer resource needed by hardware"
     )]
     pub fn new<C1: gpiote::Channel, C2: gpiote::Channel>(
-        nf: Peri<'d, AnyPin>,
-        wf: Peri<'d, AnyPin>,
+        nf: Peri<'d, impl gpiote::GpiotePin>,
+        wf: Peri<'d, impl gpiote::GpiotePin>,
         gpiote_nf_ch: Peri<'d, C1>,
         gpiote_wf_ch: Peri<'d, C2>,
 
         timer_peri: Peri<'d, T>,
-        ppi_set_ch: Peri<'d, ppi::AnyConfigurableChannel>,
-        ppi_clr_ch: Peri<'d, ppi::AnyConfigurableChannel>,
+        ppi_set_ch: Peri<'d, impl ppi::ConfigurableChannel>,
+        ppi_clr_ch: Peri<'d, impl ppi::ConfigurableChannel>,
 
         freq: timer::Frequency,
         timer_interval_ms: u32,

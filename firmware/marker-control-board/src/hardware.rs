@@ -80,7 +80,7 @@ pub struct MarkerPins {
 /// Since: Odyssey Desktop 0.7.4.
 pub struct Markers<'d> {
     outputs: [Output<'d>; 4],
-    twi: Twim<'d>,
+    twi: Twim<'d, embassy_nrf::mode::Async>,
 }
 
 impl<'d> Markers<'d> {
@@ -94,11 +94,11 @@ impl<'d> Markers<'d> {
         ];
         let twi = Twim::new(
             p.twi,
-            Irqs,
             p.scl,
             p.sda,
-            twim::Config::default(),
+            Irqs,
             tx_ram_buffer,
+            twim::Config::default(),
         );
         Self { outputs, twi }
     }

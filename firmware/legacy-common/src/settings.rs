@@ -192,8 +192,8 @@ fn set_active(list: &'static StorageList<NoodleRawMutex>, flush_fn: fn()) {
 pub async fn init_settings(
     spawner: &Spawner,
     flash_dev: embassy_embedded_hal::adapter::BlockingAsync<Nvmc<'static>>,
-    pajr2: &mut Paj,
-    pajr3: &mut Paj,
+    pajr2: &mut Paj<'_>,
+    pajr3: &mut Paj<'_>,
 ) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>
 {
     let region = get_settings_region();
@@ -256,8 +256,8 @@ pub async fn init_settings(
 pub async fn init_legacy_settings(
     list: &'static StorageList<NoodleRawMutex>,
     flush_fn: fn(),
-    pajr2: &mut Paj,
-    pajr3: &mut Paj,
+    pajr2: &mut Paj<'_>,
+    pajr3: &mut Paj<'_>,
 ) -> Result<&'static mut Settings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>>
 {
     set_active(list, flush_fn);
@@ -305,8 +305,8 @@ impl Settings {
     /// Since: Odyssey Desktop 0.7.0.
     pub async fn apply(
         &self,
-        pajr2: &mut Paj,
-        pajr3: &mut Paj,
+        pajr2: &mut Paj<'_>,
+        pajr3: &mut Paj<'_>,
     ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
         self.pajs.apply(pajr2, pajr3).await
     }
@@ -451,7 +451,7 @@ impl Default for PajsSettings {
 }
 
 async fn paj_apply_settings(
-    paj: &mut Paj,
+    paj: &mut Paj<'_>,
     s: &PajSettings,
 ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
     paj.ll
@@ -548,7 +548,7 @@ async fn paj_apply_settings(
 }
 
 async fn paj_read_settings(
-    paj: &mut Paj,
+    paj: &mut Paj<'_>,
 ) -> Result<PajSettings, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
     Ok(PajSettings {
         area_threshold_max: paj
@@ -662,8 +662,8 @@ impl PajsSettings {
     /// Since: Odyssey Desktop 0.7.0.
     pub async fn apply(
         &self,
-        pajr2: &mut Paj,
-        pajr3: &mut Paj,
+        pajr2: &mut Paj<'_>,
+        pajr3: &mut Paj<'_>,
     ) -> Result<(), Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
         paj_apply_settings(pajr2, &self.0).await?;
         paj_apply_settings(pajr3, &self.1).await
@@ -671,8 +671,8 @@ impl PajsSettings {
 
     /// Since: Odyssey Desktop 0.7.0.
     pub async fn read_from_pajs(
-        pajr2: &mut Paj,
-        pajr3: &mut Paj,
+        pajr2: &mut Paj<'_>,
+        pajr3: &mut Paj<'_>,
     ) -> Result<Self, Paj7025Error<DeviceError<embassy_nrf::spim::Error, Infallible>>> {
         Ok(Self(
             paj_read_settings(pajr2).await?,
@@ -839,6 +839,9 @@ pub struct BleBondSettings {
     /// Since: Odyssey Desktop 0.7.0.
     #[n(4)]
     pub irk: Option<[u8; 16]>,
+    /// Since: Unreleased.
+    #[n(5)]
+    pub addr_kind: Option<u8>,
 }
 
 impl Default for BleBondSettings {
@@ -849,6 +852,7 @@ impl Default for BleBondSettings {
             security_level: 0,
             is_bonded: false,
             irk: None,
+            addr_kind: None,
         }
     }
 }
@@ -857,7 +861,7 @@ impl BleBondSettings {
     /// Since: Odyssey Desktop 0.7.0.
     pub fn from_bond_info(info: &trouble_host::prelude::BondInformation) -> Self {
         let mut bd_addr = [0u8; 6];
-        bd_addr.copy_from_slice(info.identity.bd_addr.raw());
+        bd_addr.copy_from_slice(info.identity.addr.addr.raw());
         Self {
             bd_addr,
             ltk: info.ltk.to_le_bytes(),
@@ -868,30 +872,50 @@ impl BleBondSettings {
             },
             is_bonded: info.is_bonded,
             irk: info.identity.irk.map(|irk| irk.to_le_bytes()),
+            addr_kind: Some(info.identity.addr.kind.as_raw()),
         }
     }
 
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fn to_bond_info(&self) -> Option<trouble_host::prelude::BondInformation> {
-        if !self.is_bonded {
-            return None;
-        }
-
-        Some(trouble_host::prelude::BondInformation {
-            identity: trouble_host::prelude::Identity {
-                bd_addr: trouble_host::prelude::BdAddr::new(self.bd_addr),
-                irk: self
-                    .irk
-                    .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
-            },
-            security_level: match self.security_level {
-                0 => trouble_host::prelude::SecurityLevel::NoEncryption,
-                1 => trouble_host::prelude::SecurityLevel::Encrypted,
-                2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
-                _ => trouble_host::prelude::SecurityLevel::NoEncryption,
-            },
-            is_bonded: self.is_bonded,
-            ltk: trouble_host::prelude::LongTermKey::from_le_bytes(self.ltk),
-        })
+    /// Since: Unreleased.
+    pub fn to_bond_infos(
+        &self,
+    ) -> impl Iterator<Item = trouble_host::prelude::BondInformation> + '_ {
+        let stored_irk = self
+            .irk
+            .and_then(trouble_host::prelude::IdentityResolvingKey::from_le_bytes);
+        let invalid_irk = self.irk.is_some() && stored_irk.is_none();
+        let address_kinds = match (self.is_bonded, invalid_irk, self.addr_kind) {
+            (false, _, _) | (true, true, _) => [(None, false), (None, false)],
+            (true, false, Some(kind)) => [(Some(kind), true), (None, false)],
+            (true, false, None) => [
+                (
+                    Some(trouble_host::prelude::AddrKind::PUBLIC.as_raw()),
+                    false,
+                ),
+                (Some(trouble_host::prelude::AddrKind::RANDOM.as_raw()), true),
+            ],
+        };
+        address_kinds
+            .into_iter()
+            .filter_map(move |(kind, include_irk)| {
+                let kind = kind?;
+                Some(trouble_host::prelude::BondInformation {
+                    identity: trouble_host::prelude::Identity {
+                        addr: trouble_host::prelude::Address::new(
+                            trouble_host::prelude::AddrKind::new(kind),
+                            trouble_host::prelude::BdAddr::new(self.bd_addr),
+                        ),
+                        irk: if include_irk { stored_irk } else { None },
+                    },
+                    security_level: match self.security_level {
+                        0 => trouble_host::prelude::SecurityLevel::NoEncryption,
+                        1 => trouble_host::prelude::SecurityLevel::Encrypted,
+                        2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
+                        _ => trouble_host::prelude::SecurityLevel::NoEncryption,
+                    },
+                    is_bonded: self.is_bonded,
+                    ltk: trouble_host::prelude::LongTermKey::from_le_bytes(self.ltk),
+                })
+            })
     }
 }

@@ -14,6 +14,7 @@ use defmt_rtt as _;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{self, Input, Pin};
+use embassy_nrf::mode::Async;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::twim::{self, Twim};
 use embassy_nrf::{pac, peripherals};
@@ -213,15 +214,15 @@ async fn main(spawner: Spawner) {
     defmt::info!("Creating TWIM...");
     let twim = Twim::new(
         p.SERIAL2,
-        Irqs,
-        board.pmic.sda,
         board.pmic.scl,
-        twim_cfg,
+        board.pmic.sda,
+        Irqs,
         twim_buf,
+        twim_cfg,
     );
     defmt::info!("TWIM created");
 
-    static PMIC: StaticCell<AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>> =
+    static PMIC: StaticCell<AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>> =
         StaticCell::new();
     defmt::info!("Creating NPM1300...");
     let mut pmic_dev = NPM1300::new(twim, Delay);
@@ -238,7 +239,7 @@ async fn main(spawner: Spawner) {
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
     defmt::info!("Spawning pmic_irq_task...");
-    spawner.spawn(pmic_irq_task(board.pmic.irq.into(), pmic).unwrap());
+    spawner.spawn(pmic_irq_task(board.pmic.irq, pmic).unwrap());
 
     defmt::info!("Creating PmicLedAnimator...");
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
@@ -253,14 +254,14 @@ async fn main(spawner: Spawner) {
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
     wdt_config.timeout_ticks = 32768 * 60;
-    wdt_config.action_during_sleep = SleepConfig::RUN;
-    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+    wdt_config.action_during_sleep = SleepConfig::Run;
+    wdt_config.action_during_debug_halt = HaltConfig::Pause;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
     spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
     let l2cap_channels = AtsliteL2capChannels::new();
 
     defmt::info!("Power button handling...");
-    let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
+    let mut pwr_btn = Input::new_async(board.pmic.pwr_btn, Irqs, gpio::Pull::Up);
     defmt::info!("handle_boot_vbus_policy...");
     handle_boot_vbus_policy(pmic, pmic_leds).await.unwrap();
     defmt::info!("handle_pending_ship...");
@@ -278,55 +279,45 @@ async fn main(spawner: Spawner) {
     let mut paj_cfg = embassy_nrf::spim::Config::default();
     paj_cfg.frequency = embassy_nrf::spim::Frequency::M8;
     paj_cfg.mode = embassy_nrf::spim::MODE_3;
-    paj_cfg.bit_order = embassy_nrf::spim::BitOrder::LSB_FIRST;
+    paj_cfg.bit_order = embassy_nrf::spim::BitOrder::LsbFirst;
 
-    // SPI pins built by hand so `fod` stays available for object mode.
-    let paj7025r2_spi = legacy_common::utils::SpiPins {
-        sck: board.paj7025r2.sck.into(),
-        miso: board.paj7025r2.miso.into(),
-        mosi: board.paj7025r2.mosi.into(),
-        cs: board.paj7025r2.cs.into(),
-    };
-    let paj7025r3_spi = legacy_common::utils::SpiPins {
-        sck: board.paj7025r3.sck.into(),
-        miso: board.paj7025r3.miso.into(),
-        mosi: board.paj7025r3.mosi.into(),
-        cs: board.paj7025r3.cs.into(),
-    };
-    let image_receivers = legacy_common::image_mode::ImageReceivers {
-        near: legacy_common::image_mode::ImageReceiver::reserve(&paj7025r2_spi, |pins| {
-            let mut config = embassy_nrf::spis::Config::default();
-            config.mode = embassy_nrf::spis::MODE_3;
-            embassy_nrf::spis::Spis::new_rxonly(
-                // SAFETY: image entry has dropped all register futures and released SERIAL0.
-                unsafe { peripherals::SERIAL0::steal() },
-                Irqs,
-                pins.cs,
-                pins.sck,
-                pins.mosi,
-                config,
-            )
-        }),
-        wide: legacy_common::image_mode::ImageReceiver::reserve(&paj7025r3_spi, |pins| {
-            let mut config = embassy_nrf::spis::Config::default();
-            config.mode = embassy_nrf::spis::MODE_3;
-            embassy_nrf::spis::Spis::new_rxonly(
-                // SAFETY: image entry has dropped all register futures and released SERIAL1.
-                unsafe { peripherals::SERIAL1::steal() },
-                Irqs,
-                pins.cs,
-                pins.sck,
-                pins.mosi,
-                config,
-            )
-        }),
-    };
+    // Each sensor's register SPI master and image SPI slave share one peripheral and its pins.
+    // Register mode borrows them; image mode takes them back once both sensors are dropped.
+    let mut r2_bus = (
+        p.SERIAL0,
+        board.paj7025r2.sck,
+        board.paj7025r2.mosi,
+        board.paj7025r2.miso,
+        board.paj7025r2.cs,
+    );
+    let mut r3_bus = (
+        p.SERIAL1,
+        board.paj7025r3.sck,
+        board.paj7025r3.mosi,
+        board.paj7025r3.miso,
+        board.paj7025r3.cs,
+    );
 
     defmt::info!("Creating SPI devices...");
-    let dev_r2 =
-        legacy_common::utils::make_spi_dev(p.SERIAL0, Irqs, paj7025r2_spi, paj_cfg.clone());
+    let dev_r2 = legacy_common::utils::make_spi_dev(
+        r2_bus.0.reborrow(),
+        Irqs,
+        r2_bus.1.reborrow(),
+        r2_bus.2.reborrow(),
+        r2_bus.3.reborrow(),
+        r2_bus.4.reborrow(),
+        paj_cfg.clone(),
+    );
     defmt::info!("SPI dev_r2 created");
-    let dev_r3 = legacy_common::utils::make_spi_dev(p.SERIAL1, Irqs, paj7025r3_spi, paj_cfg);
+    let dev_r3 = legacy_common::utils::make_spi_dev(
+        r3_bus.0.reborrow(),
+        Irqs,
+        r3_bus.1.reborrow(),
+        r3_bus.2.reborrow(),
+        r3_bus.3.reborrow(),
+        r3_bus.4.reborrow(),
+        paj_cfg,
+    );
     defmt::info!("SPI dev_r3 created");
 
     defmt::info!("Waiting 1ms...");
@@ -342,10 +333,8 @@ async fn main(spawner: Spawner) {
     paj7025r3.init_settings(true, 0x10, 0x02).await.unwrap();
     defmt::info!("PAJ sensors configured");
 
-    static PAJ7025R2_MUTEX: StaticCell<AsyncMutex<NoopRawMutex, Paj>> = StaticCell::new();
-    static PAJ7025R3_MUTEX: StaticCell<AsyncMutex<NoopRawMutex, Paj>> = StaticCell::new();
-    let paj_r2_mutex = PAJ7025R2_MUTEX.init(AsyncMutex::new(paj7025r2));
-    let paj_r3_mutex = PAJ7025R3_MUTEX.init(AsyncMutex::new(paj7025r3));
+    let paj_r2_mutex = AsyncMutex::<NoopRawMutex, _>::new(paj7025r2);
+    let paj_r3_mutex = AsyncMutex::<NoopRawMutex, _>::new(paj7025r3);
 
     // ICM42688 IMU.
     defmt::info!("Initializing IMU...");
@@ -356,14 +345,14 @@ async fn main(spawner: Spawner) {
     }
     let (imu, imu_int) = imu::init(
         p.SPIM4,
-        board.icm42688v.cs.into(),
-        board.icm42688v.sck.into(),
-        board.icm42688v.miso.into(),
-        board.icm42688v.mosi.into(),
-        board.icm42688v.int1.into(),
-        board.icm42688v.clkin.into(),
+        board.icm42688v.cs,
+        board.icm42688v.sck,
+        board.icm42688v.miso,
+        board.icm42688v.mosi,
+        board.icm42688v.int1,
+        board.icm42688v.clkin,
         p.TIMER1, // TIMER0 is reserved for object mode
-        p.PPI_CH0.into(),
+        p.PPI_CH0,
         p.GPIOTE_CH0,
         legacy_common::settings::accel_odr(),
     )
@@ -509,19 +498,10 @@ async fn main(spawner: Spawner) {
     // the CPU cannot sleep.
     defmt::info!("Generating BLE seed from CryptoCell...");
     let ble_seed = {
-        use embassy_nrf::cryptocell_rng::CcRng;
         let mut seed = [0u8; 32];
-        defmt::info!("Creating CcRng...");
-        let mut cc_rng = CcRng::new_blocking(p.CC_RNG);
-        defmt::info!("Filling seed bytes...");
-        cc_rng.blocking_fill_bytes(&mut seed);
-        defmt::info!("Dropping CcRng...");
-        drop(cc_rng);
-        defmt::info!("Disabling CryptoCell...");
-        embassy_nrf::pac::CRYPTOCELL
-            .enable()
-            .write(|w| w.set_enable(false));
-        defmt::info!("CryptoCell disabled, seed generated");
+        // The accelerator powers down when the driver is dropped.
+        embassy_nrf::crypto::rng::Rng::new_blocking(p.CRYPTO_RNG).blocking_fill_bytes(&mut seed);
+        defmt::info!("Seed generated");
         seed
     };
 
@@ -541,12 +521,22 @@ async fn main(spawner: Spawner) {
         .unwrap(),
     );
 
-    let ctx = ObjectModeContext::<AtslitePlatform, _, _> {
-        paj7025r2_group: (paj_r2_mutex, board.paj7025r2.fod.into(), p.GPIOTE_CH1),
-        paj7025r3_group: (paj_r3_mutex, board.paj7025r3.fod.into(), p.GPIOTE_CH2),
-        fod_set_ch: p.PPI_CH1.into(),
-        fod_clr_ch: p.PPI_CH2.into(),
-        timer: p.TIMER0,
+    let fod = legacy_common::fodtrigger::FodTrigger::new(
+        board.paj7025r2.fod,
+        board.paj7025r3.fod,
+        p.GPIOTE_CH1,
+        p.GPIOTE_CH2,
+        p.TIMER0,
+        p.PPI_CH1,
+        p.PPI_CH2,
+        embassy_nrf::timer::Frequency::F1MHz,
+        5,
+        2,
+    );
+    let ctx = ObjectModeContext::<AtslitePlatform> {
+        paj7025r2: &paj_r2_mutex,
+        paj7025r3: &paj_r3_mutex,
+        fod,
         imu,
         imu_int,
         usb_snd,
@@ -558,31 +548,48 @@ async fn main(spawner: Spawner) {
         version: FIRMWARE_VERSION,
         battery_soc: &legacy_atslite::power_state::SOC_PERCENT,
         battery_charging: &legacy_atslite::power_state::VBUS_PRESENT,
-        image_receivers,
         ota: atslite_common::ota::OtaHandle,
     };
 
     defmt::info!("Initialization complete; entering object mode");
-    if let Err(e) = object_mode(0x5210, ctx).await {
-        defmt::error!(
-            "object_mode exited with error: {:?}",
-            defmt::Debug2Format(&e)
-        );
-    }
-    loop {
-        Timer::after_secs(1).await;
-    }
+    let handoff = match object_mode(0x5210, ctx).await {
+        Ok(handoff) => handoff,
+        Err(e) => {
+            defmt::error!(
+                "object_mode exited with error: {:?}",
+                defmt::Debug2Format(&e)
+            );
+            loop {
+                Timer::after_secs(1).await;
+            }
+        }
+    };
+    // The sensors hold the register SPI borrows; dropping them frees the buses for image mode.
+    drop(paj_r2_mutex);
+    drop(paj_r3_mutex);
+    legacy_common::image_mode::run(handoff, move |camera| {
+        let mut config = embassy_nrf::spis::Config::default();
+        config.mode = embassy_nrf::spis::MODE_3;
+        if camera == legacy_common::odyssey_protocol::Port::Nf {
+            let (serial, sck, mosi, _miso, cs) = r2_bus;
+            embassy_nrf::spis::Spis::new_rxonly(serial, sck, mosi, cs, Irqs, config)
+        } else {
+            let (serial, sck, mosi, _miso, cs) = r3_bus;
+            embassy_nrf::spis::Spis::new_rxonly(serial, sck, mosi, cs, Irqs, config)
+        }
+    })
+    .await
 }
 
 #[embassy_executor::task]
 async fn pmic_irq_task(
-    irq_pin: embassy_nrf::Peri<'static, embassy_nrf::gpio::AnyPin>,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    irq_pin: embassy_nrf::Peri<'static, peripherals::P0_05>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
 ) {
     let port = irq_pin.port();
     let pin = irq_pin.pin();
-    utils::set_pin_sense(&port, pin, pac::gpio::vals::Sense::HIGH);
-    let mut irq = gpio::Input::new(irq_pin, gpio::Pull::None);
+    utils::set_pin_sense(&port, pin, pac::gpio::vals::Sense::High);
+    let mut irq = gpio::Input::new_async(irq_pin, Irqs, gpio::Pull::None);
 
     loop {
         irq.wait_for_high().await;
@@ -631,7 +638,7 @@ async fn pmic_irq_task(
 }
 
 #[embassy_executor::task]
-async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
+async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static, Async>, Delay>) -> ! {
     anim.run().await
 }
 
@@ -639,14 +646,14 @@ async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> !
 async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
     loop {
         embassy_time::Timer::after_secs(30).await;
-        wdt_handle.pet();
+        wdt_handle.feed();
     }
 }
 
 #[embassy_executor::task]
 async fn power_button_task(
-    btn: Input<'static>,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    btn: Input<'static, Async>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &'static PmicLedsHandle,
 ) {
     power_button::power_button_loop(btn, pmic, leds).await;
@@ -660,7 +667,7 @@ async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
 #[embassy_executor::task]
 async fn usb_pmic_config_task(
     configured: legacy_common::usb::UsbConfigHandle,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
 ) {
     configured.wait_until_active().await;
     pmic.lock()
@@ -676,12 +683,12 @@ fn active_transport() -> TransportMode {
 }
 
 async fn handle_pending_ship(
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &PmicLedsHandle,
-    pwr_btn: &mut Input<'_>,
+    pwr_btn: &mut Input<'_, Async>,
 ) -> Result<
     (),
-    npm1300_rs::NPM1300Error<<Twim<'static> as embedded_hal_async::i2c::ErrorType>::Error>,
+    npm1300_rs::NPM1300Error<<Twim<'static, Async> as embedded_hal_async::i2c::ErrorType>::Error>,
 > {
     if !power::take_pending_ship_flag() {
         return Ok(());
@@ -719,11 +726,11 @@ async fn handle_pending_ship(
 }
 
 async fn handle_boot_vbus_policy(
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &PmicLedsHandle,
 ) -> Result<
     (),
-    npm1300_rs::NPM1300Error<<Twim<'static> as embedded_hal_async::i2c::ErrorType>::Error>,
+    npm1300_rs::NPM1300Error<<Twim<'static, Async> as embedded_hal_async::i2c::ErrorType>::Error>,
 > {
     use embassy_nrf::reset::ResetReason;
     let rr = embassy_nrf::reset::read_reasons();

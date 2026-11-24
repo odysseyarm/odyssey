@@ -73,23 +73,22 @@ embedded-storage-async = "0.4.1"
 better-dfu = { path = "../better-dfu", features = ["application", "cortex-m"] }
 better-ota = { path = "../better-ota", features = ["signed"] }
 release-signing = { path = "../release-signing" }
-embassy-boot = "0.6.1"
-embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
-embassy-nrf = { version = "0.9.0", features = ["nrf52833", "gpiote", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }
-embassy-time = "0.5.0"
-embassy-usb = { version = "0.5.1", default-features = false }
-embassy-sync = "0.7.2"
+embassy-boot = "0.7.0"
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-nrf = { version = "0.11.0", features = ["nrf52833", "time-driver-rtc1", "time", "nfc-pins-as-gpio", "unstable-pac"] }
+embassy-time = "0.5.1"
+embassy-usb = { version = "0.6.0", default-features = false, features = ["device"] }
+embassy-sync = "0.8.0"
 embassy-futures = "0.1.2"
-embassy-embedded-hal = "0.5.0"
+embassy-embedded-hal = "0.6.0"
 embedded-storage = "0.3.1"
 cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["nrf52833", "peripheral"] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "8ac007c", default-features = false, features = ["nrf52833", "critical-section-impl"] }
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "1212da1", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "security"] }
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "fc5a943384a7a4f026051bc6f76f0d353484d402", default-features = false, features = ["nrf52833", "peripheral"] }
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "fc5a943384a7a4f026051bc6f76f0d353484d402", default-features = false, features = ["nrf52833", "critical-section-impl"] }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "da44b34f67e1ee8efe977a5a975804b8b21962d4", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "security"] }
+ble-crypto = { path = "../ble-crypto" }
 static_cell = "2.1.1"
-rand_chacha = { version = "0.3", default-features = false }
-rand_core = { version = "0.6", default-features = false }
 
 [features]
 # Also trust the public development key. Dev and test builds only.
@@ -100,16 +99,16 @@ memory-spec = "0.3.0"
 bootloader-info = { path = "../bootloader-info" }
 
 [patch.crates-io]
-embassy-nrf = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-usb = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
-embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "db65b00" }
+embassy-nrf = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-executor = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-time = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-time-driver = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-time-queue-utils = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-usb = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-usb-driver = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-sync = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-futures = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-embedded-hal = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
 
 [profile.release]
 opt-level = "s"

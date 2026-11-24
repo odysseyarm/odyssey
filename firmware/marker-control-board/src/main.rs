@@ -105,7 +105,6 @@ async fn main(spawner: Spawner) {
     config.hfclk_source = HfclkSource::ExternalXtal;
     // The BC833M module carries a 20 ppm 32.768 kHz crystal and its load capacitors.
     config.lfclk_source = LfclkSource::ExternalXtal;
-    config.gpiote_interrupt_priority = Priority::P6;
     config.time_interrupt_priority = Priority::P6;
     let p = embassy_nrf::init(config);
     embassy_nrf::interrupt::typelevel::USBD::set_priority(Priority::P6);

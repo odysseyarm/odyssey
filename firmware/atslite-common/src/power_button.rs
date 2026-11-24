@@ -1,6 +1,7 @@
 //! Power button: a long press powers the device off.
 
 use embassy_nrf::gpio::Input;
+use embassy_nrf::mode::Async;
 use embassy_time::{Duration, Instant, Timer};
 
 const LONG_PRESS: Duration = Duration::from_millis(500);
@@ -14,7 +15,7 @@ const POLL_MS: u64 = 20;
 ///
 /// Since: Odyssey Desktop 0.7.0.
 pub async fn power_button_loop<I2c, Delay>(
-    mut btn: Input<'_>,
+    mut btn: Input<'_, Async>,
     pmic: &embassy_sync::mutex::Mutex<
         embassy_sync::blocking_mutex::raw::NoopRawMutex,
         npm1300_rs::NPM1300<I2c, Delay>,
@@ -61,7 +62,7 @@ where
 /// Returns once the button has been held for `hold_time`. Shorter presses are ignored.
 ///
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn wait_for_power_button_full_press(btn: &mut Input<'_>, hold_time: Duration) {
+pub async fn wait_for_power_button_full_press(btn: &mut Input<'_, Async>, hold_time: Duration) {
     loop {
         defmt::trace!("Waiting for power button down...");
         btn.wait_for_low().await;

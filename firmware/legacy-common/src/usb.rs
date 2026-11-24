@@ -1,5 +1,3 @@
-use core::cmp::max;
-
 use defmt::info;
 use embassy_nrf::Peri;
 use embassy_nrf::interrupt::typelevel::Binding;
@@ -8,7 +6,7 @@ use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _};
+use embassy_usb::driver::{EndpointError, EndpointIn as _};
 use embassy_usb::msos::windows_version;
 use embassy_usb::types::StringIndex;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
@@ -203,8 +201,8 @@ where
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
-    let ep_out = alt.endpoint_bulk_out(None, BULK_MAX_PACKET_SIZE);
-    let ep_in = alt.endpoint_bulk_in(None, BULK_MAX_PACKET_SIZE);
+    let ep_out = alt.endpoint_bulk_out(None, bulk_endpoint());
+    let ep_in = alt.endpoint_bulk_in(None, bulk_endpoint());
     drop(function);
 
     let usb = builder.build();
@@ -322,22 +320,16 @@ impl embassy_usb::Handler for MyHandler {
 }
 
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn write_transfer<'d>(
-    ep: &mut Endpoint<'d, In>,
+pub async fn write_transfer(
+    ep: &mut Endpoint<'_, In>,
     payload: &[u8],
     send_zlp: bool,
 ) -> Result<(), EndpointError> {
-    let max_packet = max(ep.info().max_packet_size, 1) as usize;
+    Ok(ep.write_transfer(payload, send_zlp).await?)
+}
 
-    for chunk in payload.chunks(max_packet) {
-        if !chunk.is_empty() {
-            ep.write(chunk).await?;
-        }
-    }
-
-    if send_zlp && payload.len() % max_packet == 0 {
-        ep.write(&[]).await?;
-    }
-
-    Ok(())
+fn bulk_endpoint() -> embassy_usb::EndpointOptions {
+    let mut options = embassy_usb::EndpointOptions::new();
+    options.max_packet_size = Some(BULK_MAX_PACKET_SIZE);
+    options
 }

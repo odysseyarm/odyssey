@@ -152,12 +152,12 @@ let
   # Config patches also affect build-std's synthetic workspace, which has no firmware lock.
   bootPatchHook =
     dir:
-    lib.optionalString (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir))) ''
+    lib.optionalString (lib.hasInfix "${bootPatch.git}?rev=${bootPatch.rev}" (builtins.readFile (lockOf dir))) ''
       cat >> Cargo.toml <<'EOF'
 
       [patch.crates-io.embassy-boot]
       git = "${bootPatch.git}"
-      branch = "${bootPatch.branch}"
+      rev = "${bootPatch.rev}"
       EOF
     '';
   vendorArgs = {
@@ -176,11 +176,14 @@ let
       else if lib.any (package: lib.hasInfix "github.com/alexmoon/nrf-sdc" package.source) packages then
         drv.overrideAttrs (old: {
           postPatch = (old.postPatch or "") + ''
-            # Both sys crates omit headers that their bindgen scripts include.
-            substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
-              --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
-            substituteInPlace nrf-sdc-sys/Cargo.toml \
-              --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+            # Older sys crates omit headers that their bindgen scripts include; newer
+            # revisions package them already.
+            if grep -q '"third_party/nordic/nrfx/LICENSE",' nrf-mpsl-sys/Cargo.toml; then
+              substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
+                --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
+              substituteInPlace nrf-sdc-sys/Cargo.toml \
+                --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+            fi
           '';
         })
       else
@@ -222,33 +225,45 @@ let
     }:
     let
       name = lib.removePrefix "firmware/" dir;
-      shared = common.mkArgs {
-        workspace = dir;
-        pname = name;
-        cargoExtraArgs = lib.concatStringsSep " " (
-          [
-            "--locked"
-            "--offline"
-          ]
-          ++ lib.optionals buildStd [
-            "-Z"
-            "build-std"
-            "-Z"
-            "build-std-features=optimize_for_size"
-          ]
-          ++ [
-            "--target"
-            target
-            "--bin"
-            bin
-          ]
-          ++ lib.optionals (features != null) [
-            "--features"
-            features
-          ]
-          ++ lib.optional (extraArgs != "") extraArgs
-        );
-      };
+      shared =
+        common.mkArgs {
+          workspace = dir;
+          pname = name;
+          cargoExtraArgs = lib.concatStringsSep " " (
+            [
+              "--locked"
+              "--offline"
+            ]
+            ++ lib.optionals buildStd [
+              "-Z"
+              "build-std"
+              "-Z"
+              "build-std-features=optimize_for_size"
+            ]
+            ++ [
+              "--target"
+              target
+              "--bin"
+              bin
+            ]
+            ++ lib.optionals (features != null) [
+              "--features"
+              features
+            ]
+            ++ lib.optional (extraArgs != "") extraArgs
+          );
+          DEFMT_LOG = "info";
+        }
+        // lib.optionalAttrs (dir == "firmware/lite1" || dir == "firmware/legacy-atslite") {
+          # Both ATS Lite applications are within a kilobyte of their flash slot. Dropping the
+          # std Debug machinery saves several KB; `{:?}` and Debug2Format log nothing in release.
+          RUSTFLAGS = "-Zfmt-debug=none";
+        }
+        // lib.optionalAttrs (dir == "firmware/lite1") {
+          # Lite1 also needs the panic machinery gone (7 KB): a panic traps at its call site,
+          # and the crash record logs it as a fault with that site's PC.
+          RUSTFLAGS = "-Zfmt-debug=none -Zunstable-options -Cpanic=immediate-abort";
+        };
       args =
         shared
         // bindgenEnv
@@ -495,60 +510,81 @@ let
     };
   };
 
-  # `cargo xtask firmware <board> build` and `build-dual-bank`.
-  dualCoreImages = board: parts: {
-    "firmware-${board}-images" = xtaskRun {
-      name = "firmware-${board}-images";
-      elfs = [
-        parts.stage1
-        parts.app-a
-        parts.app-b
-        parts.bootloader
-        parts.netcore-bootloader
-        parts.net-core
-      ];
-      boardDir = "firmware/${board}";
-      command = "firmware ${board} build";
-      outDir = "build";
-      expect = [
-        "stage1-bootloader.hex"
-        "stage2-bootloader.hex"
-        "stage2-bootloader.bin"
-        "app-a.hex"
-        "app-a.bin"
-        "app-b.hex"
-        "app-b.bin"
-        "netcore-bootloader.hex"
-        "net-core.hex"
-        "net-core.bin"
-        "merged.hex"
-      ];
+  # `cargo xtask firmware <board> build` and `build-dual-bank`. Lite1 packaging checks the
+  # stage1 binding hash at the address its memory layout gives, and leaves the merged image
+  # to the signed release flow.
+  dualCoreImages =
+    board: parts:
+    let
+      lite1 = board == "lite1";
+      layout = lib.optionalAttrs lite1 {
+        source = mkSource {
+          dirs = [ ];
+          files = [ "firmware/memory/memory-lite1.kdl" ];
+        };
+        pre = ''mkdir -p "$ODYSSEY_REPO/firmware/${board}"'';
+      };
+    in
+    {
+      "firmware-${board}-images" = xtaskRun (
+        layout
+        // {
+          name = "firmware-${board}-images";
+          elfs = [
+            parts.stage1
+            parts.app-a
+            parts.app-b
+            parts.bootloader
+            parts.netcore-bootloader
+            parts.net-core
+          ];
+          boardDir = "firmware/${board}";
+          command = "firmware ${board} build";
+          outDir = "build";
+          expect = [
+            "stage1-bootloader.hex"
+            "stage2-bootloader.hex"
+            "stage2-bootloader.bin"
+            "app-a.hex"
+            "app-a.bin"
+            "app-b.hex"
+            "app-b.bin"
+            "netcore-bootloader.hex"
+            "net-core.hex"
+            "net-core.bin"
+          ]
+          ++ lib.optional (!lite1) "merged.hex";
+        }
+      );
+      "firmware-${board}-images-dual-bank" = xtaskRun (
+        layout
+        // {
+          name = "firmware-${board}-images-dual-bank";
+          elfs = [
+            parts.stage1
+            parts.app-a
+            parts.app-b
+            parts.bootloader
+            parts.netcore-bootloader
+            parts.net-core
+          ];
+          boardDir = "firmware/${board}";
+          command = "firmware ${board} build-dual-bank";
+          outDir = "build";
+          expect = [
+            "stage1-bootloader.hex"
+            "stage2-bootloader.hex"
+            "app-a.hex"
+            "app-a.bin"
+            "app-b.hex"
+            "app-b.bin"
+            "net-core.hex"
+            "net-core.bin"
+          ]
+          ++ lib.optional (!lite1) "merged-dual.hex";
+        }
+      );
     };
-    "firmware-${board}-images-dual-bank" = xtaskRun {
-      name = "firmware-${board}-images-dual-bank";
-      elfs = [
-        parts.stage1
-        parts.app-a
-        parts.app-b
-        parts.bootloader
-        parts.net-core
-      ];
-      boardDir = "firmware/${board}";
-      command = "firmware ${board} build-dual-bank";
-      outDir = "build";
-      expect = [
-        "stage1-bootloader.hex"
-        "stage2-bootloader.hex"
-        "app-a.hex"
-        "app-a.bin"
-        "app-b.hex"
-        "app-b.bin"
-        "net-core.hex"
-        "net-core.bin"
-        "merged-dual.hex"
-      ];
-    };
-  };
 
   # `cargo xtask firmware <board> dist-bootloader` / `dist-netcore`, the
   # commands the release workflows run.

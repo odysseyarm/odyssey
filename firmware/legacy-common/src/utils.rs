@@ -1,21 +1,10 @@
 use embassy_nrf::Peri;
-use embassy_nrf::gpio::{AnyPin, Level, Output, OutputDrive};
+use embassy_nrf::gpio::{Level, Output, OutputDrive, Pin};
 use embassy_nrf::interrupt::typelevel::Binding;
+use embassy_nrf::mode::Async;
 use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
-
-/// Since: Odyssey Desktop 0.7.0.
-pub struct SpiPins {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub sck: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub miso: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub mosi: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub cs: Peri<'static, AnyPin>,
-}
 
 macro_rules! impl_from {
     ($enum:ident :: $variant:ident ( $ty:ty )) => {
@@ -40,17 +29,24 @@ macro_rules! static_byte_buffer {
 pub(crate) use static_byte_buffer;
 
 /// Since: Odyssey Desktop 0.7.0.
-pub fn make_spi_dev<SPI, IRQ>(
-    spi: Peri<'static, SPI>,
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each peripheral and pin is a distinct typed resource"
+)]
+pub fn make_spi_dev<'d, SPI, IRQ>(
+    spi: Peri<'d, SPI>,
     irqs: IRQ,
-    pins: SpiPins,
+    sck: Peri<'d, impl spim::SckPin<SPI>>,
+    mosi: Peri<'d, impl spim::MosiPin<SPI>>,
+    miso: Peri<'d, impl spim::MisoPin<SPI>>,
+    cs: Peri<'d, impl Pin>,
     cfg: spim::Config,
-) -> ExclusiveDevice<Spim<'static>, Output<'static>, Delay>
+) -> ExclusiveDevice<Spim<'d, Async>, Output<'d>, Delay>
 where
     SPI: spim::Instance,
-    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>> + 'static,
+    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>> + 'd,
 {
-    let spim = Spim::new(spi, irqs, pins.sck, pins.miso, pins.mosi, cfg);
-    let cs_out = Output::new(pins.cs, Level::High, OutputDrive::Standard);
+    let spim = Spim::new(spi, sck, mosi, miso, irqs, cfg);
+    let cs_out = Output::new(cs, Level::High, OutputDrive::Standard);
     ExclusiveDevice::new(spim, cs_out, Delay).unwrap()
 }
