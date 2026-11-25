@@ -64,6 +64,20 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
     }
 }
 
+fn verify_lite1_ota(
+    component: release_signing::Component,
+    size: u32,
+    version: [u32; 3],
+    hash: &[u8; 32],
+    signature: &[u8; release_signing::SIGNATURE_LEN],
+) -> bool {
+    let Ok(policy) = lite1_secure_boot::handoff::current_policy() else {
+        return false;
+    };
+    let message = release_signing::message(component, size, version, hash);
+    release_signing::verify_with_keys(policy.keys(), &message, signature)
+}
+
 fn ota_flash_slots(
     flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
 ) -> atslite_common::ota::FlashSlots {
@@ -103,22 +117,90 @@ fn ota_flash_slots(
     } else {
         unreachable!("app code address must belong to one linked bank")
     };
-    atslite_common::ota::FlashSlots::new(atslite_common::ota::Layout {
-        flash,
-        app_banks: [app_a, app_b],
-        running_app,
-        app_ram,
-        netcore_stage: stage,
-        netcore_active: netcore,
-        netcore_ram,
-        boot_state,
-        boot_journal: &raw const __bootloader_journal_start as u32,
-        product: atslite_common::ota::Product::Lite1,
-    })
+    atslite_common::ota::FlashSlots::new_with_verifier(
+        atslite_common::ota::Layout {
+            flash,
+            app_banks: [app_a, app_b],
+            running_app,
+            app_ram,
+            netcore_stage: stage,
+            netcore_active: netcore,
+            netcore_ram,
+            boot_state,
+            boot_journal: &raw const __bootloader_journal_start as u32,
+            product: atslite_common::ota::Product::Lite1,
+        },
+        Some(verify_lite1_ota),
+    )
+}
+fn verify_boot_slots() {
+    unsafe extern "C" {
+        static __ota_app_a_slot_start: u32;
+        static __ota_app_a_slot_end: u32;
+        static __ota_app_b_slot_start: u32;
+        static __ota_app_b_slot_end: u32;
+        static __stage2_bootloader_start: u32;
+        static __stage2_bootloader_end: u32;
+    }
+    let addr = |symbol: *const u32| symbol as u32;
+    let (app_a, app_b, stage2_start, stage2_end) = unsafe {
+        (
+            addr(&raw const __ota_app_a_slot_start)..addr(&raw const __ota_app_a_slot_end),
+            addr(&raw const __ota_app_b_slot_start)..addr(&raw const __ota_app_b_slot_end),
+            addr(&raw const __stage2_bootloader_start),
+            addr(&raw const __stage2_bootloader_end),
+        )
+    };
+    let current = verify_boot_slots as *const () as usize as u32;
+    let app_start = if app_a.contains(&current) {
+        app_a.start
+    } else if app_b.contains(&current) {
+        app_b.start
+    } else {
+        panic!("running app outside signed slots")
+    };
+    let keys = lite1_secure_boot::handoff::current_policy()
+        .expect("missing or invalid operational trust policy");
+    let stage2_len = stage2_end - stage2_start;
+    let stage2 =
+        unsafe { core::slice::from_raw_parts(stage2_start as *const u8, stage2_len as usize) };
+    lite1_secure_boot::verify_slot(
+        stage2,
+        stage2_start,
+        release_signing::Component::Lite1SecureBootloader,
+        keys.keys(),
+    )
+    .expect("stage2 signature invalid");
+    let mut stage2_version = [0; 3];
+    for (version, bytes) in stage2_version
+        .iter_mut()
+        .zip(stage2[23..35].chunks_exact(4))
+    {
+        *version = u32::from_le_bytes(bytes.try_into().expect("four-byte version word"));
+    }
+    assert!(
+        stage2_version >= [2, 0, 0],
+        "stage2 version older than 2.0.0"
+    );
+    let app_len = if app_start == app_a.start {
+        app_a.end - app_start
+    } else {
+        app_b.end - app_start
+    };
+    let app = unsafe { core::slice::from_raw_parts(app_start as *const u8, app_len as usize) };
+    lite1_secure_boot::verify_slot(
+        app,
+        app_start,
+        release_signing::Component::Lite1SecureApp,
+        keys.keys(),
+    )
+    .expect("application signature invalid");
+    // Network flash is unreadable from this core; the network bootloader locks its slot.
 }
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    verify_boot_slots();
     defmt::info!("Lite1 board initialization starting...");
 
     defmt::info!("Calling nrf5340_init::init()...");

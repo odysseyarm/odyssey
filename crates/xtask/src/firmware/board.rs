@@ -145,7 +145,7 @@ const LITE1_BOOTLOADER: Crate = app_core(
 const LITE1_STAGE1: Crate = app_core(
     "firmware/lite1-stage1-bootloader",
     "lite1-stage1-bootloader",
-    APP_CORE_RELEASE,
+    APP_CORE_SIZE_OPTIMIZED,
 );
 const LITE1_NETCORE_BOOTLOADER: Crate = net_core(
     "firmware/lite1-netcore-bootloader",

@@ -33,8 +33,38 @@ fn pcd_region_addr() -> usize {
     unsafe { &__pcd_region_start as *const u32 as usize }
 }
 
+/// Blocks writes and erases to `start..end` until the next reset. ACL registers
+/// are write-once per reset and this bootloader runs first after every reset, so
+/// nothing on this core can lift the lock. The app core cannot read network
+/// flash, so these locks replace any app-side integrity check of this flash.
+fn write_protect(instance: usize, start: u32, end: u32) {
+    let acl = 0x4108_0800 + instance * 0x10;
+    const PERM_WRITE_DISABLE: u32 = 1 << 1;
+    // SAFETY: ACL[instance] ADDR/SIZE/PERM are fixed network-core MMIO registers;
+    // each instance is configured exactly once by this bootloader.
+    unsafe {
+        (acl as *mut u32).write_volatile(start);
+        ((acl + 4) as *mut u32).write_volatile(end - start);
+        ((acl + 8) as *mut u32).write_volatile(PERM_WRITE_DISABLE);
+    }
+    cortex_m::asm::dsb();
+}
+
+fn protect_self() {
+    unsafe extern "C" {
+        static __netboot_start: u32;
+        static __netboot_end: u32;
+    }
+    write_protect(
+        0,
+        core::ptr::addr_of!(__netboot_start) as u32,
+        core::ptr::addr_of!(__netboot_end) as u32,
+    );
+}
+
 #[embassy_executor::main]
 async fn main(_spawner: embassy_executor::Spawner) {
+    protect_self();
     let p = embassy_nrf::init(Default::default());
 
     // With a debugger or RTT attached, touching flash this soon after boot hard-faults.
@@ -102,13 +132,21 @@ async fn main(_spawner: embassy_executor::Spawner) {
     boot_app()
 }
 
-/// Jumps to the network core application at `__bootloader_active_start`.
+/// Jumps to the network-core payload after its signed-slot prefix. The active
+/// slot is locked first, so the radio stack cannot persist changes to itself;
+/// only this bootloader writes it, copying images stage2 has authenticated.
+/// The state page after the slot stays writable for the application.
 fn boot_app() -> ! {
     unsafe extern "C" {
         static __bootloader_active_start: u32;
+        static __bootloader_active_end: u32;
     }
+    write_protect(
+        1,
+        core::ptr::addr_of!(__bootloader_active_start) as u32,
+        core::ptr::addr_of!(__bootloader_active_end) as u32,
+    );
 
-    // SAFETY: This bootloader runs before the application and owns core peripherals. The vector table points into validated active flash.
     unsafe {
         let mut p = cortex_m::Peripherals::steal();
 
@@ -117,7 +155,7 @@ fn boot_app() -> ! {
 
         p.SCB.invalidate_icache();
 
-        let active = &__bootloader_active_start as *const u32 as u32;
+        let active = &__bootloader_active_start as *const u32 as u32 + 512;
         p.SCB.vtor.write(active);
 
         cortex_m::asm::bootload(active as *const u32)
@@ -171,7 +209,7 @@ fn perform_update(_nvmc: &mut Nvmc<'_>, src_addr: u32, size: u32) -> Result<(), 
         _dfu_len
     );
 
-    if size == 0 || size % 4 != 0 || size > active_len {
+    if size < 520 || size % 4 != 0 || size > active_len {
         #[cfg(feature = "defmt")]
         defmt::warn!("Invalid size {}, active_len {}", size, active_len);
         return Err(());

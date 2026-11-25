@@ -34,6 +34,23 @@ fn main() {
     let bank_b = &regions["flash"]["app_bank_b"];
     let dfu = &regions["flash"]["dfu"];
     let settings = &regions["flash"]["settings"];
+    // SPU flash regions are 16 KiB; stage2 opens only these to the network core.
+    // Staging uses the network image size, not all of DFU, so the boot-state
+    // pages after DFU stay secure. DFU's unaligned start also exposes trust page B,
+    // which only the update-time network bootloader can then reach.
+    let netcore_primary = &regions["netcore_flash"]["netcore_primary"];
+    let staging_end = dfu.origin() + netcore_primary.length() - 0x1000;
+    assert!(staging_end <= dfu.origin() + dfu.length());
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    fs::write(
+        out.join("dfu_spu.rs"),
+        format!(
+            "const DFU_SPU_REGIONS: core::ops::Range<usize> = {}..{};\n",
+            dfu.origin() / 0x4000,
+            staging_end.div_ceil(0x4000)
+        ),
+    )
+    .unwrap();
     let low_ram = &regions["ram"]["low_ram"];
     let locked_ram = &regions["ram"]["high_ram"]["locked_ram"];
     let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_rx"];
@@ -76,13 +93,16 @@ __bootloader_app_b_start = {:#010x};
 __bootloader_app_b_end = {:#010x};
 __bootloader_dfu_region_start = {:#010x};
 __bootloader_dfu_region_end = {:#010x};
-__stage2_bootloader_start = ORIGIN(FLASH);
-__stage2_bootloader_end = ORIGIN(FLASH) + LENGTH(FLASH);
+__stage2_bootloader_start = {:#010x};
+__stage2_bootloader_end = {:#010x};
 __netcore_primary_start = {netcore_start:#010x};
 __netcore_primary_end = {netcore_end:#010x};
+__trust_a_start = {trust_a_start:#010x};
+__trust_a_end = {trust_a_end:#010x};
 
 __locked_ram_start = {:#010x};
 __locked_ram_end = {:#010x};
+__policy_handoff_start = {:#010x};
 __icmsg_tx_start = ORIGIN(ICMSG_TX);
 __icmsg_tx_end = ORIGIN(ICMSG_TX) + LENGTH(ICMSG_TX);
 __icmsg_rx_start = ORIGIN(ICMSG_RX);
@@ -91,8 +111,8 @@ __icmsg_rx_end = ORIGIN(ICMSG_RX) + LENGTH(ICMSG_RX);
 ASSERT(ORIGIN(ACTIVE) + LENGTH(ACTIVE) <= ORIGIN(DFU), \"
 ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
 ",
-        bootloader.origin(),
-        bootloader.length(),
+        bootloader.origin() + 512,
+        bootloader.length() - 512,
         stage2_state.origin(),
         stage2_state.length(),
         bank_a.origin(),
@@ -115,11 +135,16 @@ ERROR(bootloader): the ACTIVE and DFU regions are overlapping\");
         bank_b.origin() + bank_b.length(),
         dfu.origin(),
         dfu.origin() + dfu.length(),
+        bootloader.origin(),
+        bootloader.origin() + bootloader.length(),
         locked_ram.origin(),
         locked_ram.origin() + locked_ram.length(),
+        regions["ram"]["shared_verifier"]["policy_handoff"].origin(),
         netcore_start = regions["netcore_flash"]["netcore_primary"].origin(),
         netcore_end = regions["netcore_flash"]["netcore_primary"].origin()
             + regions["netcore_flash"]["netcore_primary"].length(),
+        trust_a_start = regions["flash"]["trust_a"].origin(),
+        trust_a_end = regions["flash"]["trust_a"].origin() + regions["flash"]["trust_a"].length(),
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

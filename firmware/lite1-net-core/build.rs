@@ -35,9 +35,12 @@ fn main() {
     let icmsg_rx = &regions["ram"]["high_ram"]["icmsg_tx"];
     let icmsg_tx = &regions["ram"]["high_ram"]["icmsg_rx"];
 
-    // NVMC pages are 4096 bytes.
     let page_size: u64 = 4096;
     let active_len = netcore_primary.length().saturating_sub(page_size);
+    let slot_header_len = 512;
+    assert!(active_len > slot_header_len);
+    let app_origin = netcore_primary.origin() + slot_header_len;
+    let app_len = active_len - slot_header_len;
     let dfu_len = dfu_region.length();
     if dfu_len < active_len + page_size {
         eprintln!("DFU slot must be at least one page larger than active");
@@ -50,8 +53,8 @@ fn main() {
         "\
 MEMORY
 {{
-  /* Active is trimmed so DFU is one page larger */
   FLASH : ORIGIN = {:#010x}, LENGTH = {:#06x}
+
   DFU : ORIGIN = {:#010x}, LENGTH = {:#06x}
   STATE : ORIGIN = {:#010x}, LENGTH = {:#06x}
   ICMSG_TX : ORIGIN = {:#010x}, LENGTH = {:#06x}
@@ -66,6 +69,8 @@ __icmsg_rx_end = ORIGIN(ICMSG_RX) + LENGTH(ICMSG_RX);
 
 __bootloader_active_start = ORIGIN(FLASH);
 __bootloader_active_end = ORIGIN(FLASH) + LENGTH(FLASH);
+__bootloader_slot_start = {:#010x};
+__bootloader_slot_end = {:#010x};
 __bootloader_dfu_start = ORIGIN(DFU);
 __bootloader_dfu_end = ORIGIN(DFU) + LENGTH(DFU);
 __bootloader_state_start = ORIGIN(STATE);
@@ -76,8 +81,8 @@ ERROR: the RAM and ICMSG_TX regions are overlapping\");
 ASSERT(ORIGIN(ICMSG_TX) + LENGTH(ICMSG_TX) <= ORIGIN(ICMSG_RX), \"
 ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
 ",
-        netcore_primary.origin(),
-        active_len,
+        app_origin,
+        app_len,
         dfu_region.origin(),
         dfu_region.length(),
         state_origin,
@@ -88,6 +93,8 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
         icmsg_rx.length(),
         netcore_ram.origin(),
         netcore_ram.length() / 1024,
+        netcore_primary.origin(),
+        netcore_primary.origin() + active_len,
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -97,7 +104,7 @@ ERROR: the ICMSG_TX and ICMSG_RX regions are overlapping\");
     // embassy-boot locates the net-core partitions through these symbols.
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_active_start={:#x}",
-        netcore_primary.origin()
+        netcore_primary.origin() + slot_header_len
     );
     println!(
         "cargo:rustc-link-arg-bins=--defsym=__bootloader_active_end={:#x}",

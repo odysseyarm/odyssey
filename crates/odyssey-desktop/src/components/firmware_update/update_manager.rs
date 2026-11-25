@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 
 use super::update_state::FirmwareUpdateState;
 use crate::hub::HubHandle;
+use crate::runtime;
 
 /// Lowest ATS Lite stage2 bootloader that Bluetooth (radio) OTA may rely on:
 /// `0.2.0`, stage2 v3.
@@ -64,16 +65,48 @@ impl Default for DeviceUpdate {
     }
 }
 
+#[derive(Default)]
+struct BootloaderCache {
+    epochs: HashMap<[u8; 6], u64>,
+    pending: HashMap<[u8; 6], u64>,
+    versions: HashMap<[u8; 6], Option<semver::Version>>,
+}
+
+impl BootloaderCache {
+    fn invalidate(&mut self, uuid: [u8; 6]) {
+        *self.epochs.entry(uuid).or_default() += 1;
+        self.pending.remove(&uuid);
+        self.versions.remove(&uuid);
+    }
+
+    fn begin(&mut self, uuid: [u8; 6]) -> Option<u64> {
+        if self.versions.contains_key(&uuid) || self.pending.contains_key(&uuid) {
+            return None;
+        }
+        let epoch = *self.epochs.entry(uuid).or_default();
+        self.pending.insert(uuid, epoch);
+        Some(epoch)
+    }
+
+    fn finish(&mut self, uuid: [u8; 6], epoch: u64, version: Option<semver::Version>) {
+        if self.epochs.get(&uuid).copied().unwrap_or_default() == epoch
+            && self.pending.get(&uuid) == Some(&epoch)
+        {
+            self.pending.remove(&uuid);
+            self.versions.insert(uuid, version);
+        }
+    }
+}
 /// Firmware update state per device, shared between the tokio update tasks
 /// and the views that show it. `generation` counts every change so the UI can
 /// redraw only when something moved.
 #[derive(Clone)]
 pub(crate) struct FirmwareUpdateManager {
     states: Arc<Mutex<HashMap<[u8; 6], DeviceUpdate>>>,
-    /// The hub's device list as last seen, which the tokio update task cannot
-    /// read from the GPUI-side hub entity.
     devices: Arc<Mutex<Vec<Device>>>,
     generation: Arc<AtomicU64>,
+    bootloader_cache: Arc<Mutex<BootloaderCache>>,
+    bootloader_sessions: Arc<Mutex<HashMap<[u8; 6], bool>>>,
     pub(super) dongles: Arc<Mutex<super::dongle_update::DongleUpdates>>,
 }
 
@@ -117,6 +150,8 @@ impl FirmwareUpdateManager {
             states: Arc::new(Mutex::new(HashMap::new())),
             devices: Arc::new(Mutex::new(Vec::new())),
             generation: Arc::new(AtomicU64::new(0)),
+            bootloader_cache: Arc::new(Mutex::new(BootloaderCache::default())),
+            bootloader_sessions: Arc::new(Mutex::new(HashMap::new())),
             dongles: Arc::new(Mutex::new(super::dongle_update::DongleUpdates::default())),
         }
     }
@@ -164,6 +199,25 @@ impl FirmwareUpdateManager {
     }
 
     pub(super) fn set_devices(&self, devices: Vec<Device>) {
+        let next: HashMap<_, _> = devices
+            .iter()
+            .map(|device| (device.uuid, super::update_check::is_in_bootloader(device)))
+            .collect();
+        let mut sessions = self.bootloader_sessions.lock();
+        let mut cache = self.bootloader_cache.lock();
+        for (uuid, was_dfu) in sessions.iter() {
+            if next.get(uuid) != Some(was_dfu) {
+                cache.invalidate(*uuid);
+            }
+        }
+        for uuid in next.keys() {
+            if !sessions.contains_key(uuid) {
+                cache.invalidate(*uuid);
+            }
+        }
+        *sessions = next;
+        drop(cache);
+        drop(sessions);
         *self.devices.lock() = devices;
         self.bump();
     }
@@ -186,6 +240,38 @@ impl FirmwareUpdateManager {
     pub(super) fn set_state(&self, uuid: [u8; 6], state: FirmwareUpdateState) {
         self.states.lock().entry(uuid).or_default().state = state;
         self.bump();
+    }
+
+    pub(super) fn actual_bootloader_version(
+        &self,
+        device: &Device,
+        vid: u16,
+        pid: u16,
+    ) -> Option<semver::Version> {
+        if super::update_check::is_in_bootloader(device) {
+            let uuid = device.uuid;
+            let mut cache = self.bootloader_cache.lock();
+            if let Some(version) = cache.versions.get(&uuid) {
+                return version.clone();
+            }
+            let epoch = cache.begin(uuid)?;
+            drop(cache);
+            let manager = self.clone();
+            runtime::spawn(async move {
+                let version = odyssey_hub_server::firmware::read_bootloader_release_for_device(
+                    &uuid, vid, pid,
+                )
+                .await
+                .ok()
+                .flatten();
+                manager.bootloader_cache.lock().finish(uuid, epoch, version);
+                manager.bump();
+            });
+            return None;
+        }
+        let [major, minor, patch] = device.bootloader_version;
+        (device.bootloader_version != [0, 0, 0])
+            .then(|| semver::Version::new(u64::from(major), u64::from(minor), u64::from(patch)))
     }
 
     /// Availability is computed during render and may already be stale when it
@@ -394,5 +480,24 @@ mod tests {
         assert!(task.await.unwrap_err().is_cancelled());
         assert!(!manager.is_updating(uuid));
         assert!(manager.try_claim(uuid).is_some());
+    }
+
+    #[test]
+    fn stale_dfu_read_cannot_fill_reconnected_session_cache() {
+        let uuid = [9; 6];
+        let mut cache = BootloaderCache::default();
+        let old_epoch = cache.begin(uuid).expect("first session starts read");
+        cache.invalidate(uuid);
+        let new_epoch = cache
+            .begin(uuid)
+            .expect("new DFU session starts a fresh read");
+
+        cache.finish(uuid, old_epoch, Some(semver::Version::new(1, 0, 0)));
+        assert_eq!(cache.versions.get(&uuid), None);
+        cache.finish(uuid, new_epoch, Some(semver::Version::new(2, 0, 0)));
+        assert_eq!(
+            cache.versions.get(&uuid),
+            Some(&Some(semver::Version::new(2, 0, 0)))
+        );
     }
 }

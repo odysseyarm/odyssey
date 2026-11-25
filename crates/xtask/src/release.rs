@@ -882,20 +882,18 @@ fn publish_app(
     }))?;
     let title = format!("{device} v{version}");
     let notes = format!("{} application firmware {version}", board.product());
-    cmd::run(cmd::at(row.component.dir, "gh").args([
-        "release",
-        "create",
-        tag,
-        "--draft",
-        "--target",
-        head,
-        "--title",
-        &title,
-        "--notes",
-        &notes,
-        "build/app-a.bin",
-        "build/app-b.bin",
-    ]))?;
+    let mut assets = vec!["build/app-a.bin", "build/app-b.bin"];
+    if matches!(board, AtsLite::Lite1) {
+        assets.extend(["build/merged.hex", "build/merged.trace"]);
+    }
+    cmd::run(
+        cmd::at(row.component.dir, "gh")
+            .args([
+                "release", "create", tag, "--draft", "--target", head, "--title", &title,
+                "--notes", &notes,
+            ])
+            .args(&assets),
+    )?;
     cmd::run(cmd::at(".", "gh").args(["release", "edit", tag, "--draft=false"]))?;
     println!("Published {tag}");
     Ok(())

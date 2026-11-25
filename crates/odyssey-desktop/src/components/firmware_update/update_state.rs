@@ -17,11 +17,15 @@ pub(super) enum FirmwareUpdateState {
         pid: u16,
         held_back: Option<HeldBack>,
         net_core_blocked: Option<NetCoreBlocked>,
+        format_blocked: Option<String>,
     },
     /// A newer firmware exists but this desktop is too old to install any of it.
     NeedsNewerDesktop(HeldBack),
     /// A newer firmware exists but the unit's net core is too old to take any of it.
     NetCoreBlockedNoPath(NetCoreBlocked),
+    BootloaderUnknown,
+    /// The installed ATS Lite bootloader uses an incompatible image format.
+    IncompatibleBootloader,
     Downloading,
     /// The DFU detach request is being sent.
     Detaching,
@@ -68,6 +72,8 @@ impl FirmwareUpdateState {
                 | Self::NeedsUsbConnection { .. }
                 | Self::NeedsNewerDesktop(_)
                 | Self::NetCoreBlockedNoPath(_)
+                | Self::BootloaderUnknown
+                | Self::IncompatibleBootloader
         )
     }
 
@@ -89,6 +95,10 @@ impl FirmwareUpdateState {
             Self::NeedsUsbConnection { .. } => "Plug in USB to update",
             Self::NeedsNewerDesktop(_) => "Needs a newer Odyssey Desktop",
             Self::NetCoreBlockedNoPath(_) => "No update path from this net core",
+            Self::BootloaderUnknown => "Checking device bootloader; firmware unchanged",
+            Self::IncompatibleBootloader => {
+                "Incompatible ATS Lite bootloader; SWD reprovisioning required"
+            }
             Self::Available { .. } => "Update available",
             Self::Downloading => "Downloading...",
             Self::Detaching => "Preparing device...",

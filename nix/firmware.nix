@@ -218,6 +218,7 @@ let
       buildStd ? false,
       files ? [ ],
       extraArgs ? "",
+      buildEnv ? { },
     }:
     let
       name = lib.removePrefix "firmware/" dir;
@@ -251,6 +252,7 @@ let
       args =
         shared
         // bindgenEnv
+        // buildEnv
         // {
           src = sourceFor { inherit dir files; };
           cargoLock = lockFile dir;
@@ -378,6 +380,16 @@ let
       dir = "firmware/lite1-stage1-bootloader";
       bin = "lite1-stage1-bootloader";
       target = triple.appCore;
+      buildStd = true;
+      buildEnv.ODYSSEY_NETCORE_BOOTLOADER =
+        pkgs.runCommand "lite1-immutable-netboot.bin" { nativeBuildInputs = [ arm ]; }
+          ''
+            arm-none-eabi-objcopy -O binary \
+              ${
+                lite1Crates.netcoreBootloader.elf { }
+              }/firmware/lite1-netcore-bootloader/target/${triple.netCore}/release/lite1-netcore-bootloader \
+              "$out"
+          '';
     };
     netcoreBootloader = mkCrate {
       dir = "firmware/lite1-netcore-bootloader";
@@ -724,6 +736,11 @@ in
       dir = "firmware/release-signing";
       pname = "release-signing-tests";
       cargoExtraArgs = "--locked --offline --features dev-signing-key";
+    });
+    lite1-secure-boot-tests = hostTest (testArgs {
+      dir = "firmware/lite1-secure-boot";
+      pname = "lite1-secure-boot-tests";
+      cargoExtraArgs = "--locked --offline --target ${hostTriple}";
     });
   };
 

@@ -104,16 +104,20 @@ pub(super) fn check_for_update_with_bootloader(
     let Some((vid, pid, device_type)) = firmware::device_info_from_pid(device.product_id) else {
         return FirmwareUpdateState::Idle;
     };
+    if device_type == "atslite1" && is_dfu_device && radio_ota_bootloader.is_none() {
+        return FirmwareUpdateState::BootloaderUnknown;
+    }
 
     // A device in the DFU bootloader is offered the latest firmware. A connected
     // device is offered it only when it is newer, across major and minor
     // versions too (protocol upgrades). `run_firmware_update` selects from the
     // same net core reading, so the entry shown here is the one installed.
-    let offer = firmware::select_firmware(
+    let offer = firmware::select_firmware_with_bootloader(
         manifest,
         device_type,
         &desktop_version(),
         device.netcore_release,
+        radio_ota_bootloader,
     );
     // A zero the hub has not settled on yet can mean the net core has
     // not answered (e.g. right after a transport swap), so it is not
@@ -160,6 +164,9 @@ pub(super) fn check_for_update_with_bootloader(
             });
 
     let Some(available_fw) = offer.offered.filter(|fw| is_newer(fw)) else {
+        if offer.format_blocked.is_some() {
+            return FirmwareUpdateState::IncompatibleBootloader;
+        }
         if let Some(held_back) = held_back {
             return FirmwareUpdateState::NeedsNewerDesktop(held_back);
         }
@@ -169,6 +176,12 @@ pub(super) fn check_for_update_with_bootloader(
         return FirmwareUpdateState::Idle;
     };
     let available_version = available_fw.version.clone();
+    let format_blocked = offer.format_blocked.map(|blocked| {
+        format!(
+            "Newer v{} requires SWD reprovisioning; incompatible bootloader format.",
+            blocked.version
+        )
+    });
     let device_uuid = device.uuid;
     if ats_ble_update_needs_usb(device_type, device, available_fw, radio_ota_bootloader) {
         return FirmwareUpdateState::NeedsUsbConnection {
@@ -211,6 +224,7 @@ pub(super) fn check_for_update_with_bootloader(
             pid,
             held_back,
             net_core_blocked,
+            format_blocked,
         };
     }
 

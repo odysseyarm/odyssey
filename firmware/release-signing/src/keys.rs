@@ -14,8 +14,9 @@ pub(crate) const EMPTY_KEY: PublicKey = [0; 32];
 
 /// Production release keys, one per slot; all-zero slots are empty.
 ///
-/// Slot 0 holds the first publisher key; the rest are empty until more publishers exist. Fill them in here
-/// when they do, as described in `firmware/manifests/README.md`.
+/// Stage1 embeds these as its permanent recovery anchors, so a slot left empty
+/// here stays empty on every unit provisioned from that build. Slot 3 is reserved
+/// for an offline backup key. See `firmware/manifests/README.md`.
 ///
 /// Since: Unreleased.
 pub const RELEASE_KEYS: [PublicKey; KEY_SLOTS] = [
@@ -31,14 +32,19 @@ pub const RELEASE_KEYS: [PublicKey; KEY_SLOTS] = [
         0x66, 0xff, 0xe8, 0x67, 0x3f, 0x2f, 0xc6, 0xc9, 0x1c, 0x10, 0x25, 0xd0, 0x27, 0xa1, 0x1d,
         0xdc, 0x5d,
     ],
-    EMPTY_KEY,
+    // ledger-flex@kybrdgmr (OpenPGP signature slot, seeded derivation)
+    [
+        0x08, 0x07, 0xa1, 0x19, 0xe8, 0x98, 0xde, 0x21, 0x28, 0x12, 0x5c, 0xa5, 0xbf, 0x7f, 0xf7,
+        0xd0, 0xf7, 0x4b, 0xad, 0x0c, 0x1a, 0x78, 0x44, 0x54, 0x86, 0x64, 0x01, 0xe6, 0x9b, 0xbc,
+        0x0f, 0x08,
+    ],
     EMPTY_KEY,
 ];
 
 /// Public half of the development key. Its seed is public (see `crates/xtask`),
 /// so builds that trust it can be forged by anyone and must never ship.
 #[cfg(any(test, feature = "dev-signing-key"))]
-pub(crate) const DEV_KEY: PublicKey = [
+pub const DEV_KEY: PublicKey = [
     0xe4, 0xc9, 0x25, 0x28, 0xd6, 0xf0, 0x39, 0xb4, 0x1c, 0x56, 0x45, 0x9c, 0x06, 0x6e, 0xf8, 0x72,
     0x0e, 0x5f, 0x8b, 0xcf, 0x40, 0x50, 0x47, 0x74, 0xe8, 0x05, 0x95, 0x97, 0xb2, 0x2c, 0xa2, 0x1e,
 ];

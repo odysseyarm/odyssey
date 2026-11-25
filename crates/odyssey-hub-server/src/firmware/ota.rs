@@ -63,6 +63,10 @@ pub enum OtaError {
     InvalidImage(&'static str),
     #[error("target bootloader floor {floor} exceeds known compatible floor {known}")]
     BootloaderFloor { floor: String, known: String },
+    #[error(
+        "ATS Lite image format is incompatible with installed bootloader; SWD reprovisioning required"
+    )]
+    IncompatibleBootloaderFormat,
     #[error("device staged bitmap does not include {0:?}")]
     NotStaged(Image),
     #[error("device did not acknowledge expected OTA offset {expected}; got {actual}")]
@@ -75,6 +79,10 @@ pub enum OtaError {
     MissingSignature(&'static str),
     #[error("manifest signature for {0} is not 128 hex characters")]
     InvalidSignature(&'static str),
+    #[error("secure ATS Lite signature does not match release metadata")]
+    SignatureRejected,
+    #[error("secure ATS Lite device did not require signature verification")]
+    SignatureModeMismatch,
 }
 
 /// Carries one OTA request frame to the device and returns its status reply.
@@ -177,6 +185,32 @@ fn ensure_image(image: VerifiedImage<'_>, name: &'static str) -> Result<(), OtaE
         return Err(OtaError::InvalidImage(name));
     }
     Ok(())
+}
+fn verify_secure_signature(
+    image: VerifiedImage<'_>,
+    component: release_signing::Component,
+    version: [u32; 3],
+    name: &'static str,
+) -> Result<(), OtaError> {
+    let signature: [u8; release_signing::SIGNATURE_LEN] = image
+        .manifest
+        .signature
+        .as_deref()
+        .ok_or(OtaError::MissingSignature(name))
+        .and_then(|signature| {
+            hex::decode(signature)
+                .ok()
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or(OtaError::InvalidSignature(name))
+        })?;
+    let size = u32::try_from(image.bytes.len()).map_err(|_error| OtaError::InvalidImage(name))?;
+    let hash: [u8; 32] = sha2::Sha256::digest(image.bytes).into();
+    let message = release_signing::message(component, size, version, &hash);
+    if release_signing::verify_production(&message, &signature) {
+        Ok(())
+    } else {
+        Err(OtaError::SignatureRejected)
+    }
 }
 
 async fn transfer<T: OtaTransport>(
@@ -289,16 +323,53 @@ pub async fn send<T: OtaTransport>(
     entry: &FirmwareEntry,
     images: Images<'_>,
 ) -> Result<(), OtaError> {
+    if link == LinkMtu::Vendor
+        && !odyssey_firmware_manifest::ats_lite_target_compatible(
+            "atslite1",
+            entry,
+            Some(images.known_bootloader_floor),
+        )
+    {
+        return Err(OtaError::IncompatibleBootloaderFormat);
+    }
     if entry.requires_bootloader > *images.known_bootloader_floor {
         return Err(OtaError::BootloaderFloor {
             floor: entry.requires_bootloader.to_string(),
             known: images.known_bootloader_floor.to_string(),
         });
     }
+    let secure_format =
+        link == LinkMtu::Vendor && entry.requires_bootloader >= semver::Version::new(2, 0, 0);
+    if secure_format {
+        let component = release_signing::Component::Lite1SecureApp;
+        for image in [images.application, images.app_a, images.app_b]
+            .into_iter()
+            .flatten()
+        {
+            ensure_image(image, "application")?;
+            verify_secure_signature(image, component, images.app_version, "application")?;
+        }
+        if let Some(netcore) = images.netcore {
+            let release = netcore
+                .manifest
+                .release
+                .ok_or(OtaError::InvalidImage("net-core"))?;
+            ensure_image(netcore, "net-core")?;
+            verify_secure_signature(
+                netcore,
+                release_signing::Component::Lite1SecureNetCore,
+                [u32::from(release), 0, 0],
+                "net-core",
+            )?;
+        }
+    }
 
     let status = exchange(transport, Request::Query).await?;
     if status.supported == 0 {
         return Err(OtaError::Unsupported);
+    }
+    if secure_format && !status.signature_required {
+        return Err(OtaError::SignatureModeMismatch);
     }
     let (slot_name, application) = match status.app_slot {
         0 => ("app", images.application),
@@ -580,6 +651,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn secure_radio_target_requires_component_bound_signature_before_query() {
+        let app = b"secure application";
+        let app_file = file(app, None);
+        let mut target = entry();
+        target.requires_bootloader = semver::Version::new(2, 0, 0);
+        let mut device = Device::new(false);
+
+        let result = send(
+            &mut device,
+            LinkMtu::Vendor,
+            &target,
+            Images {
+                application: None,
+                app_a: None,
+                app_b: Some(VerifiedImage {
+                    bytes: app,
+                    manifest: &app_file,
+                }),
+                netcore: None,
+                app_version: [2, 0, 0],
+                known_bootloader_floor: &semver::Version::new(2, 0, 0),
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OtaError::MissingSignature("application"))
+        ));
+        assert_eq!(device.flash.commits, 0);
+    }
+    #[tokio::test]
     async fn stages_target_bank_and_netcore_before_one_commit() {
         let app_a = b"wrong bank application image";
         let app_b = b"target bank application image";
@@ -727,6 +829,10 @@ mod tests {
         app: (&[u8], &FileEntry),
         netcore: Option<(&[u8], &FileEntry)>,
     ) -> Result<(), OtaError> {
+        let bootloader = match link {
+            LinkMtu::Vendor => semver::Version::new(1, 0, 0),
+            LinkMtu::Marker => semver::Version::new(0, 0, 0),
+        };
         send(
             device,
             link,
@@ -740,7 +846,7 @@ mod tests {
                 }),
                 netcore: netcore.map(|(bytes, manifest)| VerifiedImage { bytes, manifest }),
                 app_version: [1, 2, 3],
-                known_bootloader_floor: &semver::Version::new(0, 0, 0),
+                known_bootloader_floor: &bootloader,
             },
         )
         .await
@@ -766,7 +872,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signature_follows_each_staged_image_when_the_device_requires_one() {
+    async fn historical_signature_follows_each_staged_image_on_one_x_bootloader() {
         let app = b"signed application image";
         let netcore = b"signed network core image";
         let app_file = signed_file(app, None, 0xa1);

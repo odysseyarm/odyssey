@@ -1,6 +1,7 @@
 use crate::hash::Sha256;
+use crate::keys::PublicKey;
 use crate::message::{Component, DOMAIN, MESSAGE_LEN, message};
-use crate::verify::{SIGNATURE_LEN, verify};
+use crate::verify::{SIGNATURE_LEN, verify, verify_with_keys};
 
 /// Bytes in the signed metadata header, including reserved zero byte.
 pub const DFU_HEADER_LEN: usize = MESSAGE_LEN + SIGNATURE_LEN + 1;
@@ -65,6 +66,28 @@ impl DfuVerifier {
     /// # Errors
     /// Returns [`DfuError`] when the header is malformed, names another component or has a bad signature.
     pub fn new(component: Component, header: &[u8]) -> Result<Self, DfuError> {
+        Self::new_inner(component, header, verify)
+    }
+
+    /// Starts verifying a download with caller-supplied public keys.
+    ///
+    /// # Errors
+    /// Returns [`DfuError`] when the header is malformed, names another component or has a bad signature.
+    pub fn new_with_keys(
+        component: Component,
+        header: &[u8],
+        keys: &[PublicKey],
+    ) -> Result<Self, DfuError> {
+        Self::new_inner(component, header, |message, signature| {
+            verify_with_keys(keys, message, signature)
+        })
+    }
+
+    fn new_inner(
+        component: Component,
+        header: &[u8],
+        verify_signature: impl FnOnce(&[u8; MESSAGE_LEN], &[u8; SIGNATURE_LEN]) -> bool,
+    ) -> Result<Self, DfuError> {
         let header: &[u8; DFU_HEADER_LEN] = header.try_into().map_err(|_| DfuError::Header)?;
         if &header[..DOMAIN_LEN] != DOMAIN || header[DFU_HEADER_LEN - 1] != 0 {
             return Err(DfuError::Header);
@@ -84,7 +107,7 @@ impl DfuVerifier {
         let signed: &[u8; MESSAGE_LEN] = header[..MESSAGE_LEN]
             .try_into()
             .map_err(|_| DfuError::Header)?;
-        if !verify(signed, signature) {
+        if !verify_signature(signed, signature) {
             return Err(DfuError::Signature);
         }
         Ok(Self {

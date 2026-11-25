@@ -59,6 +59,7 @@ const SLOT_B: u8 = 1;
 const APP_DFU_FLAG_MAGIC: u32 = 0xDF00B071;
 const NETCORE_DFU_MAGIC: u32 = 0x4E45_5444; // "NETD"
 const ERASED_WORD: u32 = 0xFFFF_FFFF;
+include!(concat!(env!("OUT_DIR"), "/dfu_spu.rs"));
 
 // PCD region in the app core's ICMSG RX buffer, shared with the netcore bootloader.
 const PCD_REGION_ADDR: u32 = 0x20070000;
@@ -81,7 +82,8 @@ fn get_app_dfu_flag() -> &'static mut AppDfuFlag {
 struct DualBankFlashWriter<'d> {
     flash: &'d Mutex<embassy_sync::blocking_mutex::raw::NoopRawMutex, RefCell<Nvmc<'d>>>,
     netcore_dfu_size: usize,
-    app_stack_pointer: [u8; 4],
+    signed_header: [u8; release_signing::DFU_HEADER_LEN],
+    signed_size: usize,
 }
 
 impl<'d> DualBankFlashWriter<'d> {
@@ -91,7 +93,8 @@ impl<'d> DualBankFlashWriter<'d> {
         Self {
             flash,
             netcore_dfu_size: 0,
-            app_stack_pointer: [0xff; 4],
+            signed_header: [0xff; release_signing::DFU_HEADER_LEN],
+            signed_size: 0,
         }
     }
 
@@ -127,6 +130,12 @@ impl<'d> DualBankFlashWriter<'d> {
                             - &raw const __netcore_primary_start as usize);
                     (start, end)
                 }
+                DfuTarget::TrustList => {
+                    let start = lite1_secure_boot::handoff::pending_record_address()
+                        .expect("pending trust page missing")
+                        as usize;
+                    (start, start + PAGE_SIZE)
+                }
                 DfuTarget::Bootloader => {
                     // Stage1 swaps the bootloader in from here.
                     let start = &__bootloader_dfu_region_start as *const u32 as usize;
@@ -138,11 +147,106 @@ impl<'d> DualBankFlashWriter<'d> {
             }
         }
     }
+    fn verify_completed(&self, target: DfuTarget) -> Result<(), ()> {
+        if target == DfuTarget::TrustList || self.signed_size == 0 {
+            return Err(());
+        }
+        let (start, end) = self.get_bank_range(target);
+        let (logical_address, component) = match target {
+            DfuTarget::AppBankA | DfuTarget::AppBankB => {
+                (start as u32, release_signing::Component::Lite1SecureApp)
+            }
+            DfuTarget::NetCore => {
+                unsafe extern "C" {
+                    static __netcore_primary_start: u32;
+                }
+                (
+                    &raw const __netcore_primary_start as u32,
+                    release_signing::Component::Lite1SecureNetCore,
+                )
+            }
+            DfuTarget::Bootloader => {
+                unsafe extern "C" {
+                    static __stage2_bootloader_start: u32;
+                }
+                (
+                    &raw const __stage2_bootloader_start as u32,
+                    release_signing::Component::Lite1SecureBootloader,
+                )
+            }
+            DfuTarget::TrustList => return Err(()),
+        };
+        let slot_len = 512usize.checked_add(self.signed_size).ok_or(())?;
+        if slot_len > end.saturating_sub(start) {
+            return Err(());
+        }
+        let policy = lite1_secure_boot::handoff::current_policy().map_err(|_| ())?;
+        // SAFETY: linker-defined slot contains the bounded completed image.
+        let slot = unsafe { core::slice::from_raw_parts(start as *const u8, slot_len) };
+        lite1_secure_boot::verify_slot(slot, logical_address, component, policy.keys())
+            .map_err(|_| ())
+    }
 }
 
 impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
     const WRITE_SIZE: usize = Nvmc::WRITE_SIZE;
     type Error = ();
+
+    fn start_signed_download(
+        &mut self,
+        _target: DfuTarget,
+        component: release_signing::Component,
+        header: &[u8],
+    ) -> Result<release_signing::DfuVerifier, better_dfu::consts::Status> {
+        let policy = lite1_secure_boot::handoff::current_policy()
+            .map_err(|_| better_dfu::consts::Status::ErrVerify)?;
+        let keys = if _target == DfuTarget::TrustList {
+            policy.root_keys()
+        } else {
+            policy.keys()
+        };
+        let verifier = release_signing::DfuVerifier::new_with_keys(component, header, keys)
+            .map_err(|_| better_dfu::consts::Status::ErrVerify)?;
+        self.signed_header.copy_from_slice(header);
+        self.signed_size = verifier.image_size() as usize;
+        if _target == DfuTarget::TrustList
+            && (self.signed_size == 0 || self.signed_size > release_signing::POLICY_RECORD_MAX)
+        {
+            return Err(better_dfu::consts::Status::ErrAddress);
+        }
+        Ok(verifier)
+    }
+
+    fn commit_signed_header(
+        &mut self,
+        target: DfuTarget,
+        header: &[u8; release_signing::DFU_HEADER_LEN],
+    ) -> Result<(), ()> {
+        let (start, _) = self.get_bank_range(target);
+        if target == DfuTarget::TrustList {
+            let record_len = self.signed_size;
+            if record_len == 0 || record_len > release_signing::POLICY_RECORD_MAX {
+                return Err(());
+            }
+            let (page_start, page_end) = self.get_bank_range(target);
+            let page_len = release_signing::DFU_HEADER_LEN
+                .checked_add(record_len)
+                .ok_or(())?;
+            if page_len > page_end.saturating_sub(page_start) {
+                return Err(());
+            }
+            return self.flash.lock(|flash_cell| {
+                let mut flash = flash_cell.borrow_mut();
+                flash.write(page_start as u32, header).map_err(|_| ())
+            });
+        }
+        self.flash.lock(|flash_cell| {
+            flash_cell
+                .borrow_mut()
+                .write(start as u32, header)
+                .map_err(|_| ())
+        })
+    }
     fn write_for_target(
         &mut self,
         target: DfuTarget,
@@ -150,23 +254,20 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
         data: &[u8],
     ) -> Result<(), ()> {
         let (bank_start, bank_end) = self.get_bank_range(target);
-
         if bank_start == 0 {
-            defmt::error!("Invalid target for dual-bank write: {:?}", target);
             return Err(());
         }
-
         let bank_len = bank_end.saturating_sub(bank_start);
-        if offset > bank_len || data.len() > bank_len - offset {
-            defmt::error!(
-                "Write would exceed bank boundary: offset={:#x}, len={}, capacity={:#x}",
-                offset,
-                data.len(),
-                bank_len
-            );
+        let prefix = if target == DfuTarget::TrustList {
+            release_signing::DFU_HEADER_LEN
+        } else {
+            512
+        };
+        let payload_capacity = bank_len.checked_sub(prefix).ok_or(())?;
+        if offset > payload_capacity || data.len() > payload_capacity - offset {
             return Err(());
         }
-        let write_addr = bank_start + offset;
+        let write_addr = bank_start + prefix + offset;
 
         defmt::debug!(
             "Writing {} bytes to {:?} at offset {:#x}",
@@ -176,9 +277,8 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
         );
 
         let is_app = matches!(target, DfuTarget::AppBankA | DfuTarget::AppBankB);
-        if offset == 0 && !is_app {
+        if offset == 0 && !is_app && target != DfuTarget::TrustList {
             clear_netcore_dfu_info(self.flash)?;
-            // A stale stage1 swap must not consume this replacement staging payload.
             unsafe extern "C" {
                 static __stage1_state_start: u32;
             }
@@ -196,14 +296,6 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
             pcd.cmd.clear();
             pcd.status.clear();
         }
-        let (write_addr, data) = if is_app && offset == 0 {
-            self.app_stack_pointer
-                .copy_from_slice(data.get(..4).ok_or(())?);
-            // Keep partial banks unbootable across reset until the image hash is authenticated.
-            (write_addr + 4, &data[4..])
-        } else {
-            (write_addr, data)
-        };
         self.flash.lock(|flash_cell| {
             let mut flash = flash_cell.borrow_mut();
             if matches!(target, DfuTarget::AppBankA | DfuTarget::AppBankB) {
@@ -221,9 +313,11 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
                 }
             }
 
-            // DFU appends chunks in order. The page containing an unaligned offset already holds
-            // earlier bytes. Erase only pages first reached by this chunk.
-            let page_start = (bank_start + offset + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+            let page_start = if offset == 0 {
+                bank_start
+            } else {
+                (write_addr + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+            };
             let page_end = (write_addr + data.len() + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
             for page_addr in (page_start..page_end).step_by(PAGE_SIZE) {
@@ -242,11 +336,7 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
         })?;
 
         if target == DfuTarget::NetCore {
-            self.netcore_dfu_size = if offset == 0 {
-                data.len()
-            } else {
-                (offset + data.len()).max(self.netcore_dfu_size)
-            };
+            self.netcore_dfu_size = 512 + offset + data.len();
             let pcd = get_pcd_region();
             pcd.status.reserved[0].store(self.netcore_dfu_size as u32, Ordering::Release);
             pcd.status.reserved[1].store(0x4E_5450, Ordering::Release); // "NTP"
@@ -255,17 +345,22 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
     }
 
     fn mark_updated_for_target(&mut self, target: DfuTarget) -> Result<(), ()> {
-        defmt::info!(
+        defmt::debug!(
             "Marking {:?} as updated (direct XIP, no swap needed)",
             target
         );
 
+        if target == DfuTarget::TrustList {
+            return Ok(());
+        }
+        self.verify_completed(target)?;
         // The bank written last is preferred on the next boot.
         let target_slot = match target {
             DfuTarget::AppBankA => SLOT_A,
             DfuTarget::AppBankB => SLOT_B,
             DfuTarget::NetCore => {
-                defmt::info!(
+                self.netcore_dfu_size = 512 + self.signed_size;
+                defmt::debug!(
                     "Setting netcore DFU pending via PCD, size: {}",
                     self.netcore_dfu_size
                 );
@@ -285,7 +380,7 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
                 let padded = (self.netcore_dfu_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
                 pcd.status.reserved[0].store(padded as u32, Ordering::Release);
                 pcd.status.reserved[1].store(0x4E_54_44, Ordering::Release); // "NTD"
-                defmt::info!(
+                defmt::debug!(
                     "PCD command set in RAM: addr={:#x}, size={} (padded {})",
                     dfu_addr,
                     self.netcore_dfu_size,
@@ -298,13 +393,13 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
                 {
                     defmt::warn!("Failed to persist netcore DFU info to flash");
                 } else {
-                    defmt::info!("Netcore DFU info written to flash for persistence across reset");
+                    defmt::debug!("Netcore DFU info written to flash for persistence across reset");
                 }
 
                 return Ok(());
             }
             DfuTarget::Bootloader => {
-                defmt::info!("Bootloader DFU completed, marking for swap via stage1");
+                defmt::debug!("Bootloader DFU completed, marking for swap via stage1");
                 // The new bootloader is already in the DFU region. SWAP_MAGIC in
                 // stage1_state makes stage1 swap it in on the next boot.
 
@@ -334,31 +429,18 @@ impl<'d> FirmwareWriter for DualBankFlashWriter<'d> {
                         return Err(());
                     }
 
-                    defmt::info!("Stage1 state marked for bootloader swap");
+                    defmt::debug!("Stage1 state marked for bootloader swap");
                     Ok(())
                 })?;
 
                 return Ok(());
             }
+            DfuTarget::TrustList => return Err(()),
         };
 
         self.flash.lock(|flash_cell| {
-            let mut flash = flash_cell.borrow_mut();
-            let (bank_start, bank_end) = self.get_bank_range(target);
-            // SAFETY: the reset vector lies inside the linker-defined application bank.
-            let reset = unsafe { ((bank_start + 4) as *const u32).read_volatile() };
-            if !better_boot::valid_vectors(
-                bank_start..bank_end,
-                u32::from_le_bytes(self.app_stack_pointer),
-                reset,
-            ) {
-                return Err(());
-            }
-            flash
-                .write(bank_start as u32, &self.app_stack_pointer)
-                .map_err(|_| ())?;
             get_boot_state_manager()
-                .mark_bank_updated(&mut *flash, target_slot, PAGE_SIZE as u32)
+                .mark_bank_updated(&mut *flash_cell.borrow_mut(), target_slot, PAGE_SIZE as u32)
                 .map_err(|_| ())
         })
     }
@@ -374,10 +456,22 @@ fn stored_boot_state() -> BootState {
     unsafe { core::ptr::read_volatile(address as *const BootState) }
 }
 
-/// Whether `slot`'s bank still has the stack pointer and reset vector of a
-/// bootable application, judged without touching the boot state.
-fn valid_resume_vectors(slot: u8) -> bool {
-    // SAFETY: Linker script defines app-bank boundaries in mapped flash.
+fn valid_app_slot(start: usize, end: usize, keys: &[release_signing::PublicKey]) -> bool {
+    if end <= start {
+        return false;
+    }
+    // SAFETY: linker-defined app bank is readable mapped flash.
+    let slot = unsafe { core::slice::from_raw_parts(start as *const u8, end - start) };
+    lite1_secure_boot::verify_slot(
+        slot,
+        start as u32,
+        release_signing::Component::Lite1SecureApp,
+        keys,
+    )
+    .is_ok()
+}
+
+fn valid_resume_slot(slot: u8) -> bool {
     unsafe extern "C" {
         static __bootloader_app_a_start: u32;
         static __bootloader_app_a_end: u32;
@@ -395,11 +489,45 @@ fn valid_resume_vectors(slot: u8) -> bool {
         }
         _ => return false,
     };
-    // SAFETY: Linker-defined application banks contain aligned, readable vector tables.
-    let sp = unsafe { core::ptr::read_volatile(bank.start as *const u32) };
-    // SAFETY: The reset vector is the second aligned word in the application bank.
-    let reset = unsafe { core::ptr::read_volatile((bank.start + 4) as *const u32) };
-    better_boot::valid_vectors(bank, sp, reset)
+    let Ok(policy) = lite1_secure_boot::handoff::current_policy() else {
+        return false;
+    };
+    valid_app_slot(bank.start, bank.end, policy.keys())
+}
+fn valid_staged_netcore(address: u32, size: u32) -> bool {
+    unsafe extern "C" {
+        static __bootloader_dfu_region_start: u32;
+        static __bootloader_dfu_region_end: u32;
+        static __netcore_primary_start: u32;
+    }
+    let start = &raw const __bootloader_dfu_region_start as u32;
+    let end = &raw const __bootloader_dfu_region_end as u32;
+    if address != start || size < 512 || size > end.saturating_sub(start) {
+        return false;
+    }
+    let Ok(policy) = lite1_secure_boot::handoff::current_policy() else {
+        return false;
+    };
+    let Ok(len) = usize::try_from(size) else {
+        return false;
+    };
+    // SAFETY: validated PCD address and size lie inside linker-defined DFU staging region.
+    let slot = unsafe { core::slice::from_raw_parts(address as *const u8, len) };
+    let Ok(verifier) = release_signing::DfuVerifier::new_with_keys(
+        release_signing::Component::Lite1SecureNetCore,
+        &slot[..release_signing::DFU_HEADER_LEN],
+        policy.keys(),
+    ) else {
+        return false;
+    };
+    size == 512 + verifier.image_size()
+        && lite1_secure_boot::verify_slot(
+            slot,
+            &raw const __netcore_primary_start as u32,
+            release_signing::Component::Lite1SecureNetCore,
+            policy.keys(),
+        )
+        .is_ok()
 }
 
 /// Selects a valid application bank and persists its boot decision.
@@ -419,31 +547,22 @@ fn select_boot_bank(
     let bank_a_end = &raw const __bootloader_app_a_end as usize;
     let bank_b_start = &raw const __bootloader_app_b_start as usize;
     let bank_b_end = &raw const __bootloader_app_b_end as usize;
-    // SAFETY: Linker symbols delimit readable, aligned application vector tables.
-    let bank_a_sp = unsafe { core::ptr::read_volatile(bank_a_start as *const u32) };
-    // SAFETY: Reset vector is second aligned word inside bank A.
-    let bank_a_reset = unsafe { core::ptr::read_volatile((bank_a_start + 4) as *const u32) };
-    // SAFETY: Linker symbols delimit readable, aligned application vector tables.
-    let bank_b_sp = unsafe { core::ptr::read_volatile(bank_b_start as *const u32) };
-    // SAFETY: Reset vector is second aligned word inside bank B.
-    let bank_b_reset = unsafe { core::ptr::read_volatile((bank_b_start + 4) as *const u32) };
-    let bank_a_valid =
-        better_boot::valid_vectors(bank_a_start..bank_a_end, bank_a_sp, bank_a_reset);
-    let bank_b_valid =
-        better_boot::valid_vectors(bank_b_start..bank_b_end, bank_b_sp, bank_b_reset);
+    let policy = lite1_secure_boot::handoff::current_policy().ok();
+    let bank_a_valid = policy
+        .as_ref()
+        .is_some_and(|policy| valid_app_slot(bank_a_start, bank_a_end, policy.keys()));
+    let bank_b_valid = policy
+        .as_ref()
+        .is_some_and(|policy| valid_app_slot(bank_b_start, bank_b_end, policy.keys()));
 
-    defmt::info!(
-        "Bank A: addr={:#x}, sp={:#x}, reset={:#x}, valid={}",
+    defmt::debug!(
+        "Bank A: addr={:#x}, signed-valid={}",
         bank_a_start,
-        bank_a_sp,
-        bank_a_reset,
         bank_a_valid
     );
-    defmt::info!(
-        "Bank B: addr={:#x}, sp={:#x}, reset={:#x}, valid={}",
+    defmt::debug!(
+        "Bank B: addr={:#x}, signed-valid={}",
         bank_b_start,
-        bank_b_sp,
-        bank_b_reset,
         bank_b_valid
     );
 
@@ -464,8 +583,8 @@ fn select_boot_bank(
     };
     let state = read_boot_state(flash);
     let (offset, name) = match slot {
-        Some(SLOT_A) => (Some(bank_a_start), "Bank A"),
-        Some(SLOT_B) => (Some(bank_b_start), "Bank B"),
+        Some(SLOT_A) => (Some(bank_a_start + 512), "Bank A"),
+        Some(SLOT_B) => (Some(bank_b_start + 512), "Bank B"),
         Some(_) => unreachable!(),
         None => {
             defmt::warn!("No bootable bank; entering DFU recovery");
@@ -497,18 +616,6 @@ fn check_dfu_state(
         let _flash = flash_cell.borrow();
         // SAFETY: The state word is linker-defined, aligned, and readable flash.
         let state_word = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
-        // SAFETY: BootState follows the state word at its linker-defined aligned flash address.
-        let state_struct = unsafe {
-            core::ptr::read_volatile((state_addr + core::mem::size_of::<u32>()) as *const BootState)
-        };
-
-        defmt::info!(
-            "Boot state word: {:#010x}, active={}, pending={}, attempts={}",
-            state_word,
-            state_struct.active_slot,
-            state_struct.pending_slot,
-            state_struct.boot_counter
-        );
 
         state_word == better_boot::SWAP_MAGIC
     })
@@ -719,7 +826,7 @@ fn flag_dfu_requested(
         // SAFETY: State address is linker-defined and aligned; flash write completed before read-back.
         let verify_flag = unsafe { core::ptr::read_volatile(state_addr as *const u32) };
 
-        defmt::info!(
+        defmt::debug!(
             "Flagged DFU requested (SWAP_MAGIC) at {:#x} (read-back={:#010x}); preserved state active={}, pending={}, attempts={}",
             state_addr,
             verify_flag,
@@ -738,7 +845,7 @@ fn flag_dfu_requested(
 async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
     use embassy_time::{Duration, Timer};
 
-    defmt::info!("Watchdog feeder task started (feeding every 30s)");
+    defmt::debug!("Watchdog feeder task started (feeding every 30s)");
 
     loop {
         wdt_handle.pet();
@@ -778,7 +885,7 @@ async fn main(spawner: Spawner) -> ! {
 
     if pcd.status.is_valid() {
         if let Some(status) = pcd.status.get_status() {
-            defmt::info!("PCD status from previous net DFU: {}", status as u32);
+            defmt::debug!("PCD status from previous net DFU: {}", status as u32);
             if matches!(status, PcdStatusCode::Success | PcdStatusCode::AppConfirmed) {
                 if let Err(_) = clear_netcore_dfu_info(&flash) {
                     defmt::warn!("Failed to clear persisted netcore DFU info after status");
@@ -808,7 +915,7 @@ async fn main(spawner: Spawner) -> ! {
                 let dfu_addr = core::ptr::read_volatile((state_addr + 16) as *const u32);
                 let dfu_size = core::ptr::read_volatile((state_addr + 20) as *const u32);
 
-                defmt::info!(
+                defmt::debug!(
                     "Found netcore DFU in flash: addr={:#x}, size={}",
                     dfu_addr,
                     dfu_size
@@ -819,7 +926,7 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    defmt::info!(
+    defmt::debug!(
         "PCD region: magic={:#x}, addr={:#x}, size={}",
         // SAFETY: `pcd` points to valid shared SRAM and the field is an aligned atomic word.
         unsafe { core::ptr::read_volatile(&pcd.cmd.magic as *const _ as *const u32) },
@@ -834,15 +941,25 @@ async fn main(spawner: Spawner) -> ! {
     let mut netcore_dfu_pending = pcd.copy_pending();
 
     if netcore_dfu_pending {
-        defmt::info!("PCD command VALID - will start netcore bootloader");
+        defmt::debug!("PCD command VALID - will start netcore bootloader");
     } else {
-        defmt::info!("PCD command INVALID - skipping netcore DFU");
+        defmt::debug!("PCD command INVALID - skipping netcore DFU");
     }
 
     // A copy that never reports back is retried a few times, then abandoned: the
     // pending command survives power cycles, so an unbounded retry would trap the
     // unit before DFU. Giving up enters DFU so the update can be run again.
     let mut netcore_gave_up = false;
+    if netcore_dfu_pending
+        && !valid_staged_netcore(pcd.cmd.get_image_addr(), pcd.cmd.get_image_size())
+    {
+        defmt::error!("Staged network slot failed authentication; entering USB recovery");
+        let _ = clear_netcore_dfu_info(&flash);
+        pcd.cmd.clear();
+        pcd.status.clear();
+        netcore_dfu_pending = false;
+        netcore_gave_up = true;
+    }
     if netcore_dfu_pending {
         // SAFETY: State page layout is linker-defined; attempt count is the persisted word at offset 24.
         let stored_attempts = unsafe {
@@ -854,7 +971,7 @@ async fn main(spawner: Spawner) -> ! {
         };
         match lite1_pcd::next_copy_attempt(stored_attempts) {
             Some(attempt) => {
-                defmt::info!(
+                defmt::debug!(
                     "Net core copy attempt {}/{}",
                     attempt,
                     lite1_pcd::MAX_COPY_ATTEMPTS
@@ -888,7 +1005,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // Run the netcore bootloader for a pending update.
     if netcore_dfu_pending {
-        defmt::info!("Network core DFU pending, starting network core bootloader");
+        defmt::debug!("Network core DFU pending, starting network core bootloader");
         use embassy_nrf::pac::reset::vals::Forceoff;
         use embassy_nrf::pac::spu::vals;
 
@@ -896,9 +1013,10 @@ async fn main(spawner: Spawner) -> ! {
         unsafe {
             let spu = embassy_nrf::pac::SPU_S;
 
-            // The netcore reads app flash and its own.
-            const NUM_FLASH_REGIONS: usize = 64;
-            for i in 0..NUM_FLASH_REGIONS {
+            // The network core is a non-secure bus master. Only the 16 KiB SPU
+            // regions covering DFU staging become non-secure; stage1, stage2 and
+            // both app banks stay secure and unreachable from it.
+            for i in DFU_SPU_REGIONS {
                 spu.flashregion(i).perm().write(|w| {
                     w.set_read(true);
                     w.set_write(true);
@@ -960,7 +1078,7 @@ async fn main(spawner: Spawner) -> ! {
                 .write(|w| w.set_forceoff(Forceoff::RELEASE));
             (0x50005618 as *mut u32).write_volatile(0);
         }
-        defmt::info!("Network core bootloader started");
+        defmt::debug!("Network core bootloader started");
 
         // The net core reports its own copy failures, so this only bounds a net
         // core that never answers. shortcut: 30 s assumes a ~10 s copy
@@ -977,7 +1095,7 @@ async fn main(spawner: Spawner) -> ! {
                     None
                 };
                 if let Some(status) = status {
-                    defmt::info!("Netcore DFU status from net bootloader: {}", status as u32);
+                    defmt::debug!("Netcore DFU status from net bootloader: {}", status as u32);
                     if status == PcdStatusCode::Success {
                         if let Err(_) = clear_netcore_dfu_info(&flash) {
                             defmt::warn!("Failed to clear persisted netcore DFU info after status");
@@ -1007,23 +1125,6 @@ async fn main(spawner: Spawner) -> ! {
                     cortex_m::peripheral::SCB::sys_reset();
                 }
 
-                if ticks % 10 == 0 {
-                    // SAFETY: `pcd` points to valid shared SRAM; atomic fields are aligned and initialized.
-                    let magic = unsafe {
-                        core::ptr::read_volatile(&pcd.status.magic as *const _ as *const u32)
-                    };
-                    // SAFETY: `pcd` points to valid shared SRAM; atomic fields are aligned and initialized.
-                    let raw_status = unsafe {
-                        core::ptr::read_volatile(&pcd.status.status as *const _ as *const u32)
-                    };
-                    defmt::info!(
-                        "Waiting for netcore DFU status... ticks={}/{} magic={:#x} raw_status={:#x}",
-                        ticks,
-                        MAX_TICKS,
-                        magic,
-                        raw_status
-                    );
-                }
                 Timer::after(Duration::from_millis(100)).await;
                 ticks += 1;
             }
@@ -1037,20 +1138,20 @@ async fn main(spawner: Spawner) -> ! {
     if app_dfu_flag.magic == APP_DFU_FLAG_MAGIC && app_dfu_flag.dfu_requested != 0 {
         ram_dfu_request = true;
         app_dfu_flag.dfu_requested = 0;
-        defmt::info!("DFU requested via RAM flag");
+        defmt::debug!("DFU requested via RAM flag");
     }
 
     // A pending netcore update takes precedence over app DFU, even with SWAP_MAGIC set.
     let mut should_enter_dfu = ram_dfu_request || check_dfu_state(&flash) || netcore_gave_up;
     if netcore_dfu_pending && should_enter_dfu {
-        defmt::info!("Clearing app DFU request because netcore DFU is pending");
+        defmt::debug!("Clearing app DFU request because netcore DFU is pending");
         should_enter_dfu = false;
         // Clear SWAP_MAGIC, otherwise every boot lands in DFU.
         let mut state = read_boot_state(&flash);
         state.boot_counter = 0;
         let _ = write_boot_state(&flash, &state);
     }
-    defmt::info!(
+    defmt::debug!(
         "DFU decision: should_enter_dfu={} netcore_dfu_pending={}",
         should_enter_dfu,
         netcore_dfu_pending
@@ -1070,7 +1171,7 @@ async fn main(spawner: Spawner) -> ! {
         && confirmed_application
         && !netcore_was_pending
         && !netcore_gave_up
-        && valid_resume_vectors(entry_state.active_slot);
+        && valid_resume_slot(entry_state.active_slot);
 
     let (boot_offset, boot_bank_name, boot_state) = select_boot_bank(&flash);
     if boot_offset.is_none() {
@@ -1095,7 +1196,7 @@ async fn main(spawner: Spawner) -> ! {
         // SAFETY: Stage-one state address is aligned readable flash.
         let stage1_magic = unsafe { core::ptr::read_volatile(stage1_state_addr as *const u32) };
         if stage1_magic != better_boot::BOOT_MAGIC && stage1_magic != ERASED_WORD {
-            defmt::info!(
+            defmt::debug!(
                 "Confirming this bootloader to stage1 (state word was {:#010x})",
                 stage1_magic
             );
@@ -1129,9 +1230,7 @@ async fn main(spawner: Spawner) -> ! {
     if should_enter_dfu {
         defmt::info!("DFU mode");
 
-        defmt::info!("Creating USB driver with VBUS detect");
         let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-        defmt::info!("USB driver created");
         static SERIAL_BUF: static_cell::ConstStaticCell<[u8; 12]> =
             static_cell::ConstStaticCell::new([0; 12]);
         let serial_buf = SERIAL_BUF.take();
@@ -1162,12 +1261,10 @@ async fn main(spawner: Spawner) -> ! {
         let mut msos_descriptor = [0; 512];
         let mut control_buf = [0; 4096];
 
-        defmt::info!("Creating DFU control with dual-bank and network core support");
-
         // The active bank decides which alt interface is offered: Bank B for
         // download when Bank A is active, and the reverse.
         let active_bank_is_a = boot_bank_name.starts_with("Bank A");
-        defmt::info!("Active bank for DFU: {}", boot_bank_name);
+        defmt::debug!("Active bank for DFU: {}", boot_bank_name);
 
         let dual_bank_writer = DualBankFlashWriter::new(&flash);
 
@@ -1186,11 +1283,12 @@ async fn main(spawner: Spawner) -> ! {
             ResetImmediate,
             active_bank_is_a,
             [
-                release_signing::Component::Lite1App,
-                release_signing::Component::Lite1NetCore,
-                release_signing::Component::Lite1Bootloader,
+                release_signing::Component::Lite1SecureApp,
+                release_signing::Component::Lite1SecureNetCore,
+                release_signing::Component::Lite1SecureBootloader,
             ],
         );
+        state.set_trust_component(release_signing::Component::Lite1TrustList);
         state.set_firmware_version(env!("CARGO_PKG_VERSION"));
         state.set_state_flagger(&mut dfu_flagger);
         state.set_bootloader_label(concat!("BOOTLOADER ", env!("CARGO_PKG_VERSION")));
@@ -1226,7 +1324,6 @@ async fn main(spawner: Spawner) -> ! {
 
         let mut dev = builder.build();
 
-        defmt::info!("USB device built, starting run loop");
         if !resume_after_timeout {
             dev.run().await;
         } else {
@@ -1240,7 +1337,7 @@ async fn main(spawner: Spawner) -> ! {
                 defmt::error!("Cannot clear abandoned DFU request; staying in recovery");
                 dev.run().await;
             } else {
-                defmt::info!("No DFU download within 60 seconds; booting confirmed application");
+                defmt::debug!("No DFU download within 60 seconds; booting confirmed application");
             }
         }
     }
@@ -1266,12 +1363,12 @@ async fn main(spawner: Spawner) -> ! {
     {
         use embassy_nrf::pac::reset::vals::Forceoff;
 
-        defmt::info!("Stopping network core before booting app");
+        defmt::debug!("Stopping network core before booting app");
         embassy_nrf::pac::RESET_S
             .network()
             .forceoff()
             .write(|w| w.set_forceoff(Forceoff::HOLD));
-        defmt::info!("Network core stopped");
+        defmt::debug!("Network core stopped");
     }
 
     // Locked RAM is made read-only so the app cannot tamper with it.
@@ -1286,7 +1383,7 @@ async fn main(spawner: Spawner) -> ! {
         let locked_ram_start = &raw const __locked_ram_start as usize;
         let locked_ram_end = &raw const __locked_ram_end as usize;
 
-        defmt::info!(
+        defmt::debug!(
             "Locking RAM region 0x{:08x}-0x{:08x}",
             locked_ram_start,
             locked_ram_end
@@ -1301,99 +1398,11 @@ async fn main(spawner: Spawner) -> ! {
             spu.ramregion(region).perm().modify(|w| {
                 w.set_write(false);
             });
-            defmt::info!("Locked RAM region {}", region);
+            defmt::debug!("Locked RAM region {}", region);
         }
     }
 
-    // Dead: the stage1_state write happens right after select_boot_bank, since
-    // erasing just before the app jump corrupted flash.
-    if false {
-        // SAFETY: Linker script defines the stage-one state page in mapped flash.
-        unsafe extern "C" {
-            static __stage1_state_start: u32;
-        }
-
-        // SAFETY: Linker symbol points to the aligned stage-one state word.
-        let stage1_state_addr = unsafe { &__stage1_state_start as *const u32 as u32 };
-
-        // Same value embassy-boot's mark_booted() writes: BOOT_MAGIC, 0xD0D0D0D0.
-
-        defmt::info!(
-            "Marking stage2 bootloader boot as successful for stage1 (writing to state at {:#010x})",
-            stage1_state_addr
-        );
-
-        // stage2_state is read before and after to see whether erasing stage1_state disturbs it.
-        // SAFETY: Linker script defines the stage-two boot-state partition.
-        unsafe extern "C" {
-            static __bootloader_state_start: u32;
-        }
-        // SAFETY: Linker symbol points to the aligned stage-two state word.
-        let stage2_state_addr = unsafe { &__bootloader_state_start as *const u32 as u32 };
-        // SAFETY: The state word is linker-defined, aligned, and readable RAM-mapped flash.
-        let stage2_before = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
-        defmt::info!(
-            "[PRE-ERASE] stage2_state at {:#010x} = {:#010x}",
-            stage2_state_addr,
-            stage2_before
-        );
-
-        flash.lock(|flash_cell| {
-            let mut flash = flash_cell.borrow_mut();
-
-            let page_start = stage1_state_addr & !(PAGE_SIZE as u32 - 1);
-            let page_end = page_start + PAGE_SIZE as u32;
-
-            defmt::info!(
-                "[ERASE] Erasing stage1 page: start={:#010x}, end={:#010x}, size={}",
-                page_start,
-                page_end,
-                page_end - page_start
-            );
-
-            if let Err(_) = flash.erase(page_start, page_end) {
-                defmt::error!("Failed to erase stage1 state page at {:#x}", page_start);
-                return;
-            }
-
-            defmt::info!("[ERASE] Stage1 state page erased successfully");
-
-            // The erase must complete before anything else touches flash.
-            cortex_m::asm::dsb();
-            cortex_m::asm::isb();
-
-            let stage2_after_erase =
-            // SAFETY: State address is linker-defined aligned flash and erase operation has completed.
-                unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
-            defmt::info!(
-                "[POST-ERASE] stage2_state at {:#010x} = {:#010x}",
-                stage2_state_addr,
-                stage2_after_erase
-            );
-
-            if let Err(_) = flash.write(stage1_state_addr, &better_boot::BOOT_MAGIC.to_le_bytes()) {
-                defmt::error!(
-                    "Failed to write BOOT_MAGIC to stage1 state at {:#x}",
-                    stage1_state_addr
-                );
-                return;
-            }
-
-            // SAFETY: Stage-one state address is linker-defined aligned flash; write completed before read-back.
-            let verify = unsafe { core::ptr::read_volatile(stage1_state_addr as *const u32) };
-            defmt::info!("Stage1 state marked booted: magic={:#010x}", verify);
-
-            // SAFETY: Stage-two state address is linker-defined aligned readable flash.
-            let stage2_final = unsafe { core::ptr::read_volatile(stage2_state_addr as *const u32) };
-            defmt::info!(
-                "[FINAL] stage2_state at {:#010x} = {:#010x}",
-                stage2_state_addr,
-                stage2_final
-            );
-        });
-    }
-
-    defmt::info!(
+    defmt::debug!(
         "Booting application from {} at 0x{:08x}",
         boot_bank_name,
         boot_offset
