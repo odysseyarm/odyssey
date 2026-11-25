@@ -22,8 +22,8 @@ use crate::device_tasks::transport_selection::TransportSelection;
 
 const UUID: [u8; 6] = [1, 2, 3, 4, 5, 6];
 const WAIT: Duration = Duration::from_secs(5);
-/// Firmware from this protocol on picks its own transport.
-const AUTO_PROTOCOL: [u16; 3] = [0, 1, 6];
+/// A protocol that picks its own transport and carries OTA frames and marker hints as packets.
+const AUTO_PROTOCOL: [u16; 3] = [0, 3, 0];
 /// The unit stamps reports with whatever id the last Enable carried, which may have come
 /// over the other link, so reports here carry an id this link never issued.
 const FOREIGN_REPORT_ID: u8 = 254;
@@ -172,6 +172,16 @@ fn start_handler_with_links(
     control_device: Option<VmDevice>,
     events_device: Option<VmDevice>,
 ) -> Harness {
+    start_handler_with_protocol(device, owner, control_device, events_device, AUTO_PROTOCOL)
+}
+
+fn start_handler_with_protocol(
+    device: Device,
+    owner: Option<Arc<()>>,
+    control_device: Option<VmDevice>,
+    events_device: Option<VmDevice>,
+    protocol_version: [u16; 3],
+) -> Harness {
     let (message_channel, messages) = mpsc::channel(16);
     let (event_sender, events) = broadcast::channel(64);
     let context = DeviceTaskContext {
@@ -193,14 +203,14 @@ fn start_handler_with_links(
         device,
         control_rx,
         context: context.clone(),
-        protocol_version: AUTO_PROTOCOL,
+        protocol_version,
         hub_device: None,
         self_tx: commands.downgrade(),
     };
     let task = tokio::spawn(async move {
         let mut handler = DeviceHandler::start(init).await;
         handler.events_owner = owner;
-        handler.run().await;
+        Box::pin(handler.run()).await;
     });
     Harness {
         commands,
@@ -220,7 +230,7 @@ fn start_auto_unit_over_ble(ble: &FakeLink) -> Harness {
 
 #[tokio::test]
 async fn radio_update_frames_stay_on_bluetooth_after_the_cable_goes_in() {
-    let is_ota = |data: &PacketData| matches!(data, PacketData::Vendor(tag, _) if *tag == odyssey_protocol::ota::VENDOR_TAG);
+    let is_ota = |data: &PacketData| matches!(data, PacketData::OtaRequest(_));
     let mut ble = FakeLink::new();
     let mut usb = FakeLink::new();
     let harness = start_auto_unit_over_ble(&ble);
@@ -242,6 +252,33 @@ async fn radio_update_frames_stay_on_bluetooth_after_the_cable_goes_in() {
     while let Ok(packet) = usb.sent.try_recv() {
         assert!(!is_ota(&packet.data), "the frame went over USB");
     }
+}
+
+#[tokio::test]
+async fn radio_update_is_refused_before_any_traffic_on_a_pre_0_3_0_unit() {
+    let mut ble = FakeLink::new();
+    let mut connected = device(DeviceCapabilities::EVENTS | DeviceCapabilities::AUTO_TRANSPORT);
+    connected.events_connected = true;
+    let harness =
+        start_handler_with_protocol(connected, None, None, Some(ble.device.clone()), [0, 2, 2]);
+
+    let (reply, answer) = oneshot::channel();
+    harness
+        .send(DeviceTaskMessage::OtaExchange {
+            frame: vec![0],
+            reply,
+        })
+        .await;
+    tokio::time::timeout(WAIT, answer)
+        .await
+        .expect("handler answers")
+        .expect("handler replies")
+        .expect_err("the old protocol cannot take OTA packets");
+
+    assert!(
+        !ble.receives(|data| matches!(data, PacketData::OtaRequest(_)))
+            .await
+    );
 }
 
 impl Harness {

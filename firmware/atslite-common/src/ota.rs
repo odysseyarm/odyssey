@@ -1,7 +1,7 @@
 //! OTA for the lite1 and legacy-atslite trackers: a task that owns the `better_ota::Receiver`,
 //! and the flash backend that stages images for the bootloader.
 //!
-//! The packet handlers in `object_mode.rs` (and `legacy-common`) receive OTA vendor packets from
+//! The packet handlers in `object_mode.rs` (and `legacy-common`) receive OTA request packets from
 //! the hub and call [`OtaHandle::request`]. The request goes through a channel to [`run`], which
 //! feeds the single `Receiver` and answers with the encoded status. One exchange at a time:
 //! both channels hold one item and `request` waits for its own reply.
@@ -25,7 +25,7 @@ static REPLIES: Channel<ThreadModeRawMutex, Reply, QUEUE> = Channel::new();
 
 #[derive(Clone, Copy)]
 struct Frame {
-    len: u8,
+    len: u16,
     bytes: [u8; MAX_FRAME],
 }
 
@@ -45,7 +45,7 @@ pub struct OtaHandle;
 impl OtaHandle {
     /// Returns the reply to `bytes`, or `None` if the frame is over [`MAX_FRAME`].
     pub async fn request(&self, bytes: &[u8]) -> Option<Reply> {
-        let Ok(len) = u8::try_from(bytes.len()) else {
+        let Ok(len) = u16::try_from(bytes.len()) else {
             return None;
         };
         if bytes.len() > MAX_FRAME {

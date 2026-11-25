@@ -14,6 +14,7 @@ name: Proto Breaking Change Check
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths:
       - 'crates/odyssey-hub-server-interface/proto/**'
 
@@ -22,6 +23,9 @@ permissions:
 
 jobs:
   breaking:
+    # A maintainer applies this label when a PR breaks the wire contract on purpose, e.g. to
+    # replace an RPC no released client calls. Removing the label runs the check again.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'proto-breaking-accepted') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

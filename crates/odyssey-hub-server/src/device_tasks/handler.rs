@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{Fuse, StreamExt as _};
-use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport};
+use odyssey_hub_common::device::{Device, DeviceCapabilities, EventsTransport, Transport};
 use odyssey_usb::device::{GeneralSettings, MuxDevice, VmDevice};
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::{ReceiverStream, WatchStream};
@@ -91,7 +91,7 @@ impl DeviceHandler {
     /// Run a handler for `init` on its own task. The task is owned by the caller, which
     /// watches for it finishing (see `UsbDeviceManager::forget_finished_handlers`).
     pub(super) fn spawn(init: DeviceHandlerInit) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move { Self::start(init).await.run().await })
+        tokio::spawn(async move { Box::pin(Self::start(init).await.run()).await })
     }
 
     /// Reads the unit's config and starts its sensor streams. That can take seconds, so it
@@ -312,6 +312,7 @@ impl DeviceHandler {
             DeviceTaskMessage::ClearZero => self.on_clear_zero().await,
             DeviceTaskMessage::SetShotDelay(ms) => self.on_set_shot_delay(ms).await,
             DeviceTaskMessage::WriteVendor(tag, data) => self.on_write_vendor(tag, &data).await,
+            DeviceTaskMessage::MarkerHint(hint) => self.on_marker_hint(hint).await,
             DeviceTaskMessage::OtaExchange { frame, reply } => {
                 let result = self.on_ota_exchange(&frame).await;
                 let _ = reply.send(result);
@@ -443,6 +444,12 @@ impl DeviceHandler {
                 .capabilities
                 .remove(DeviceCapabilities::AUTO_TRANSPORT),
         }
+    }
+
+    /// The control device is the unit's Bluetooth packet link, not a USB cable. USB control
+    /// moves the unit to `Transport::Usb` when it attaches.
+    fn control_over_radio(&self) -> bool {
+        self.connections.control_device.is_some() && self.device.transport == Transport::UsbMux
     }
 
     /// A link is attached whose sensor streams are not running.

@@ -8,7 +8,8 @@ use std::time::Duration;
 use odyssey_hub_common::device::{Device, EventsTransport};
 use odyssey_hub_common::events::DeviceEventKind;
 use odyssey_protocol::control::device::{PairingError, TransportMode};
-use odyssey_protocol::{VendorData, ota};
+use odyssey_protocol::marker_hint::MarkerHint;
+use odyssey_protocol::ota;
 use odyssey_usb::Error as UsbError;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{ConfigKind, GeneralConfig, PacketData};
@@ -22,6 +23,12 @@ use crate::device_tasks::transport_selection::TransportSelection;
 
 /// Reboot is fire-and-forget: the unit disappears before it could acknowledge.
 const REBOOT_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// First device protocol that carries marker hints as `MarkerHint` packets.
+const MARKER_HINT_PROTOCOL: [u16; 3] = [0, 3, 0];
+
+/// First device protocol that carries OTA frames as `OtaRequest` packets.
+const OTA_PACKET_PROTOCOL: [u16; 3] = [0, 3, 0];
 
 /// First device protocol whose firmware lists and removes single bonds.
 const BOND_MANAGEMENT_PROTOCOL: [u16; 3] = [0, 2, 2];
@@ -76,18 +83,39 @@ impl DeviceHandler {
         }
     }
 
+    pub(super) async fn on_marker_hint(&mut self, hint: MarkerHint) {
+        // Older firmware cannot decode the packet.
+        if !semver_at_least(self.protocol_version, MARKER_HINT_PROTOCOL) {
+            return;
+        }
+        let Some(events) = self.connections.events_device.clone() else {
+            return;
+        };
+        if let Err(e) =
+            call_with_timeout(CALL_TIMEOUT, "marker_hint", events.send_marker_hint(hint)).await
+        {
+            warn!("Failed to send marker hint: {e}");
+        }
+    }
+
     pub(super) async fn on_ota_exchange(
         &mut self,
         frame: &[u8],
     ) -> Result<[u8; ota::STATUS_LEN], String> {
-        if frame.len() > ota::MAX_FRAME {
-            return Err("OTA request exceeds vendor packet limit".into());
+        if !semver_at_least(self.protocol_version, OTA_PACKET_PROTOCOL) {
+            return Err(format!(
+                "Unit speaks device protocol {}.{}.{}; radio update needs {}.{}.{} or newer. Update it over USB",
+                self.protocol_version[0],
+                self.protocol_version[1],
+                self.protocol_version[2],
+                OTA_PACKET_PROTOCOL[0],
+                OTA_PACKET_PROTOCOL[1],
+                OTA_PACKET_PROTOCOL[2],
+            ));
         }
-        let mut data = VendorData {
-            len: u8::try_from(frame.len()).map_err(|error| error.to_string())?,
-            data: [0; VendorData::CAPACITY],
-        };
-        data.data[..frame.len()].copy_from_slice(frame);
+        let frame = heapless::Vec::from_slice(frame)
+            .map_err(|_overlong| "OTA request exceeds the OTA frame limit".to_owned())?;
+        let request = PacketData::OtaRequest(ota::Frame::from(frame));
         let links = self.radio_links();
         if links.is_empty() {
             return Err(
@@ -98,21 +126,15 @@ impl DeviceHandler {
             &links,
             SLOW_CALL_TIMEOUT,
             "ota_exchange",
-            |device: VmDevice| async move {
-                device
-                    .request(PacketData::Vendor(ota::VENDOR_TAG, data))
-                    .await
+            |device: VmDevice| {
+                let request = request.clone();
+                async move { device.request(request).await }
             },
         )
         .await?;
-        let PacketData::Vendor(tag, response) = response else {
+        let PacketData::OtaStatus(status) = response else {
             return Err("Device returned an unexpected OTA response".into());
         };
-        if tag != ota::VENDOR_TAG || usize::from(response.len) != ota::STATUS_LEN {
-            return Err("Device returned a malformed OTA status".into());
-        }
-        let mut status = [0; ota::STATUS_LEN];
-        status.copy_from_slice(&response.data[..ota::STATUS_LEN]);
         Ok(status)
     }
 
@@ -403,6 +425,14 @@ impl DeviceHandler {
             let _ = reply.send(Err("no control device available".into()));
             return;
         };
+        // The adapter is already linked to a unit reached over Bluetooth, and a second
+        // link would end that one.
+        if self.control_over_radio() {
+            let _ = reply.send(Err(
+                "this computer is already linked to the unit over Bluetooth".into(),
+            ));
+            return;
+        }
         // `native_ble::pair` derives the unit's BLE address from its uuid.
         let unit = self.device.uuid;
         tokio::spawn(async move {

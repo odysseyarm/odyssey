@@ -429,6 +429,11 @@ impl DeviceHandler {
         self.device.capabilities.remove(DeviceCapabilities::EVENTS);
         self.device.events_connected = false;
 
+        if self.control_over_radio() {
+            // The control device was the BLE link that just went away.
+            self.connections.control_device = None;
+            self.device.capabilities.remove(DeviceCapabilities::CONTROL);
+        }
         if self.connections.control_device.is_none() {
             info!("Device {uuid:02x?} has no control device, exiting");
             return ControlFlow::Break(());

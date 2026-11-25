@@ -31,7 +31,7 @@ service Service {
   rpc RebootDevice(Device) returns (EmptyReply) {}
 
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
-  rpc ExchangeVendor(ExchangeVendorRequest) returns (ExchangeVendorReply) {}
+  rpc ExchangeOta(ExchangeOtaRequest) returns (ExchangeOtaReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
   rpc ReadConfig(ReadConfigRequest) returns (ReadConfigReply) {}
@@ -393,12 +393,11 @@ message WriteVendorRequest {
   bytes data = 3;
 }
 
-message ExchangeVendorRequest {
+message ExchangeOtaRequest {
   Device device = 1;
-  uint32 tag = 2;
-  bytes data = 3;
+  bytes data = 2;
 }
-message ExchangeVendorReply {
+message ExchangeOtaReply {
   bytes data = 1;
 }
 

@@ -11,23 +11,25 @@
 //! |--------|------------------|-------------------------------------------|--------------|
 //! | 0      | [`Request::Query`]  | none                                   | 1            |
 //! | 1      | [`Request::Begin`]  | image `u8`, size `u32`, CRC-32 `u32`   | 10           |
-//! | 2      | [`Request::Data`]   | offset `u32`, then image bytes         | 6 to 98      |
+//! | 2      | [`Request::Data`]   | offset `u32`, then image bytes         | 6 to 245     |
 //! | 3      | [`Request::Commit`] | none                                   | 1            |
 //! | 4      | [`Request::Abort`]  | none                                   | 1            |
 //! | 5      | [`Request::Signature`] | image `u8`, record offset `u8`, record bytes (version `[u32; 3]`, signature `[u8; 64]`; 76 in all) | 4 to 79 |
 //!
 //! The status reply is [`STATUS_LEN`] bytes. See [`Status::encode`] for the layout.
 
-/// Tag of the vendor packet that carries OTA frames on the L2CAP packet link. The marker hint uses
-/// [`crate::marker_hint::VENDOR_TAG`].
+/// Largest request frame: one opcode byte, a 4-byte offset and up to 240 data bytes.
+///
+/// The unit's BLE host reassembles each received L2CAP SDU inside one 251-byte pool packet and
+/// closes the channel on anything larger, whatever MTU the channel announces. A
+/// [`crate::PacketData::OtaRequest`] carrying this frame encodes to at most 249 bytes.
 ///
 /// Since: Unreleased.
-pub const VENDOR_TAG: u8 = 0xfe;
-/// Largest request frame: one opcode byte, a 4-byte offset and up to 93 data bytes. Equals
-/// [`crate::VendorData::CAPACITY`], so a frame fits one vendor packet.
+pub const MAX_FRAME: usize = 245;
+/// One OTA request frame as a packet carries it.
 ///
 /// Since: Unreleased.
-pub const MAX_FRAME: usize = 98;
+pub type Frame = crate::List<u8, MAX_FRAME>;
 /// Length of an encoded [`Status`].
 ///
 /// Since: Unreleased.

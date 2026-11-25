@@ -11,8 +11,8 @@
 //!
 //! - ATS Lite: `RadioOtaTransport` in odyssey-desktop's
 //!   `firmware_update/update_task.rs`. Frames go through the hub's
-//!   `exchange_vendor` RPC and out over the device's selected packet link, BLE
-//!   through a mux dongle. Chunking is [`LinkMtu::Vendor`].
+//!   `exchange_ota` RPC and out over the device's selected packet link, BLE
+//!   through a mux dongle. Chunking is [`LinkMtu::Packet`].
 //! - Marker control board: `MarkerOtaTransport` in `accessories/ota.rs`. Frames
 //!   go to the marker's OTA GATT characteristic, either on the host's own
 //!   Bluetooth adapter or relayed by an Odyssey dongle (`accessories/transport.rs`
@@ -27,21 +27,24 @@ use odyssey_firmware_manifest::{FileEntry, FirmwareEntry};
 use odyssey_protocol::ota::{self, Code, Image, Request, Status};
 use sha2::Digest as _;
 
-const VENDOR_DATA_CHUNK: usize = 92;
+/// [`Request::Data`] header: opcode and 4-byte offset.
+const DATA_HEADER_LEN: usize = 5;
+const PACKET_DATA_CHUNK: usize = ota::MAX_FRAME - DATA_HEADER_LEN;
 const MARKER_DATA_CHUNK: usize = 12;
 
 /// Data bytes per [`Request::Data`] frame. The frame adds a 5-byte header, so
-/// the vendor chunk plus header stays within [`ota::MAX_FRAME`].
+/// the packet chunk plus header fills [`ota::MAX_FRAME`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkMtu {
-    Vendor,
+    /// `OtaRequest` packets over the unit's packet link.
+    Packet,
     Marker,
 }
 
 impl LinkMtu {
     const fn data_chunk(self) -> usize {
         match self {
-            Self::Vendor => VENDOR_DATA_CHUNK,
+            Self::Packet => PACKET_DATA_CHUNK,
             Self::Marker => MARKER_DATA_CHUNK,
         }
     }
@@ -207,7 +210,8 @@ fn verify_secure_signature(
                 .and_then(|bytes| bytes.try_into().ok())
                 .ok_or(OtaError::InvalidSignature(name))
         })?;
-    let size = u32::try_from(image.bytes.len()).map_err(|_error| OtaError::InvalidImage(name))?;
+    let size =
+        u32::try_from(image.bytes.len()).map_err(|_too_long| OtaError::InvalidImage(name))?;
     let hash: [u8; 32] = sha2::Sha256::digest(image.bytes).into();
     let message = release_signing::message(component, size, version, &hash);
     if release_signing::verify_production(&message, &signature) {
@@ -308,7 +312,7 @@ async fn transfer_safely<T: OtaTransport>(
     }
 }
 
-/// Sends verified images through an acknowledged accessory or vendor transport.
+/// Sends verified images through an acknowledged accessory or packet transport.
 ///
 /// Both images are staged before a single commit, and any failure before it
 /// aborts the staged data, so the running firmware is untouched. The net core
@@ -327,7 +331,7 @@ pub async fn send<T: OtaTransport>(
     entry: &FirmwareEntry,
     images: Images<'_>,
 ) -> Result<(), OtaError> {
-    if link == LinkMtu::Vendor
+    if link == LinkMtu::Packet
         && !odyssey_firmware_manifest::ats_lite_target_compatible(
             "atslite1",
             entry,
@@ -343,7 +347,7 @@ pub async fn send<T: OtaTransport>(
         });
     }
     let secure_format =
-        link == LinkMtu::Vendor && entry.requires_bootloader >= semver::Version::new(2, 0, 0);
+        link == LinkMtu::Packet && entry.requires_bootloader >= semver::Version::new(2, 0, 0);
     if secure_format {
         let component = release_signing::Component::Lite1SecureApp;
         for image in [images.application, images.app_a, images.app_b]
@@ -683,7 +687,7 @@ mod tests {
 
         let result = send(
             &mut device,
-            LinkMtu::Vendor,
+            LinkMtu::Packet,
             &target,
             Images {
                 application: None,
@@ -753,7 +757,7 @@ mod tests {
 
         let result = send(
             &mut device,
-            LinkMtu::Vendor,
+            LinkMtu::Packet,
             &entry(),
             Images {
                 application: None,
@@ -805,7 +809,7 @@ mod tests {
             Some(Image::Application)
         );
 
-        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+        update(&mut device, LinkMtu::Packet, (app, &app_file), None)
             .await
             .expect("retry after interrupted transfer");
 
@@ -824,14 +828,14 @@ mod tests {
             &mut device,
             Image::Application,
             stale,
-            LinkMtu::Vendor,
+            LinkMtu::Packet,
             None,
         )
         .await
         .expect("stage stale image");
         assert_ne!(device.receiver.status(2, 0, [0; 3], 0).staged, 0);
 
-        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+        update(&mut device, LinkMtu::Packet, (app, &app_file), None)
             .await
             .expect("retry after staged session");
 
@@ -853,7 +857,7 @@ mod tests {
         netcore: Option<(&[u8], &FileEntry)>,
     ) -> Result<(), OtaError> {
         let bootloader = match link {
-            LinkMtu::Vendor => semver::Version::new(1, 0, 0),
+            LinkMtu::Packet => semver::Version::new(1, 0, 0),
             LinkMtu::Marker => semver::Version::new(0, 0, 0),
         };
         send(
@@ -905,7 +909,7 @@ mod tests {
 
         update(
             &mut device,
-            LinkMtu::Vendor,
+            LinkMtu::Packet,
             (app, &app_file),
             Some((netcore, &netcore_file)),
         )
@@ -929,7 +933,7 @@ mod tests {
         let mut device = Device::new(false);
         device.require_signature = true;
 
-        let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+        let result = update(&mut device, LinkMtu::Packet, (app, &app_file), None).await;
 
         assert!(matches!(
             result,
@@ -947,7 +951,7 @@ mod tests {
         let mut device = Device::new(false);
         device.require_signature = true;
 
-        let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+        let result = update(&mut device, LinkMtu::Packet, (app, &app_file), None).await;
 
         assert!(matches!(
             result,
@@ -965,7 +969,7 @@ mod tests {
             device.target_netcore = device.current_netcore;
             device.refuse_commit = Some(refusal);
 
-            let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+            let result = update(&mut device, LinkMtu::Packet, (app, &app_file), None).await;
 
             assert!(
                 match &result {
@@ -987,7 +991,7 @@ mod tests {
         let mut device = Device::new(false);
         device.target_netcore = device.current_netcore;
 
-        update(&mut device, LinkMtu::Vendor, (app, &app_file), None)
+        update(&mut device, LinkMtu::Packet, (app, &app_file), None)
             .await
             .expect("update");
 

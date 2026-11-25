@@ -1,6 +1,8 @@
 //! `VmDevice` operations that go over the USB control endpoint instead of the
-//! packet stream. They need a direct control link and work in either transport
-//! mode, which is why pairing and mode switching live here.
+//! packet stream. They work in either transport mode, which is why pairing and
+//! mode switching live here. A unit reached over Bluetooth has no control
+//! endpoint, so the same messages travel as `PacketData::DeviceControl` on its
+//! packet link; a link with neither fails with [`Error::NoControlInterface`].
 
 use std::time::Duration;
 
@@ -18,7 +20,7 @@ use crate::device::control_transfer::{
 };
 use crate::device::general_settings::GeneralSettings;
 use crate::device::usb_bulk_io::find_vendor_interface;
-use crate::packets::vm::{ConfigKind, GeneralConfig};
+use crate::packets::vm::{ConfigKind, GeneralConfig, PacketData};
 use crate::{Error, Result};
 
 /// Longest a pairing session can run before the device reports a timeout.
@@ -31,11 +33,17 @@ fn unexpected(msg: &DeviceMsg) -> Error {
 }
 
 impl VmDevice {
+    /// The USB control link of a device that has no packet-link control path.
     fn ctrl_iface(&self) -> Result<&ControlLink<DeviceMsg>> {
         self.ctrl_if.as_ref().ok_or(Error::NoControlInterface)
     }
 
     async fn send_ctrl_msg(&self, msg: DeviceMsg) -> Result<()> {
+        if self.packet_control {
+            return self
+                .send_without_reply(PacketData::DeviceControl(msg))
+                .await;
+        }
         let ctrl_if = self.ctrl_iface()?;
         info!("send_ctrl_msg: control_out");
         let result = ctrl_if.send(&msg).await;
@@ -67,6 +75,36 @@ impl VmDevice {
             .await
     }
 
+    /// Sends `msg` and returns the first reply `accept` takes. Over the packet
+    /// link the reply is the one carrying the request's packet id, so it either
+    /// matches or the call fails.
+    async fn request_locked(
+        &self,
+        pending: &mut Option<PairingOutcome>,
+        msg: DeviceMsg,
+        timeout: Duration,
+        mut accept: impl FnMut(&DeviceMsg) -> bool,
+    ) -> Result<DeviceMsg> {
+        if !self.packet_control {
+            self.send_ctrl_msg(msg).await?;
+            return self.recv_ctrl_msg_filtered(timeout, pending, accept).await;
+        }
+        let reply = tokio::time::timeout(
+            timeout,
+            self.request_unbounded(PacketData::DeviceControl(msg)),
+        )
+        .await
+        .map_err(|_elapsed| Error::Timeout(timeout))??;
+        match reply {
+            PacketData::DeviceControl(msg) if accept(&msg) => Ok(msg),
+            PacketData::DeviceControl(DeviceMsg::PairingResult(outcome)) => {
+                *pending = Some(outcome);
+                Err(Error::unexpected(&"PairingResult"))
+            }
+            other => Err(Error::unexpected(&other)),
+        }
+    }
+
     /// Sends `msg`, then waits for the first reply `accept` takes.
     async fn ctrl_request(
         &self,
@@ -75,8 +113,7 @@ impl VmDevice {
         accept: impl FnMut(&DeviceMsg) -> bool,
     ) -> Result<DeviceMsg> {
         let mut pending = self.ctrl.lock().await;
-        self.send_ctrl_msg(msg).await?;
-        self.recv_ctrl_msg_filtered(timeout, &mut pending, accept)
+        self.request_locked(&mut pending, msg, timeout, accept)
             .await
     }
 
@@ -247,15 +284,23 @@ impl VmDevice {
     pub async fn start_pairing(&self, timeout_ms: u32) -> Result<()> {
         let mut pending = self.ctrl.lock().await;
         *pending = None;
-        self.send_ctrl_msg(DeviceMsg::StartPairing(StartPairing { timeout_ms }))
-            .await?;
+        if self.packet_control {
+            // Results of an earlier session are stale.
+            let mut events = self.pairing_events.lock().await;
+            while events.try_recv().is_ok() {}
+        }
         match self
-            .recv_ctrl_msg_filtered(REPLY_TIMEOUT, &mut pending, |msg| {
-                matches!(
-                    msg,
-                    DeviceMsg::StartPairingResponse() | DeviceMsg::PairingResult(_)
-                )
-            })
+            .request_locked(
+                &mut pending,
+                DeviceMsg::StartPairing(StartPairing { timeout_ms }),
+                REPLY_TIMEOUT,
+                |msg| {
+                    matches!(
+                        msg,
+                        DeviceMsg::StartPairingResponse() | DeviceMsg::PairingResult(_)
+                    )
+                },
+            )
             .await?
         {
             DeviceMsg::StartPairingResponse() => Ok(()),
@@ -276,6 +321,13 @@ impl VmDevice {
         let mut pending = self.ctrl.lock().await;
         let outcome = match pending.take() {
             Some(outcome) => outcome,
+            None if self.packet_control => tokio::time::timeout(
+                PAIRING_EVENT_TIMEOUT,
+                self.pairing_events.lock().await.recv(),
+            )
+            .await
+            .map_err(|_elapsed| Error::Timeout(PAIRING_EVENT_TIMEOUT))?
+            .ok_or(Error::Closed)?,
             None => match self
                 .recv_ctrl_msg_filtered(PAIRING_EVENT_TIMEOUT, &mut pending, |msg| {
                     matches!(msg, DeviceMsg::PairingResult(_))
@@ -514,8 +566,9 @@ impl VmDevice {
     /// Since: Odyssey Desktop 0.6.0.
     pub async fn set_transport_mode(&self, mode: TransportMode) -> Result<TransportMode> {
         info!(
-            "set_transport_mode: ctrl_if present={}, sending {:?}",
+            "set_transport_mode: ctrl_if present={}, packet_control={}, sending {:?}",
             self.ctrl_if.is_some(),
+            self.packet_control,
             mode
         );
         match self

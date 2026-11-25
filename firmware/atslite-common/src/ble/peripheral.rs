@@ -365,6 +365,9 @@ async fn advertise<'values, 'server, C: Controller>(
         )
         .await?;
     defmt::info!("[advertise] Now advertising, waiting for connection...");
+    if pairing_on {
+        PAIRING_ADVERTISING.signal(());
+    }
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
     defmt::info!("[advertise] Connection accepted!");
     Ok(conn)
@@ -578,6 +581,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 .await
                 {
                     Ok(Ok(())) => {
+                        crate::ble::l2cap_bridge::control_sent(tx_queue.is_empty());
                         let duration_ms = send_start.elapsed().as_millis();
                         defmt::info!(
                             "[control_tx_task] TX control: send complete (id={}, duration={}ms)",
@@ -731,6 +735,9 @@ static PAIRING_COMPLETE_SIGNAL: Signal<
     CriticalSectionRawMutex,
     Result<[u8; 6], odyssey_protocol::control::device::PairingError>,
 > = Signal::new();
+/// Raised once an advertising cycle with the pairing data is running, so device control can tell
+/// the host to pair only when the unit is actually connectable as a new peer.
+static PAIRING_ADVERTISING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Identity of the bonded host whose L2CAP session is open.
 static CONNECTED_PEER: BlockingMutex<BmRaw, core::cell::Cell<Option<Identity>>> =
@@ -770,8 +777,16 @@ pub fn request_disconnect() {
 /// Since: Odyssey Desktop 0.7.0.
 pub fn enter_pairing_mode() {
     PAIRING_COMPLETE_SIGNAL.reset();
+    PAIRING_ADVERTISING.reset();
     PAIRING.store(true, Ordering::Relaxed);
     DISCONNECT_REQUEST.signal(());
+}
+
+/// Resolves once advertising with the pairing data has started after [`enter_pairing_mode`].
+///
+/// Since: Unreleased.
+pub async fn wait_for_pairing_advertising() {
+    PAIRING_ADVERTISING.wait().await;
 }
 
 /// Leaves pairing mode and aborts an in-flight pairing connection. Successful pairing clears
@@ -833,6 +848,13 @@ pub fn bond_slots() -> odyssey_protocol::List<
         });
     }
     slots
+}
+
+/// Whether an encrypted, bonded L2CAP session is up.
+///
+/// Since: Unreleased.
+pub fn is_connected() -> bool {
+    CONNECTED_PEER.lock(|peer| peer.get().is_some())
 }
 
 /// Whether the host with identity address `bd_addr` holds the BLE link.

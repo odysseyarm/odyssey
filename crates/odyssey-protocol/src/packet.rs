@@ -229,6 +229,48 @@ pub enum PacketData {
         )]
         crate::image::ImageObject,
     ),
+    /// One radio OTA request frame (`crate::ota::Request`), host to device. The device answers
+    /// with [`PacketData::OtaStatus`] under the same packet id.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(28))]
+    OtaRequest(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::postcard_only"))]
+        crate::ota::Frame,
+    ),
+    /// Encoded `crate::ota::Status` answering an [`PacketData::OtaRequest`].
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(29))]
+    OtaStatus(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "serde", serde(with = "serde_bytes"))]
+        [u8; crate::ota::STATUS_LEN],
+    ),
+    /// One-way marker hint from the hub, see [`crate::marker_hint`].
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(30))]
+    MarkerHint(#[cfg_attr(feature = "minicbor", n(0))] crate::marker_hint::MarkerHint),
+    /// A control message (pairing, bonds, transport mode) on the packet link, for hosts that
+    /// reach the unit without its USB control endpoint. Replies come back the same way.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(31))]
+    DeviceControl(
+        #[cfg_attr(feature = "minicbor", n(0))]
+        #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::postcard_only"))]
+        crate::control::device::DeviceMsg,
+    ),
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -420,6 +462,26 @@ pub enum PacketType {
     /// Wire baseline: device protocol 0.1.6.
     #[cfg_attr(feature = "minicbor", n(30))]
     ImageObject(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(31))]
+    OtaRequest(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(32))]
+    OtaStatus(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(33))]
+    MarkerHint(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.3.0.
+    #[cfg_attr(feature = "minicbor", n(34))]
+    DeviceControl(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -454,6 +516,10 @@ impl TryFrom<u8> for PacketType {
             0x19 => Ok(Self::ImageStatus()),
             0x1a => Ok(Self::ImageChunk()),
             0x1b => Ok(Self::ImageObject()),
+            0x1c => Ok(Self::OtaRequest()),
+            0x1d => Ok(Self::OtaStatus()),
+            0x1e => Ok(Self::MarkerHint()),
+            0x1f => Ok(Self::DeviceControl()),
             VENDOR_START_ID => Ok(Self::VendorStart()),
             VENDOR_END_ID => Ok(Self::VendorEnd()),
             n if (VENDOR_START_ID..VENDOR_END_ID).contains(&n) => Ok(Self::Vendor(n)),
@@ -493,6 +559,10 @@ impl From<PacketType> for u8 {
             PacketType::ImageStatus() => 0x19,
             PacketType::ImageChunk() => 0x1a,
             PacketType::ImageObject() => 0x1b,
+            PacketType::OtaRequest() => 0x1c,
+            PacketType::OtaStatus() => 0x1d,
+            PacketType::MarkerHint() => 0x1e,
+            PacketType::DeviceControl() => 0x1f,
             PacketType::VendorStart() => VENDOR_START_ID,
             PacketType::VendorEnd() => VENDOR_END_ID,
             PacketType::Vendor(n) => n,
@@ -532,6 +602,10 @@ impl Packet {
             PacketData::ImageStatus(_) => PacketType::ImageStatus(),
             PacketData::ImageChunk(_) => PacketType::ImageChunk(),
             PacketData::ImageObject(_) => PacketType::ImageObject(),
+            PacketData::OtaRequest(_) => PacketType::OtaRequest(),
+            PacketData::OtaStatus(_) => PacketType::OtaStatus(),
+            PacketData::MarkerHint(_) => PacketType::MarkerHint(),
+            PacketData::DeviceControl(_) => PacketType::DeviceControl(),
         }
     }
 
@@ -563,7 +637,11 @@ impl Packet {
             | PacketData::FlashSettings()
             | PacketData::Vendor(_, _)
             | PacketData::SetDeviceName(_)
-            | PacketData::SetDeviceNameResponse(_) => true,
+            | PacketData::SetDeviceNameResponse(_)
+            | PacketData::OtaRequest(_)
+            | PacketData::OtaStatus(_)
+            | PacketData::MarkerHint(_)
+            | PacketData::DeviceControl(_) => true,
             PacketData::LegacyObjectReport(_)
             | PacketData::LegacyCombinedMarkersReport(_)
             | PacketData::MarkersReport(_)
@@ -668,8 +746,8 @@ mod tests {
     #[test]
     fn ids_outside_the_tables_are_rejected() {
         assert!(matches!(
-            PacketType::try_from(0x1c),
-            Err(Error::UnrecognizedPacketId(0x1c))
+            PacketType::try_from(0x20),
+            Err(Error::UnrecognizedPacketId(0x20))
         ));
         assert!(matches!(
             PacketType::try_from(0x7f),
