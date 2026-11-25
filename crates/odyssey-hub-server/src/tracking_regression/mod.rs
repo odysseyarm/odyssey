@@ -708,7 +708,7 @@ pub async fn replay(trace: &Trace) -> Result<Report, Error> {
         let device = Device {
             uuid: source.device_uuid,
             transport: Transport::Usb,
-            capabilities: DeviceCapabilities::new(DeviceCapabilities::EVENTS),
+            capabilities: DeviceCapabilities::EVENTS,
             firmware_identity: FirmwareVersion::default(),
             firmware_version: [0; 3],
             events_transport: EventsTransport::Wired,

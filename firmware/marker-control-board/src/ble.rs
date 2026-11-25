@@ -14,6 +14,7 @@
 //! [`crate::OTA_ACTIVE`] keeps the marker outputs off.
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use better_ota::{Action, Receiver, Slots};
 use embassy_embedded_hal::flash::partition::Partition;
@@ -56,6 +57,24 @@ pub static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ENROLLMENT: Mutex<CriticalSectionRawMutex, RefCell<Enrollment>> =
     Mutex::new(RefCell::new(Enrollment::new()));
 static ENROLLMENT_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// A bond clear was requested. The flag survives a wakeup consumed by a task that is not the
+/// host loop; the signal ends the advertise/session wait.
+static CLEAR_BONDS: AtomicBool = AtomicBool::new(false);
+static CLEAR_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static BONDS_CLEARED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Colour the button task forces over the normal status: the clear warning and confirmation.
+static LED_OVERRIDE: Mutex<CriticalSectionRawMutex, RefCell<Option<Led>>> =
+    Mutex::new(RefCell::new(None));
+/// Confirmation flashes after a clear.
+const CLEAR_FLASHES: u32 = 4;
+const CLEAR_FLASH_MS: u64 = 150;
+
+fn set_led_override(led: Option<Led>) {
+    let changed = LED_OVERRIDE.lock(|cell| cell.replace(led) != led);
+    if changed {
+        CHANGED.signal(());
+    }
+}
 
 fn enrollment_active() -> bool {
     ENROLLMENT.lock(|window| window.borrow().active(Instant::now().as_millis()))
@@ -249,7 +268,13 @@ pub async fn outputs(mut markers: Markers<'_>) {
             (
                 s.on() && !inhibited,
                 s.deadline(),
-                if inhibited { Led::Off } else { s.led(pairing) },
+                if inhibited {
+                    Led::Off
+                } else {
+                    LED_OVERRIDE
+                        .lock(|cell| *cell.borrow())
+                        .unwrap_or_else(|| s.led(pairing))
+                },
             )
         });
         if on != previous {
@@ -276,6 +301,13 @@ pub async fn outputs(mut markers: Markers<'_>) {
     }
 }
 
+fn open_enrollment() {
+    ENROLLMENT.lock(|window| window.borrow_mut().open(Instant::now().as_millis()));
+    state(OutputState::disconnect);
+    CHANGED.signal(());
+    ENROLLMENT_CHANGED.signal(());
+}
+
 /// Since: Odyssey Desktop 0.7.4.
 pub async fn button(button: Input<'_>) {
     let mut clicks = PowerButton::default();
@@ -290,13 +322,29 @@ pub async fn button(button: Input<'_>) {
                 state(OutputState::click);
                 CHANGED.signal(());
             }
-            Some(ButtonAction::Enroll) => {
-                ENROLLMENT.lock(|window| window.borrow_mut().open(Instant::now().as_millis()));
-                state(OutputState::disconnect);
-                CHANGED.signal(());
-                ENROLLMENT_CHANGED.signal(());
+            Some(ButtonAction::Enroll) => open_enrollment(),
+            Some(ButtonAction::Clear) => {
+                close_enrollment();
+                BONDS_CLEARED.reset();
+                CLEAR_BONDS.store(true, Ordering::Release);
+                CLEAR_WAKE.signal(());
+                BONDS_CLEARED.wait().await;
+                for _ in 0..CLEAR_FLASHES {
+                    set_led_override(Some(Led::White));
+                    Timer::after_millis(CLEAR_FLASH_MS).await;
+                    set_led_override(Some(Led::Off));
+                    Timer::after_millis(CLEAR_FLASH_MS).await;
+                }
+                set_led_override(None);
+                open_enrollment();
             }
             None => {}
+        }
+        // Red warns while the hold is past enrollment and still short of the clear.
+        if clicks.clear_pending() {
+            set_led_override(Some(Led::Red));
+        } else if LED_OVERRIDE.lock(|cell| *cell.borrow()) == Some(Led::Red) {
+            set_led_override(None);
         }
     }
 }
@@ -310,7 +358,9 @@ pub async fn run<C: Controller, F: NorFlash>(
 ) {
     let low = embassy_nrf::pac::FICR.deviceid(0).read().to_le_bytes();
     let high = embassy_nrf::pac::FICR.deviceid(1).read().to_le_bytes();
-    let address = Address::random([low[0], low[1], low[2], low[3], high[0], high[1] | 0xc0]);
+    let address = Address::random(odyssey_protocol::control::ble_address([
+        low[0], low[1], low[2], low[3], high[0], high[1],
+    ]));
     let mut resources: HostResources<DefaultPacketPool, 1, 2> = HostResources::new();
     let mut seed_rng = ChaCha20Rng::from_seed(seed);
     let stack = trouble_host::new(controller, &mut resources)
@@ -344,8 +394,21 @@ pub async fn run<C: Controller, F: NorFlash>(
         async {
             let stack = &stack;
             loop {
+                if CLEAR_BONDS.swap(false, Ordering::AcqRel) {
+                    // The stack's table holds the owner too: a stale copy would still encrypt.
+                    if bonds.clear().await.is_err() {
+                        reset_safe();
+                    }
+                    for bond in stack.get_bond_information() {
+                        if stack.remove_bond_information(bond.identity).is_err() {
+                            reset_safe();
+                        }
+                    }
+                    BONDS_CLEARED.signal(());
+                }
                 let conn = match advertise(&mut peripheral, &server).await {
-                    Ok(conn) => conn,
+                    Ok(Some(conn)) => conn,
+                    Ok(None) => continue,
                     Err(_) => reset_safe(),
                 };
                 if conn.raw().set_bondable(enrollment_active()).is_ok() {
@@ -377,6 +440,7 @@ pub async fn run<C: Controller, F: NorFlash>(
                     }
                 }
                 if let Some(owner) = bonds.owner()
+                    && !CLEAR_BONDS.load(Ordering::Acquire)
                     && stack.add_bond_information(bond_information(owner)).is_err()
                 {
                     reset_safe();
@@ -390,7 +454,7 @@ pub async fn run<C: Controller, F: NorFlash>(
 async fn advertise<'values, 'server, C: Controller>(
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values>,
-) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
+) -> Result<Option<GattConnection<'values, 'server, DefaultPacketPool>>, BleHostError<C::Error>> {
     let mut service_data = [0; 18];
     service_data[..16].copy_from_slice(&SERVICE_UUID);
     service_data[..16].reverse();
@@ -441,14 +505,16 @@ async fn advertise<'values, 'server, C: Controller>(
             }
         };
         // Dropping Advertiser/advertise cancels through trouble-host's command state.
-        match select(connection, select(ENROLLMENT_CHANGED.wait(), expiry)).await {
-            Either::First(connection) => return connection,
-            Either::Second(Either::First(())) => {}
-            Either::Second(Either::Second(())) => {
+        let interrupts = select(ENROLLMENT_CHANGED.wait(), select(expiry, CLEAR_WAKE.wait()));
+        match select(connection, interrupts).await {
+            Either::First(connection) => return connection.map(Some),
+            Either::Second(Either::Second(Either::Second(()))) => return Ok(None),
+            Either::Second(Either::Second(Either::First(()))) => {
                 if !enrollment_active() {
                     close_enrollment();
                 }
             }
+            Either::Second(Either::First(())) => {}
         }
     }
 }
@@ -467,9 +533,15 @@ async fn session<F: NorFlash>(
     };
     server.set(&server.markers.ota, &ota_status(&receiver).encode())?;
     loop {
-        let event = match select(conn.next(), ENROLLMENT_CHANGED.wait()).await {
+        let event = match select(
+            conn.next(),
+            select(ENROLLMENT_CHANGED.wait(), CLEAR_WAKE.wait()),
+        )
+        .await
+        {
             Either::First(event) => event,
-            Either::Second(()) => {
+            Either::Second(Either::Second(())) => return Ok(()),
+            Either::Second(Either::First(())) => {
                 if enrollment_active() {
                     return Ok(());
                 }

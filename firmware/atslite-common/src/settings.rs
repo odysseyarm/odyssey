@@ -35,7 +35,9 @@ pub use settings_region::get_settings_region;
 /// Since: Odyssey Desktop 0.7.0.
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
+// Firmware before multi-bond support kept one bond here. Read once to migrate it.
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
+static NODE_BLE_BONDS: StorageListNode<BleBonds> = StorageListNode::new("settings/ble_bonds");
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
 static NODE_PAG: StorageListNode<PagSettings> = StorageListNode::new("settings/pag");
 
@@ -195,18 +197,34 @@ pub async fn init_core(
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 }
 
-/// Loads the BLE bond node into owned settings. Call after `init_core()`, then load any
-/// board-specific nodes before publishing the settings for the application tasks.
+/// Loads the BLE bonds into owned settings, moving a bond stored by single-bond firmware into
+/// the first slot. Call after `init_core()`, then load any board-specific nodes before
+/// publishing the settings for the application tasks.
 ///
 /// Since: Odyssey Desktop 0.7.0.
 pub async fn init_nodes() -> Settings {
-    let h_ble_bond = NODE_BLE_BOND
+    let mut h_legacy = NODE_BLE_BOND
         .attach_with_default(&LIST, ble_bond_default)
         .await
         .unwrap();
+    let mut h_bonds = NODE_BLE_BONDS
+        .attach_with_default(&LIST, BleBonds::default)
+        .await
+        .unwrap();
+
+    let mut bonds = h_bonds.load();
+    let legacy = h_legacy.load();
+    if legacy.is_bonded {
+        if bonds.slots.iter().all(|slot| !slot.is_bonded) {
+            bonds.slots[0] = legacy;
+            h_bonds.write(&bonds).await.unwrap();
+        }
+        h_legacy.write(&ble_bond_default()).await.unwrap();
+        settings_flush_now();
+    }
 
     Settings {
-        ble_bond: h_ble_bond.load(),
+        ble_bonds: bonds,
         general: GeneralSettings::default(),
         pag: PagSettings::default(),
     }
@@ -233,30 +251,107 @@ pub async fn init_board_nodes(settings: &mut Settings) {
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct Settings {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub ble_bond: BleBondSettings,
+    /// Since: Unreleased.
+    pub ble_bonds: BleBonds,
     /// Since: Odyssey Desktop 0.7.0.
     pub general: GeneralSettings,
     /// Since: Odyssey Desktop 0.7.0.
     pub pag: PagSettings,
 }
 
+/// Outcome of [`Settings::bond_store`] when no slot can take the bond.
+///
+/// Since: Unreleased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
+pub struct BondsFull;
+
 impl Settings {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fn ble_bond_write(&self) {
-        embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
-            hb.write(&self.ble_bond).await.unwrap();
-        });
-        settings_flush_now();
+    /// The stored bonds, ready to load into the BLE host.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_infos(&self) -> impl Iterator<Item = trouble_host::prelude::BondInformation> + '_ {
+        self.ble_bonds
+            .slots
+            .iter()
+            .filter_map(ble_bond_to_bond_info)
     }
 
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fn ble_bond_clear(&mut self) {
-        self.ble_bond = ble_bond_default();
+    /// Whether `identity` belongs to a stored bond.
+    ///
+    /// Since: Unreleased.
+    pub fn is_bonded_peer(&self, identity: &trouble_host::prelude::Identity) -> bool {
+        self.bond_infos()
+            .any(|bond| bond.identity.match_identity(identity))
+    }
+
+    /// Whether every slot holds a bond.
+    ///
+    /// Since: Unreleased.
+    pub fn bonds_full(&self) -> bool {
+        self.ble_bonds.slots.iter().all(|slot| slot.is_bonded)
+    }
+
+    /// Stores `entry`, replacing a bond with the same identity or filling a free slot, and
+    /// writes the bonds to flash.
+    ///
+    /// # Errors
+    ///
+    /// [`BondsFull`] when `entry` is a new host and every slot is in use. Nothing changes.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_store(&mut self, entry: BleBondSettings) -> Result<(), BondsFull> {
+        let identity = ble_bond_to_bond_info(&entry).map(|bond| bond.identity);
+        let slots = &self.ble_bonds.slots;
+        let relation: [slot_table::Slot; odyssey_protocol::control::MAX_BONDS] =
+            core::array::from_fn(|i| {
+                let same = identity.is_some_and(|identity| {
+                    ble_bond_to_bond_info(&slots[i])
+                        .is_some_and(|bond| bond.identity.match_identity(&identity))
+                });
+                if same {
+                    slot_table::Slot::Same
+                } else if slots[i].is_bonded {
+                    slot_table::Slot::Other
+                } else {
+                    slot_table::Slot::Free
+                }
+            });
+        let index = slot_table::slot_for(&relation).ok_or(BondsFull)?;
+        self.ble_bonds.slots[index] = entry;
+        self.ble_bonds_write();
+        Ok(())
+    }
+
+    /// Removes the bond whose identity address is `bd_addr` and writes the bonds to flash.
+    /// Returns whether one was found.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_remove(&mut self, bd_addr: [u8; 6]) -> bool {
+        let Some(slot) = self
+            .ble_bonds
+            .slots
+            .iter_mut()
+            .find(|slot| slot.is_bonded && slot.bd_addr == bd_addr)
+        else {
+            return false;
+        };
+        *slot = ble_bond_default();
+        self.ble_bonds_write();
+        true
+    }
+
+    /// Removes every bond and writes the empty slots to flash.
+    ///
+    /// Since: Unreleased.
+    pub fn bonds_clear(&mut self) {
+        self.ble_bonds = BleBonds::default();
+        self.ble_bonds_write();
+    }
+
+    fn ble_bonds_write(&self) {
         embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
-            hb.write(&self.ble_bond).await.unwrap();
+            let mut hb = NODE_BLE_BONDS.attach(&LIST).await.unwrap();
+            hb.write(&self.ble_bonds).await.unwrap();
         });
         settings_flush_now();
     }
@@ -399,6 +494,24 @@ impl GeneralSettings {
 
 /// Since: Odyssey Desktop 0.7.0.
 pub type BleBondSettings = odyssey_protocol::control::BondEntry;
+
+/// Every bond slot. An entry with `is_bonded == false` is free.
+///
+/// Since: Unreleased.
+#[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
+pub struct BleBonds {
+    /// Since: Unreleased.
+    #[n(0)]
+    pub slots: [BleBondSettings; odyssey_protocol::control::MAX_BONDS],
+}
+
+impl Default for BleBonds {
+    fn default() -> Self {
+        Self {
+            slots: [ble_bond_default(); odyssey_protocol::control::MAX_BONDS],
+        }
+    }
+}
 
 /// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_default() -> BleBondSettings {

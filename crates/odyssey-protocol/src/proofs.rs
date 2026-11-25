@@ -242,3 +242,17 @@ fn marker_hint_encode_decode_roundtrips() {
         Ok(hint)
     );
 }
+
+/// The BLE address is static random for every uuid and differs from it in nothing else, so
+/// a host can derive one from the other.
+#[cfg(kani)]
+#[kani::proof]
+#[kani::unwind(7)]
+fn ble_address_is_static_random_and_keeps_every_other_bit() {
+    let uuid: [u8; 6] = kani::any();
+    let address = crate::control::ble_address(uuid);
+    assert_eq!(address[5] & 0xC0, 0xC0);
+    assert_eq!(address[5] & 0x3F, uuid[5] & 0x3F);
+    assert_eq!(address[..5], uuid[..5]);
+    assert_eq!(crate::control::ble_address(address), address);
+}

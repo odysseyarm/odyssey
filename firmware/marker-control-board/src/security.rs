@@ -221,6 +221,31 @@ impl<F: NorFlash> BondStore<F> {
         self.generation = generation;
         Ok(())
     }
+
+    /// Erases both bond pages so no owner survives a reload.
+    ///
+    /// Since: Unreleased.
+    /// Returns flash I/O failures or a page that still decodes afterwards.
+    pub async fn clear(&mut self) -> Result<(), StoreError<F::Error>> {
+        // Stale page first: an interrupted clear then leaves the current owner, never an older one.
+        for slot in [1 - self.slot, self.slot] {
+            let address = self.start + slot as u32 * BOND_PAGE_SIZE;
+            self.flash
+                .erase(address, address + BOND_PAGE_SIZE)
+                .await
+                .map_err(StoreError::Flash)?;
+            let mut record = Record([0; RECORD_SIZE]);
+            self.flash
+                .read(address, &mut record.0)
+                .await
+                .map_err(StoreError::Flash)?;
+            if decode(&record.0).is_some() {
+                return Err(StoreError::Verification);
+            }
+        }
+        self.owner = None;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -368,6 +393,23 @@ mod tests {
         let owner = store.owner().unwrap();
         assert!(owner.permits(true, Some(&bond(2))));
         assert!(!owner.permits(true, Some(&bond(1))));
+    }
+    #[test]
+    fn clear_removes_owner_across_reload_and_allows_new_enrollment() {
+        let flash = Flash {
+            bytes: [0xff; 8192],
+            fail_commit: false,
+        };
+        let mut store = run(BondStore::load(flash, 0)).unwrap();
+        run(store.persist(bond(1), || true)).unwrap();
+        run(store.persist(bond(2), || true)).unwrap();
+        run(store.clear()).unwrap();
+        assert!(store.owner().is_none());
+        let mut store = run(BondStore::load(store.flash, 0)).unwrap();
+        assert!(store.owner().is_none());
+        run(store.persist(bond(3), || true)).unwrap();
+        let store = run(BondStore::load(store.flash, 0)).unwrap();
+        assert!(store.owner() == Some(bond(3)));
     }
     #[test]
     fn every_interrupted_record_prefix_rejects_new_owner() {

@@ -29,6 +29,9 @@ heapless = { workspace = true }
 rand = "0.8"
 parking_lot = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [features]
 sim = []
 pyo3 = ["odyssey-protocol/pyo3"]

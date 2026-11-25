@@ -157,16 +157,9 @@ pub(super) async fn pair(peripheral: &Peripheral) -> Result<(), String> {
         .into_iter()
         .find(|device| device.id.to_string() == id)
         .ok_or_else(|| format!("BlueZ device {id} unavailable"))?;
-    if !device.paired {
-        session
-            .pair_with_timeout(&device.id, Duration::from_secs(25))
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    if !io(session.get_device_info(&device.id)).await?.paired {
-        return Err("BlueZ did not establish a bond".into());
-    }
-    Ok(())
+    crate::device_tasks::native_ble::pair_device(&session, &device)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "windows")]

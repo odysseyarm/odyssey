@@ -5,7 +5,7 @@ use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
 use odyssey_protocol::control::AddBondResult;
 use odyssey_protocol::control::device::{
-    ClearBondResult, DeviceMsg, PairingError, PairingOutcome, TransportMode,
+    ClearBondResult, ClearBondsError, DeviceMsg, PairingError, PairingOutcome, TransportMode,
 };
 use odyssey_protocol::{PropKind, Props, SetDeviceNameResult};
 
@@ -34,7 +34,7 @@ pub async fn device_control_task(
                 return core::future::pending().await;
             };
             match select(peripheral::wait_for_pairing_complete(), Timer::at(deadline)).await {
-                Either::First(device) => PairingOutcome::Ok(device),
+                Either::First(outcome) => outcome,
                 Either::Second(()) => PairingOutcome::Err(PairingError::Timeout),
             }
         };
@@ -100,16 +100,37 @@ async fn handle_cmd(
         }
 
         DeviceMsg::ClearBond() => {
-            info!("Clearing bond...");
+            info!("Clearing every bond...");
             let result = if settings::is_initialized() {
-                settings::with_settings(|s| s.ble_bond_clear());
-                // The next advertising cycle removes the old bond from the BLE host too.
+                settings::with_settings(settings::Settings::bonds_clear);
+                // The next advertising cycle removes the old bonds from the BLE host too.
                 peripheral::request_disconnect();
                 ClearBondResult::Ok()
             } else {
-                ClearBondResult::Err(odyssey_protocol::control::device::ClearBondsError::Failed)
+                ClearBondResult::Err(ClearBondsError::Failed)
             };
             device_control::try_send_event(DeviceMsg::ClearBondResponse(result));
+        }
+
+        DeviceMsg::ListBonds() => {
+            device_control::try_send_event(DeviceMsg::ListBondsResponse(peripheral::bond_slots()));
+        }
+
+        DeviceMsg::RemoveBond(bd_addr) => {
+            info!("RemoveBond for {:02x}", bd_addr);
+            let result = if !settings::is_initialized() {
+                ClearBondResult::Err(ClearBondsError::Failed)
+            } else if settings::with_settings(|s| s.bond_remove(bd_addr)) {
+                if peripheral::is_connected_peer(bd_addr) {
+                    peripheral::request_disconnect();
+                } else {
+                    peripheral::reload_bonds();
+                }
+                ClearBondResult::Ok()
+            } else {
+                ClearBondResult::Err(ClearBondsError::NotFound)
+            };
+            device_control::try_send_event(DeviceMsg::RemoveBondResponse(result));
         }
 
         DeviceMsg::StartPairing(params) => {
@@ -120,9 +141,16 @@ async fn handle_cmd(
                 device_control::try_send_event(DeviceMsg::StartPairingResponse());
                 return;
             }
+            device_control::try_send_event(DeviceMsg::StartPairingResponse());
+            if settings::is_initialized() && settings::with_settings(|s| s.bonds_full()) {
+                end_pairing(
+                    pairing_deadline,
+                    PairingOutcome::Err(PairingError::BondsFull),
+                );
+                return;
+            }
             info!("Starting pairing mode for {} ms", params.timeout_ms);
             peripheral::enter_pairing_mode();
-            device_control::try_send_event(DeviceMsg::StartPairingResponse());
         }
 
         DeviceMsg::CancelPairing() => {
@@ -205,20 +233,17 @@ async fn handle_cmd(
         DeviceMsg::AddBond(entry) => {
             use odyssey_protocol::control::AddBondError;
             info!("AddBond received for {:02x}", entry.bd_addr);
-            if settings::is_initialized() {
-                settings::with_settings(|s| {
-                    s.ble_bond = entry.into();
-                    s.ble_bond_write();
-                });
-                // The BLE loop loads the bond from settings into the host before it advertises
+            let result = if !settings::is_initialized() {
+                AddBondResult::Err(AddBondError::Failed)
+            } else if settings::with_settings(|s| s.bond_store(entry)).is_ok() {
+                // The BLE loop loads bonds from settings into the host before it advertises
                 // again, so the new bond is live from the next connection on.
-                peripheral::request_disconnect();
-                device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Ok()));
+                peripheral::reload_bonds();
+                AddBondResult::Ok()
             } else {
-                device_control::try_send_event(DeviceMsg::AddBondResponse(AddBondResult::Err(
-                    AddBondError::Failed,
-                )));
-            }
+                AddBondResult::Err(AddBondError::Full)
+            };
+            device_control::try_send_event(DeviceMsg::AddBondResponse(result));
         }
         _ => {
             // Responses sent to us as commands are ignored.

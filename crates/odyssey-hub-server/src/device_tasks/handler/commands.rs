@@ -2,22 +2,29 @@
 //! access, flashing, pairing, bonds, naming and transport mode.
 
 use std::ops::ControlFlow;
+use std::pin::pin;
 use std::time::Duration;
 
 use odyssey_hub_common::device::{Device, EventsTransport};
 use odyssey_hub_common::events::DeviceEventKind;
-use odyssey_protocol::control::device::TransportMode;
+use odyssey_protocol::control::device::{PairingError, TransportMode};
 use odyssey_protocol::{VendorData, ota};
+use odyssey_usb::Error as UsbError;
 use odyssey_usb::device::VmDevice;
 use odyssey_usb::packets::vm::{ConfigKind, GeneralConfig, PacketData};
 use tracing::{debug, info, warn};
 
 use super::{CALL_TIMEOUT, DeviceHandler, SLOW_CALL_TIMEOUT, call_over_links, call_with_timeout};
-use crate::device_tasks::messages::{Message, Reply};
+use crate::device_tasks::messages::{BondInfo, Message, Reply, SystemPairingOutcome};
+use crate::device_tasks::native_ble;
+use crate::device_tasks::semver::semver_at_least;
 use crate::device_tasks::transport_selection::TransportSelection;
 
 /// Reboot is fire-and-forget: the unit disappears before it could acknowledge.
 const REBOOT_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// First device protocol whose firmware lists and removes single bonds.
+const BOND_MANAGEMENT_PROTOCOL: [u16; 3] = [0, 2, 2];
 
 /// RPCs address sensors by index: 0 is the near-field camera, anything else the wide-field one.
 fn sensor_port(port: u8) -> odyssey_protocol::Port {
@@ -81,9 +88,11 @@ impl DeviceHandler {
             data: [0; VendorData::CAPACITY],
         };
         data.data[..frame.len()].copy_from_slice(frame);
-        let links = self.packet_links();
+        let links = self.radio_links();
         if links.is_empty() {
-            return Err("No connected device link for OTA; recover this unit over USB".into());
+            return Err(
+                "No Bluetooth link to the unit for a radio update; update it over USB".into(),
+            );
         }
         let response = call_over_links(
             &links,
@@ -329,6 +338,78 @@ impl DeviceHandler {
         let _ = reply.send(result);
     }
 
+    /// The control link, once the unit's protocol is known to carry `ListBonds` and
+    /// `RemoveBond`. Older firmware cannot decode them and would answer nothing.
+    async fn bond_management_link(&mut self) -> Result<VmDevice, String> {
+        let device = self
+            .connections
+            .control_device
+            .clone()
+            .ok_or("no control device available")?;
+        let version =
+            call_with_timeout(CALL_TIMEOUT, "read_version", device.read_version()).await?;
+        if !semver_at_least(version.protocol_semver, BOND_MANAGEMENT_PROTOCOL) {
+            return Err("firmware too old to manage individual bonds; update the unit".into());
+        }
+        Ok(device)
+    }
+
+    pub(super) async fn on_list_bonds(&mut self, reply: Reply<Vec<BondInfo>>) {
+        let result = async {
+            let device = self.bond_management_link().await?;
+            let slots = call_with_timeout(CALL_TIMEOUT, "list_bonds", device.list_bonds()).await?;
+            let adapter = native_ble::adapter_address().await;
+            Ok::<_, String>(
+                slots
+                    .into_iter()
+                    .map(|slot| BondInfo {
+                        bd_addr: slot.bd_addr,
+                        connected: slot.connected,
+                        this_computer: adapter == Some(slot.bd_addr),
+                    })
+                    .collect(),
+            )
+        }
+        .await;
+        let _ = reply.send(result);
+    }
+
+    pub(super) async fn on_remove_bond(&mut self, bd_addr: [u8; 6], reply: Reply<()>) {
+        let result = async {
+            let device = self.bond_management_link().await?;
+            call_with_timeout(
+                SLOW_CALL_TIMEOUT,
+                "remove_bond",
+                device.remove_bond(bd_addr),
+            )
+            .await
+        }
+        .await;
+        info!(
+            "RemoveBond {bd_addr:02x?} for {:02x?}: {result:?}",
+            self.device.uuid
+        );
+        let _ = reply.send(result);
+    }
+
+    /// Detached so the handler keeps serving while the pairing runs. The reply sender
+    /// moves into the task, so a task that dies shows up as a dropped reply.
+    pub(super) fn on_pair_system_bluetooth(
+        &mut self,
+        timeout_ms: u32,
+        reply: Reply<SystemPairingOutcome>,
+    ) {
+        let Some(device) = self.connections.control_device.clone() else {
+            let _ = reply.send(Err("no control device available".into()));
+            return;
+        };
+        // `native_ble::pair` derives the unit's BLE address from its uuid.
+        let unit = self.device.uuid;
+        tokio::spawn(async move {
+            let _ = reply.send(pair_system_bluetooth(&device, unit, timeout_ms).await);
+        });
+    }
+
     pub(super) async fn on_clear_bond(&mut self, reply: Reply<()>) {
         let uuid = self.device.uuid;
         let Some(device) = self.connections.control_device.as_ref() else {
@@ -453,5 +534,57 @@ impl DeviceHandler {
             }
             _ => Err("unexpected response to SetDeviceName".into()),
         }
+    }
+}
+
+fn pairing_outcome(error: &UsbError) -> Option<SystemPairingOutcome> {
+    match error {
+        UsbError::Pairing(PairingError::BondsFull) => Some(SystemPairingOutcome::BondsFull),
+        UsbError::Pairing(PairingError::Timeout) => Some(SystemPairingOutcome::Timeout),
+        UsbError::Pairing(PairingError::Cancelled) => Some(SystemPairingOutcome::Cancelled),
+        UsbError::Pairing(PairingError::NotBleMode) => Some(SystemPairingOutcome::NotBleMode),
+        _ => None,
+    }
+}
+
+/// Puts the unit in pairing mode over USB, pairs the system adapter with it and
+/// settles on the unit's verdict. A unit with no free slot reports `BondsFull` right
+/// after acknowledging, before the adapter could connect, so the unit's verdict is
+/// watched while the adapter pairs.
+async fn pair_system_bluetooth(
+    device: &VmDevice,
+    unit: [u8; 6],
+    timeout_ms: u32,
+) -> Result<SystemPairingOutcome, String> {
+    call_with_timeout(
+        SLOW_CALL_TIMEOUT,
+        "start_pairing",
+        device.start_pairing(timeout_ms),
+    )
+    .await?;
+    let mut verdict = pin!(device.wait_pairing_event());
+    let mut adapter = pin!(native_ble::pair(unit));
+    let result = tokio::select! {
+        result = &mut verdict => {
+            if result.is_ok() {
+                // BlueZ cancels a bond whose requesting D-Bus session goes away, so the
+                // adapter must finish storing its keys before its future may be dropped.
+                if let Err(error) = adapter.await {
+                    return Err(format!("pairing the system Bluetooth adapter failed: {error}"));
+                }
+            }
+            result
+        }
+        paired = &mut adapter => {
+            if let Err(error) = paired {
+                let _ = call_with_timeout(CALL_TIMEOUT, "cancel_pairing", device.cancel_pairing()).await;
+                return Err(format!("pairing the system Bluetooth adapter failed: {error}"));
+            }
+            verdict.await
+        }
+    };
+    match result {
+        Ok(_) => Ok(SystemPairingOutcome::Paired),
+        Err(error) => pairing_outcome(&error).ok_or_else(|| error.to_string()),
     }
 }

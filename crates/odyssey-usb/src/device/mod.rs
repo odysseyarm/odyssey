@@ -2,6 +2,8 @@ mod cobs;
 mod control_transfer;
 mod general_settings;
 mod hex_address;
+#[cfg(target_os = "linux")]
+mod l2cap_transport;
 mod mux_accessory;
 mod mux_device;
 mod mux_transport;

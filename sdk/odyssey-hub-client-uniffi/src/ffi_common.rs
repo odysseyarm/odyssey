@@ -469,7 +469,7 @@ impl TryFrom<Device> for common::device::Device {
         Ok(Self {
             uuid,
             transport: device.transport,
-            capabilities: common::device::DeviceCapabilities::new(device.capabilities),
+            capabilities: common::device::DeviceCapabilities::from_bits_retain(device.capabilities),
             firmware_version,
             firmware_identity: device
                 .firmware_version_string

@@ -17,6 +17,12 @@ pub enum PairingError {
     ///
     /// Wire baseline: device protocol 0.1.4.
     NotBleMode,
+    /// Every bond slot is in use; remove a bond before pairing another host.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    BondsFull,
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -46,6 +52,12 @@ pub enum ClearBondsError {
     ///
     /// Wire baseline: device protocol 0.1.4.
     Failed,
+    /// No stored bond has the address a `RemoveBond` named.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    NotFound,
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -162,6 +174,28 @@ pub enum DeviceMsg {
     ///
     /// Wire baseline: device protocol 0.1.4.
     SetDeviceNameResponse(crate::SetDeviceNameResult),
+
+    /// Lists the stored bonds. Only for devices reporting protocol 0.2.2 or later.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    ListBonds(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    ListBondsResponse(crate::List<super::BondSlot, { super::MAX_BONDS }>),
+    /// Removes the bond with this identity address, dropping its link if connected.
+    /// Only for devices reporting protocol 0.2.2 or later.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    RemoveBond([u8; 6]),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.2.2.
+    RemoveBondResponse(ClearBondResult),
 }
 
 /// The result of a clear-bond request. Serializes as the equivalent `Result`.

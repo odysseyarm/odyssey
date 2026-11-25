@@ -265,9 +265,7 @@ mod tests {
         let mut device = Device {
             uuid: [1; 6],
             transport: Transport::Usb,
-            capabilities: DeviceCapabilities::new(
-                DeviceCapabilities::DFU | DeviceCapabilities::DFU_RUNTIME_ONLY,
-            ),
+            capabilities: DeviceCapabilities::DFU | DeviceCapabilities::DFU_RUNTIME_ONLY,
             firmware_identity: FirmwareVersion::default(),
             firmware_version: [0, 1, 0],
             events_transport: EventsTransport::Wired,
@@ -324,7 +322,7 @@ mod tests {
         let mut device = Device {
             uuid: [1; 6],
             transport: Transport::Usb,
-            capabilities: DeviceCapabilities::new(DeviceCapabilities::CONTROL),
+            capabilities: DeviceCapabilities::CONTROL,
             firmware_identity: identity(older),
             firmware_version: [0, 1, 1],
             events_transport: EventsTransport::Wired,
@@ -386,7 +384,7 @@ mod tests {
         let mut device = Device {
             uuid: [1; 6],
             transport: Transport::UsbMux,
-            capabilities: DeviceCapabilities::new(DeviceCapabilities::CONTROL),
+            capabilities: DeviceCapabilities::CONTROL,
             firmware_identity: "0.1.0".parse().expect("valid version"),
             firmware_version: [0, 1, 0],
             events_transport: EventsTransport::Bluetooth,
@@ -408,7 +406,7 @@ mod tests {
             Some(&reported_bootloader),
         ));
 
-        device.capabilities = DeviceCapabilities::new(DeviceCapabilities::EVENTS);
+        device.capabilities = DeviceCapabilities::EVENTS;
         assert!(matches!(
             check_for_update_with_bootloader(
                 &manifest,

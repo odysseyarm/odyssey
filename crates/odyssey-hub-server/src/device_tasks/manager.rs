@@ -1,5 +1,7 @@
 mod bootloader_devices;
 mod direct_usb;
+#[cfg(target_os = "linux")]
+mod system_bluetooth;
 
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU8;
@@ -125,6 +127,9 @@ struct UsbDeviceManager {
     /// Devices in the last scan whose list was logged. The timer rescans every
     /// `SCAN_INTERVAL`, so an unchanged list is not logged again.
     logged_device_ids: Vec<nusb::DeviceId>,
+    /// Bonded units reached through the system Bluetooth adapter.
+    #[cfg(target_os = "linux")]
+    system_bluetooth: system_bluetooth::SystemBluetoothUnits,
     #[cfg(feature = "sim")]
     simulated: Option<SimulatedDevices>,
     /// False leaves the physical USB bus alone.
@@ -174,11 +179,29 @@ impl UsbDeviceManager {
             last_uuid_by_pid: HashMap::new(),
             dfu_devices: HashMap::new(),
             logged_device_ids: Vec::new(),
+            #[cfg(target_os = "linux")]
+            system_bluetooth: system_bluetooth::SystemBluetoothUnits::default(),
             #[cfg(feature = "sim")]
             simulated: None,
             #[cfg(feature = "sim")]
             discovery: true,
         }
+    }
+
+    /// False for a simulator build that leaves the physical radios and USB bus alone.
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(
+        not(feature = "sim"),
+        expect(
+            clippy::unused_self,
+            reason = "only a simulator build can turn hardware discovery off"
+        )
+    )]
+    fn scans_hardware(&self) -> bool {
+        #[cfg(feature = "sim")]
+        return self.discovery;
+        #[cfg(not(feature = "sim"))]
+        true
     }
 
     #[cfg(feature = "sim")]
@@ -297,6 +320,11 @@ impl UsbDeviceManager {
 
         self.reconcile_direct_usb_disconnects(&present).await;
         self.reconcile_dfu_disconnects(&present).await;
+        // Last, so a unit that is on a cable this scan already has its handler.
+        #[cfg(target_os = "linux")]
+        if self.scans_hardware() {
+            self.scan_system_bluetooth().await;
+        }
     }
 
     /// Stop the hub manager of every hub that is no longer plugged in (compared by

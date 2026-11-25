@@ -481,7 +481,7 @@ fn direct_usb_device(metadata: &DirectUsbMetadata<'_>, probed: &ProbedUsbDevice)
 
     // CONTROL always, EVENTS only in USB transport mode, DFU whenever the device exposes
     // a DFU interface (class 0xFE).
-    let mut capabilities = DeviceCapabilities::new(DeviceCapabilities::CONTROL);
+    let mut capabilities = DeviceCapabilities::CONTROL;
     if in_usb_mode {
         capabilities.insert(DeviceCapabilities::EVENTS);
     }

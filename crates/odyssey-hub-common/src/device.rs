@@ -18,74 +18,42 @@ pub enum Transport {
     UdpMux,
 }
 
-/// Bit flags for the operations a device supports.
-///
-/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DeviceCapabilities {
-    bits: u8,
-}
-
-impl DeviceCapabilities {
-    /// USB control interface: pairing, config, DFU.
+bitflags::bitflags! {
+    /// Bit flags for the operations a device supports.
     ///
     /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const CONTROL: u8 = 0b01;
-    /// Packet and event streams.
-    ///
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const EVENTS: u8 = 0b10;
-    /// Firmware flashing is available without the control protocol.
-    /// Bootloader entries report `[0, 0, 0]`; DFU-only applications also set `DFU_RUNTIME_ONLY`.
-    ///
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const DFU: u8 = 0b100;
-    /// `netcore_release` is a settled reading, not a read still in progress.
-    /// Without this flag a 0 can also mean "not answered yet", which a unit shows for a
-    /// while after every boot, so such a 0 must not be judged as behind.
-    ///
-    /// Since: Odyssey Desktop 0.6.5.
-    pub const NETCORE_KNOWN: u8 = 0b1000;
-    /// The firmware picks its data link itself: USB while plugged into a computer,
-    /// Bluetooth otherwise. There is no transport mode to choose, and
-    /// `SetTransportMode` only reports the link in use.
-    ///
-    /// Since: Odyssey Desktop 0.7.0.
-    pub const AUTO_TRANSPORT: u8 = 0b1_0000;
-    /// Application exposes USB DFU runtime but no Odyssey control or event interfaces.
-    ///
-    /// Since: Odyssey Desktop 0.7.4.
-    pub const DFU_RUNTIME_ONLY: u8 = 0b10_0000;
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const fn empty() -> Self {
-        Self { bits: 0 }
-    }
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const fn new(bits: u8) -> Self {
-        Self { bits }
-    }
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const fn contains(&self, flag: u8) -> bool {
-        (self.bits & flag) == flag
-    }
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub fn insert(&mut self, flag: u8) {
-        self.bits |= flag;
-    }
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub fn remove(&mut self, flag: u8) {
-        self.bits &= !flag;
-    }
-
-    /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
-    pub const fn bits(&self) -> u8 {
-        self.bits
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DeviceCapabilities: u8 {
+        /// USB control interface: pairing, config, DFU.
+        ///
+        /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+        const CONTROL = 0b01;
+        /// Packet and event streams.
+        ///
+        /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+        const EVENTS = 0b10;
+        /// Firmware flashing is available without the control protocol.
+        /// Bootloader entries report `[0, 0, 0]`; DFU-only applications also set `DFU_RUNTIME_ONLY`.
+        ///
+        /// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
+        const DFU = 0b100;
+        /// `netcore_release` is a settled reading, not a read still in progress.
+        /// Without this flag a 0 can also mean "not answered yet", which a unit shows for a
+        /// while after every boot, so such a 0 must not be judged as behind.
+        ///
+        /// Since: Odyssey Desktop 0.6.5.
+        const NETCORE_KNOWN = 0b1000;
+        /// The firmware picks its data link itself: USB while plugged into a computer,
+        /// Bluetooth otherwise. There is no transport mode to choose, and
+        /// `SetTransportMode` only reports the link in use.
+        ///
+        /// Since: Odyssey Desktop 0.7.0.
+        const AUTO_TRANSPORT = 0b1_0000;
+        /// Application exposes USB DFU runtime but no Odyssey control or event interfaces.
+        ///
+        /// Since: Odyssey Desktop 0.7.4.
+        const DFU_RUNTIME_ONLY = 0b10_0000;
     }
 }
 

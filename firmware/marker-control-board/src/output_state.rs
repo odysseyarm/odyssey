@@ -120,6 +120,10 @@ pub enum Led {
     Yellow,
     /// Since: Odyssey Desktop 0.7.4.
     Magenta,
+    /// Since: Unreleased.
+    Red,
+    /// Since: Unreleased.
+    White,
 }
 
 impl Led {
@@ -131,6 +135,8 @@ impl Led {
             Self::Blue => 0x80,
             Self::Yellow => 0x60,
             Self::Magenta => 0xA0,
+            Self::Red => 0x20,
+            Self::White => 0xE0,
         }
     }
 }

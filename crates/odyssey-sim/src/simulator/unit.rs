@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
-use odyssey_protocol::control::BondEntry;
-use odyssey_protocol::control::device::{self, DeviceMsg, TransportMode};
+use odyssey_protocol::control::device::{self, ClearBondsError, DeviceMsg, TransportMode};
+use odyssey_protocol::control::{AddBondError, AddBondResult, BondEntry, BondSlot, MAX_BONDS};
 use odyssey_protocol::image::{IMAGE_LEASE_TIMEOUT_MS, ImageCommand, ImageStatus, ImageStatusCode};
 use odyssey_protocol::marker_hint::{self, MarkerHint};
 use odyssey_protocol::mux::{DevicePacket, MuxMsg};
 use odyssey_protocol::{
-    AccelReport, BatteryReport, ConfigKind, DeviceName, GeneralConfig, ImpactReport, Packet,
+    AccelReport, BatteryReport, ConfigKind, DeviceName, GeneralConfig, ImpactReport, List, Packet,
     PacketData, PacketType, ProductId, PropKind, Props, ReadRegisterResponse, SetDeviceNameResult,
     StreamUpdateAction, Version,
 };
@@ -144,7 +144,11 @@ pub(crate) struct Unit {
     pub(crate) link: Option<Uuid>,
     pub(crate) usb: Option<mpsc::Sender<Packet>>,
     pub(crate) control: Option<mpsc::Sender<DeviceMsg>>,
+    /// The bond the simulated dongle link uses.
     pub(crate) bond: Option<BondEntry>,
+    /// Bonds of other hosts, such as the desktop's own adapter. Together with `bond`
+    /// they fill the same `MAX_BONDS` slots the firmware has.
+    pub(crate) host_bonds: Vec<BondEntry>,
     pub(crate) pairing_deadline: Option<u64>,
     pub(crate) ble_resume: u64,
     aim: Option<[f32; 2]>,
@@ -203,6 +207,7 @@ impl Unit {
             usb: None,
             control: None,
             bond: None,
+            host_bonds: Vec::new(),
             pairing_deadline: None,
             ble_resume: 0,
             aim: Some([0.5, 0.5]),
@@ -281,6 +286,61 @@ impl Unit {
         if let Err(error) = send(self.control.as_ref(), event) {
             errors.report(error);
         }
+    }
+
+    fn bond_count(&self) -> usize {
+        usize::from(self.bond.is_some()) + self.host_bonds.len()
+    }
+
+    /// Forgets every bond, `bond` included.
+    pub(crate) fn clear_bonds(&mut self) {
+        self.bond = None;
+        self.host_bonds.clear();
+    }
+
+    fn bond_slots(&self) -> List<BondSlot, MAX_BONDS> {
+        let mut slots = List::default();
+        for entry in self.bond.iter().chain(&self.host_bonds) {
+            let connected = self.link == Some(entry.bd_addr);
+            // At most MAX_BONDS bonds are ever stored, so the push cannot overflow.
+            let _ = slots.0.push(BondSlot {
+                bd_addr: entry.bd_addr,
+                connected,
+            });
+        }
+        slots
+    }
+
+    fn add_bond(&mut self, entry: BondEntry) -> AddBondResult {
+        if self.bond.is_none_or(|bond| bond.bd_addr == entry.bd_addr) {
+            self.bond = Some(entry);
+        } else if let Some(existing) = self
+            .host_bonds
+            .iter_mut()
+            .find(|bond| bond.bd_addr == entry.bd_addr)
+        {
+            *existing = entry;
+        } else if self.bond_count() < MAX_BONDS {
+            self.host_bonds.push(entry);
+        } else {
+            return AddBondResult::Err(AddBondError::Full);
+        }
+        AddBondResult::Ok()
+    }
+
+    fn remove_bond(&mut self, bd_addr: Uuid) -> Result<(), ClearBondsError> {
+        if self.bond.is_some_and(|bond| bond.bd_addr == bd_addr) {
+            self.bond = None;
+        } else if let Some(index) = self
+            .host_bonds
+            .iter()
+            .position(|bond| bond.bd_addr == bd_addr)
+        {
+            self.host_bonds.remove(index);
+        } else {
+            return Err(ClearBondsError::NotFound);
+        }
+        Ok(())
     }
 
     pub(crate) fn cancel_pairing(&mut self, error: device::PairingError, errors: &mut Errors) {
@@ -669,15 +729,24 @@ impl Unit {
                 );
             }
             DeviceMsg::StartPairing(parameters) => {
-                self.pairing_deadline =
-                    Some(now_ms.saturating_add(u64::from(parameters.timeout_ms)));
                 self.event(DeviceMsg::StartPairingResponse(), errors);
+                if self.bond_count() >= MAX_BONDS {
+                    self.event(
+                        DeviceMsg::PairingResult(device::PairingOutcome::Err(
+                            device::PairingError::BondsFull,
+                        )),
+                        errors,
+                    );
+                } else {
+                    self.pairing_deadline =
+                        Some(now_ms.saturating_add(u64::from(parameters.timeout_ms)));
+                }
             }
             DeviceMsg::CancelPairing() => {
                 self.cancel_pairing(device::PairingError::Cancelled, errors);
             }
             DeviceMsg::ClearBond() => {
-                self.bond = None;
+                self.clear_bonds();
                 self.ble_resume = now_ms.saturating_add(10);
                 self.event(
                     DeviceMsg::ClearBondResponse(device::ClearBondResult::Ok()),
@@ -685,12 +754,20 @@ impl Unit {
                 );
             }
             DeviceMsg::AddBond(entry) => {
-                self.bond = Some(entry);
+                let result = self.add_bond(entry);
                 self.ble_resume = now_ms.saturating_add(10);
-                self.event(
-                    DeviceMsg::AddBondResponse(odyssey_protocol::control::AddBondResult::Ok()),
-                    errors,
-                );
+                self.event(DeviceMsg::AddBondResponse(result), errors);
+            }
+            DeviceMsg::ListBonds() => {
+                let slots = self.bond_slots();
+                self.event(DeviceMsg::ListBondsResponse(slots), errors);
+            }
+            DeviceMsg::RemoveBond(bd_addr) => {
+                let result = self.remove_bond(bd_addr);
+                if result.is_ok() {
+                    self.ble_resume = now_ms.saturating_add(10);
+                }
+                self.event(DeviceMsg::RemoveBondResponse(result.into()), errors);
             }
             DeviceMsg::Reboot() => {
                 self.event(DeviceMsg::RebootAck(), errors);
@@ -993,6 +1070,92 @@ mod tests {
         assert!(matches!(
             reported.try_recv(),
             Ok(SimError::InvalidInput("malformed marker hint"))
+        ));
+    }
+
+    fn bond_entry(last: u8) -> BondEntry {
+        BondEntry {
+            bd_addr: [1, 2, 3, 4, 5, last],
+            ltk: [0; 16],
+            security_level: 2,
+            is_bonded: true,
+            irk: None,
+        }
+    }
+
+    fn unit_with_control() -> (Model, mpsc::Receiver<DeviceMsg>) {
+        let mut model = Model::new(broadcast::channel(16).0, SensorModel::Pag7665qn);
+        let (sender, replies) = mpsc::channel(16);
+        let unit = model.units.get_mut(&UNIT_UUID).unwrap();
+        unit.control = Some(sender);
+        unit.plugged = true;
+        unit.clear_bonds();
+        (model, replies)
+    }
+
+    fn ask(model: &mut Model, msg: DeviceMsg) {
+        let unit = model.units.get_mut(&UNIT_UUID).unwrap();
+        unit.control_message(msg, 0, &mut model.errors);
+    }
+
+    #[test]
+    fn four_bonds_fill_the_unit_and_the_fifth_is_refused() {
+        let (mut model, mut replies) = unit_with_control();
+        for last in 0..MAX_BONDS as u8 {
+            ask(&mut model, DeviceMsg::AddBond(bond_entry(last)));
+            assert!(matches!(
+                replies.try_recv(),
+                Ok(DeviceMsg::AddBondResponse(AddBondResult::Ok()))
+            ));
+        }
+        ask(&mut model, DeviceMsg::AddBond(bond_entry(9)));
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(DeviceMsg::AddBondResponse(AddBondResult::Err(
+                AddBondError::Full
+            )))
+        ));
+        ask(
+            &mut model,
+            DeviceMsg::StartPairing(device::StartPairing { timeout_ms: 1000 }),
+        );
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(DeviceMsg::StartPairingResponse())
+        ));
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(DeviceMsg::PairingResult(device::PairingOutcome::Err(
+                device::PairingError::BondsFull
+            )))
+        ));
+        assert!(model.units[&UNIT_UUID].pairing_deadline.is_none());
+    }
+
+    #[test]
+    fn list_and_remove_bonds_follow_the_firmware() {
+        let (mut model, mut replies) = unit_with_control();
+        for last in [1, 2] {
+            ask(&mut model, DeviceMsg::AddBond(bond_entry(last)));
+            replies.try_recv().unwrap();
+        }
+        ask(&mut model, DeviceMsg::ListBonds());
+        let Ok(DeviceMsg::ListBondsResponse(slots)) = replies.try_recv() else {
+            panic!("ListBonds is answered");
+        };
+        assert_eq!(slots.len(), 2);
+        assert!(slots.iter().all(|slot| !slot.connected));
+        ask(&mut model, DeviceMsg::RemoveBond(bond_entry(2).bd_addr));
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(DeviceMsg::RemoveBondResponse(device::ClearBondResult::Ok()))
+        ));
+        ask(&mut model, DeviceMsg::RemoveBond(bond_entry(2).bd_addr));
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(DeviceMsg::RemoveBondResponse(device::ClearBondResult::Err(
+                ClearBondsError::NotFound
+            )))
         ));
     }
 }

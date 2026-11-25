@@ -63,7 +63,9 @@ jobs:
         run: nix build -L --no-link .#checks.x86_64-linux.sdk-ffi-lint
       - name: Build (nix, cargo-zigbuild)
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/push-cache
         if: github.event_name != 'pull_request'
         with:
@@ -103,7 +105,9 @@ jobs:
       # (nix/xwin.nix), so the build downloads nothing itself.
       - name: Build (nix, cargo-xwin)
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-win_x64)" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-win_x64)
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/push-cache
         if: github.event_name != 'pull_request'
         with:
@@ -137,7 +141,9 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Build (nix)
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-ffi-${{ matrix.triplet }})
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/push-cache
         if: github.event_name != 'pull_request'
         with:

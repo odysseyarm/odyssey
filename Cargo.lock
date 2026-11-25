@@ -8833,6 +8833,7 @@ version = "0.0.0"
 dependencies = [
  "app_dirs2",
  "arrayvec 0.7.8",
+ "bitflags 2.13.2",
  "json5",
  "nalgebra 0.35.0",
  "odyssey-common",
@@ -8861,6 +8862,7 @@ dependencies = [
  "crc32fast",
  "dfu-core",
  "dfu-nusb",
+ "eros",
  "futures",
  "futures-concurrency",
  "heapless 0.9.3",
@@ -9020,6 +9022,7 @@ dependencies = [
  "backon",
  "enumn",
  "heapless 0.9.3",
+ "libc",
  "minicbor",
  "nalgebra 0.35.0",
  "num-traits",

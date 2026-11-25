@@ -53,7 +53,7 @@ pub enum OtaError {
     Transport(String),
     #[error("device does not support radio OTA; update over USB first")]
     Unsupported,
-    #[error("device reported OTA error {0}; recover this unit over USB")]
+    #[error("device reported {0}; recover this unit over USB")]
     Device(Code),
     #[error("invalid OTA status: {0}")]
     Status(Code),
@@ -83,6 +83,10 @@ pub enum OtaError {
     SignatureRejected,
     #[error("secure ATS Lite device did not require signature verification")]
     SignatureModeMismatch,
+    #[error(
+        "device rejected the firmware signature and kept its current firmware; the image is not signed by a release key it trusts"
+    )]
+    DeviceRejectedSignature,
 }
 
 /// Carries one OTA request frame to the device and returns its status reply.
@@ -460,6 +464,12 @@ pub async fn send<T: OtaTransport>(
     // The commit reboots the unit, so its acknowledgement can be lost with the
     // link. The versions seen after reconnecting are the authority.
     let committed = exchange(transport, Request::Commit).await;
+    // A unit that answers the commit with an error did not commit and will not reboot.
+    match committed {
+        Err(OtaError::Device(Code::Signature)) => return Err(OtaError::DeviceRejectedSignature),
+        Err(error @ OtaError::Device(_)) => return Err(error),
+        _ => {}
+    }
     let verified = transport
         .verify_reconnected(images.app_version, expected_netcore)
         .await
@@ -575,6 +585,7 @@ mod tests {
         reset: bool,
         require_signature: bool,
         signatures: Vec<Vec<u8>>,
+        refuse_commit: Option<Code>,
     }
 
     impl Device {
@@ -590,6 +601,7 @@ mod tests {
                 reset: false,
                 require_signature: false,
                 signatures: Vec::new(),
+                refuse_commit: None,
             }
         }
     }
@@ -603,6 +615,17 @@ mod tests {
             }
             if frame.first() == Some(&5) {
                 self.signatures.push(frame.clone());
+            }
+            if let (Some(code), Ok(Request::Commit)) = (self.refuse_commit, Request::decode(&frame))
+            {
+                let mut status = self.receiver.status(
+                    self.slot,
+                    Image::Application.bit() | Image::NetCore.bit(),
+                    self.app_version,
+                    self.current_netcore,
+                );
+                status.error = code;
+                return Ok(status.encode());
             }
             match self.receiver.handle(&mut self.flash, &frame).await {
                 Ok(Action::Reset) => self.reset = true,
@@ -930,6 +953,31 @@ mod tests {
             result,
             Err(OtaError::InvalidSignature("application"))
         ));
+    }
+
+    #[tokio::test]
+    async fn commit_refused_by_the_device_reports_its_reason_without_waiting_for_a_reboot() {
+        let app = b"signed application image";
+        let app_file = signed_file(app, None, 0xa1);
+        for (refusal, signature_rejected) in [(Code::Signature, true), (Code::Flash, false)] {
+            let mut device = Device::new(false);
+            device.require_signature = true;
+            device.target_netcore = device.current_netcore;
+            device.refuse_commit = Some(refusal);
+
+            let result = update(&mut device, LinkMtu::Vendor, (app, &app_file), None).await;
+
+            assert!(
+                match &result {
+                    Err(OtaError::DeviceRejectedSignature) => signature_rejected,
+                    Err(OtaError::Device(code)) => !signature_rejected && *code == refusal,
+                    _ => false,
+                },
+                "unexpected OTA result for {refusal:?}: {result:?}"
+            );
+            assert_eq!(device.flash.commits, 0);
+            assert!(!device.reset);
+        }
     }
 
     #[tokio::test]

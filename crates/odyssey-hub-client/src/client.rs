@@ -6,6 +6,8 @@ use interprocess::local_socket::{
 };
 use odyssey_hub_common as common;
 use odyssey_hub_server_interface as proto;
+/// Since: Unreleased.
+pub use odyssey_hub_server_interface::SystemPairingResult;
 use odyssey_hub_server_interface::service_client::ServiceClient;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
@@ -35,6 +37,25 @@ pub struct Client {
 pub struct DeviceClient {
     rpc: ServiceClient<Channel>,
     device: proto::Device,
+}
+
+/// One stored BLE bond of a unit.
+///
+/// Since: Unreleased.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bond {
+    /// Identity address of the bonded host, little-endian as on air.
+    ///
+    /// Since: Unreleased.
+    pub bd_addr: [u8; 6],
+    /// This host holds the unit's BLE link now.
+    ///
+    /// Since: Unreleased.
+    pub connected: bool,
+    /// The bonded host is the Bluetooth adapter of the computer running the hub.
+    ///
+    /// Since: Unreleased.
+    pub this_computer: bool,
 }
 
 fn invalid_reply(message: &'static str) -> RpcError {
@@ -701,6 +722,78 @@ impl DeviceClient {
             })
             .await?;
         Ok(())
+    }
+
+    /// Lists the unit's stored BLE bonds. Needs a USB control link and device
+    /// protocol 0.2.2 or newer.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails, including firmware that is too old.
+    /// Since: Unreleased.
+    pub async fn list_bonds(&self) -> Result<Vec<Bond>, ClientError> {
+        let reply = self
+            .rpc
+            .clone()
+            .list_bonds(proto::ListBondsRequest {
+                device: Some(self.device.clone()),
+            })
+            .await?
+            .into_inner();
+        Ok(reply
+            .bonds
+            .into_iter()
+            .map(|bond| {
+                Ok(Bond {
+                    bd_addr: bond.bd_addr.try_into().map_err(|_wrong_length| {
+                        invalid_reply("bond address has invalid length")
+                    })?,
+                    connected: bond.connected,
+                    this_computer: bond.this_computer,
+                })
+            })
+            .collect::<Result<_, RpcError>>()?)
+    }
+
+    /// Removes the bond with identity address `bd_addr`, as listed by
+    /// [`Self::list_bonds`]. Same requirements as that call.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails, the unit has no such bond, or the
+    /// firmware is too old.
+    /// Since: Unreleased.
+    pub async fn remove_bond(&self, bd_addr: [u8; 6]) -> Result<(), ClientError> {
+        self.rpc
+            .clone()
+            .remove_bond(proto::RemoveBondRequest {
+                device: Some(self.device.clone()),
+                bd_addr: bd_addr.to_vec(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Puts the unit in pairing mode and pairs this computer's Bluetooth adapter with
+    /// it. Returns once the pairing settles, so a refusal such as a full unit is the
+    /// returned result, not an error.
+    ///
+    /// # Errors
+    /// Returns an error if the hub RPC fails or the adapter could not pair.
+    /// Since: Unreleased.
+    pub async fn pair_system_bluetooth(
+        &self,
+        timeout_ms: u32,
+    ) -> Result<SystemPairingResult, ClientError> {
+        let reply = self
+            .rpc
+            .clone()
+            .pair_system_bluetooth(proto::PairSystemBluetoothRequest {
+                device: Some(self.device.clone()),
+                timeout_ms,
+            })
+            .await?
+            .into_inner();
+        Ok(SystemPairingResult::try_from(reply.result)
+            .map_err(|_unknown| invalid_reply("unknown system pairing result"))?)
     }
 
     /// Ask a device without [`DeviceCapabilities::AUTO_TRANSPORT`] to stream over USB
