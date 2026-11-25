@@ -62,6 +62,8 @@ a merge queue must not be required for `master` before they all carry it.
 
 Vision-tool simulation attaches to `odyssey_sim::UNIT_UUID`; USB presence and
 reconnect generation come from that unit's snapshot, not global simulator state.
+The PAG exposure simulation uses only in-frame spots, capped at the chip's
+16 report slots; off-screen lights cannot drive its exposure controller.
 Check Host CI's optional simulator features, including simulator-control test targets:
 
 ```sh

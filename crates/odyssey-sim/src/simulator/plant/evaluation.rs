@@ -372,3 +372,18 @@ fn an_exposure_write_blinds_the_sensor_for_a_frame_gap() {
     assert!(sensor.frame(&mut registers, 1010, &markers).is_none());
     assert!(sensor.frame(&mut registers, 1020, &markers).is_some());
 }
+
+#[test]
+fn off_sensor_lights_do_not_change_exposure() {
+    let phases = [Phase::hold("outside", 3.0, 1.0, 3000, 0)];
+    let baseline = simulate(Mode::Adaptive, &[], &phases);
+    for px in [[-1000.0, 1000.0], [f64::from(GRID[0]) + 1000.0, 1000.0]] {
+        let outside = simulate(
+            Mode::Adaptive,
+            &[Distractor::Lamp { px, intensity: 1.0 }],
+            &phases,
+        );
+        assert_eq!(outside.exposures, baseline.exposures, "{px:?}");
+        assert_eq!(outside.phases[0].detected, baseline.phases[0].detected);
+    }
+}
