@@ -88,27 +88,30 @@ its PR itself and explicitly dispatches the required checks.
 The bump and publish decisions come from the
 [`pure-release`](https://github.com/Abrahamh08/pure-release) dependency. Component
 mapping, dependency discovery and publishing I/O remain in `crates/xtask/src/release.rs`.
+Its component table is listed in publish order, with each net core and
+bootloader before the application that delivers it.
 Host CI runs Verus and Kani against the dependency revision in `crates/xtask/Cargo.lock`:
 
 ```
 nix build .#checks.x86_64-linux.release-proofs .#checks.x86_64-linux.wire-proofs
 ```
 
-Verus verifies the seven release properties for arbitrary component-table sizes
-and compatibility-history lengths. Its strict gate rejects unproved assumptions
-and skipped executable bodies. Kani independently checks every valid table and
-state combination at 11 components,
-and compatibility histories of zero through five releases. Both cover arbitrary
-`u64` version triples:
+Verus verifies the five release properties for component tables of any size
+and shape. Its strict gate rejects unproved assumptions and skipped executable
+bodies. Kani independently checks every table of five components that each
+ship inside at most two others:
 
-- changed components are never current, and source-version regressions are refused
-- outgoing parts force their carrier application to become releasable
-- one automatic bump reaches a fixed point, and default publication accepts its
-  ready components, ordered parts before applications, without duplicates
-- named publication requires a ready carrier but does not publish it unless
-  selected, while default publication selects every ready carrier
-- net-core counter increments are monotonic and reject exhaustion at 65535
-- the Desktop floor is the oldest compatible suffix
+- changed components are never up to date, and source-version regressions are refused
+- a part heading to units makes the application that delivers it need a
+  release, and nothing else is made to
+- one automatic bump reaches a fixed point, and default publication then
+  accepts every ready component
+- a named bump also raises the application of each named part
+- publication releases only ready components, each part before its
+  application, and refuses a part whose application is not being released
+
+The net-core counter increment and the Desktop floor are outside these proofs.
+Both are plain code in `crates/xtask/src/release.rs`; the floor has a unit test.
 
 Wire proofs call production codecs against fixed byte layouts, which is a
 stronger check than an encode/decode roundtrip. Coverage includes legacy object
