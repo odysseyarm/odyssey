@@ -55,16 +55,12 @@ pub(crate) enum DeviceCommands {
     Stream,
 }
 
-async fn list_devices(require_usb_mode: bool) -> eros::Result<Vec<nusb::DeviceInfo>> {
+// Firmware picks USB or BLE itself, so the reported mode never excludes a device.
+async fn list_devices() -> eros::Result<Vec<nusb::DeviceInfo>> {
     let mut devices = Vec::new();
-    let mut non_usb_devices = 0usize;
     for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(mode) => {
-                if require_usb_mode && !matches!(mode, TransportMode::Usb) {
-                    non_usb_devices += 1;
-                    continue;
-                }
                 if !matches!(mode, TransportMode::Usb) {
                     eprintln!(
                         "Info: {:04X}:{:04X} is in {:?} mode",
@@ -84,18 +80,10 @@ async fn list_devices(require_usb_mode: bool) -> eros::Result<Vec<nusb::DeviceIn
             }
         }
     }
-    if require_usb_mode && devices.is_empty() && non_usb_devices > 0 {
-        eprintln!(
-            "Found {non_usb_devices} device(s) not in USB mode; no USB-mode devices available"
-        );
-    }
     Ok(devices)
 }
 
-async fn connect_to_device(
-    device_index: Option<usize>,
-    require_usb_mode: bool,
-) -> eros::Result<VmDevice> {
+async fn connect_to_device(device_index: Option<usize>) -> eros::Result<VmDevice> {
     // Explicit indices refer to the unfiltered enumeration printed by
     // `list-devices`. Probing or filtering first would renumber devices.
     let device_info = if let Some(idx) = device_index {
@@ -108,7 +96,7 @@ async fn connect_to_device(
             })?
             .clone()
     } else {
-        let devices = list_devices(require_usb_mode).await?;
+        let devices = list_devices().await?;
         if devices.is_empty() {
             eros::bail!("No device found. Please connect a device.");
         }
@@ -121,15 +109,9 @@ async fn connect_to_device(
         devices[0].clone()
     };
 
-    if require_usb_mode {
-        Ok(VmDevice::connect_usb(device_info)
-            .await
-            .context("Failed to connect to device")?)
-    } else {
-        Ok(VmDevice::connect_usb_any_mode(device_info)
-            .await
-            .context("Failed to connect to device")?)
-    }
+    Ok(VmDevice::connect_usb_any_mode(device_info)
+        .await
+        .context("Failed to connect to device")?)
 }
 
 async fn cmd_list_devices() -> eros::Result<()> {
@@ -293,28 +275,28 @@ pub(crate) async fn handle_command(
     match command {
         DeviceCommands::ListDevices => cmd_list_devices().await,
         DeviceCommands::Version => {
-            let device = connect_to_device(device_index, true).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_version(&device).await
         }
         DeviceCommands::Pair { timeout } => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_pair(&device, timeout).await
         }
         DeviceCommands::PairCancel => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_pair_cancel(&device).await
         }
         DeviceCommands::ClearBond => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_clear_bond(&device).await
         }
         DeviceCommands::ListBonds => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_list_bonds(&device).await
         }
         DeviceCommands::RemoveBond { addr } => {
             let addr = parse_bond_addr(&addr)?;
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_remove_bond(&device, addr).await
         }
         DeviceCommands::AccelCalib {
@@ -324,16 +306,16 @@ pub(crate) async fn handle_command(
         } => {
             crate::calibration::validate_sample_count(samples)?;
             crate::calibration::validate_gravity(gravity)?;
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_accel_calib(&mut device, samples, gravity, &output).await
         }
         DeviceCommands::GyroCalib { samples, output } => {
             crate::calibration::validate_sample_count(samples)?;
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_gyro_calib(&mut device, samples, &output).await
         }
         DeviceCommands::Stream => {
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_stream(&mut device).await
         }
     }
