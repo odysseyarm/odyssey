@@ -53,7 +53,7 @@ pub struct ImageHandoff<L> {
     /// Since: Unreleased.
     pub l2cap_channels: L,
     /// Since: Unreleased.
-    pub ota: atslite_common::ota::OtaHandle,
+    pub ota: Option<ota_channel::OtaHandle>,
 }
 
 /// Switches `sensor` to image output and releases its register SPI.
@@ -352,10 +352,13 @@ pub async fn run<'r, L: L2capChannels>(
 
 async fn ota_busy_reply<L: L2capChannels>(
     l2cap: &L,
-    ota: atslite_common::ota::OtaHandle,
+    ota: Option<ota_channel::OtaHandle>,
     packet: Packet,
 ) {
     let PacketData::OtaRequest(_) = packet.data else {
+        return;
+    };
+    let Some(ota) = ota else {
         return;
     };
     let Some(reply) = ota.request(&[0]).await else {

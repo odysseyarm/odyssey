@@ -180,6 +180,7 @@ dependencies = [
  "nrfxlib-sys",
  "odyssey-cv",
  "odyssey-protocol",
+ "ota-channel",
  "pag7665qn",
  "postcard",
  "release-signing",
@@ -1727,6 +1728,7 @@ dependencies = [
  "nrfxlib-sys",
  "odyssey-protocol",
  "odyssey-version",
+ "ota-channel",
  "paj7025",
  "postcard",
  "static_cell",
@@ -1747,7 +1749,6 @@ dependencies = [
 name = "legacy-common"
 version = "0.1.0"
 dependencies = [
- "atslite-common",
  "bytemuck",
  "cfg-noodle",
  "cortex-m",
@@ -1773,6 +1774,7 @@ dependencies = [
  "odyssey-version",
  "once_cell",
  "opencv-ros-camera 0.17.0 (git+https://github.com/Abrahamh08/opencv-ros-camera)",
+ "ota-channel",
  "paj7025",
  "panic-probe",
  "postcard",
@@ -2208,6 +2210,15 @@ source = "git+https://github.com/Abrahamh08/opencv-ros-camera#1a77df9eae538594ea
 dependencies = [
  "cam-geom",
  "nalgebra",
+]
+
+[[package]]
+name = "ota-channel"
+version = "0.1.0"
+dependencies = [
+ "better-ota",
+ "embassy-sync",
+ "odyssey-protocol",
 ]
 
 [[package]]

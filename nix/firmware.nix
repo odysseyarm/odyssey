@@ -255,13 +255,8 @@ let
           DEFMT_LOG = "info";
         }
         // lib.optionalAttrs (dir == "firmware/lite1" || dir == "firmware/legacy-atslite") {
-          # Both ATS Lite applications are within a kilobyte of their flash slot. Dropping the
-          # std Debug machinery saves several KB; `{:?}` and Debug2Format log nothing in release.
-          RUSTFLAGS = "-Zfmt-debug=none";
-        }
-        // lib.optionalAttrs (dir == "firmware/lite1") {
-          # Lite1 also needs the panic machinery gone (7 KB): a panic traps at its call site,
-          # and the crash record logs it as a fault with that site's PC.
+          # Tracker banks cannot fit Debug formatting and panic machinery. Panics trap into
+          # HardFault and retain their PC in the crash record; Debug2Format prints nothing.
           RUSTFLAGS = "-Zfmt-debug=none -Zunstable-options -Cpanic=immediate-abort";
         };
       args =
@@ -771,6 +766,11 @@ in
       dir = "firmware/better-ota";
       pname = "better-ota-tests";
       cargoExtraArgs = "--locked --offline --features signed,dev-signing-key";
+    });
+    ota-channel-tests = hostTest (testArgs {
+      dir = "firmware/ota-channel";
+      pname = "ota-channel-tests";
+      cargoExtraArgs = "--locked --offline --features embassy-sync/std --target ${hostTriple}";
     });
     release-signing-tests = hostTest (testArgs {
       dir = "firmware/release-signing";

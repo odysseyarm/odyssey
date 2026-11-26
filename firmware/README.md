@@ -1,3 +1,24 @@
+## Firmware library boundaries
+
+Board applications wire peripherals and start tasks; drivers and protocol state belong in
+libraries. Each board resolves its own Cargo graph, so nRF52840 and nRF5340 HAL features never
+unify across applications.
+
+- `atslite-common` is an nRF5340 application-core library: network core, power management,
+  settings and dual-core OTA flash backend. nRF52840 boards must not depend on it.
+- `legacy-common` shares PAJ tracking, image mode and USB handling between legacy ATS Lite
+  and VM. Its `Platform` trait delegates board-specific behavior, including settings flush
+  before reset.
+- `ota-channel` owns the HAL-independent OTA request/reply service. Chip libraries supply
+  `better_ota::Slots`; applications only start the task and wire its handle. VM's `Platform`
+  declares no BLE OTA service.
+- `legacy-vm` owns nRF52840 board wiring and BMI270 support; `legacy-atslite` owns its
+  nRF5340 board wiring and ICM support. Neither application implements shared protocol logic.
+
+Nix release builds of both ATS Lite trackers use immediate-abort panics to fit their fixed
+flash banks. A panic reaches HardFault directly; crash records report a fault with the
+panic site's PC rather than the `Panic` kind. Debug formatting remains disabled.
+
 ## Board flashing
 
 `cargo xtask firmware <board> flash` runs `probe-rs download` with read-back

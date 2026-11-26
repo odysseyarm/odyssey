@@ -58,6 +58,7 @@ path = "src/main.rs"
 legacy-common = { path = "../legacy-common" }
 atslite-common = { path = "../atslite-common", features = ["signed-ota"] }
 atslite-transport = { path = "../atslite-transport" }
+ota-channel = { path = "../ota-channel" }
 legacy-atslite-boot-api = { path = "../legacy-atslite-boot-api", features = ["defmt"] }
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
 embassy-nrf = { version = "0.11.0", features = ["nrf5340-app-s", "time-driver-rtc1", "defmt", "unstable-pac"] }

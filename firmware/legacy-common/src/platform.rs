@@ -90,6 +90,9 @@ pub trait Platform {
     /// Since: Odyssey Desktop 0.7.0.
     const NAME: &'static str;
 
+    /// OTA service supplied by this board's library, absent on USB-only boards.
+    const OTA: Option<ota_channel::OtaHandle>;
+
     /// IMU accelerometer scaling: LSB per g
     ///
     /// Since: Odyssey Desktop 0.7.0.
@@ -119,6 +122,9 @@ pub trait Platform {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     fn device_id() -> [u8; 8];
+
+    /// Waits for this board's settings worker before resetting flash hardware.
+    fn settings_wait_settled(timeout: embassy_time::Duration) -> impl Future<Output = ()>;
 
     /// Update the BLE advertising name. No-op on platforms without BLE.
     ///

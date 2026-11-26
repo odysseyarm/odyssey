@@ -82,6 +82,7 @@ static NODE_TRANSIENT: StorageListNode<TransientSettings> =
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
 
 static SETTINGS_FLUSH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static SETTINGS_SETTLED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static SETTINGS_CELL: StaticCell<Settings> = StaticCell::new();
 
@@ -169,6 +170,7 @@ async fn settings_worker(
                     Err(e) => defmt::error!("process_garbage err: {:?}", e),
                 }
                 defmt::trace!("gc in {:?}", start.elapsed());
+                SETTINGS_SETTLED.signal(());
             }
         }
     }
@@ -178,6 +180,18 @@ async fn settings_worker(
 #[inline]
 pub fn settings_flush_now() {
     SETTINGS_FLUSH.signal(());
+}
+
+/// Waits for the VM's settings worker to finish a write pass before resetting.
+pub async fn settings_wait_settled(timeout: Duration) {
+    SETTINGS_SETTLED.reset();
+    settings_flush_now();
+    if embassy_time::with_timeout(timeout, SETTINGS_SETTLED.wait())
+        .await
+        .is_err()
+    {
+        defmt::warn!("settings did not settle within {:?}, continuing", timeout);
+    }
 }
 
 fn set_active(list: &'static StorageList<NoodleRawMutex>, flush_fn: fn()) {

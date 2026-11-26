@@ -366,7 +366,7 @@ where
     /// Since: Odyssey Desktop 0.7.0.
     pub usb_configured: UsbConfigHandle,
     /// Since: Unreleased.
-    pub ota: crate::ota::OtaHandle,
+    pub ota: ota_channel::OtaHandle,
 }
 
 /// Runs object mode forever: the USB reader and the receive, IMU, marker, battery and send
@@ -527,7 +527,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
     device_id: [u8; 6],
     product_id: u16,
     firmware_version: [u32; 3],
-    ota: crate::ota::OtaHandle,
+    ota: ota_channel::OtaHandle,
     usb_requests: Receiver<'_, UsbPacket, Q>,
     usb_replies: Sender<'_, UsbPacket, R>,
     image_requests: Sender<'_, ImageRequest, 2>,

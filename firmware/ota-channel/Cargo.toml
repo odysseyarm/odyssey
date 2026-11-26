@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "ota-channel"
+version = "0.1.0"
+edition = "2024"
+description = "HAL-independent channel service for firmware update receivers"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+better-ota = { path = "../better-ota" }
+embassy-sync = "0.8.0"
+odyssey-protocol = { path = "../../crates/odyssey-protocol", default-features = false }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.cargo]
+unused_dependencies = "deny"
