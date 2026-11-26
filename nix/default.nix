@@ -289,6 +289,8 @@ in
             nativeBuildInputs = [
               (pkgs.python3.withPackages (ps: [
                 ps.mypy
+                ps.cryptography
+                ps.pyscard
                 (ps.toPythonModule pkgs.yubikey-manager)
               ]))
             ];
