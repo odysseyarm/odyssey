@@ -12,5 +12,5 @@ if [ -z "$key" ]; then
   trap 'rm -f "$key"' EXIT
   printf '%s' "$NIX_SIGNING_KEY" >"$key"
 fi
-nix store sign -r -k "$key" "${paths[@]}"
-nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' "${paths[@]}"
+printf '%s\n' "${paths[@]}" | nix store sign -r -k "$key" --stdin
+nix copy --to 's3://odyssey-cache?endpoint=a3499d8c0c6b0de52bda690ab62c8ded.r2.cloudflarestorage.com&region=auto&compression=zstd&parallel-compression=true' --stdin <<<"$selection"
