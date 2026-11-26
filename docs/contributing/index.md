@@ -299,85 +299,20 @@ CI orchestrates lab runs; QEMU supplies interactive Windows and passed-through
 Radeon GPU. Physical HITL needs separately enrolled devices and exclusive
 ownership; simulator smoke does not substitute for hardware checks.
 
-#### Lab admission and hardware isolation
+#### Lab admission and hardware coverage
 
-Admission and reset boundaries:
+Maintainer-authenticated pushes may run on an isolated Windows GUI worker.
+Other sources require maintainer approval tied to the exact source run attempt
+and immutable build artifact; changed attempts or artifacts need new approval.
+Fork CI runs on GitHub-hosted runners, not directly on lab machines.
 
-- A push authenticated as a repository maintainer or administrator auto-authorizes
-  its exact source commit and build artifacts. Commit author/email is not evidence
-  of that permission. Scheduled runs and reruns must not inherit trust merely
-  because a maintainer clicked Run.
-- Other contributors need maintainer approval bound to the exact commit and
-  artifacts before HITL receives devices. Changed code or artifacts invalidate
-  that approval. Fork CI runs on GitHub-hosted runners.
-- GUI worker receives no USB/BLE devices. Physical HITL jobs are not enabled by
-  this workflow; they require separately enrolled hardware and exclusive leases
-  across Linux and Windows. Missing hardware must fail a requested hardware check.
-- Public workflows cannot address a lab runner directly. Private control repo
-  permits only maintainers to dispatch approval. Broker registers a unique
-  single-job JIT runner only after admission; host deletes registration on cleanup.
-- Each job starts from a sealed disk, NVRAM and TPM baseline. Disposable disk
-  overlay and copied firmware/TPM state are reset outside guest after completion,
-  failure or cancellation. Failed graceful shutdown quarantines worker rather
-  than reusing dirty state; host never forces power off.
-- QEMU runs unprivileged. Host firewall denies guest access to host services,
-  LAN and tailnet; host DNS/DHCP remain available. Public web traffic and NTP
-  remain allowed. No personal credentials or signing keys belong in baseline.
+GUI evidence includes screenshots, semantic widget snapshots and application
+logs. This workflow does not establish physical USB, Bluetooth or DFU coverage:
+those checks require separately enrolled hardware and exclusive device leases.
+Missing hardware must fail a requested hardware check.
 
-For local USB, use libvirt passthrough of explicitly enrolled physical ports and
-serial numbers. Allowlist application and bootloader VID/PID transitions on that
-same device, including modes without a serial number; do not attach every matching
-VID/PID. Validate disconnect, DFU/recovery re-enumeration and return to application
-mode before claiming firmware HITL coverage.
-
-For remote USB, the source machine exports the device: `usbipd-win` for a Windows
-source, Linux USB/IP for a Linux source. A dedicated lab host imports it over a
-restricted tailnet connection and supplies the imported USB device to QEMU.
-Guest gets no general tailnet access. Remote export/rebind must follow the same
-enrolled port through bootloader transitions. Native local passthrough needs
-neither WSL nor USB/IP.
-
-Windows BLE tests own a dedicated USB Bluetooth adapter passed through in full.
-Host Bluetooth keeps its own adapter; no shared host HCI stack or desktop adapter
-takeover. Preserve the product's refusal of BLE pairing and exercise discovery,
-unpaired connections and reconnects against real devices. Guest reset cannot undo
-firmware, bonds or other persistent state changed on physical hardware.
-
-Interactive Windows lab console uses SPICE at host loopback `127.0.0.1:5930`.
-From a remote workstation, forward it through authenticated SSH:
-`ssh -N -L 5930:127.0.0.1:5930 kybrdgmr@nixos`, then open
-`spice://127.0.0.1:5930` in remote-viewer. Substitute the host's reachable SSH
-name or tailnet address. Clipboard, file transfer and viewer USB redirection
-are disabled. Existing VGA and Radeon passthrough are preserved; guest-agent
-installation and automatic guest resolution changes are not configured.
-
-Host starts `odyssey-lab.service` on boot, not an idle Windows desktop. Manual
-maintenance is mutually exclusive with controller:
-
-```sh
-sudo systemctl stop odyssey-lab
-sudo systemctl start odyssey-windows
-# Finish maintenance, shut Windows down, then resume controller:
-sudo systemctl stop odyssey-windows
-sudo systemctl start odyssey-lab
-```
-
-For a non-auto-admitted run, inspect its exact run attempt and GUI artifact
-digest, then dispatch private workflow as a maintainer:
-
-```sh
-gh workflow run windows-gui.yml -R odysseyarm/odyssey-lab \
-  -f source_run_id="$run" -f source_run_attempt="$attempt" \
-  -f approved_artifact_digest="$digest"
-```
-
-Approval applies only to that source run attempt and immutable artifact digest.
-Changing either requires new approval. Private repo scripts contain baseline
-installation/sealing commands and host controller CLI; never seal a running VM.
-
-Complete first-sign-in prompts and disable optional Windows welcome/setup
-reminders for the lab user before sealing. Verify a cold boot reaches the desktop
-without input: post-login setup screens block the Startup-folder runner.
+Operator provisioning, access, maintenance and recovery procedures belong in
+the private infrastructure repository, not this contributor guide.
 
 ### NixOS package
 
