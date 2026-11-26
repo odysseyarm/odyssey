@@ -375,6 +375,10 @@ Approval applies only to that source run attempt and immutable artifact digest.
 Changing either requires new approval. Private repo scripts contain baseline
 installation/sealing commands and host controller CLI; never seal a running VM.
 
+Complete first-sign-in prompts and disable optional Windows welcome/setup
+reminders for the lab user before sealing. Verify a cold boot reaches the desktop
+without input: post-login setup screens block the Startup-folder runner.
+
 ### NixOS package
 
 Desktop releases attach the pushed store path as
