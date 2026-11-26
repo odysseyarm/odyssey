@@ -265,26 +265,28 @@ Stable floor.
 ### Windows desktop smoke
 
 `desktop-release.yml` runs hosted Windows MSI install/uninstall checks, then a
-hosted waiting job. Public repository has no registered lab runners. The waiting
-job accepts only the host broker's commit status for that exact workflow run
-and attempt; a rerun cannot reuse an earlier success.
+hosted waiting job. The public repository has no registered lab runners. The
+waiting job accepts only the host broker's commit status for that exact workflow
+run and attempt, so a rerun cannot reuse an earlier success.
 
-Private `odysseyarm/odyssey-lab` owns lab workflows. Its hosted guard validates
-source run, successful build/installer jobs and immutable artifact metadata.
-Host broker independently checks permissions and approval, downloads the exact
-artifact, verifies its REST SHA256 digest and safely extracts it. Read-only ISO
-supplies the package, exact-source launcher and single-run JIT configuration;
-guest receives no reusable registration token or personal access token.
+Private `odysseyarm/odyssey-lab` owns the lab workflows. Its hosted guard
+validates the source run, the successful build and installer jobs, and the
+immutable artifact metadata. The host broker independently checks permissions
+and approval, downloads the exact artifact, verifies its REST SHA256 digest and
+extracts it safely. A read-only ISO supplies the package, the exact-source
+launcher and a single-run JIT runner configuration; the guest never receives a
+reusable registration token or personal access token.
 
-Windows needs an unlocked `odyssey-lab` desktop and healthy AMD hardware rendering.
-Separate `desktop-windows-gui` package contains instrumented app and Rust test
-executable; launcher verifies both SHA256 hashes. Shipping online/full binaries
-do not enable automation. Same `gpui-goo` scenario drives native widgets locally
-and in QEMU; no OCR or coordinate matching. Private control run uploads PNGs,
-widget snapshots and logs as `windows-gui-evidence-<run>-<attempt>`, including
-failure evidence. Public waiting job links that run; organization members can
-download evidence there. Screenshots are not pixel baselines. Hosted MSI checks
-and simulator GUI checks make no USB, BLE or DFU claims.
+Windows needs an unlocked `odyssey-lab` desktop and healthy AMD hardware
+rendering. The separate `desktop-windows-gui` package holds an instrumented app
+and the Rust test executable; the launcher verifies both SHA256 hashes. Shipping
+online and full binaries do not enable automation. The same `gpui-goo` scenario
+drives native widgets locally and in QEMU, with no OCR or coordinate matching.
+The private control run uploads PNGs, widget snapshots and logs (including
+failure evidence) as `windows-gui-evidence-<run>-<attempt>`. The public waiting
+job links that run, and organization members can download the evidence there.
+Screenshots are not pixel baselines. Hosted MSI checks and simulator GUI checks
+make no USB, BLE or DFU claims.
 
 From repository root, run either smoke locally:
 
