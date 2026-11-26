@@ -495,8 +495,8 @@ dependencies = [
 
 [[package]]
 name = "pure-release"
-version = "0.1.0"
-source = "git+https://github.com/Abrahamh08/pure-release#b9854b318690639cac644169fe9df2bd87da4268"
+version = "0.2.0"
+source = "git+https://github.com/Abrahamh08/pure-release#c555bd726b4fcaf408ed1f265ed899ebb5cd66fc"
 
 [[package]]
 name = "quote"
