@@ -254,6 +254,9 @@ versions use the next patch and include UTC timestamp plus source commit, such a
 prereleases. Desktop has no self-updater; users choose releases and install them
 manually.
 
+For lab-only verification, dispatch with `publish_release=false`; build,
+installer and GUI checks still run, but no GitHub release or website is published.
+
 The app reports full SemVer. Windows Installer accepts only three numeric
 version fields, so MSI upgrade checks use the numeric `X.Y.Z` core; firmware
 compatibility checks compare full SemVer, keeping a Nightly below matching
