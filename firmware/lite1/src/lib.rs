@@ -8,6 +8,7 @@ pub mod battery_model;
 pub mod imu;
 /// Since: Odyssey Desktop 0.6.0.
 pub mod init;
+pub mod lsm;
 /// Since: Odyssey Desktop 0.6.0.
 pub mod pins;
 /// Since: Odyssey Desktop 0.6.0.
@@ -24,16 +25,21 @@ pub use atslite_common::{
 pub use embassy_executor;
 /// Since: Odyssey Desktop 0.6.0.
 pub use embassy_nrf;
-use embassy_nrf::{bind_interrupts, cryptocell_rng, peripherals, spim, twim};
+use embassy_nrf::{bind_interrupts, gpio, peripherals, spim, twim};
 
 bind_interrupts!(pub struct Irqs {
     SERIAL0 => spim::InterruptHandler<peripherals::SERIAL0>;
+    SERIAL1 => spim::InterruptHandler<peripherals::SERIAL1>;
     SPIM4 => spim::InterruptHandler<peripherals::SPIM4>;
     SERIAL2 => twim::InterruptHandler<peripherals::SERIAL2>;
     USBD => embassy_nrf::usb::InterruptHandler<peripherals::USBD>;
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
-    CRYPTOCELL => cryptocell_rng::InterruptHandler<peripherals::CC_RNG>;
+    GPIOTE0 => gpio::InterruptHandler<peripherals::P0_21>,
+        gpio::InterruptHandler<peripherals::P1_00>,
+        gpio::InterruptHandler<peripherals::P1_15>,
+        gpio::InterruptHandler<peripherals::P0_05>,
+        gpio::InterruptHandler<peripherals::P0_04>;
 });
 
 /// Returns a `&'static mut [u8; $size]` zeroed buffer; each expansion site can take it once.

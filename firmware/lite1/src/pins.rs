@@ -1,39 +1,11 @@
 //! lite1 pin map, from the Radiosity_POC2.PDF schematic (ATS POC2 Lite1, Rev A).
 
 use embassy_nrf::Peri;
-use embassy_nrf::gpio::AnyPin;
 use embassy_nrf::peripherals::*;
-
-/// Since: Odyssey Desktop 0.6.0.
-pub struct Spi {
-    /// Since: Odyssey Desktop 0.6.0.
-    pub sck: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.6.0.
-    pub miso: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.6.0.
-    pub mosi: Peri<'static, AnyPin>,
-    /// Since: Odyssey Desktop 0.6.0.
-    pub cs: Peri<'static, AnyPin>,
-}
 
 macro_rules! define_peripheral {
     ($name:ident { $( $field:ident : $pin:ident ),+ $(,)? }) => {
         pub struct $name { $( pub $field: Peri<'static, $pin> ),+ }
-    };
-}
-
-macro_rules! impl_spi_from {
-    ($name:ident { sck:$sck:ident, miso:$miso:ident, mosi:$mosi:ident, cs:$cs:ident }) => {
-        impl From<$name> for Spi {
-            fn from(p: $name) -> Spi {
-                Spi {
-                    sck: p.$sck.into(),
-                    miso: p.$miso.into(),
-                    mosi: p.$mosi.into(),
-                    cs: p.$cs.into(),
-                }
-            }
-        }
     };
 }
 
@@ -57,8 +29,8 @@ macro_rules! group_peripherals {
 }
 
 // Vision sensor (PAG7661QN via SPIM4 high-speed bus)
-// Sheet 3: SPI4_CS=P1.13, SPI4_SCK=P1.08, SPI4_MOSI=P0.29, SPI4_MISO=P1.09
-// Sheet 3: VS_INT_O=P1.14, VS_RESET_N=P0.24, VS_LED_HIRL=P1.10
+// Sheet 3: SPI4_CS=P0.11, SPI4_SCK=P0.08, SPI4_MOSI=P0.09, SPI4_MISO=P0.10
+// Sheet 3: VIS_INT_O=P1.15, VIS_RESET_N=P0.24, VIS_LED_CTRL=P1.10
 define_peripheral!(Pag7665qn {
     sck: P0_08,
     miso: P0_10,
@@ -68,15 +40,9 @@ define_peripheral!(Pag7665qn {
     reset: P0_24,
     led_ctrl: P1_10,
 });
-impl_spi_from!(Pag7665qn {
-    sck: sck,
-    miso: miso,
-    mosi: mosi,
-    cs: cs
-});
 
 // Primary IMU (ICM-42688-P via SPI0)
-// Sheet 3: SPI0_CS=P0.22, SPI0_SCK=P0.20, SPI0_MOSI=P0.19, SPI0_MISO=P1.00
+// Sheet 3: SPI0_CS=P1.13, SPI0_SCK=P1.08, SPI0_MOSI=P0.29, SPI0_MISO=P1.09
 // Sheet 3: ICM_INT1=P0.21, ICM_CLKIN=P1.05
 define_peripheral!(Icm42688p {
     sck: P1_08,
@@ -86,11 +52,15 @@ define_peripheral!(Icm42688p {
     int1: P0_21,
     clkin: P1_05,
 });
-impl_spi_from!(Icm42688p {
-    sck: sck,
-    miso: miso,
-    mosi: mosi,
-    cs: cs
+
+// Sheet 3: SPI1_CS=P1.04, SPI1_SCK=P0.20, SPI1_MOSI=P1.01, SPI1_MISO=P0.22
+define_peripheral!(Lsm6dsv320x {
+    sck: P0_20,
+    miso: P0_22,
+    mosi: P1_01,
+    cs: P1_04,
+    int1: P1_00,
+    int2: P1_07,
 });
 
 // PMIC (NPM1300 via I2C)
@@ -110,5 +80,6 @@ define_peripheral!(Pmic {
 group_peripherals!(Board {
     pag7665qn: Pag7665qn { sck=P0_08, miso=P0_10, mosi=P0_09, cs=P0_11, int_o=P1_15, reset=P0_24, led_ctrl=P1_10 },
     icm42688p: Icm42688p { sck=P1_08, miso=P1_09, mosi=P0_29, cs=P1_13, int1=P0_21, clkin=P1_05 },
+    lsm6dsv320x: Lsm6dsv320x { sck=P0_20, miso=P0_22, mosi=P1_01, cs=P1_04, int1=P1_00, int2=P1_07 },
     pmic:      Pmic      { sda=P1_02, scl=P1_03, shphld=P0_30, int=P0_05, fail=P0_06, pwr_btn=P0_04 },
 });

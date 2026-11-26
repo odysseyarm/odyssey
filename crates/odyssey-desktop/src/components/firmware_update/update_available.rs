@@ -18,6 +18,7 @@ pub(super) struct Offer<'a> {
     pub pid: u16,
     pub held_back: Option<&'a HeldBack>,
     pub net_core_blocked: Option<&'a NetCoreBlocked>,
+    pub format_blocked: Option<&'a str>,
 }
 
 /// The yellow "update available" line with its notes and the Update button.
@@ -48,6 +49,14 @@ pub(super) fn update_available(
     }
     if let Some(blocked) = offer.net_core_blocked {
         row = row.child(net_core_blocked_note(blocked, Some(available), p));
+    }
+    if let Some(blocked) = offer.format_blocked {
+        row = row.child(
+            div()
+                .text_xs()
+                .text_color(p.warning_ink)
+                .child(blocked.to_owned()),
+        );
     }
 
     let (manager, manifest, device) = (manager.clone(), manifest.cloned(), device.clone());

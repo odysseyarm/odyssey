@@ -14,6 +14,7 @@
 //! [`crate::OTA_ACTIVE`] keeps the marker outputs off.
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use better_ota::{Action, Receiver, Slots};
 use embassy_embedded_hal::flash::partition::Partition;
@@ -25,7 +26,7 @@ use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Instant, Timer};
 use embedded_storage_async::nor_flash::{NorFlash, ReadNorFlash};
-use marker_control_board::security::{BondStore, Enrollment, OwnerBond};
+use marker_control_board::security::{BondStore, Enrollment, OwnerAddressKind, OwnerBond};
 use marker_control_board::{ButtonAction, Led, OutputState, PowerButton, valid_vectors};
 use nrf_sdc::mpsl;
 use odyssey_protocol::marker_control::{
@@ -33,14 +34,12 @@ use odyssey_protocol::marker_control::{
     parse_demand,
 };
 use odyssey_protocol::ota::{Code, Image, STATUS_LEN, Status};
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 use release_signing::Component;
 use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::{
-    AdStructure, Address, Advertisement, AttErrorCode, BR_EDR_NOT_SUPPORTED, BleHostError,
-    BondInformation, Controller, DefaultPacketPool, Error, FromGatt, GapConfig, GattConnection,
-    GattConnectionEvent, GattEvent, Host, HostResources, Identity, IdentityResolvingKey,
+    AdStructure, AddrKind, Address, Advertisement, AttErrorCode, BR_EDR_NOT_SUPPORTED, BdAddr,
+    BleHostError, BondInformation, Controller, DefaultPacketPool, Error, FromGatt, GapConfig,
+    GattConnection, GattConnectionEvent, GattEvent, HostResources, Identity, IdentityResolvingKey,
     IoCapabilities, LE_GENERAL_DISCOVERABLE, LongTermKey, Peripheral, PeripheralConfig,
     SecurityLevel, appearance, gatt_server, gatt_service,
 };
@@ -56,6 +55,24 @@ pub static CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ENROLLMENT: Mutex<CriticalSectionRawMutex, RefCell<Enrollment>> =
     Mutex::new(RefCell::new(Enrollment::new()));
 static ENROLLMENT_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// A bond clear was requested. The flag survives a wakeup consumed by a task that is not the
+/// host loop; the signal ends the advertise/session wait.
+static CLEAR_BONDS: AtomicBool = AtomicBool::new(false);
+static CLEAR_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static BONDS_CLEARED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Colour the button task forces over the normal status: the clear warning and confirmation.
+static LED_OVERRIDE: Mutex<CriticalSectionRawMutex, RefCell<Option<Led>>> =
+    Mutex::new(RefCell::new(None));
+/// Confirmation flashes after a clear.
+const CLEAR_FLASHES: u32 = 4;
+const CLEAR_FLASH_MS: u64 = 150;
+
+fn set_led_override(led: Option<Led>) {
+    let changed = LED_OVERRIDE.lock(|cell| cell.replace(led) != led);
+    if changed {
+        CHANGED.signal(());
+    }
+}
 
 fn enrollment_active() -> bool {
     ENROLLMENT.lock(|window| window.borrow().active(Instant::now().as_millis()))
@@ -81,7 +98,12 @@ fn stored_bond(bond: &BondInformation) -> Option<OwnerBond> {
         return None;
     }
     Some(OwnerBond {
-        address: bond.identity.bd_addr.raw().try_into().ok()?,
+        address: bond.identity.addr.addr.raw().try_into().ok()?,
+        address_kind: Some(if bond.identity.addr.kind.as_raw() & 1 == 0 {
+            OwnerAddressKind::Public
+        } else {
+            OwnerAddressKind::Random
+        }),
         ltk: bond.ltk.to_le_bytes(),
         irk: bond.identity.irk.map(|irk| irk.to_le_bytes()),
         security_level: match bond.security_level {
@@ -92,18 +114,37 @@ fn stored_bond(bond: &BondInformation) -> Option<OwnerBond> {
     })
 }
 
-fn bond_information(bond: OwnerBond) -> BondInformation {
-    BondInformation {
-        identity: Identity {
-            bd_addr: trouble_host::prelude::BdAddr::new(bond.address),
-            irk: bond.irk.map(IdentityResolvingKey::from_le_bytes),
+fn bond_information(bond: OwnerBond, kind: OwnerAddressKind) -> BondInformation {
+    let mut identity = Identity::from(Address::new(
+        match kind {
+            OwnerAddressKind::Public => AddrKind::PUBLIC,
+            OwnerAddressKind::Random => AddrKind::RANDOM,
         },
-        ltk: LongTermKey::from_le_bytes(bond.ltk),
-        is_bonded: true,
-        security_level: match bond.security_level {
+        BdAddr::new(bond.address),
+    ));
+    identity.irk = if bond.address_kind.is_none() && kind == OwnerAddressKind::Public {
+        None
+    } else {
+        bond.irk.and_then(IdentityResolvingKey::from_le_bytes)
+    };
+    BondInformation::new(
+        identity,
+        LongTermKey::from_le_bytes(bond.ltk),
+        match bond.security_level {
             2 => SecurityLevel::EncryptedAuthenticated,
             _ => SecurityLevel::Encrypted,
         },
+        true,
+    )
+}
+
+fn owner_address_kinds(owner: OwnerBond) -> [Option<OwnerAddressKind>; 2] {
+    match owner.address_kind {
+        Some(kind) => [Some(kind), None],
+        None => [
+            Some(OwnerAddressKind::Public),
+            Some(OwnerAddressKind::Random),
+        ],
     }
 }
 
@@ -249,7 +290,13 @@ pub async fn outputs(mut markers: Markers<'_>) {
             (
                 s.on() && !inhibited,
                 s.deadline(),
-                if inhibited { Led::Off } else { s.led(pairing) },
+                if inhibited {
+                    Led::Off
+                } else {
+                    LED_OVERRIDE
+                        .lock(|cell| *cell.borrow())
+                        .unwrap_or_else(|| s.led(pairing))
+                },
             )
         });
         if on != previous {
@@ -276,6 +323,13 @@ pub async fn outputs(mut markers: Markers<'_>) {
     }
 }
 
+fn open_enrollment() {
+    ENROLLMENT.lock(|window| window.borrow_mut().open(Instant::now().as_millis()));
+    state(OutputState::disconnect);
+    CHANGED.signal(());
+    ENROLLMENT_CHANGED.signal(());
+}
+
 /// Since: Odyssey Desktop 0.7.4.
 pub async fn button(button: Input<'_>) {
     let mut clicks = PowerButton::default();
@@ -290,13 +344,29 @@ pub async fn button(button: Input<'_>) {
                 state(OutputState::click);
                 CHANGED.signal(());
             }
-            Some(ButtonAction::Enroll) => {
-                ENROLLMENT.lock(|window| window.borrow_mut().open(Instant::now().as_millis()));
-                state(OutputState::disconnect);
-                CHANGED.signal(());
-                ENROLLMENT_CHANGED.signal(());
+            Some(ButtonAction::Enroll) => open_enrollment(),
+            Some(ButtonAction::Clear) => {
+                close_enrollment();
+                BONDS_CLEARED.reset();
+                CLEAR_BONDS.store(true, Ordering::Release);
+                CLEAR_WAKE.signal(());
+                BONDS_CLEARED.wait().await;
+                for _ in 0..CLEAR_FLASHES {
+                    set_led_override(Some(Led::White));
+                    Timer::after_millis(CLEAR_FLASH_MS).await;
+                    set_led_override(Some(Led::Off));
+                    Timer::after_millis(CLEAR_FLASH_MS).await;
+                }
+                set_led_override(None);
+                open_enrollment();
             }
             None => {}
+        }
+        // Red warns while the hold is past enrollment and still short of the clear.
+        if clicks.clear_pending() {
+            set_led_override(Some(Led::Red));
+        } else if LED_OVERRIDE.lock(|cell| *cell.borrow()) == Some(Led::Red) {
+            set_led_override(None);
         }
     }
 }
@@ -308,28 +378,32 @@ pub async fn run<C: Controller, F: NorFlash>(
     ota_flash: &AsyncMutex<NoopRawMutex, mpsl::Flash<'_>>,
     seed: [u8; 32],
 ) {
+    ble_crypto::init(seed);
     let low = embassy_nrf::pac::FICR.deviceid(0).read().to_le_bytes();
     let high = embassy_nrf::pac::FICR.deviceid(1).read().to_le_bytes();
-    let address = Address::random([low[0], low[1], low[2], low[3], high[0], high[1] | 0xc0]);
+    let address = Address::random(odyssey_protocol::control::ble_address([
+        low[0], low[1], low[2], low[3], high[0], high[1],
+    ]));
     let mut resources: HostResources<DefaultPacketPool, 1, 2> = HostResources::new();
-    let mut seed_rng = ChaCha20Rng::from_seed(seed);
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_io_capabilities(IoCapabilities::NoInputNoOutput)
-        .set_random_generator_seed(&mut seed_rng);
+        .set_io_capabilities(IoCapabilities::NoInputNoOutput);
     let Ok(mut bonds) = BondStore::load(flash, 0).await else {
         reset_safe();
     };
-    if let Some(owner) = bonds.owner()
-        && stack.add_bond_information(bond_information(owner)).is_err()
-    {
-        reset_safe();
+    let stack = stack.build();
+    if let Some(owner) = bonds.owner() {
+        for kind in owner_address_kinds(owner).into_iter().flatten() {
+            if stack
+                .add_bond_information(bond_information(owner, kind))
+                .is_err()
+            {
+                reset_safe();
+            }
+        }
     }
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
+    let mut peripheral = stack.peripheral();
+    let mut runner = stack.runner();
     let Ok(server) = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: "Odyssey Markers",
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
@@ -344,8 +418,22 @@ pub async fn run<C: Controller, F: NorFlash>(
         async {
             let stack = &stack;
             loop {
+                if CLEAR_BONDS.swap(false, Ordering::AcqRel) {
+                    // The stack's table holds the owner too: a stale copy would still encrypt.
+                    if bonds.clear().await.is_err() {
+                        reset_safe();
+                    }
+                    while let Some(identity) = stack.with_bond_information(|bond_information| {
+                        bond_information.first().map(|bond| bond.identity)
+                    }) {
+                        if stack.remove_bond_information(identity).is_err() {
+                            reset_safe();
+                        }
+                    }
+                }
                 let conn = match advertise(&mut peripheral, &server).await {
-                    Ok(conn) => conn,
+                    Ok(Some(conn)) => conn,
+                    Ok(None) => continue,
                     Err(_) => reset_safe(),
                 };
                 if conn.raw().set_bondable(enrollment_active()).is_ok() {
@@ -354,13 +442,14 @@ pub async fn run<C: Controller, F: NorFlash>(
                         &conn,
                         &mut bonds,
                         || {
-                            stack
-                                .get_bond_information()
-                                .iter()
-                                .find(|bond| {
-                                    bond.identity.match_identity(&conn.raw().peer_identity())
-                                })
-                                .and_then(stored_bond)
+                            stack.with_bond_information(|bond_information| {
+                                bond_information
+                                    .iter()
+                                    .find(|bond| {
+                                        bond.identity.match_identity(&conn.raw().peer_identity())
+                                    })
+                                    .and_then(stored_bond)
+                            })
                         },
                         ota_flash,
                     )
@@ -371,15 +460,24 @@ pub async fn run<C: Controller, F: NorFlash>(
                 state(OutputState::disconnect);
                 CHANGED.signal(());
                 conn.raw().disconnect();
-                for bond in stack.get_bond_information() {
-                    if stack.remove_bond_information(bond.identity).is_err() {
+                while let Some(identity) = stack.with_bond_information(|bond_information| {
+                    bond_information.first().map(|bond| bond.identity)
+                }) {
+                    if stack.remove_bond_information(identity).is_err() {
                         reset_safe();
                     }
                 }
                 if let Some(owner) = bonds.owner()
-                    && stack.add_bond_information(bond_information(owner)).is_err()
+                    && !CLEAR_BONDS.load(Ordering::Acquire)
                 {
-                    reset_safe();
+                    for kind in owner_address_kinds(owner).into_iter().flatten() {
+                        if stack
+                            .add_bond_information(bond_information(owner, kind))
+                            .is_err()
+                        {
+                            reset_safe();
+                        }
+                    }
                 }
             }
         },
@@ -390,7 +488,7 @@ pub async fn run<C: Controller, F: NorFlash>(
 async fn advertise<'values, 'server, C: Controller>(
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values>,
-) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
+) -> Result<Option<GattConnection<'values, 'server, DefaultPacketPool>>, BleHostError<C::Error>> {
     let mut service_data = [0; 18];
     service_data[..16].copy_from_slice(&SERVICE_UUID);
     service_data[..16].reverse();
@@ -441,14 +539,16 @@ async fn advertise<'values, 'server, C: Controller>(
             }
         };
         // Dropping Advertiser/advertise cancels through trouble-host's command state.
-        match select(connection, select(ENROLLMENT_CHANGED.wait(), expiry)).await {
-            Either::First(connection) => return connection,
-            Either::Second(Either::First(())) => {}
-            Either::Second(Either::Second(())) => {
+        let interrupts = select(ENROLLMENT_CHANGED.wait(), select(expiry, CLEAR_WAKE.wait()));
+        match select(connection, interrupts).await {
+            Either::First(connection) => return connection.map(Some),
+            Either::Second(Either::Second(Either::Second(()))) => return Ok(None),
+            Either::Second(Either::Second(Either::First(()))) => {
                 if !enrollment_active() {
                     close_enrollment();
                 }
             }
+            Either::Second(Either::First(())) => {}
         }
     }
 }
@@ -467,9 +567,15 @@ async fn session<F: NorFlash>(
     };
     server.set(&server.markers.ota, &ota_status(&receiver).encode())?;
     loop {
-        let event = match select(conn.next(), ENROLLMENT_CHANGED.wait()).await {
+        let event = match select(
+            conn.next(),
+            select(ENROLLMENT_CHANGED.wait(), CLEAR_WAKE.wait()),
+        )
+        .await
+        {
             Either::First(event) => event,
-            Either::Second(()) => {
+            Either::Second(Either::Second(())) => return Ok(()),
+            Either::Second(Either::First(())) => {
                 if enrollment_active() {
                     return Ok(());
                 }
@@ -483,6 +589,24 @@ async fn session<F: NorFlash>(
                 crate::OTA_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
                 CHANGED.signal(());
                 return Ok(());
+            }
+            GattConnectionEvent::Encrypted {
+                security_level,
+                bond: Some(bond),
+            } if security_level.encrypted() => {
+                if let Some(owner) = bonds.owner() {
+                    let registered_alias = current_bond();
+                    if let Some(candidate) = stored_bond(&bond).and_then(|candidate| {
+                        owner.migrate_address_kind(
+                            candidate,
+                            security_level.encrypted(),
+                            registered_alias.as_ref(),
+                        )
+                    }) && bonds.persist(candidate, || true).await.is_err()
+                    {
+                        return Ok(());
+                    }
+                }
             }
             GattConnectionEvent::PairingComplete {
                 security_level,
@@ -537,7 +661,7 @@ async fn session<F: NorFlash>(
                         ) {
                             Some(AttErrorCode::WRITE_NOT_PERMITTED)
                         } else if write.handle() == server.markers.ota.handle {
-                            if write.data().len() > MAX_OTA_WRITE {
+                            if write.with_data(|_, data| data.len()) > MAX_OTA_WRITE {
                                 Some(AttErrorCode::INVALID_ATTRIBUTE_VALUE_LENGTH)
                             } else {
                                 ota_write = true;
@@ -547,9 +671,13 @@ async fn session<F: NorFlash>(
                             || write.handle() == server.markers.mode.handle
                         {
                             let parsed = if write.handle() == server.markers.demand.handle {
-                                parse_demand(write.data()).map(|active| (false, u8::from(active)))
+                                write
+                                    .with_data(|_, data| parse_demand(data))
+                                    .map(|active| (false, u8::from(active)))
                             } else {
-                                Mode::parse(write.data()).map(|mode| (true, mode as u8))
+                                write
+                                    .with_data(|_, data| Mode::parse(data))
+                                    .map(|mode| (true, mode as u8))
                             };
                             match parsed {
                                 Ok(command) => {
@@ -588,8 +716,14 @@ async fn session<F: NorFlash>(
                 };
                 if error.is_none() && ota_write {
                     if let GattEvent::Write(write) = &event {
+                        // The length was checked against MAX_OTA_WRITE above.
+                        let mut data = [0; MAX_OTA_WRITE];
+                        let len = write.with_data(|_, written| {
+                            data[..written.len()].copy_from_slice(written);
+                            written.len()
+                        });
                         ota_action = receiver
-                            .handle(&mut slots, write.data())
+                            .handle(&mut slots, &data[..len])
                             .await
                             .unwrap_or(Action::Continue);
                     }
@@ -627,5 +761,31 @@ async fn session<F: NorFlash>(
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_aliases_do_not_deduplicate_and_random_keeps_irk() {
+        let owner = OwnerBond {
+            address: [7; 6],
+            address_kind: None,
+            ltk: [3; 16],
+            irk: Some([9; 16]),
+            security_level: 1,
+        };
+        let public = bond_information(owner, OwnerAddressKind::Public);
+        let random = bond_information(owner, OwnerAddressKind::Random);
+
+        assert_eq!(public.identity.irk, None);
+        assert_eq!(
+            random.identity.irk,
+            IdentityResolvingKey::from_le_bytes([9; 16])
+        );
+        // Upstream Stack::add_bond_information replaces entries when match_identity is true.
+        assert!(!random.identity.match_identity(&public.identity));
     }
 }

@@ -8,7 +8,7 @@ use embassy_usb::driver::EndpointError;
 ///
 /// Since: Odyssey Desktop 0.7.0.
 pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    snd: &mut cdc_acm::Sender<'d, D>,
+    snd: &mut cdc_acm::device::Sender<'d, D>,
     data: &[u8],
 ) {
     let max_packet_size = usize::from(snd.max_packet_size());
@@ -30,7 +30,7 @@ pub async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
 ///
 /// Since: Odyssey Desktop 0.7.0.
 pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
-    rcv: &mut cdc_acm::Receiver<'d, D>,
+    rcv: &mut cdc_acm::device::Receiver<'d, D>,
 ) -> u8 {
     loop {
         let mut buf = [0; 64];
@@ -41,7 +41,7 @@ pub async fn wait_for_serial<'d, D: embassy_usb::driver::Driver<'d>>(
             Err(EndpointError::Disabled) => {
                 rcv.wait_connection().await;
             }
-            Err(EndpointError::BufferOverflow) => unreachable!(),
+            Err(_) => unreachable!(),
         }
     }
 }

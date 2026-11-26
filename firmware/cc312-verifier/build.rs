@@ -12,6 +12,9 @@ fn main() {
     println!("cargo:rerun-if-changed=src/cc312_verifier_config.h");
     println!("cargo:rerun-if-env-changed=DEP_NRFXLIB_SYS_SDK_ROOT");
     println!("cargo:rerun-if-env-changed=PSA_CRYPTO_ROOT");
+    if env::var_os("CARGO_FEATURE_SHARED_ENTRY").is_some() {
+        return;
+    }
     let sdk = required_path("DEP_NRFXLIB_SYS_SDK_ROOT");
     let psa = required_path("PSA_CRYPTO_ROOT");
     let cc312 = sdk.join("crypto/nrf_cc312_mbedcrypto");

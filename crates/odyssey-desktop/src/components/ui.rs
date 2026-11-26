@@ -3,7 +3,7 @@
 use gpui::{
     AnyElement, App, ClickEvent, CursorStyle, Div, ElementId, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, px, relative,
+    Styled as _, TestSupportExt as _, Window, div, px, relative,
 };
 
 use crate::theme::{Palette, RADIUS_LG, RADIUS_XL};
@@ -87,6 +87,9 @@ impl RenderOnce for Button {
         };
         let mut el = div()
             .id(self.id)
+            .test_support()
+            .role(gpui::Role::Button)
+            .aria_label(self.label.clone())
             .flex()
             .items_center()
             .justify_center()

@@ -8,6 +8,9 @@ rustflags = [
   #"-Z", "trap-unreachable=no",
   #"-C", "no-vectorize-loops",
   "-C", "force-frame-pointers=yes",
+  "-Z", "location-detail=none",
+  "-Z", "unstable-options",
+  "-C", "panic=immediate-abort",
 ]
 
 [build]

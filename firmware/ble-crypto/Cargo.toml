@@ -1,0 +1,16 @@
+[package]
+name = "ble-crypto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+critical-section = "1.2"
+embassy-crypto = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f" }
+embassy-crypto-rustcrypto = { git = "https://github.com/Abrahamh08/embassy", rev = "6956f911079b240f5928c7c367f2cb1bb2d6271f", features = ["embassy-crypto-aes128-ecb", "embassy-crypto-aes128-cmac", "embassy-crypto-p256-ecdh"] }
+rand_chacha = { version = "0.3", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+
+[dev-dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+
+[workspace]

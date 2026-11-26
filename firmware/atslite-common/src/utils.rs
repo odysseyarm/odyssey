@@ -18,10 +18,10 @@ pub fn set_pin_sense(
     let n = idx as usize;
     match port {
         embassy_nrf::gpio::Port::Port0 => pac::P0.pin_cnf(n).modify(|w| {
-            w.set_dir(pac::gpio::vals::Dir::INPUT);
-            w.set_input(pac::gpio::vals::Input::CONNECT);
-            w.set_pull(pac::gpio::vals::Pull::PULLUP);
-            w.set_drive(pac::gpio::vals::Drive::S0S1);
+            w.set_dir(pac::gpio::vals::Dir::Input);
+            w.set_input(pac::gpio::vals::Input::Connect);
+            w.set_pull(pac::gpio::vals::Pull::Pullup);
+            w.set_drive(pac::gpio::vals::Drive::S0s1);
             w.set_sense(sense)
         }),
         embassy_nrf::gpio::Port::Port1 => pac::P1.pin_cnf(n).modify(|w| w.set_sense(sense)),

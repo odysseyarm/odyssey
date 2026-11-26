@@ -1,16 +1,9 @@
-//! Object-mode plant of the PAG7665QN tracking chip behind a PAG7646J2 sensor.
+//! Approximate PAG7665QN object-mode optics with the firmware's [`ExposureController`].
 //!
-//! Each frame turns the LEDs and distractors in view into the spots the chip
-//! would report from its exposure, gain, light threshold and area registers.
-//! The real [`ExposureController`] closes the loop through register 0x67, so a
-//! simulated unit adapts exactly as the firmware does. The rest of the loop is
-//! the hub's: `unit.rs` sends [`Frame::report`] as a `MarkersReport`, and the hub's
-//! `MarkerHint` comes back through [`Sensor::hint`]. `odyssey_cv::exposure` describes
-//! the loop in full.
-//!
-//! Spot positions are on the chip's report grid, 1/64 native px
-//! (`MarkersReport::UNITS_PER_PX`), which is what `MarkersReport`, hub hints and the
-//! controller all use. `World::targets` projects markers onto the same grid.
+//! Brightness, bloom and noise are synthetic, not measured sensor calibration.
+//! Exposure changes update register 0x67 and pause frames; hub hints return through
+//! [`Sensor::hint`]. Positions use report-grid units, 1/64 native px, throughout
+//! projection, reports and exposure control.
 
 use std::f64::consts::{PI, TAU};
 
@@ -29,6 +22,7 @@ const AREA_MIN: [(u8, u8); 2] = [(0, 0x6e), (0, 0x6f)];
 const AREA_MAX: [(u8, u8); 2] = [(0, 0x70), (0, 0x71)];
 const LED_ALWAYS_ON: u8 = 0x80;
 const EXPOSURE_MASK: u8 = 0x7f;
+const MAX_SPOTS: usize = 16;
 
 /// The chip's report grid, which is the native image scaled by `UNITS_PER_PX`.
 const GRID: [f64; 2] = {
@@ -102,14 +96,9 @@ pub(crate) struct Frame {
 impl Frame {
     /// What `MarkersReport` carries: report-grid positions, no brightness.
     pub(crate) fn report(&self) -> MarkersReport {
-        let mut points = [Point2::origin(); 16];
-        let visible = self.spots.iter().filter_map(|spot| {
-            let [u, v] = spot.px;
-            ((1.0..=GRID[0] - 1.0).contains(&u) && (1.0..=GRID[1] - 1.0).contains(&v))
-                .then(|| Point2::new(u.round() as u16, v.round() as u16))
-        });
-        for (slot, point) in points.iter_mut().zip(visible) {
-            *slot = point;
+        let mut points = [Point2::origin(); MAX_SPOTS];
+        for (slot, spot) in points.iter_mut().zip(&self.spots) {
+            *slot = Point2::new(spot.px[0].round() as u16, spot.px[1].round() as u16);
         }
         MarkersReport { points }
     }
@@ -286,6 +275,13 @@ impl Sensor {
             };
             spots.extend(self.measure(&settings, now_ms, &blob));
         }
+
+        // Exposure sees only spots the chip can include in its report.
+        spots.retain(|spot| {
+            let [u, v] = spot.px;
+            (1.0..=GRID[0] - 1.0).contains(&u) && (1.0..=GRID[1] - 1.0).contains(&v)
+        });
+        spots.truncate(MAX_SPOTS);
 
         if let Some(controller) = &mut self.controller {
             let seen: Vec<Spot> = spots.iter().map(|spot| spot.spot).collect();

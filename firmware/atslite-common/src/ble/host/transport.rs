@@ -2,11 +2,10 @@
 
 use core::mem::MaybeUninit;
 
-use bt_hci::transport::WithIndicator;
-use bt_hci::{ControllerToHostPacket, FromHciBytes as _, HostToControllerPacket, WriteHci};
+use bt_hci_transport::{PacketKind, PacketToController, PacketToHost, ReadHciError, WithIndicator};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::mutex::Mutex;
-use embedded_io::{Error as _, ErrorKind, ErrorType};
+use embedded_io::{Error as _, ErrorKind, ErrorType, ReadExactError};
 
 use super::icmsg_config;
 use super::uninit_write_buf::UninitWriteBuf;
@@ -32,21 +31,52 @@ impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> MyTransport<M, W,
     }
 }
 
-impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> ErrorType for MyTransport<M, W, N> {
-    type Error = bt_hci::transport::Error<ErrorKind>;
+/// Transport failure. A local type because `ExternalController` needs
+/// `From<ReadHciError<Infallible>>` and the orphan rule forbids adding that to
+/// `ReadHciError<ErrorKind>`.
+///
+/// Since: Unreleased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
+pub struct TransportError(pub ReadHciError<ErrorKind>);
+
+impl core::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
 }
 
-impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> bt_hci::transport::Transport
+impl core::error::Error for TransportError {}
+
+impl embedded_io::Error for TransportError {
+    fn kind(&self) -> ErrorKind {
+        self.0.kind()
+    }
+}
+
+impl From<ReadHciError<core::convert::Infallible>> for TransportError {
+    fn from(error: ReadHciError<core::convert::Infallible>) -> Self {
+        Self(map_read_error(error))
+    }
+}
+
+impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> ErrorType for MyTransport<M, W, N> {
+    type Error = TransportError;
+}
+
+impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> bt_hci_transport::Transport
     for MyTransport<M, W, N>
 {
-    async fn read<'a>(&self, rx: &'a mut [u8]) -> Result<ControllerToHostPacket<'a>, Self::Error> {
+    async fn read<'a, P: PacketToHost<'a>>(&self, rx: &'a mut [u8]) -> Result<P, Self::Error> {
+        let mut storage = [0; STASH_MAX];
         let mut r = self.reader.lock().await;
-        let n = r.recv(rx).await.map_err(|e| e.kind())?;
-
-        Ok(ControllerToHostPacket::from_hci_bytes_complete(&rx[..n])?)
+        let n = r
+            .recv(&mut storage)
+            .await
+            .map_err(|e| TransportError(ReadHciError::Read(ReadExactError::Other(e.kind()))))?;
+        decode_packet(&storage[..n], rx).map_err(TransportError)
     }
 
-    async fn write<T: HostToControllerPacket>(&self, tx: &T) -> Result<(), Self::Error> {
+    async fn write<T: PacketToController>(&self, tx: &T) -> Result<(), Self::Error> {
         let needed = tx.size() + 1;
         assert!(needed <= STASH_MAX);
 
@@ -59,6 +89,60 @@ impl<M: RawMutex, W: icmsg::WaitForNotify, N: icmsg::Notifier> bt_hci::transport
         let buf = sink.as_init();
 
         let mut w = self.writer.lock().await;
-        Ok(w.send(buf).map_err(|e| e.kind())?)
+        w.send(buf)
+            .map_err(|e| TransportError(ReadHciError::Read(ReadExactError::Other(e.kind()))))
+    }
+}
+
+fn map_read_error(error: ReadHciError<core::convert::Infallible>) -> ReadHciError<ErrorKind> {
+    match error {
+        ReadHciError::BufferTooSmall => ReadHciError::BufferTooSmall,
+        ReadHciError::InvalidValue => ReadHciError::InvalidValue,
+        ReadHciError::Read(ReadExactError::UnexpectedEof) => {
+            ReadHciError::Read(ReadExactError::UnexpectedEof)
+        }
+        ReadHciError::Read(ReadExactError::Other(never)) => match never {},
+    }
+}
+
+fn decode_packet<'a, P: PacketToHost<'a>>(
+    bytes: &[u8],
+    rx: &'a mut [u8],
+) -> Result<P, ReadHciError<ErrorKind>> {
+    let mut data = bytes;
+    let kind = PacketKind::read(&mut data).map_err(map_read_error)?;
+    let packet = P::read_hci(kind, &mut data, rx).map_err(map_read_error)?;
+    if !data.is_empty() {
+        return Err(ReadHciError::InvalidValue);
+    }
+    Ok(packet)
+}
+
+#[cfg(test)]
+mod tests {
+    use bt_hci::ControllerToHostPacket;
+
+    use super::*;
+
+    const COMMAND_COMPLETE: &[u8] = &[4, 0x0e, 4, 1, 3, 0x0c, 0];
+
+    #[test]
+    fn hci_frame_requires_exact_length_and_valid_output_capacity() {
+        let mut buffer = [0; 16];
+        assert!(decode_packet::<ControllerToHostPacket>(COMMAND_COMPLETE, &mut buffer).is_ok());
+        assert!(matches!(
+            decode_packet::<ControllerToHostPacket>(&[4, 0x0e, 4, 1], &mut buffer),
+            Err(ReadHciError::Read(ReadExactError::UnexpectedEof))
+        ));
+        let mut extra = [0; 8];
+        extra[..7].copy_from_slice(COMMAND_COMPLETE);
+        assert!(matches!(
+            decode_packet::<ControllerToHostPacket>(&extra, &mut buffer),
+            Err(ReadHciError::InvalidValue)
+        ));
+        assert!(matches!(
+            decode_packet::<ControllerToHostPacket>(COMMAND_COMPLETE, &mut []),
+            Err(ReadHciError::BufferTooSmall)
+        ));
     }
 }

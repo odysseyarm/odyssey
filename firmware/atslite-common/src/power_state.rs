@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use backon::{ConstantBuilder, EmbassySleeper, Retryable};
+use embassy_nrf::mode::Async;
 use embassy_nrf::twim::Twim;
 use embassy_time::{Delay, Duration, Ticker};
 use npm1300_rs::NPM1300;
@@ -50,7 +51,7 @@ mod tests {
 pub async fn power_state_task(
     pmic: &'static embassy_sync::mutex::Mutex<
         embassy_sync::blocking_mutex::raw::NoopRawMutex,
-        NPM1300<Twim<'static>, Delay>,
+        NPM1300<Twim<'static, Async>, Delay>,
     >,
     leds: &'static crate::pmic_leds::PmicLedsHandle,
     battery_model: &'static nrfxlib_sys::battery_model,

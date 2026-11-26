@@ -10,10 +10,17 @@ mod dfu;
 mod hash;
 mod keys;
 mod message;
+mod trust;
 mod verify;
 
 pub use dfu::{DFU_HEADER_LEN, DfuError, DfuVerifier, dfu_header};
 pub use hash::Sha256;
+#[cfg(any(test, feature = "dev-signing-key"))]
+pub use keys::DEV_KEY;
 pub use keys::{KEY_SLOTS, PublicKey, RELEASE_KEYS, trusted_keys};
 pub use message::{Component, MESSAGE_LEN, message};
-pub use verify::{SIGNATURE_LEN, verify, verify_production};
+pub use trust::{
+    MAX_SIGNATURES, POLICY_RECORD_MAX, RECORD_HEADER_LEN, RootSet, SIGNATURE_ENTRY_LEN,
+    TRUST_LIST_LEN, TrustList, TrustListError,
+};
+pub use verify::{SIGNATURE_LEN, verify, verify_production, verify_with_keys};

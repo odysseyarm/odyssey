@@ -1,5 +1,3 @@
-use core::cmp::max;
-
 use defmt::info;
 use embassy_nrf::Peri;
 use embassy_nrf::interrupt::typelevel::Binding;
@@ -8,7 +6,7 @@ use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _};
+use embassy_usb::driver::{EndpointError, EndpointIn as _};
 use embassy_usb::msos::windows_version;
 use embassy_usb::types::StringIndex;
 use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
@@ -100,6 +98,7 @@ static USB_ACTIVE: UsbActiveWatch = Watch::new_with(false);
 /// Since: Odyssey Desktop 0.7.0.
 pub fn usb_device<Irqs>(
     pid: u16,
+    device_id: [u8; 8],
     firmware_version: [u32; 3],
     firmware_version_string: &'static str,
     guid: &'static str,
@@ -122,19 +121,7 @@ where
 
     static SERIAL_BUF: ConstStaticCell<[u8; 12]> = ConstStaticCell::new([0; 12]);
     let serial_buf = SERIAL_BUF.take();
-    let ficr = embassy_nrf::pac::FICR;
-    #[cfg(feature = "nrf52840")]
-    let (low, high) = (
-        ficr.deviceid(0).read().to_le_bytes(),
-        ficr.deviceid(1).read().to_le_bytes(),
-    );
-    #[cfg(not(feature = "nrf52840"))]
-    let (low, high) = (
-        ficr.info().deviceid(0).read().to_le_bytes(),
-        ficr.info().deviceid(1).read().to_le_bytes(),
-    );
-    let id_bytes = [low[0], low[1], low[2], low[3], high[0], high[1]];
-    for (i, &b) in id_bytes.iter().enumerate() {
+    for (i, &b) in device_id[..6].iter().enumerate() {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         serial_buf[i * 2] = HEX[(b >> 4) as usize];
         serial_buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
@@ -203,8 +190,8 @@ where
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
-    let ep_out = alt.endpoint_bulk_out(None, BULK_MAX_PACKET_SIZE);
-    let ep_in = alt.endpoint_bulk_in(None, BULK_MAX_PACKET_SIZE);
+    let ep_out = alt.endpoint_bulk_out(None, bulk_endpoint());
+    let ep_in = alt.endpoint_bulk_in(None, bulk_endpoint());
     drop(function);
 
     let usb = builder.build();
@@ -322,22 +309,16 @@ impl embassy_usb::Handler for MyHandler {
 }
 
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn write_transfer<'d>(
-    ep: &mut Endpoint<'d, In>,
+pub async fn write_transfer(
+    ep: &mut Endpoint<'_, In>,
     payload: &[u8],
     send_zlp: bool,
 ) -> Result<(), EndpointError> {
-    let max_packet = max(ep.info().max_packet_size, 1) as usize;
+    Ok(ep.write_transfer(payload, send_zlp).await?)
+}
 
-    for chunk in payload.chunks(max_packet) {
-        if !chunk.is_empty() {
-            ep.write(chunk).await?;
-        }
-    }
-
-    if send_zlp && payload.len() % max_packet == 0 {
-        ep.write(&[]).await?;
-    }
-
-    Ok(())
+fn bulk_endpoint() -> embassy_usb::EndpointOptions {
+    let mut options = embassy_usb::EndpointOptions::new();
+    options.max_packet_size = Some(BULK_MAX_PACKET_SIZE);
+    options
 }

@@ -1,4 +1,4 @@
-//! object_mode sensor traits for the lite1 PAG7665QN and ICM-42688-P.
+//! object_mode sensor traits for Lite1 vision and interchangeable IMUs.
 
 use bytemuck::{cast_slice, from_bytes};
 use defmt::Format;
@@ -19,7 +19,7 @@ use crate::object_mode::{ImuData, ImuInterrupt, ImuSensor, PagInterrupt, PagSens
 pub type PagDriver<M> = Pag7665Qn<
     Pag7665QnSpi<
         ExclusiveDevice<
-            embassy_nrf::spim::Spim<'static>,
+            embassy_nrf::spim::Spim<'static, embassy_nrf::mode::Async>,
             embassy_nrf::gpio::Output<'static>,
             Delay,
         >,
@@ -31,12 +31,13 @@ pub type PagDriver<M> = Pag7665Qn<
 /// Sensor failure, kept field-less so defmt can print it.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-#[derive(Format)]
+#[derive(Debug, Format)]
 pub enum SensorError {
     /// Since: Odyssey Desktop 0.6.0.
     Spi,
     /// Since: Odyssey Desktop 0.6.0.
     InvalidData,
+    Lsm(crate::lsm::LsmError),
 }
 
 /// The PAG7665QN as an object_mode [`PagSensor`].
@@ -158,7 +159,7 @@ impl PagSensor for Pag7665QnSensor {
 /// Since: Odyssey Desktop 0.6.0.
 pub struct Pag7665QnInterrupt {
     /// Since: Odyssey Desktop 0.6.0.
-    pub int_o: Input<'static>,
+    pub int_o: Input<'static, embassy_nrf::mode::Async>,
 }
 
 impl PagInterrupt for Pag7665QnInterrupt {
@@ -167,32 +168,50 @@ impl PagInterrupt for Pag7665QnInterrupt {
     }
 }
 
-/// The ready ICM-42688-P on its own SPI bus.
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub type ImuDriver = icm426xx::ICM42688<
-    ExclusiveDevice<embassy_nrf::spim::Spim<'static>, embassy_nrf::gpio::Output<'static>, Delay>,
-    icm426xx::Ready,
->;
+/// Boot-selected IMU; each adapter reports board-frame SI measurements.
+pub enum Imu {
+    Icm(Icm42688Sensor),
+    Lsm(crate::lsm::Lsm6dsv320xSensor),
+}
 
-/// The ICM-42688-P as an object_mode [`ImuSensor`], timestamped from its FIFO.
-///
-/// Since: Odyssey Desktop 0.6.0.
+impl ImuSensor for Imu {
+    type Error = SensorError;
+
+    async fn read_data(&mut self) -> Result<ImuData, Self::Error> {
+        match self {
+            Self::Icm(sensor) => sensor.read_data().await,
+            Self::Lsm(sensor) => sensor.read_data().await.map_err(SensorError::Lsm),
+        }
+    }
+
+    fn has_pending_data(&self) -> bool {
+        match self {
+            Self::Icm(sensor) => sensor.has_pending_data(),
+            Self::Lsm(sensor) => sensor.has_pending_data(),
+        }
+    }
+}
+
+/// The ICM-42688-P with buffered FIFO samples and its 32 kHz timestamp.
 pub struct Icm42688Sensor {
-    /// Since: Odyssey Desktop 0.6.0.
-    pub driver: ImuDriver,
+    driver: crate::imu::IcmDriver,
     buffer: &'static mut [u32; 521],
+    packet_count: usize,
+    next_packet: usize,
     ts_micros: u32,
+    ts_quarters: u32,
 }
 
 impl Icm42688Sensor {
-    /// Since: Odyssey Desktop 0.6.0.
-    pub fn new(driver: ImuDriver) -> Self {
+    pub fn new(driver: crate::imu::IcmDriver) -> Self {
         static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
         Self {
             driver,
             buffer: BUFFER.take(),
+            packet_count: 0,
+            next_packet: 0,
             ts_micros: 0,
+            ts_quarters: 0,
         }
     }
 }
@@ -201,36 +220,108 @@ impl ImuSensor for Icm42688Sensor {
     type Error = SensorError;
 
     async fn read_data(&mut self) -> Result<ImuData, Self::Error> {
-        let _items = self
-            .driver
-            .read_fifo(self.buffer)
-            .await
-            .map_err(|_| SensorError::Spi)?;
-        let pkt = from_bytes::<FifoPacket4>(&cast_slice(self.buffer)[4..24]);
+        if !self.has_pending_data() {
+            self.packet_count = self
+                .driver
+                .read_fifo(self.buffer)
+                .await
+                .map_err(|_| SensorError::Spi)?;
+            self.next_packet = 0;
+            if self.packet_count == 0 || self.packet_count > (self.buffer.len() * 4 - 4) / 20 {
+                self.packet_count = 0;
+                return Err(SensorError::InvalidData);
+            }
+        }
+        let start = 4 + self.next_packet * 20;
+        let pkt = from_bytes::<FifoPacket4>(&cast_slice(self.buffer)[start..start + 20]);
+        self.next_packet += 1;
+        (self.ts_micros, self.ts_quarters) =
+            advance_icm_timestamp(self.ts_micros, self.ts_quarters, pkt.timestamp());
+        icm_data(pkt, self.ts_micros)
+    }
 
-        // FIFO timestamps count CLKIN ticks at 32 kHz.
-        self.ts_micros = self
-            .ts_micros
-            .wrapping_add(1000 * (pkt.timestamp() as u32) / 32);
-
-        Ok(ImuData {
-            accel: [pkt.accel_data_x(), pkt.accel_data_y(), pkt.accel_data_z()],
-            gyro: [pkt.gyro_data_x(), pkt.gyro_data_y(), pkt.gyro_data_z()],
-            timestamp_micros: self.ts_micros,
-        })
+    fn has_pending_data(&self) -> bool {
+        self.next_packet < self.packet_count
     }
 }
 
-/// The ICM-42688-P INT1 line as an object_mode [`ImuInterrupt`].
-///
-/// Since: Odyssey Desktop 0.6.0.
-pub struct Icm42688Interrupt {
-    /// Since: Odyssey Desktop 0.6.0.
-    pub int1: Input<'static>,
+fn advance_icm_timestamp(micros: u32, fraction: u32, ticks: u16) -> (u32, u32) {
+    let quarters = fraction + 125 * u32::from(ticks);
+    (micros.wrapping_add(quarters / 4), quarters % 4)
 }
 
-impl ImuInterrupt for Icm42688Interrupt {
+#[inline(never)]
+fn icm_data(pkt: &FifoPacket4, timestamp_micros: u32) -> Result<ImuData, SensorError> {
+    let accel = [pkt.accel_data_x(), pkt.accel_data_y(), pkt.accel_data_z()];
+    let gyro = [pkt.gyro_data_x(), pkt.gyro_data_y(), pkt.gyro_data_z()];
+    if pkt.fifo_header & 0xf0 != 0x70 || accel.contains(&-524_288) || gyro.contains(&-524_288) {
+        return Err(SensorError::InvalidData);
+    }
+    let accel = accel.map(|raw| raw as f32 / 32768.0 * 9.806_65);
+    let gyro = gyro.map(|raw| (raw as f32 / 262.144).to_radians());
+    Ok(ImuData {
+        accel: [accel[1], accel[0], -accel[2]],
+        gyro: [gyro[1], gyro[0], -gyro[2]],
+        timestamp_micros,
+    })
+}
+
+/// Active-low data-ready line of the selected IMU.
+pub struct SensorInterrupt {
+    pub int1: Input<'static, embassy_nrf::mode::Async>,
+}
+
+impl ImuInterrupt for SensorInterrupt {
     async fn wait(&mut self) {
         self.int1.wait_for_low().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icm_maps_signed_motion_to_board_si_units() {
+        let packet = FifoPacket4 {
+            fifo_header: 0x78,
+            accel_data_y1: 0x08,
+            accel_data_z1: 0x10,
+            gyro_data_x1: 0x10,
+            ..FifoPacket4::default()
+        };
+        let sample = icm_data(&packet, 123).unwrap();
+        assert!((sample.accel[0] - 9.806_65).abs() < 0.000_01);
+        assert_eq!(sample.accel[1], 0.0);
+        assert!((sample.accel[2] + 2.0 * 9.806_65).abs() < 0.000_01);
+        assert!((sample.gyro[1] - 250.0_f32.to_radians()).abs() < 0.000_01);
+        assert_eq!(sample.timestamp_micros, 123);
+    }
+
+    #[test]
+    fn icm_rejects_empty_or_incomplete_fifo_samples() {
+        assert!(matches!(
+            icm_data(&FifoPacket4::default(), 0),
+            Err(SensorError::InvalidData)
+        ));
+        let packet = FifoPacket4 {
+            fifo_header: 0x78,
+            accel_data_x1: 0x80,
+            ..FifoPacket4::default()
+        };
+        assert!(matches!(
+            icm_data(&packet, 0),
+            Err(SensorError::InvalidData)
+        ));
+    }
+
+    #[test]
+    fn icm_timestamp_retains_fraction_and_wraps_microseconds() {
+        let (mut micros, mut fraction) = (0, 0);
+        for _ in 0..4 {
+            (micros, fraction) = advance_icm_timestamp(micros, fraction, 1);
+        }
+        assert_eq!((micros, fraction), (125, 0));
+        assert_eq!(advance_icm_timestamp(u32::MAX - 10, 0, 1), (20, 1));
     }
 }

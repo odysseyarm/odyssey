@@ -22,8 +22,8 @@ use crate::device_tasks::transport_selection::TransportSelection;
 
 const UUID: [u8; 6] = [1, 2, 3, 4, 5, 6];
 const WAIT: Duration = Duration::from_secs(5);
-/// Firmware from this protocol on picks its own transport.
-const AUTO_PROTOCOL: [u16; 3] = [0, 1, 6];
+/// A protocol that picks its own transport and carries OTA frames and marker hints as packets.
+const AUTO_PROTOCOL: [u16; 3] = [0, 3, 0];
 /// The unit stamps reports with whatever id the last Enable carried, which may have come
 /// over the other link, so reports here carry an id this link never issued.
 const FOREIGN_REPORT_ID: u8 = 254;
@@ -38,11 +38,11 @@ struct Harness {
     task: tokio::task::JoinHandle<()>,
 }
 
-fn device(capabilities: u8) -> Device {
+fn device(capabilities: DeviceCapabilities) -> Device {
     Device {
         uuid: UUID,
         transport: Transport::UsbMux,
-        capabilities: DeviceCapabilities::new(capabilities),
+        capabilities,
         firmware_identity: FirmwareVersion::default(),
         firmware_version: [0, 0, 0],
         events_transport: EventsTransport::Bluetooth,
@@ -158,7 +158,7 @@ impl FakeLink {
     }
 }
 
-fn start_handler(capabilities: u8) -> Harness {
+fn start_handler(capabilities: DeviceCapabilities) -> Harness {
     start_handler_with_device(device(capabilities), None)
 }
 
@@ -171,6 +171,16 @@ fn start_handler_with_links(
     owner: Option<Arc<()>>,
     control_device: Option<VmDevice>,
     events_device: Option<VmDevice>,
+) -> Harness {
+    start_handler_with_protocol(device, owner, control_device, events_device, AUTO_PROTOCOL)
+}
+
+fn start_handler_with_protocol(
+    device: Device,
+    owner: Option<Arc<()>>,
+    control_device: Option<VmDevice>,
+    events_device: Option<VmDevice>,
+    protocol_version: [u16; 3],
 ) -> Harness {
     let (message_channel, messages) = mpsc::channel(16);
     let (event_sender, events) = broadcast::channel(64);
@@ -193,14 +203,14 @@ fn start_handler_with_links(
         device,
         control_rx,
         context: context.clone(),
-        protocol_version: AUTO_PROTOCOL,
+        protocol_version,
         hub_device: None,
         self_tx: commands.downgrade(),
     };
     let task = tokio::spawn(async move {
         let mut handler = DeviceHandler::start(init).await;
         handler.events_owner = owner;
-        handler.run().await;
+        Box::pin(handler.run()).await;
     });
     Harness {
         commands,
@@ -216,6 +226,59 @@ fn start_auto_unit_over_ble(ble: &FakeLink) -> Harness {
     let mut connected = device(DeviceCapabilities::EVENTS | DeviceCapabilities::AUTO_TRANSPORT);
     connected.events_connected = true;
     start_handler_with_links(connected, None, None, Some(ble.device.clone()))
+}
+
+#[tokio::test]
+async fn radio_update_frames_stay_on_bluetooth_after_the_cable_goes_in() {
+    let is_ota = |data: &PacketData| matches!(data, PacketData::OtaRequest(_));
+    let mut ble = FakeLink::new();
+    let mut usb = FakeLink::new();
+    let harness = start_auto_unit_over_ble(&ble);
+    harness.plug_usb(&usb, TransportSelection::Automatic).await;
+    harness.barrier().await;
+
+    let (reply, answer) = oneshot::channel();
+    harness
+        .send(DeviceTaskMessage::OtaExchange {
+            frame: vec![0],
+            reply,
+        })
+        .await;
+    let _ = tokio::time::timeout(WAIT, answer)
+        .await
+        .expect("handler answers without waiting out a USB timeout");
+
+    assert!(ble.receives(is_ota).await);
+    while let Ok(packet) = usb.sent.try_recv() {
+        assert!(!is_ota(&packet.data), "the frame went over USB");
+    }
+}
+
+#[tokio::test]
+async fn radio_update_is_refused_before_any_traffic_on_a_pre_0_3_0_unit() {
+    let mut ble = FakeLink::new();
+    let mut connected = device(DeviceCapabilities::EVENTS | DeviceCapabilities::AUTO_TRANSPORT);
+    connected.events_connected = true;
+    let harness =
+        start_handler_with_protocol(connected, None, None, Some(ble.device.clone()), [0, 2, 2]);
+
+    let (reply, answer) = oneshot::channel();
+    harness
+        .send(DeviceTaskMessage::OtaExchange {
+            frame: vec![0],
+            reply,
+        })
+        .await;
+    tokio::time::timeout(WAIT, answer)
+        .await
+        .expect("handler answers")
+        .expect("handler replies")
+        .expect_err("the old protocol cannot take OTA packets");
+
+    assert!(
+        !ble.receives(|data| matches!(data, PacketData::OtaRequest(_)))
+            .await
+    );
 }
 
 impl Harness {
@@ -319,7 +382,7 @@ async fn closing_the_control_channel_ends_the_handler_with_a_disconnect() {
 
 #[tokio::test]
 async fn a_shot_delay_is_stored_and_reaches_the_watcher() {
-    let harness = start_handler(0);
+    let harness = start_handler(DeviceCapabilities::empty());
     harness
         .commands
         .send(DeviceTaskMessage::SetShotDelay(120))
@@ -337,7 +400,7 @@ async fn a_shot_delay_is_stored_and_reaches_the_watcher() {
 
 #[tokio::test]
 async fn unknown_config_kind_is_refused() {
-    let harness = start_handler(0);
+    let harness = start_handler(DeviceCapabilities::empty());
     let (reply, answer) = oneshot::channel();
     harness
         .commands
@@ -352,7 +415,7 @@ async fn unknown_config_kind_is_refused() {
 
 #[tokio::test]
 async fn net_core_release_is_published_once_per_change() {
-    let mut harness = start_handler(0);
+    let mut harness = start_handler(DeviceCapabilities::empty());
     harness
         .commands
         .send(DeviceTaskMessage::SetNetCoreRelease(7))
@@ -380,7 +443,7 @@ async fn net_core_release_is_published_once_per_change() {
 
 #[tokio::test]
 async fn bootloader_version_is_published_once_per_change() {
-    let mut harness = start_handler(0);
+    let mut harness = start_handler(DeviceCapabilities::empty());
     harness
         .commands
         .send(DeviceTaskMessage::SetBootloaderVersion([0, 2, 1]))
@@ -476,7 +539,7 @@ async fn departing_old_dongle_cannot_remove_replacement_events() {
 
 #[tokio::test]
 async fn zeroing_without_a_pose_reports_failure() {
-    let mut harness = start_handler(0);
+    let mut harness = start_handler(DeviceCapabilities::empty());
     harness
         .commands
         .send(DeviceTaskMessage::Zero(
@@ -495,7 +558,7 @@ async fn zeroing_without_a_pose_reports_failure() {
 
 #[tokio::test]
 async fn resetting_zero_forgets_the_stored_offset() {
-    let mut harness = start_handler(0);
+    let mut harness = start_handler(DeviceCapabilities::empty());
     harness
         .context
         .device_offsets
@@ -897,4 +960,188 @@ async fn image_frames_use_the_events_endpoint_and_end_when_usb_detaches() {
         .expect_err("USB detach invalidates image session");
     assert_eq!(error.code(), tonic::Code::Aborted);
     assert!(images.next().await.is_none());
+}
+
+#[tokio::test]
+async fn bond_requests_without_a_control_link_are_refused() {
+    let harness = start_handler(DeviceCapabilities::EVENTS);
+    let (reply, answer) = oneshot::channel();
+    harness.send(DeviceTaskMessage::ListBonds { reply }).await;
+    answer.await.unwrap().expect_err("no control link");
+    let (reply, answer) = oneshot::channel();
+    harness
+        .send(DeviceTaskMessage::RemoveBond {
+            bd_addr: [9; 6],
+            reply,
+        })
+        .await;
+    answer.await.unwrap().expect_err("no control link");
+}
+
+#[cfg(feature = "sim")]
+mod bonds {
+    use odyssey_protocol::control::device::{ClearBondResult, DeviceMsg};
+    use odyssey_protocol::control::{BondSlot, MAX_BONDS};
+    use odyssey_protocol::{List, Props, Version};
+
+    use super::*;
+    use crate::device_tasks::messages::BondInfo;
+
+    struct ControlLink {
+        device: VmDevice,
+        /// Control messages the host sent, in order.
+        requests: mpsc::Receiver<DeviceMsg>,
+        replies: mpsc::Sender<DeviceMsg>,
+    }
+
+    fn control_link() -> ControlLink {
+        let (outgoing, _packets) = mpsc::channel(1);
+        let (_incoming, incoming_rx) = mpsc::channel(1);
+        let (control_outgoing, requests) = mpsc::channel(8);
+        let (replies, control_incoming) = mpsc::channel(8);
+        ControlLink {
+            device: VmDevice::from_simulated_channels(
+                outgoing,
+                incoming_rx,
+                control_outgoing,
+                control_incoming,
+            ),
+            requests,
+            replies,
+        }
+    }
+
+    async fn report_protocol(link: &ControlLink, protocol_semver: [u16; 3]) {
+        link.replies
+            .send(DeviceMsg::ReadPropResponse(Props::Version(Version {
+                protocol_semver,
+                firmware_semver: [1, 0, 0],
+            })))
+            .await
+            .unwrap();
+    }
+
+    /// The events link keeps the handler's startup config read off the control link,
+    /// whose queued replies a test scripts.
+    fn handler_with(link: &ControlLink) -> Harness {
+        start_handler_with_links(
+            device(DeviceCapabilities::CONTROL | DeviceCapabilities::EVENTS),
+            None,
+            Some(link.device.clone()),
+            Some(FakeLink::new().device),
+        )
+    }
+
+    async fn list(harness: &Harness) -> Result<Vec<BondInfo>, String> {
+        let (reply, answer) = oneshot::channel();
+        harness.send(DeviceTaskMessage::ListBonds { reply }).await;
+        tokio::time::timeout(WAIT, answer)
+            .await
+            .expect("handler answers")
+            .expect("handler replies")
+    }
+
+    #[tokio::test]
+    async fn list_bonds_on_old_firmware_sends_nothing_to_the_unit() {
+        let mut link = control_link();
+        report_protocol(&link, [0, 2, 1]).await;
+        let harness = handler_with(&link);
+        list(&harness).await.expect_err("firmware too old");
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ReadProp(_))
+        ));
+        assert!(link.requests.try_recv().is_err(), "ListBonds is not sent");
+    }
+
+    #[tokio::test]
+    async fn list_bonds_returns_the_units_slots() {
+        let mut link = control_link();
+        report_protocol(&link, [0, 2, 2]).await;
+        let slots = [
+            BondSlot {
+                bd_addr: [1, 2, 3, 4, 5, 6],
+                connected: true,
+            },
+            BondSlot {
+                bd_addr: [6, 5, 4, 3, 2, 1],
+                connected: false,
+            },
+        ];
+        assert!(slots.len() <= MAX_BONDS);
+        link.replies
+            .send(DeviceMsg::ListBondsResponse(List::from(
+                heapless::Vec::from_slice(&slots).unwrap(),
+            )))
+            .await
+            .unwrap();
+        let harness = handler_with(&link);
+        let bonds = list(&harness).await.expect("listed");
+        assert_eq!(
+            bonds
+                .iter()
+                .map(|b| (b.bd_addr, b.connected))
+                .collect::<Vec<_>>(),
+            slots.map(|slot| (slot.bd_addr, slot.connected))
+        );
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ReadProp(_))
+        ));
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ListBonds())
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_bond_sends_the_address_after_the_protocol_check() {
+        let mut link = control_link();
+        report_protocol(&link, [0, 2, 2]).await;
+        link.replies
+            .send(DeviceMsg::RemoveBondResponse(ClearBondResult::Ok()))
+            .await
+            .unwrap();
+        let harness = handler_with(&link);
+        let (reply, answer) = oneshot::channel();
+        harness
+            .send(DeviceTaskMessage::RemoveBond {
+                bd_addr: [1, 2, 3, 4, 5, 6],
+                reply,
+            })
+            .await;
+        tokio::time::timeout(WAIT, answer)
+            .await
+            .expect("handler answers")
+            .expect("handler replies")
+            .expect("removed");
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ReadProp(_))
+        ));
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::RemoveBond([1, 2, 3, 4, 5, 6]))
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_bond_on_old_firmware_is_refused() {
+        let mut link = control_link();
+        report_protocol(&link, [0, 1, 6]).await;
+        let harness = handler_with(&link);
+        let (reply, answer) = oneshot::channel();
+        harness
+            .send(DeviceTaskMessage::RemoveBond {
+                bd_addr: [1; 6],
+                reply,
+            })
+            .await;
+        answer.await.unwrap().expect_err("firmware too old");
+        assert!(matches!(
+            link.requests.recv().await,
+            Some(DeviceMsg::ReadProp(_))
+        ));
+        link.requests.try_recv().unwrap_err();
+    }
 }

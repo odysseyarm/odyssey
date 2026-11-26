@@ -18,7 +18,9 @@ core::arch::global_asm!(
     "bx lr",
 );
 
-/// Opens every flash region, EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core.
+/// Opens EXTDOMAIN[0] and the ICMSG RX/TX RAM regions to the network core. Without
+/// `secure-boot`, also every app flash region; secure-boot units keep app flash secure,
+/// since only stage2 needs to share DFU staging, during network updates.
 unsafe fn configure_spu_for_network_core() {
     use embassy_nrf::pac::spu::vals;
 
@@ -33,6 +35,7 @@ unsafe fn configure_spu_for_network_core() {
     const RAM_REGION_SIZE: u32 = 8 * 1024; // 8 KiB per SPU RAM region (nRF53)
     // Engineering A silicon has 32 flash regions of 32 KiB, later revisions 64 of 16 KiB.
     // Writing 64 covers both.
+    #[cfg(not(feature = "secure-boot"))]
     const NUM_FLASH_REGIONS: usize = 64;
 
     #[inline]
@@ -44,6 +47,7 @@ unsafe fn configure_spu_for_network_core() {
 
     // Make all flash non-secure so the network core can reach it: app flash at 0x0000_0000
     // and network core flash at 0x0100_0000.
+    #[cfg(not(feature = "secure-boot"))]
     for i in 0..NUM_FLASH_REGIONS {
         spu.flashregion(i).perm().write(|w| {
             w.set_read(true);
@@ -56,7 +60,7 @@ unsafe fn configure_spu_for_network_core() {
 
     // EXTDOMAIN[0] is the network core. Map it non-secure.
     spu.extdomain(0).perm().write(|w| {
-        w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
+        w.set_securemapping(vals::ExtdomainPermSecuremapping::NonSecure);
         w.set_lock(false);
     });
 
@@ -112,7 +116,7 @@ pub fn init() -> (cortex_m::Peripherals, Peripherals) {
     // HCLK at 128 MHz (DIV1) avoids erratum 166.
     pac::CLOCK
         .hfclkctrl()
-        .write(|w| w.set_hclk(pac::clock::vals::Hclk::DIV1));
+        .write(|w| w.set_hclk(pac::clock::vals::Hclk::Div1));
 
     let peripherals = embassy_nrf::init(config);
 
@@ -138,18 +142,18 @@ pub fn start_network_core_after_spu() {
     embassy_nrf::pac::RESET
         .network()
         .forceoff()
-        .write(|w| w.set_forceoff(Forceoff::RELEASE));
+        .write(|w| w.set_forceoff(Forceoff::Release));
     // The net core runs from its own clock, so a short busy-wait is enough between toggles.
     cortex_m::asm::delay(512);
     embassy_nrf::pac::RESET
         .network()
         .forceoff()
-        .write(|w| w.set_forceoff(Forceoff::HOLD));
+        .write(|w| w.set_forceoff(Forceoff::Hold));
     cortex_m::asm::delay(128);
     embassy_nrf::pac::RESET
         .network()
         .forceoff()
-        .write(|w| w.set_forceoff(Forceoff::RELEASE));
+        .write(|w| w.set_forceoff(Forceoff::Release));
     // SAFETY: Erratum 161 register is memory-mapped at this fixed nRF5340 address.
     unsafe {
         (0x50005618 as *mut u32).write_volatile(0);

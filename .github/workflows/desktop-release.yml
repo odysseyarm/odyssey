@@ -13,6 +13,11 @@ on:
   schedule:
     - cron: '0 2,14 * * *'
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish release; disable for lab verification only
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -75,20 +80,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-nix
-      - name: Build both variants and packaging tools
+      - name: Build Windows release and GUI smoke packages
         run: |
           out=$(nix build --impure -L --no-link --print-out-paths .#desktop-windows)
+          gui=$(nix build --impure -L --no-link --print-out-paths .#desktop-windows-gui)
           mkdir prebuilt-windows
           cp -rL "$out"/. prebuilt-windows/
+          mkdir windows-gui-package
+          cp -rL "$gui"/. windows-gui-package/
       - uses: actions/upload-artifact@v6
         with:
           name: odyssey-desktop-windows-prebuilt
           path: prebuilt-windows
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        with:
+          name: odyssey-desktop-windows-gui
+          path: windows-gui-package
+          if-no-files-found: error
 
   bundle:
     name: Bundle MSI
     needs: [check-version, windows-build]
-    runs-on: ${{ vars.DESKTOP_RUNNER || 'windows-latest' }}
+    runs-on: windows-latest
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
       ODYSSEY_BUILD_VERSION: ${{ needs.check-version.outputs.version }}
@@ -120,6 +134,71 @@ jobs:
         with:
           name: odyssey-desktop-msi
           path: dist
+
+  windows-installer-smoke:
+    name: Smoke-test Windows MSI installers
+    needs: [check-version, bundle]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with:
+          name: odyssey-desktop-msi
+          path: dist
+      - name: Install, validate, and uninstall both MSI variants
+        shell: powershell
+        run: |
+          ./.github/scripts/windows-installer-smoke.ps1 `
+            -InstallerPath "dist/Odyssey-${{ needs.check-version.outputs.version }}-win-x64.msi"
+          ./.github/scripts/windows-installer-smoke.ps1 `
+            -InstallerPath "dist/Odyssey-${{ needs.check-version.outputs.version }}-win-x64-full.msi"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: odyssey-desktop-windows-msi-smoke
+          path: windows-installer-smoke
+          if-no-files-found: ignore
+
+  windows-ui-smoke:
+    name: Await isolated Windows GUI result
+    needs: [windows-build, windows-installer-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          LAB_STATUS_ACTOR: ${{ vars.ODYSSEY_LAB_STATUS_ACTOR }}
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            const actor = process.env.LAB_STATUS_ACTOR;
+            if (!actor) throw new Error('ODYSSEY_LAB_STATUS_ACTOR must identify trusted host broker');
+            const statusContext = `odyssey/windows-gui/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`;
+            const trusted = s => s.context === statusContext &&
+              s.creator?.login === actor &&
+              /^https:\/\/github\.com\/odysseyarm\/odyssey-lab\/actions\/runs\/[1-9][0-9]*$/.test(s.target_url);
+            const sample = {context: statusContext, creator: {login: actor},
+              target_url: 'https://github.com/odysseyarm/odyssey-lab/actions/runs/1'};
+            assert(trusted(sample));
+            assert(!trusted({...sample, creator: {login: `${actor}-forged`}}));
+            assert(!trusted({...sample, context: `odyssey/windows-gui/${context.runId}/0`}));
+            assert(!trusted({...sample, target_url: `${sample.target_url}/other`}));
+            const deadline = Date.now() + 38 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef,
+                {...context.repo, ref: context.sha, per_page: 100});
+              const status = statuses.find(trusted);
+              if (status?.state === 'success') {
+                await core.summary.addLink('Windows GUI screenshots and logs', status.target_url).write();
+                return;
+              }
+              if (status && ['error', 'failure'].includes(status.state)) {
+                throw new Error(`Windows GUI failed: ${status.target_url}`);
+              }
+              await new Promise(resolve => setTimeout(resolve, 30000));
+            }
+            throw new Error('No admitted Windows GUI result. Non-maintainer pushes and scheduled/manual runs need exact-artifact approval in odysseyarm/odyssey-lab.');
 
   appimage:
     name: Bundle AppImage
@@ -183,8 +262,8 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [check-version, bundle, appimage, nixos-prebuilt]
-    if: github.ref_type == 'tag' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [check-version, bundle, windows-ui-smoke, appimage, nixos-prebuilt]
+    if: github.ref_type == 'tag' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     permissions:
       contents: write
     env:

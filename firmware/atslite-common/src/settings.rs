@@ -35,7 +35,9 @@ pub use settings_region::get_settings_region;
 /// Since: Odyssey Desktop 0.7.0.
 pub static LIST: StorageList<NoodleRawMutex> = StorageList::new();
 
+// Firmware before multi-bond support kept one bond here. Read once to migrate it.
 static NODE_BLE_BOND: StorageListNode<BleBondSettings> = StorageListNode::new("settings/ble_bond");
+static NODE_BLE_BONDS: StorageListNode<BleBonds> = StorageListNode::new("settings/ble_bonds");
 static NODE_GENERAL: StorageListNode<GeneralSettings> = StorageListNode::new("settings/general");
 static NODE_PAG: StorageListNode<PagSettings> = StorageListNode::new("settings/pag");
 
@@ -195,18 +197,34 @@ pub async fn init_core(
     spawner.spawn(settings_worker(flash_dev, region.clone(), Duration::from_secs(10)).unwrap());
 }
 
-/// Loads the BLE bond node into owned settings. Call after `init_core()`, then load any
-/// board-specific nodes before publishing the settings for the application tasks.
+/// Loads the BLE bonds into owned settings, moving a bond stored by single-bond firmware into
+/// the first slot. Call after `init_core()`, then load any board-specific nodes before
+/// publishing the settings for the application tasks.
 ///
 /// Since: Odyssey Desktop 0.7.0.
 pub async fn init_nodes() -> Settings {
-    let h_ble_bond = NODE_BLE_BOND
+    let mut h_legacy = NODE_BLE_BOND
         .attach_with_default(&LIST, ble_bond_default)
         .await
         .unwrap();
+    let mut h_bonds = NODE_BLE_BONDS
+        .attach_with_default(&LIST, BleBonds::default)
+        .await
+        .unwrap();
+
+    let mut bonds = h_bonds.load();
+    let legacy = h_legacy.load();
+    if legacy.is_bonded {
+        if bonds.slots.iter().all(|slot| !slot.is_bonded) {
+            bonds.slots[0] = legacy;
+            h_bonds.write(&bonds).await.unwrap();
+        }
+        h_legacy.write(&ble_bond_default()).await.unwrap();
+        settings_flush_now();
+    }
 
     Settings {
-        ble_bond: h_ble_bond.load(),
+        ble_bonds: bonds,
         general: GeneralSettings::default(),
         pag: PagSettings::default(),
     }
@@ -233,30 +251,144 @@ pub async fn init_board_nodes(settings: &mut Settings) {
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct Settings {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub ble_bond: BleBondSettings,
+    /// Since: Unreleased.
+    pub ble_bonds: BleBonds,
     /// Since: Odyssey Desktop 0.7.0.
     pub general: GeneralSettings,
     /// Since: Odyssey Desktop 0.7.0.
     pub pag: PagSettings,
 }
 
+/// Outcome of [`Settings::bond_store`] when no slot can take the bond.
+///
+/// Since: Unreleased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
+pub struct BondsFull;
+
 impl Settings {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fn ble_bond_write(&self) {
-        embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
-            hb.write(&self.ble_bond).await.unwrap();
-        });
-        settings_flush_now();
+    /// The stored bonds, ready to load into the BLE host.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_infos(&self) -> impl Iterator<Item = trouble_host::prelude::BondInformation> + '_ {
+        ble_bond_infos(&self.ble_bonds)
     }
 
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fn ble_bond_clear(&mut self) {
-        self.ble_bond = ble_bond_default();
+    /// Whether `identity` belongs to a stored bond.
+    ///
+    /// Since: Unreleased.
+    pub fn is_bonded_peer(&self, identity: &trouble_host::prelude::Identity) -> bool {
+        self.bond_infos()
+            .any(|bond| bond.identity.match_identity(identity))
+    }
+
+    /// Whether every slot holds a bond.
+    ///
+    /// Since: Unreleased.
+    pub fn bonds_full(&self) -> bool {
+        self.ble_bonds.slots.iter().all(|slot| slot.is_bonded)
+    }
+
+    /// Stores `entry`, replacing a bond with the same identity or filling a free slot, and
+    /// writes the bonds to flash.
+    ///
+    /// # Errors
+    ///
+    /// [`BondsFull`] when `entry` is a new host and every slot is in use. Nothing changes.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_store(&mut self, entry: BleBondSettings) -> Result<(), BondsFull> {
+        self.bond_store_with_kind(entry, None)
+    }
+
+    /// Stores a bond learned from an authenticated BLE connection.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_store_info(
+        &mut self,
+        info: &trouble_host::prelude::BondInformation,
+    ) -> Result<(), BondsFull> {
+        self.bond_store_with_kind(
+            ble_bond_from_bond_info(info),
+            Some(info.identity.addr.kind.as_raw()),
+        )
+    }
+    /// Records the address kind only after Trouble confirms the stored bond key.
+    ///
+    /// Since: Unreleased.
+    pub fn learn_bond_address(&mut self, info: &trouble_host::prelude::BondInformation) -> bool {
+        if !learn_bond_address_kind(&mut self.ble_bonds, info) {
+            return false;
+        }
+        self.ble_bonds_write();
+        true
+    }
+
+    fn bond_store_with_kind(
+        &mut self,
+        entry: BleBondSettings,
+        address_kind: Option<u8>,
+    ) -> Result<(), BondsFull> {
+        let address_kinds = self
+            .ble_bonds
+            .address_kinds
+            .unwrap_or([None; odyssey_protocol::control::MAX_BONDS]);
+        let slots = &self.ble_bonds.slots;
+        let relation: [slot_table::Slot; odyssey_protocol::control::MAX_BONDS] =
+            core::array::from_fn(|i| {
+                let same = ble_bond_to_bond_infos(&entry, address_kind).any(|new| {
+                    ble_bond_to_bond_infos(&slots[i], address_kinds[i])
+                        .any(|stored| stored.identity.match_identity(&new.identity))
+                });
+                if same {
+                    slot_table::Slot::Same
+                } else if slots[i].is_bonded {
+                    slot_table::Slot::Other
+                } else {
+                    slot_table::Slot::Free
+                }
+            });
+        let index = slot_table::slot_for(&relation).ok_or(BondsFull)?;
+        self.ble_bonds.slots[index] = entry;
+        let mut address_kinds = address_kinds;
+        address_kinds[index] = address_kind.or(address_kinds[index]);
+        self.ble_bonds.address_kinds = Some(address_kinds);
+        self.ble_bonds_write();
+        Ok(())
+    }
+
+    /// Removes the bond whose identity address is `bd_addr` and writes the bonds to flash.
+    /// Returns whether one was found.
+    ///
+    /// Since: Unreleased.
+    pub fn bond_remove(&mut self, bd_addr: [u8; 6]) -> bool {
+        let Some(index) = self
+            .ble_bonds
+            .slots
+            .iter()
+            .position(|slot| slot.is_bonded && slot.bd_addr == bd_addr)
+        else {
+            return false;
+        };
+        self.ble_bonds.slots[index] = ble_bond_default();
+        if let Some(address_kinds) = &mut self.ble_bonds.address_kinds {
+            address_kinds[index] = None;
+        }
+        self.ble_bonds_write();
+        true
+    }
+
+    /// Removes every bond and writes the empty slots to flash.
+    ///
+    /// Since: Unreleased.
+    pub fn bonds_clear(&mut self) {
+        self.ble_bonds = BleBonds::default();
+        self.ble_bonds_write();
+    }
+
+    fn ble_bonds_write(&self) {
         embassy_futures::block_on(async {
-            let mut hb = NODE_BLE_BOND.attach(&LIST).await.unwrap();
-            hb.write(&self.ble_bond).await.unwrap();
+            let mut hb = NODE_BLE_BONDS.attach(&LIST).await.unwrap();
+            hb.write(&self.ble_bonds).await.unwrap();
         });
         settings_flush_now();
     }
@@ -400,6 +532,28 @@ impl GeneralSettings {
 /// Since: Odyssey Desktop 0.7.0.
 pub type BleBondSettings = odyssey_protocol::control::BondEntry;
 
+/// Every bond slot. An entry with `is_bonded == false` is free.
+///
+/// Since: Unreleased.
+#[derive(Debug, Clone, Encode, Decode, CborLen, Format)]
+pub struct BleBonds {
+    /// Since: Unreleased.
+    #[n(0)]
+    pub slots: [BleBondSettings; odyssey_protocol::control::MAX_BONDS],
+    /// Address kinds parallel to `slots`; `None` keeps legacy untyped bonds ambiguous.
+    #[n(1)]
+    pub address_kinds: Option<[Option<u8>; odyssey_protocol::control::MAX_BONDS]>,
+}
+
+impl Default for BleBonds {
+    fn default() -> Self {
+        Self {
+            slots: [ble_bond_default(); odyssey_protocol::control::MAX_BONDS],
+            address_kinds: None,
+        }
+    }
+}
+
 /// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_default() -> BleBondSettings {
     BleBondSettings {
@@ -414,7 +568,7 @@ pub fn ble_bond_default() -> BleBondSettings {
 /// Since: Odyssey Desktop 0.7.0.
 pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) -> BleBondSettings {
     let mut bd_addr = [0u8; 6];
-    bd_addr.copy_from_slice(info.identity.bd_addr.raw());
+    bd_addr.copy_from_slice(info.identity.addr.addr.raw());
     BleBondSettings {
         bd_addr,
         ltk: info.ltk.to_le_bytes(),
@@ -428,29 +582,95 @@ pub fn ble_bond_from_bond_info(info: &trouble_host::prelude::BondInformation) ->
     }
 }
 
-/// Since: Odyssey Desktop 0.7.0.
-pub fn ble_bond_to_bond_info(
+/// Since: Unreleased.
+pub fn ble_bond_to_bond_infos(
     b: &BleBondSettings,
-) -> Option<trouble_host::prelude::BondInformation> {
-    if !b.is_bonded {
-        return None;
-    }
-    Some(trouble_host::prelude::BondInformation {
-        identity: trouble_host::prelude::Identity {
-            bd_addr: trouble_host::prelude::BdAddr::new(b.bd_addr),
-            irk: b
-                .irk
-                .map(|irk| trouble_host::prelude::IdentityResolvingKey::from_le_bytes(irk)),
-        },
-        security_level: match b.security_level {
-            0 => trouble_host::prelude::SecurityLevel::NoEncryption,
-            1 => trouble_host::prelude::SecurityLevel::Encrypted,
-            2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
-            _ => trouble_host::prelude::SecurityLevel::NoEncryption,
-        },
-        is_bonded: b.is_bonded,
-        ltk: trouble_host::prelude::LongTermKey::from_le_bytes(b.ltk),
-    })
+    address_kind: Option<u8>,
+) -> impl Iterator<Item = trouble_host::prelude::BondInformation> + '_ {
+    let stored_irk = b
+        .irk
+        .and_then(trouble_host::prelude::IdentityResolvingKey::from_le_bytes);
+    let invalid_irk = b.irk.is_some() && stored_irk.is_none();
+    let address_kinds = match (b.is_bonded, invalid_irk, address_kind) {
+        (false, _, _) | (true, true, _) => [(None, false), (None, false)],
+        (true, false, Some(kind)) => [(Some(kind), true), (None, false)],
+        (true, false, None) => [
+            (
+                Some(trouble_host::prelude::AddrKind::PUBLIC.as_raw()),
+                false,
+            ),
+            (Some(trouble_host::prelude::AddrKind::RANDOM.as_raw()), true),
+        ],
+    };
+    address_kinds
+        .into_iter()
+        .filter_map(move |(kind, include_irk)| {
+            let kind = kind?;
+            Some(trouble_host::prelude::BondInformation {
+                identity: trouble_host::prelude::Identity {
+                    addr: trouble_host::prelude::Address::new(
+                        trouble_host::prelude::AddrKind::new(kind),
+                        trouble_host::prelude::BdAddr::new(b.bd_addr),
+                    ),
+                    irk: if include_irk { stored_irk } else { None },
+                },
+                security_level: match b.security_level {
+                    0 => trouble_host::prelude::SecurityLevel::NoEncryption,
+                    1 => trouble_host::prelude::SecurityLevel::Encrypted,
+                    2 => trouble_host::prelude::SecurityLevel::EncryptedAuthenticated,
+                    _ => trouble_host::prelude::SecurityLevel::NoEncryption,
+                },
+                is_bonded: b.is_bonded,
+                ltk: trouble_host::prelude::LongTermKey::from_le_bytes(b.ltk),
+            })
+        })
+}
+
+fn ble_bond_infos(
+    bonds: &BleBonds,
+) -> impl Iterator<Item = trouble_host::prelude::BondInformation> + '_ {
+    let address_kinds = bonds
+        .address_kinds
+        .unwrap_or([None; odyssey_protocol::control::MAX_BONDS]);
+    bonds
+        .slots
+        .iter()
+        .zip(address_kinds)
+        .flat_map(|(bond, kind)| ble_bond_to_bond_infos(bond, kind))
+}
+
+fn untyped_bond_index(
+    bonds: &BleBonds,
+    observed: &trouble_host::prelude::BondInformation,
+) -> Option<usize> {
+    let address_kinds = bonds
+        .address_kinds
+        .unwrap_or([None; odyssey_protocol::control::MAX_BONDS]);
+    bonds
+        .slots
+        .iter()
+        .zip(address_kinds)
+        .enumerate()
+        .find_map(|(index, (bond, kind))| {
+            (kind.is_none()
+                && ble_bond_to_bond_infos(bond, None).any(|candidate| candidate == *observed))
+            .then_some(index)
+        })
+}
+
+fn learn_bond_address_kind(
+    bonds: &mut BleBonds,
+    observed: &trouble_host::prelude::BondInformation,
+) -> bool {
+    let Some(index) = untyped_bond_index(bonds, observed) else {
+        return false;
+    };
+    let mut address_kinds = bonds
+        .address_kinds
+        .unwrap_or([None; odyssey_protocol::control::MAX_BONDS]);
+    address_kinds[index] = Some(observed.identity.addr.kind.as_raw());
+    bonds.address_kinds = Some(address_kinds);
+    true
 }
 
 /// PAG7665QN register values kept across power cycles.
@@ -525,5 +745,135 @@ impl Default for PagSettings {
             circle_k_max: 0x1D, // datasheet default
             frame_rate: 180,    // FPS
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cfg_noodle::minicbor::{self, Encode};
+    use trouble_host::prelude::{
+        AddrKind, Address, BdAddr, BondInformation, Identity, IdentityResolvingKey, LongTermKey,
+        SecurityLevel,
+    };
+
+    use super::{
+        BleBondSettings, BleBonds, ble_bond_default, ble_bond_from_bond_info, ble_bond_infos,
+        ble_bond_to_bond_infos, learn_bond_address_kind, untyped_bond_index,
+    };
+
+    const MAX_BONDS: usize = odyssey_protocol::control::MAX_BONDS;
+
+    fn bond(kind: AddrKind, key: u8) -> BondInformation {
+        BondInformation::new(
+            Identity {
+                addr: Address::new(kind, BdAddr::new([1, 2, 3, 4, 5, 6])),
+                irk: Some(IdentityResolvingKey::from_le_bytes([7; 16]).unwrap()),
+            },
+            LongTermKey::from_le_bytes([key; 16]),
+            SecurityLevel::EncryptedAuthenticated,
+            true,
+        )
+    }
+
+    fn same_slots(a: &BleBonds, b: &BleBonds) -> bool {
+        a.slots.iter().zip(&b.slots).all(|(a, b)| {
+            a.bd_addr == b.bd_addr
+                && a.ltk == b.ltk
+                && a.security_level == b.security_level
+                && a.is_bonded == b.is_bonded
+                && a.irk == b.irk
+        })
+    }
+
+    #[derive(Encode)]
+    struct LegacyBleBonds {
+        #[n(0)]
+        slots: [BleBondSettings; MAX_BONDS],
+    }
+
+    #[test]
+    fn old_cbor_without_address_kinds_decodes_as_unknown() {
+        let mut output = [0; 256];
+        let remaining = {
+            let mut encoder = minicbor::Encoder::new(&mut output[..]);
+            encoder
+                .encode(LegacyBleBonds {
+                    slots: [ble_bond_default(); MAX_BONDS],
+                })
+                .unwrap();
+            encoder.into_writer().len()
+        };
+        let encoded = &output[..output.len() - remaining];
+        let decoded: BleBonds = minicbor::decode(encoded).unwrap();
+        assert_eq!(decoded.address_kinds, None);
+    }
+
+    #[test]
+    fn untyped_bonds_expand_to_both_address_kinds_at_full_capacity() {
+        let entry = ble_bond_from_bond_info(&bond(AddrKind::PUBLIC, 1));
+        let bonds = BleBonds {
+            slots: [entry; MAX_BONDS],
+            address_kinds: None,
+        };
+        let mut candidates = ble_bond_to_bond_infos(&entry, None);
+        let public_alias = candidates.next().unwrap();
+        let random_alias = candidates.next().unwrap();
+        assert_eq!(public_alias.identity.irk, None);
+        assert_eq!(
+            random_alias.identity.irk,
+            entry.irk.and_then(IdentityResolvingKey::from_le_bytes)
+        );
+        assert_eq!(ble_bond_to_bond_infos(&entry, None).count(), 2);
+        assert_eq!(
+            ble_bond_to_bond_infos(&entry, Some(AddrKind::PUBLIC.as_raw())).count(),
+            1
+        );
+        assert_eq!(ble_bond_infos(&bonds).count(), 2 * MAX_BONDS);
+    }
+
+    #[test]
+    fn address_learning_requires_exact_candidate_and_preserves_entry() {
+        let observed = bond(AddrKind::RANDOM, 1);
+        let entry = ble_bond_from_bond_info(&observed);
+        let mut untyped = BleBonds::default();
+        untyped.slots[0] = entry;
+        let wrong_key = bond(AddrKind::RANDOM, 2);
+        assert_eq!(untyped_bond_index(&untyped, &wrong_key), None);
+        let wrong_security = BondInformation {
+            security_level: SecurityLevel::Encrypted,
+            ..observed.clone()
+        };
+        assert_eq!(untyped_bond_index(&untyped, &wrong_security), None);
+
+        for candidate in ble_bond_to_bond_infos(&entry, None) {
+            assert_eq!(untyped_bond_index(&untyped, &candidate), Some(0));
+            let mut learned = untyped.clone();
+            assert!(learn_bond_address_kind(&mut learned, &candidate));
+            assert!(same_slots(&learned, &untyped));
+            assert_eq!(
+                learned.address_kinds.unwrap()[0],
+                Some(candidate.identity.addr.kind.as_raw())
+            );
+            assert!(!learn_bond_address_kind(&mut learned, &candidate));
+            let typed_candidate =
+                ble_bond_to_bond_infos(&learned.slots[0], learned.address_kinds.unwrap()[0])
+                    .next()
+                    .unwrap();
+            assert_eq!(typed_candidate.identity.irk, observed.identity.irk);
+        }
+
+        let typed = BleBonds {
+            slots: [entry; MAX_BONDS],
+            address_kinds: Some([Some(AddrKind::RANDOM.as_raw()); MAX_BONDS]),
+        };
+        assert_eq!(untyped_bond_index(&typed, &observed), None);
+    }
+
+    #[test]
+    fn invalid_persisted_irk_does_not_downgrade_to_unresolved_bond() {
+        let mut entry = ble_bond_default();
+        entry.is_bonded = true;
+        entry.irk = Some([0; 16]);
+        assert_eq!(ble_bond_to_bond_infos(&entry, None).count(), 0);
     }
 }

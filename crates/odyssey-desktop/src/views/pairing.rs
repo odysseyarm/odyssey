@@ -1,5 +1,6 @@
 //! The Pairing page: every dongle and device that can be paired.
 
+mod bonds_panel;
 mod device_row;
 mod dongle_row;
 mod pair_buttons;

@@ -70,6 +70,29 @@ pub struct FileEntry {
     pub signature: Option<String>,
 }
 
+/// Whether an ATS Lite 1 release may be installed on reported bootloader.
+///
+/// `2.0.0` marks the signed-prefix stage1 format and immutable generation 1;
+/// crossing that boundary requires SWD reprovisioning, not a host bootloader
+/// update. Other device types, including legacy ATS Lite, retain old behavior.
+pub fn ats_lite_target_compatible(
+    device_type: &str,
+    entry: &FirmwareEntry,
+    actual_bootloader: Option<&semver::Version>,
+) -> bool {
+    if device_type != "atslite1" {
+        return true;
+    }
+    let secure_generation = semver::Version::new(2, 0, 0);
+    let target_is_secure = entry.requires_bootloader >= secure_generation;
+    match (actual_bootloader, target_is_secure) {
+        (None, true) => false,
+        (Some(actual), true) => actual >= &secure_generation,
+        (Some(actual), false) => actual < &secure_generation,
+        (None, false) => true,
+    }
+}
+
 impl FirmwareEntry {
     pub fn version_parts(&self) -> Option<[u32; 3]> {
         let version = semver::Version::parse(&self.version).ok()?;
@@ -154,7 +177,46 @@ impl ReleaseSource<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FirmwareEntry, FirmwareManifest, ReleaseSource, asset_filename};
+    use super::{
+        FirmwareEntry, FirmwareManifest, ReleaseSource, asset_filename, ats_lite_target_compatible,
+    };
+
+    fn release(requires_bootloader: &str) -> FirmwareEntry {
+        serde_json::from_value(serde_json::json!({
+            "version": "2.0.0",
+            "requires_bootloader": requires_bootloader,
+            "requires_netcore": 0,
+            "min_desktop": "0.1.0",
+            "files": {}
+        }))
+        .expect("valid release")
+    }
+
+    #[test]
+    fn secure_format_boundary_is_closed_and_legacy_is_unchanged() {
+        let old = release("0.0.0");
+        let secure = release("2.0.0");
+        let old_bootloader = semver::Version::new(1, 0, 0);
+        let secure_bootloader = semver::Version::new(2, 0, 0);
+        assert!(!ats_lite_target_compatible(
+            "atslite1",
+            &secure,
+            Some(&old_bootloader)
+        ));
+        assert!(!ats_lite_target_compatible(
+            "atslite1",
+            &old,
+            Some(&secure_bootloader)
+        ));
+        assert!(ats_lite_target_compatible(
+            "atslite1",
+            &secure,
+            Some(&secure_bootloader)
+        ));
+        assert!(!ats_lite_target_compatible("atslite1", &secure, None));
+        assert!(ats_lite_target_compatible("legacy-atslite1", &secure, None));
+        assert!(ats_lite_target_compatible("atslite1", &old, None));
+    }
 
     #[test]
     fn typed_manifest_requires_update_floors_and_accepts_unknown_metadata() {

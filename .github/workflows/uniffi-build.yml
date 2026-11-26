@@ -97,7 +97,9 @@ jobs:
       # audits it against the manylinux2014 / musllinux_1_2 policy.
       - name: Build wheels
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }})" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-python-linux-${{ matrix.platform.manylinux }}-${{ matrix.platform.target }})
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - name: Collect wheels
         run: |
           mkdir -p dist
@@ -139,7 +141,9 @@ jobs:
       # hash-pinned sysroot from nix/xwin.nix.
       - name: Build wheels
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-windows-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-python-windows-${{ matrix.target }})
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - name: Collect wheels
         run: |
           mkdir -p dist
@@ -168,7 +172,9 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - name: Build wheels
         id: build
-        run: echo "out=$(nix build -L --no-link --print-out-paths .#sdk-python-macos-${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+        run: |
+          out=$(nix build -L --no-link --print-out-paths .#sdk-python-macos-${{ matrix.target }})
+          echo "out=$out" >> "$GITHUB_OUTPUT"
       - name: Collect wheels
         run: |
           mkdir -p dist

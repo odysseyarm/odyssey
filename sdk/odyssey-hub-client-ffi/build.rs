@@ -40,6 +40,7 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
             rename_variants: cbindgen::RenameRule::ScreamingSnakeCase,
             ..Default::default()
         },
+        macro_expansion: cbindgen::MacroExpansionConfig { bitflags: true },
         ..Default::default()
     };
 
@@ -60,6 +61,7 @@ fn build_c(crate_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
             rename_variants: cbindgen::RenameRule::ScreamingSnakeCase,
             ..Default::default()
         },
+        macro_expansion: cbindgen::MacroExpansionConfig { bitflags: true },
         header: Some(
             indoc::indoc! {"
                 #if 0

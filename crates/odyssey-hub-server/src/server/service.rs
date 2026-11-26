@@ -4,17 +4,18 @@ use std::task::{Context, Poll};
 use odyssey_hub_common as common;
 use odyssey_hub_server_interface::service_server::Service;
 use odyssey_hub_server_interface::{
-    AccessoryInfoMap, AccessoryMapReply, AccessoryMapRequest, CancelDonglePairingRequest,
+    AccessoryInfoMap, AccessoryMapReply, AccessoryMapRequest, Bond, CancelDonglePairingRequest,
     CancelPairingRequest, ClearBondRequest, ClearDongleBondsRequest, Device, DeviceListReply,
-    DeviceListRequest, DongleListReply, EmptyReply, EmptyRequest, Event, ExchangeVendorReply,
-    ExchangeVendorRequest, FlashSettingsRequest, GetShotDelayReply, MarkerOtaReply,
-    MarkerOtaRequest, ReadConfigReply, ReadConfigRequest, ReadRegisterReply, ReadRegisterRequest,
+    DeviceListRequest, DongleListReply, EmptyReply, EmptyRequest, Event, ExchangeOtaReply,
+    ExchangeOtaRequest, FlashSettingsRequest, GetShotDelayReply, ListBondsReply, ListBondsRequest,
+    MarkerOtaReply, MarkerOtaRequest, PairSystemBluetoothReply, PairSystemBluetoothRequest,
+    ReadConfigReply, ReadConfigRequest, ReadRegisterReply, ReadRegisterRequest, RemoveBondRequest,
     ResetShotDelayReply, ScreenBounds, ScreenInfoByIdRequest, ScreenInfoReply,
     SetDeviceNameRequest, SetShotDelayRequest, SetTransportModeRequest, StartDonglePairingRequest,
     StartPairingRequest, SubscribeAccessoryMapRequest, SubscribeDeviceListRequest,
     SubscribeDongleListRequest, SubscribeEventsRequest, SubscribeShotDelayRequest,
-    TransportModeReply, Vector2, WriteConfigRequest, WriteRegisterRequest, WriteVendorRequest,
-    ZeroRequest, device_event,
+    SystemPairingResult, TransportModeReply, Vector2, WriteConfigRequest, WriteRegisterRequest,
+    WriteVendorRequest, ZeroRequest, device_event,
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::StreamExt as _;
@@ -27,7 +28,7 @@ use super::device_uuid::{requested_uuid, uuid_from_bytes};
 use super::hub_server::SUBSCRIPTION_BUFFER;
 use super::rpc_error::RpcError;
 use crate::accessories::ResetMarkerModeError;
-use crate::device_tasks::{DeviceTaskMessage, DongleTaskMessage};
+use crate::device_tasks::{DeviceTaskMessage, DongleTaskMessage, SystemPairingOutcome};
 
 /// Capacity of the event stream. Tracking events arrive fast, so it is deeper
 /// than the other subscriptions.
@@ -544,21 +545,18 @@ impl Service for HubServer {
         Ok(ok_empty())
     }
 
-    async fn exchange_vendor(
+    async fn exchange_ota(
         &self,
-        request: tonic::Request<ExchangeVendorRequest>,
-    ) -> Result<Response<ExchangeVendorReply>, Status> {
-        let ExchangeVendorRequest { device, tag, data } = request.into_inner();
-        if request_byte(tag, 0xfe, "vendor tag")? != odyssey_protocol::ota::VENDOR_TAG {
-            return Err(Status::invalid_argument("unexpected vendor tag"));
-        }
+        request: tonic::Request<ExchangeOtaRequest>,
+    ) -> Result<Response<ExchangeOtaReply>, Status> {
+        let ExchangeOtaRequest { device, data } = request.into_inner();
         odyssey_protocol::ota::Request::decode(&data)
             .map_err(|_decode_error| Status::invalid_argument("malformed OTA frame"))?;
-        let task = self.device_task("exchange_vendor", requested_uuid(device)?)?;
+        let task = self.device_task("exchange_ota", requested_uuid(device)?)?;
         let status = task
             .request(|reply| DeviceTaskMessage::OtaExchange { frame: data, reply })
             .await?;
-        Ok(Response::new(ExchangeVendorReply {
+        Ok(Response::new(ExchangeOtaReply {
             data: status.to_vec(),
         }))
     }
@@ -685,6 +683,66 @@ impl Service for HubServer {
         task.request(|reply| DeviceTaskMessage::ClearBond { reply })
             .await?;
         Ok(ok_empty())
+    }
+
+    async fn list_bonds(
+        &self,
+        request: tonic::Request<ListBondsRequest>,
+    ) -> Result<Response<ListBondsReply>, Status> {
+        let uuid = requested_uuid(request.into_inner().device)?;
+        let task = self.device_task("list_bonds", uuid)?;
+        let bonds = task
+            .request(|reply| DeviceTaskMessage::ListBonds { reply })
+            .await?;
+        Ok(Response::new(ListBondsReply {
+            bonds: bonds
+                .into_iter()
+                .map(|bond| Bond {
+                    bd_addr: bond.bd_addr.to_vec(),
+                    connected: bond.connected,
+                    this_computer: bond.this_computer,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn remove_bond(
+        &self,
+        request: tonic::Request<RemoveBondRequest>,
+    ) -> Result<Response<EmptyReply>, Status> {
+        let RemoveBondRequest { device, bd_addr } = request.into_inner();
+        let uuid = requested_uuid(device)?;
+        let bd_addr = bd_addr
+            .try_into()
+            .map_err(|_wrong_length| RpcError::InvalidField("bd_addr length (expected 6 bytes)"))?;
+        tracing::info!("remove_bond RPC for device {uuid:02x?}: {bd_addr:02x?}");
+        let task = self.device_task("remove_bond", uuid)?;
+        task.request(|reply| DeviceTaskMessage::RemoveBond { bd_addr, reply })
+            .await?;
+        Ok(ok_empty())
+    }
+
+    async fn pair_system_bluetooth(
+        &self,
+        request: tonic::Request<PairSystemBluetoothRequest>,
+    ) -> Result<Response<PairSystemBluetoothReply>, Status> {
+        let PairSystemBluetoothRequest { device, timeout_ms } = request.into_inner();
+        let uuid = requested_uuid(device)?;
+        tracing::info!("pair_system_bluetooth RPC for device {uuid:02x?}");
+        let task = self.device_task("pair_system_bluetooth", uuid)?;
+        let outcome = task
+            .request(|reply| DeviceTaskMessage::PairSystemBluetooth { timeout_ms, reply })
+            .await?;
+        let result = match outcome {
+            SystemPairingOutcome::Paired => SystemPairingResult::Paired,
+            SystemPairingOutcome::BondsFull => SystemPairingResult::BondsFull,
+            SystemPairingOutcome::Timeout => SystemPairingResult::Timeout,
+            SystemPairingOutcome::Cancelled => SystemPairingResult::Cancelled,
+            SystemPairingOutcome::NotBleMode => SystemPairingResult::NotBleMode,
+        };
+        Ok(Response::new(PairSystemBluetoothReply {
+            result: result.into(),
+        }))
     }
 
     async fn set_transport_mode(

@@ -43,6 +43,10 @@ pub(crate) enum Cmd {
         #[arg(long)]
         prebuilt: Option<PathBuf>,
     },
+    /// Build the app. Defaults: official manifests, release profile.
+    Build(#[command(flatten)] BuildOpts),
+    /// Build and run the app for HITL work. Defaults: dev manifests, hitl profile.
+    Run(#[command(flatten)] BuildOpts),
     /// Publish the MSIs in crates/odyssey-desktop/dist/ to a GitHub release
     /// tagged odyssey-desktop-v<version>.
     Release {
@@ -63,6 +67,76 @@ pub(crate) enum Variant {
     /// internet. The app is built without the downloader. Whether offline
     /// mode is on is separate: `OFFLINE_MODE=1` at install time, or policy.
     Full,
+}
+
+/// Deployment selects only the manifest source: never optimization or trusted keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Deployment {
+    Official,
+    Dev,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Profile {
+    Dev,
+    Release,
+    Hitl,
+}
+
+impl Profile {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Release => "release",
+            Self::Hitl => "hitl",
+        }
+    }
+}
+
+/// HITL hosts set the `ODYSSEY_*` variables in their own config, so the tailnet
+/// address stays out of this public repository.
+#[derive(clap::Args)]
+pub(crate) struct BuildOpts {
+    #[arg(long, value_enum, env = "ODYSSEY_DEPLOYMENT")]
+    deployment: Option<Deployment>,
+    /// HTTPS base URL holding `releases.<channel>.json`; required for dev.
+    #[arg(long, env = "ODYSSEY_DEV_MANIFEST_URL")]
+    manifest_url: Option<String>,
+    #[arg(long, value_enum)]
+    profile: Option<Profile>,
+}
+
+/// The manifest URL baked into the build, or none for the official default.
+fn manifest_override(deployment: Deployment, url: Option<String>) -> eros::Result<Option<String>> {
+    match (deployment, url) {
+        (Deployment::Official, _) => Ok(None),
+        (Deployment::Dev, None) => {
+            eros::bail!("dev deployment requires --manifest-url or ODYSSEY_DEV_MANIFEST_URL")
+        }
+        (Deployment::Dev, Some(url)) => {
+            let url = url.trim_end_matches('/');
+            if !url.starts_with("https://") || url.len() == "https://".len() {
+                eros::bail!("dev manifest URL must be https://<host>[/path]");
+            }
+            Ok(Some(url.to_owned()))
+        }
+    }
+}
+
+fn build(opts: BuildOpts, deployment: Deployment, profile: Profile, run: bool) -> eros::Result<()> {
+    let deployment = opts.deployment.unwrap_or(deployment);
+    let manifest = manifest_override(deployment, opts.manifest_url)?;
+    let mut cargo = cmd::at(DIR, "cargo");
+    cargo
+        .arg(if run { "run" } else { "build" })
+        .args(["--package", "odyssey-desktop", "--profile"])
+        .arg(opts.profile.unwrap_or(profile).name());
+    // An inherited value would silently retarget an official build.
+    cargo.env_remove("ODYSSEY_FIRMWARE_MANIFEST_URL");
+    if let Some(url) = &manifest {
+        cargo.env("ODYSSEY_FIRMWARE_MANIFEST_URL", url);
+    }
+    cmd::run(&mut cargo)
 }
 
 impl Variant {
@@ -87,6 +161,8 @@ pub(crate) fn run(command: Cmd) -> eros::Result<()> {
             Ok(())
         }
         Cmd::Bundle { variant, prebuilt } => bundle(variant, prebuilt),
+        Cmd::Build(opts) => build(opts, Deployment::Official, Profile::Release, false),
+        Cmd::Run(opts) => build(opts, Deployment::Dev, Profile::Hitl, true),
         Cmd::Release { version, token } => release(version, token),
     }
 }
@@ -105,6 +181,8 @@ fn bundle(variant: Variant, prebuilt: Option<PathBuf>) -> eros::Result<()> {
         // cargo-packager packages a finished binary, it does not build one.
         let mut build = cmd::at(DIR, "cargo");
         build.args(["build", "--release", "--package", "odyssey-desktop"]);
+        // Customer installers always read the official manifests.
+        build.env_remove("ODYSSEY_FIRMWARE_MANIFEST_URL");
         // The full app is the same code without the SDK downloader.
         if let Variant::Full = variant {
             build.arg("--no-default-features");
@@ -251,5 +329,27 @@ fn asset_name(variant: Variant, version: &str) -> String {
     match variant {
         Variant::Online => format!("Odyssey-{version}-win-x64.msi"),
         Variant::Full => format!("Odyssey-{version}-win-x64-full.msi"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deployment_controls_manifest_override() {
+        let url = |s: &str| Some(s.to_owned());
+        assert_eq!(manifest_override(Deployment::Official, None).unwrap(), None);
+        assert_eq!(
+            manifest_override(Deployment::Official, url("https://hitl")).unwrap(),
+            None
+        );
+        manifest_override(Deployment::Dev, None).unwrap_err();
+        manifest_override(Deployment::Dev, url("http://hitl.ts.net")).unwrap_err();
+        manifest_override(Deployment::Dev, url("https://")).unwrap_err();
+        assert_eq!(
+            manifest_override(Deployment::Dev, url("https://hitl.ts.net/manifests/")).unwrap(),
+            url("https://hitl.ts.net/manifests")
+        );
     }
 }

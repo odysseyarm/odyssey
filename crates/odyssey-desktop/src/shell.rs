@@ -7,7 +7,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, Image, ImageFormat, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled, Subscription,
-    Window, WindowOptions, div, img, px, size,
+    TestSupportExt as _, Window, WindowOptions, div, img, px, size,
 };
 use odyssey_hub_common::config::ConfigCorruptionEvent;
 use tokio::sync::{mpsc, watch};
@@ -210,6 +210,10 @@ impl Render for Shell {
                 links.child(
                     div()
                         .id(label)
+                        .test_support()
+                        .role(gpui::Role::Button)
+                        .aria_label(label)
+                        .aria_selected(active)
                         .flex()
                         .items_center()
                         .px_3()
@@ -365,12 +369,14 @@ pub(crate) fn activate_main(cx: &mut App) {
 pub(crate) fn show_calibration(args: Option<cli::CalibrateArgs>, cx: &mut App) {
     let main = cx.global::<MainWindow>();
     let (window, shell) = (main.window, main.shell.clone());
-    cx.defer(move |cx| {
+    // Deferred effects can flush inside an X11 platform borrow; use the next executor turn.
+    cx.spawn(async move |cx| {
         let _ = window.update(cx, |_, window, cx| {
             shell.update(cx, |shell, cx| shell.begin_calibration(args, window, cx));
             window.activate_window();
         });
-    });
+    })
+    .detach();
 }
 
 pub(crate) fn finish_calibration(cx: &mut App) {
@@ -424,6 +430,13 @@ pub(crate) fn launch(cx: &mut App) {
             return;
         }
     };
+
+    #[cfg(feature = "ui-automation")]
+    if let Err(error) = gpui_goo::gpui_adapter::attach(window, cx) {
+        tracing::error!("Could not start UI automation: {error}");
+        cx.quit();
+        return;
+    }
 
     cx.set_global(MainWindow {
         window,

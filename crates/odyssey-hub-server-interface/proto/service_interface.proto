@@ -31,7 +31,7 @@ service Service {
   rpc RebootDevice(Device) returns (EmptyReply) {}
 
   rpc WriteVendor(WriteVendorRequest) returns (EmptyReply) {}
-  rpc ExchangeVendor(ExchangeVendorRequest) returns (ExchangeVendorReply) {}
+  rpc ExchangeOta(ExchangeOtaRequest) returns (ExchangeOtaReply) {}
   rpc ReadRegister(ReadRegisterRequest) returns (ReadRegisterReply) {}
   rpc WriteRegister(WriteRegisterRequest) returns (EmptyReply) {}
   rpc ReadConfig(ReadConfigRequest) returns (ReadConfigReply) {}
@@ -65,6 +65,12 @@ service Service {
   rpc SetDeviceName(SetDeviceNameRequest) returns (EmptyReply) {}
 
   rpc BringToFront(EmptyRequest) returns (EmptyReply) {}
+
+  // Multi-bond ATS Lite units (device protocol 0.2.2 and later), over the unit's USB control link.
+  rpc ListBonds(ListBondsRequest) returns (ListBondsReply) {}
+  rpc RemoveBond(RemoveBondRequest) returns (EmptyReply) {}
+  // Pairs this computer's Bluetooth adapter with the unit. The reply comes once the pairing is settled.
+  rpc PairSystemBluetooth(PairSystemBluetoothRequest) returns (PairSystemBluetoothReply) {}
 }
 
 message Matrix3x3 {
@@ -387,12 +393,11 @@ message WriteVendorRequest {
   bytes data = 3;
 }
 
-message ExchangeVendorRequest {
+message ExchangeOtaRequest {
   Device device = 1;
-  uint32 tag = 2;
-  bytes data = 3;
+  bytes data = 2;
 }
-message ExchangeVendorReply {
+message ExchangeOtaReply {
   bytes data = 1;
 }
 
@@ -490,3 +495,33 @@ message SubscribeEventsRequest {
 }
 message EmptyRequest {}
 message EmptyReply {}
+
+message ListBondsRequest {
+  Device device = 1;
+}
+message Bond {
+  bytes bd_addr = 1; // Identity address of the bonded host: 6 bytes, little-endian as on air.
+  bool connected = 2; // This host holds the unit's BLE link now.
+  bool this_computer = 3; // The host is this computer's Bluetooth adapter.
+}
+message ListBondsReply {
+  repeated Bond bonds = 1;
+}
+message RemoveBondRequest {
+  Device device = 1;
+  bytes bd_addr = 2; // 6 bytes, little-endian as on air, as listed by ListBonds.
+}
+message PairSystemBluetoothRequest {
+  Device device = 1;
+  uint32 timeout_ms = 2;
+}
+enum SystemPairingResult {
+  SYSTEM_PAIRING_RESULT_PAIRED = 0;
+  SYSTEM_PAIRING_RESULT_BONDS_FULL = 1; // Every bond slot of the unit is in use; remove one first.
+  SYSTEM_PAIRING_RESULT_TIMEOUT = 2;
+  SYSTEM_PAIRING_RESULT_CANCELLED = 3;
+  SYSTEM_PAIRING_RESULT_NOT_BLE_MODE = 4;
+}
+message PairSystemBluetoothReply {
+  SystemPairingResult result = 1;
+}

@@ -5,24 +5,25 @@
 //! `odyssey_cv::exposure` for the whole loop). `tracking.rs` calls [`MarkerHintSender::send`]
 //! for every marker report. The sender stays silent unless the tracker matched enough markers,
 //! so hints flow only while tracking; the firmware drops a hint after about 300 ms and falls
-//! back to shape heuristics. Firmware that predates hints ignores the vendor tag.
+//! back to shape heuristics. The handler drops hints for units whose protocol predates the
+//! `MarkerHint` packet.
 
 use std::time::{Duration, Instant};
 
-use odyssey_protocol::marker_hint::{MarkerHint, VENDOR_TAG};
+use odyssey_protocol::marker_hint::MarkerHint;
 use tokio::sync::mpsc;
 
 use super::messages::DeviceTaskMessage;
 
 /// The firmware only needs the hint to be fresher than its own expiry, and every hint costs a
-/// vendor packet on a link that also carries the sensor streams.
+/// packet on a link that also carries the sensor streams.
 const MIN_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Fewer matched markers than a pose solve needs are not worth steering exposure by.
 pub(super) const MIN_POINTS: usize = 4;
 
-/// Sends hints through the unit handler's own control channel, so they take the same vendor
-/// write path as any other `WriteVendor` and never run on the tracking path.
+/// Sends hints through the unit handler's own control channel, so the write never runs on
+/// the tracking path.
 #[derive(Debug, Default)]
 pub(super) struct MarkerHintSender {
     sink: Option<mpsc::WeakSender<DeviceTaskMessage>>,
@@ -56,12 +57,7 @@ impl MarkerHintSender {
         };
         self.last_attempt = Some(now);
         let hint = MarkerHint::new(points);
-        sender
-            .try_send(DeviceTaskMessage::WriteVendor(
-                VENDOR_TAG,
-                hint.encode().to_vec(),
-            ))
-            .is_ok()
+        sender.try_send(DeviceTaskMessage::MarkerHint(hint)).is_ok()
     }
 }
 
@@ -83,17 +79,14 @@ mod tests {
     }
 
     #[test]
-    fn sends_a_decodable_hint_on_the_vendor_tag() {
+    fn sends_the_hint_as_a_marker_hint_message() {
         let (mut sender, _tx, mut rx) = sender();
         assert!(sender.send(Instant::now(), &POINTS));
-        let Ok(DeviceTaskMessage::WriteVendor(tag, data)) = rx.try_recv() else {
-            panic!("expected a vendor write");
+        let Ok(DeviceTaskMessage::MarkerHint(hint)) = rx.try_recv() else {
+            panic!("expected a marker hint");
         };
-        assert_eq!(tag, VENDOR_TAG);
-        assert_eq!(
-            MarkerHint::decode(&data).expect("canonical hint").points(),
-            POINTS
-        );
+        hint.validate().expect("canonical hint");
+        assert_eq!(hint.points(), POINTS);
     }
 
     #[test]

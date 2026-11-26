@@ -253,7 +253,7 @@ impl Model {
                 let (unit, dongle) = (self.unit_id(target)?, self.dongle_id(target)?);
                 if let Some(unit) = self.units.get_mut(&unit) {
                     unit.pairing_deadline = None;
-                    unit.bond = None;
+                    unit.clear_bonds();
                 }
                 if let Some(dongle) = self.dongles.get_mut(&dongle) {
                     dongle.pairing_deadline = None;

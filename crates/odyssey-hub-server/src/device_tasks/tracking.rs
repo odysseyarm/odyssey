@@ -858,10 +858,7 @@ mod tests {
         assert!(tracker.hints.send(Instant::now(), &matched));
         assert!(matches!(
             rx.try_recv(),
-            Ok(DeviceTaskMessage::WriteVendor(
-                odyssey_protocol::marker_hint::VENDOR_TAG,
-                _
-            ))
+            Ok(DeviceTaskMessage::MarkerHint(_))
         ));
     }
 

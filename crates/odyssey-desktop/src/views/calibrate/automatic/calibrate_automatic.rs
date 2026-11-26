@@ -6,7 +6,7 @@ use gpui::component::tooltip::Tooltip;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _,
     IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, px,
+    Styled as _, Subscription, TestSupportExt as _, Window, div, px,
 };
 
 use super::quality::{Verdict, assess};
@@ -147,6 +147,7 @@ impl Render for CalibrateAutomaticView {
         let stage_view = self.stage_view(p, stage, cx);
         div()
             .id("calibrate-automatic")
+            .test_support()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
             .size_full()

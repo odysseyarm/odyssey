@@ -9,6 +9,30 @@ pub(crate) fn reject_image_response<'b, C, T>(
     ))
 }
 
+/// For packet payloads that only travel as postcard. Older units that decode CBOR predate these
+/// variants and never receive them, so both directions fail instead of inventing an encoding.
+pub(crate) mod postcard_only {
+    use minicbor::decode::Error;
+    use minicbor::encode::{Error as EncodeError, Write};
+    use minicbor::{Decoder, Encoder};
+
+    pub(crate) fn encode<T, Ctx, W: Write>(
+        _value: &T,
+        _e: &mut Encoder<W>,
+        _ctx: &mut Ctx,
+    ) -> Result<(), EncodeError<W::Error>> {
+        Err(EncodeError::message("payload is postcard-only"))
+    }
+
+    pub(crate) fn decode<T, Ctx>(_d: &mut Decoder<'_>, _ctx: &mut Ctx) -> Result<T, Error> {
+        Err(Error::message("payload is postcard-only"))
+    }
+
+    pub(crate) fn cbor_len<T, Ctx>(_value: &T, _ctx: &mut Ctx) -> usize {
+        0
+    }
+}
+
 pub(crate) mod heapless_str32 {
     use minicbor::decode::Error;
     use minicbor::encode::{Error as EncodeError, Write};

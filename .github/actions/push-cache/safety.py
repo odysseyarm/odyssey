@@ -54,7 +54,6 @@ def scan_file(
     try:
         return _scan_file(path, fingerprints, forbidden_paths, depth, public_graph)
     except (
-        ValueError,
         NotImplementedError,
         EOFError,
         OSError,

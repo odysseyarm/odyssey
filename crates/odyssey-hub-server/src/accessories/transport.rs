@@ -39,6 +39,10 @@ const CONNECT_ATTEMPTS: usize = 4;
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(28);
 /// One acknowledged OTA write, or one OTA status read.
 const OTA_IO_TIMEOUT: Duration = Duration::from_secs(5);
+/// Largest marker OTA frame the dongle's `MarkerOta` command carries: the payload of
+/// a `VendorData`. Marker frames hold 12 data bytes, so it is never reached.
+const MARKER_OTA_FRAME_CAPACITY: usize = 98;
+const _: () = assert!(MARKER_OTA_FRAME_CAPACITY == VendorData::CAPACITY);
 
 /// Which radio an accessory session talks through.
 #[derive(Clone)]
@@ -218,7 +222,7 @@ impl Link {
         &mut self,
         frame: &[u8],
     ) -> Result<[u8; ota::STATUS_LEN], String> {
-        if frame.len() > VendorData::CAPACITY {
+        if frame.len() > MARKER_OTA_FRAME_CAPACITY {
             return Err("Marker OTA frame exceeds transport capacity".into());
         }
         match self {
@@ -265,7 +269,7 @@ impl Link {
                             .into(),
                     );
                 }
-                let mut data = [0; VendorData::CAPACITY];
+                let mut data = [0; MARKER_OTA_FRAME_CAPACITY];
                 data[..frame.len()].copy_from_slice(frame);
                 let frame = VendorData {
                     len: frame.len() as u8,

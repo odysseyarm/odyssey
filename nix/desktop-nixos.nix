@@ -50,6 +50,8 @@ let
       inherit version;
       ODYSSEY_BUILD_VERSION = version;
       nativeBuildInputs = nativeInputs;
+      # strictDeps: pkg-config only sees OpenSSL (via openssl-sys) if it is a build input.
+      buildInputs = nativeLibraries;
       doCheck = false;
     };
   desktop = craneLib.buildPackage (

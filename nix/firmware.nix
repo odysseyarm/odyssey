@@ -152,12 +152,12 @@ let
   # Config patches also affect build-std's synthetic workspace, which has no firmware lock.
   bootPatchHook =
     dir:
-    lib.optionalString (lib.hasInfix "${bootPatch.git}?branch=${bootPatch.branch}" (builtins.readFile (lockOf dir))) ''
+    lib.optionalString (lib.hasInfix "${bootPatch.git}?rev=${bootPatch.rev}" (builtins.readFile (lockOf dir))) ''
       cat >> Cargo.toml <<'EOF'
 
       [patch.crates-io.embassy-boot]
       git = "${bootPatch.git}"
-      branch = "${bootPatch.branch}"
+      rev = "${bootPatch.rev}"
       EOF
     '';
   vendorArgs = {
@@ -176,11 +176,14 @@ let
       else if lib.any (package: lib.hasInfix "github.com/alexmoon/nrf-sdc" package.source) packages then
         drv.overrideAttrs (old: {
           postPatch = (old.postPatch or "") + ''
-            # Both sys crates omit headers that their bindgen scripts include.
-            substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
-              --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
-            substituteInPlace nrf-sdc-sys/Cargo.toml \
-              --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+            # Older sys crates omit headers that their bindgen scripts include; newer
+            # revisions package them already.
+            if grep -q '"third_party/nordic/nrfx/LICENSE",' nrf-mpsl-sys/Cargo.toml; then
+              substituteInPlace nrf-mpsl-sys/Cargo.toml nrf-sdc-sys/Cargo.toml \
+                --replace-fail '"third_party/nordic/nrfx/LICENSE",' '"third_party/nordic/nrfx/**",'
+              substituteInPlace nrf-sdc-sys/Cargo.toml \
+                --replace-fail '"src/**",' '"src/**", "include/**", "third_party/nordic/nrfxlib/mpsl/include/**",'
+            fi
           '';
         })
       else
@@ -218,39 +221,48 @@ let
       buildStd ? false,
       files ? [ ],
       extraArgs ? "",
+      buildEnv ? { },
     }:
     let
       name = lib.removePrefix "firmware/" dir;
-      shared = common.mkArgs {
-        workspace = dir;
-        pname = name;
-        cargoExtraArgs = lib.concatStringsSep " " (
-          [
-            "--locked"
-            "--offline"
-          ]
-          ++ lib.optionals buildStd [
-            "-Z"
-            "build-std"
-            "-Z"
-            "build-std-features=optimize_for_size"
-          ]
-          ++ [
-            "--target"
-            target
-            "--bin"
-            bin
-          ]
-          ++ lib.optionals (features != null) [
-            "--features"
-            features
-          ]
-          ++ lib.optional (extraArgs != "") extraArgs
-        );
-      };
+      shared =
+        common.mkArgs {
+          workspace = dir;
+          pname = name;
+          cargoExtraArgs = lib.concatStringsSep " " (
+            [
+              "--locked"
+              "--offline"
+            ]
+            ++ lib.optionals buildStd [
+              "-Z"
+              "build-std"
+              "-Z"
+              "build-std-features=optimize_for_size"
+            ]
+            ++ [
+              "--target"
+              target
+              "--bin"
+              bin
+            ]
+            ++ lib.optionals (features != null) [
+              "--features"
+              features
+            ]
+            ++ lib.optional (extraArgs != "") extraArgs
+          );
+          DEFMT_LOG = "info";
+        }
+        // lib.optionalAttrs (dir == "firmware/lite1" || dir == "firmware/legacy-atslite") {
+          # Tracker banks cannot fit Debug formatting and panic machinery. Panics trap into
+          # HardFault and retain their PC in the crash record; Debug2Format prints nothing.
+          RUSTFLAGS = "-Zfmt-debug=none -Zunstable-options -Cpanic=immediate-abort";
+        };
       args =
         shared
         // bindgenEnv
+        // buildEnv
         // {
           src = sourceFor { inherit dir files; };
           cargoLock = lockFile dir;
@@ -378,6 +390,16 @@ let
       dir = "firmware/lite1-stage1-bootloader";
       bin = "lite1-stage1-bootloader";
       target = triple.appCore;
+      buildStd = true;
+      buildEnv.ODYSSEY_NETCORE_BOOTLOADER =
+        pkgs.runCommand "lite1-immutable-netboot.bin" { nativeBuildInputs = [ arm ]; }
+          ''
+            arm-none-eabi-objcopy -O binary \
+              ${
+                lite1Crates.netcoreBootloader.elf { }
+              }/firmware/lite1-netcore-bootloader/target/${triple.netCore}/release/lite1-netcore-bootloader \
+              "$out"
+          '';
     };
     netcoreBootloader = mkCrate {
       dir = "firmware/lite1-netcore-bootloader";
@@ -483,60 +505,81 @@ let
     };
   };
 
-  # `cargo xtask firmware <board> build` and `build-dual-bank`.
-  dualCoreImages = board: parts: {
-    "firmware-${board}-images" = xtaskRun {
-      name = "firmware-${board}-images";
-      elfs = [
-        parts.stage1
-        parts.app-a
-        parts.app-b
-        parts.bootloader
-        parts.netcore-bootloader
-        parts.net-core
-      ];
-      boardDir = "firmware/${board}";
-      command = "firmware ${board} build";
-      outDir = "build";
-      expect = [
-        "stage1-bootloader.hex"
-        "stage2-bootloader.hex"
-        "stage2-bootloader.bin"
-        "app-a.hex"
-        "app-a.bin"
-        "app-b.hex"
-        "app-b.bin"
-        "netcore-bootloader.hex"
-        "net-core.hex"
-        "net-core.bin"
-        "merged.hex"
-      ];
+  # `cargo xtask firmware <board> build` and `build-dual-bank`. Lite1 packaging checks the
+  # stage1 binding hash at the address its memory layout gives, and leaves the merged image
+  # to the signed release flow.
+  dualCoreImages =
+    board: parts:
+    let
+      lite1 = board == "lite1";
+      layout = lib.optionalAttrs lite1 {
+        source = mkSource {
+          dirs = [ ];
+          files = [ "firmware/memory/memory-lite1.kdl" ];
+        };
+        pre = ''mkdir -p "$ODYSSEY_REPO/firmware/${board}"'';
+      };
+    in
+    {
+      "firmware-${board}-images" = xtaskRun (
+        layout
+        // {
+          name = "firmware-${board}-images";
+          elfs = [
+            parts.stage1
+            parts.app-a
+            parts.app-b
+            parts.bootloader
+            parts.netcore-bootloader
+            parts.net-core
+          ];
+          boardDir = "firmware/${board}";
+          command = "firmware ${board} build";
+          outDir = "build";
+          expect = [
+            "stage1-bootloader.hex"
+            "stage2-bootloader.hex"
+            "stage2-bootloader.bin"
+            "app-a.hex"
+            "app-a.bin"
+            "app-b.hex"
+            "app-b.bin"
+            "netcore-bootloader.hex"
+            "net-core.hex"
+            "net-core.bin"
+          ]
+          ++ lib.optional (!lite1) "merged.hex";
+        }
+      );
+      "firmware-${board}-images-dual-bank" = xtaskRun (
+        layout
+        // {
+          name = "firmware-${board}-images-dual-bank";
+          elfs = [
+            parts.stage1
+            parts.app-a
+            parts.app-b
+            parts.bootloader
+            parts.netcore-bootloader
+            parts.net-core
+          ];
+          boardDir = "firmware/${board}";
+          command = "firmware ${board} build-dual-bank";
+          outDir = "build";
+          expect = [
+            "stage1-bootloader.hex"
+            "stage2-bootloader.hex"
+            "app-a.hex"
+            "app-a.bin"
+            "app-b.hex"
+            "app-b.bin"
+            "net-core.hex"
+            "net-core.bin"
+          ]
+          ++ lib.optional (!lite1) "merged-dual.hex";
+        }
+      );
     };
-    "firmware-${board}-images-dual-bank" = xtaskRun {
-      name = "firmware-${board}-images-dual-bank";
-      elfs = [
-        parts.stage1
-        parts.app-a
-        parts.app-b
-        parts.bootloader
-        parts.net-core
-      ];
-      boardDir = "firmware/${board}";
-      command = "firmware ${board} build-dual-bank";
-      outDir = "build";
-      expect = [
-        "stage1-bootloader.hex"
-        "stage2-bootloader.hex"
-        "app-a.hex"
-        "app-a.bin"
-        "app-b.hex"
-        "app-b.bin"
-        "net-core.hex"
-        "net-core.bin"
-        "merged-dual.hex"
-      ];
-    };
-  };
 
   # `cargo xtask firmware <board> dist-bootloader` / `dist-netcore`, the
   # commands the release workflows run.
@@ -603,8 +646,8 @@ let
     '';
   };
 
-  # Host tests the marker release workflow gates on. Dev profile, as `cargo test`
-  # runs them: debug assertions and overflow checks stay on.
+  # Host tests the marker release workflow gates on. Dev profile keeps debug
+  # assertions and overflow checks enabled.
   testArgs =
     {
       dir,
@@ -624,10 +667,14 @@ let
     };
   hostTest =
     args:
-    craneLib.cargoTest (
+    craneLib.cargoNextest (
       args
       // {
         cargoArtifacts = craneLib.buildDepsOnly (args // { doCheck = false; });
+        cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+        postCheck = lib.optionalString (!lib.hasInfix "--lib" args.cargoExtraArgs) ''
+          cargo test ''${CARGO_PROFILE:+--profile $CARGO_PROFILE} ${args.cargoExtraArgs} --doc
+        '';
       }
     );
 in
@@ -703,13 +750,13 @@ in
     // netcoreDist "legacy-atslite" legacyAtslite.net-core;
 
   checks = {
-    # cargo test --manifest-path firmware/marker-control-board/Cargo.toml --lib --target <host>
+    # Host nextest check with explicit host target for marker-control-board.
     marker-control-board-tests = hostTest (testArgs {
       dir = "firmware/marker-control-board";
       pname = "marker-control-board-tests";
       cargoExtraArgs = "--locked --offline --lib --target ${hostTriple}";
     });
-    # cargo test --manifest-path firmware/better-dfu/Cargo.toml --features dfu,application,embassy-time/std
+    # Host nextest check with dfu/application features enabled.
     better-dfu-tests = hostTest (testArgs {
       dir = "firmware/better-dfu";
       pname = "better-dfu-tests";
@@ -720,10 +767,20 @@ in
       pname = "better-ota-tests";
       cargoExtraArgs = "--locked --offline --features signed,dev-signing-key";
     });
+    ota-channel-tests = hostTest (testArgs {
+      dir = "firmware/ota-channel";
+      pname = "ota-channel-tests";
+      cargoExtraArgs = "--locked --offline --features embassy-sync/std --target ${hostTriple}";
+    });
     release-signing-tests = hostTest (testArgs {
       dir = "firmware/release-signing";
       pname = "release-signing-tests";
       cargoExtraArgs = "--locked --offline --features dev-signing-key";
+    });
+    lite1-secure-boot-tests = hostTest (testArgs {
+      dir = "firmware/lite1-secure-boot";
+      pname = "lite1-secure-boot-tests";
+      cargoExtraArgs = "--locked --offline --target ${hostTriple}";
     });
   };
 

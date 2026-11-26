@@ -30,6 +30,10 @@ static L2CAP_DATA_RX: L2capDataRxChannel = Channel::new();
 static L2CAP_CONTROL_TX: L2capControlTxChannel = Channel::new();
 static L2CAP_DATA_TX: L2capDataTxChannel = Channel::new();
 
+/// Raised by the control writer when a send leaves the control queue empty.
+static CONTROL_TX_DRAINED: embassy_sync::signal::Signal<CriticalSectionRawMutex, ()> =
+    embassy_sync::signal::Signal::new();
+
 static SESSION_GENERATION: AtomicU32 = AtomicU32::new(0);
 
 /// Changes whenever a BLE session starts or ends, including while a request handler awaits I/O.
@@ -39,6 +43,29 @@ pub fn session_generation() -> u32 {
     SESSION_GENERATION.load(Ordering::Relaxed)
 }
 
+/// Called by the control writer after a packet went out on L2CAP.
+pub(crate) fn control_sent(queue_empty: bool) {
+    if queue_empty {
+        CONTROL_TX_DRAINED.signal(());
+    }
+}
+
+/// Queues `pkt` on the control channel and waits until it has been written to L2CAP, so the
+/// caller may drop the link next. Gives up after the writer's own send timeout.
+///
+/// Since: Unreleased.
+pub async fn send_control_flushed(pkt: Packet) {
+    CONTROL_TX_DRAINED.reset();
+    L2CAP_CONTROL_TX.send(pkt).await;
+    if !super::peripheral::is_connected() {
+        return;
+    }
+    let _ = embassy_time::with_timeout(
+        embassy_time::Duration::from_secs(6),
+        CONTROL_TX_DRAINED.wait(),
+    )
+    .await;
+}
 /// Since: Odyssey Desktop 0.7.0.
 pub struct L2capChannels {
     /// Since: Odyssey Desktop 0.7.0.

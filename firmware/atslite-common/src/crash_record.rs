@@ -106,6 +106,8 @@ pub fn report_previous_boot() {
 // `Location` and file path alive through LTO, +61 KB that lite1's flash lacks. Build lite1
 // with `-Z location-detail=line` like legacy-atslite to afford it. A probe still halts here
 // with the message, and `defmt::panic!` / `defmt::unwrap!` log theirs over RTT.
+// Tracker release builds use `-C panic=immediate-abort` and never reach this handler: the
+// panic site traps straight into HardFault, which records it as a fault at that PC.
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     store(CrashKind::Panic, 0, 0);

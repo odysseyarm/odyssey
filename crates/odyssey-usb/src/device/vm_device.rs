@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use backon::Retryable as _;
 use nusb::{DeviceInfo, Interface};
-use odyssey_protocol::control::device::TransportMode;
+use odyssey_protocol::control::device::{DeviceMsg, PairingOutcome, TransportMode};
 use odyssey_protocol::legacy::{CombinedMarkersReport, MotData, ObjectReport};
+use odyssey_protocol::marker_hint::MarkerHint;
 use odyssey_protocol::{MarkersReport, VendorData};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -38,6 +39,8 @@ mod tests;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// Replies a stream may have queued for its consumer before new ones are dropped.
 const STREAM_REPLY_BUFFER: usize = 100;
+/// Pairing results queued for `wait_pairing_event` on a packet-link control path.
+const PAIRING_EVENT_BUFFER: usize = 4;
 
 /// Whether a USB connection insists on the device being in USB data mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,10 +58,15 @@ pub struct VmDevice {
     thread_state: Weak<State>,
     // Arc drops the guards exactly once even when clones drop concurrently.
     keepalive: Arc<(tokio_util::sync::DropGuard, tokio_util::sync::DropGuard)>,
-    ctrl_if: Option<ControlLink<odyssey_protocol::control::device::DeviceMsg>>,
+    ctrl_if: Option<ControlLink<DeviceMsg>>,
+    /// Device control travels as `PacketData::DeviceControl` on the packet link,
+    /// because the unit is reached over Bluetooth with no USB control endpoint.
+    packet_control: bool,
     // Serialize request/reply pairs. Retain pairing events encountered while
     // waiting for a different reply.
-    ctrl: Arc<tokio::sync::Mutex<Option<odyssey_protocol::control::device::PairingOutcome>>>,
+    ctrl: Arc<tokio::sync::Mutex<Option<PairingOutcome>>>,
+    /// Pairing results the unit pushes on the packet link after the start reply.
+    pairing_events: Arc<tokio::sync::Mutex<mpsc::Receiver<PairingOutcome>>>,
     image_requests: mpsc::Sender<image_session::ImageRequest>,
     image_link: bool,
     image_mode_check: bool,
@@ -72,8 +80,10 @@ impl VmDevice {
 
     fn from_control_link(
         transport: PacketTransport,
-        ctrl_if: Option<ControlLink<odyssey_protocol::control::device::DeviceMsg>>,
+        ctrl_if: Option<ControlLink<DeviceMsg>>,
     ) -> Self {
+        let packet_control = ctrl_if.is_none() && is_ble(&transport);
+        let (pairing_tx, pairing_events) = mpsc::channel(PAIRING_EVENT_BUFFER);
         let image_link = matches!(
             transport.kind,
             super::packet_transport::LinkKind::Usb | super::packet_transport::LinkKind::Simulated
@@ -98,7 +108,7 @@ impl VmDevice {
             // from Drop or detached from the owning transport dispatcher.
             tokio::join!(
                 async {
-                    run_dispatcher(state, incoming, dispatcher_cancel).await;
+                    run_dispatcher(state, incoming, pairing_tx, dispatcher_cancel).await;
                     image_cancel.cancel();
                 },
                 image_session::supervise(
@@ -119,7 +129,9 @@ impl VmDevice {
                 transport_cancel.as_ref().clone().drop_guard(),
             )),
             ctrl_if,
+            packet_control,
             ctrl: Arc::new(tokio::sync::Mutex::new(None)),
+            pairing_events: Arc::new(tokio::sync::Mutex::new(pairing_events)),
             image_requests,
             image_link,
             image_mode_check,
@@ -134,8 +146,8 @@ impl VmDevice {
     pub fn from_simulated_channels(
         outgoing: mpsc::Sender<Packet>,
         incoming: mpsc::Receiver<Packet>,
-        control_outgoing: mpsc::Sender<odyssey_protocol::control::device::DeviceMsg>,
-        control_incoming: mpsc::Receiver<odyssey_protocol::control::device::DeviceMsg>,
+        control_outgoing: mpsc::Sender<DeviceMsg>,
+        control_incoming: mpsc::Receiver<DeviceMsg>,
     ) -> Self {
         Self::from_control_link(
             PacketTransport::from_channels(outgoing, incoming),
@@ -215,6 +227,38 @@ impl VmDevice {
             HexAddress(device_addr)
         );
         Self::from_transport(PacketTransport::mux(mux, device_addr), None)
+    }
+
+    /// Opens a link straight to the unit with BLE address `address` over the host's
+    /// own Bluetooth adapter, without touching the unit's streams.
+    ///
+    /// Like [`Self::open_via_mux`]: a unit whose firmware picks its own transport shares
+    /// one set of stream subscriptions between USB and BLE, so a `DisableAll` here
+    /// could stop reports a cable is carrying. The caller resets streams only for
+    /// firmware that keeps one set per link. The address is little-endian, as on air.
+    ///
+    /// # Errors
+    /// Returns the Bluetooth error when the unit cannot be reached or the host is not
+    /// one of its bonds.
+    /// Since: Unreleased.
+    #[cfg(target_os = "linux")]
+    pub async fn connect_via_l2cap(address: [u8; 6]) -> Result<Self> {
+        debug!(
+            "VmDevice::connect_via_l2cap() opening link to {}",
+            HexAddress(address)
+        );
+        Ok(Self::from_transport(
+            PacketTransport::l2cap(address).await?,
+            None,
+        ))
+    }
+
+    /// Resolves once the link to the unit has closed: the unit disconnected or the
+    /// transport failed.
+    ///
+    /// Since: Unreleased.
+    pub async fn closed(&self) {
+        self.transport.writer.closed().await;
     }
 
     /// Asks the device to stop every stream, re-sending until it acknowledges.
@@ -406,6 +450,16 @@ impl VmDevice {
             },
         ))
         .await
+    }
+
+    /// Sends a marker hint without waiting for a reply. Needs device protocol
+    /// 0.3.0 or newer, so callers gate on the version.
+    ///
+    /// # Errors
+    /// Returns transport-closed errors.
+    /// Since: Unreleased.
+    pub async fn send_marker_hint(&self, hint: MarkerHint) -> Result<()> {
+        self.send_without_reply(PacketData::MarkerHint(hint)).await
     }
 
     /// # Errors
@@ -674,6 +728,16 @@ impl VmDevice {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn is_ble(transport: &PacketTransport) -> bool {
+    transport.kind == super::packet_transport::LinkKind::Ble
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_ble(_transport: &PacketTransport) -> bool {
+    false
+}
+
 /// Routes every packet the device sends to the request or stream waiting for
 /// its id, until the transport closes or `cancel` fires.
 ///
@@ -683,6 +747,7 @@ impl VmDevice {
 async fn run_dispatcher(
     state: Arc<State>,
     mut incoming: ReceiverStream<Packet>,
+    pairing_events: mpsc::Sender<PairingOutcome>,
     cancel: CancellationToken,
 ) {
     use rand::Rng as _;
@@ -708,9 +773,26 @@ async fn run_dispatcher(
                     continue;
                 }
                 let id = reply.id;
+                let pairing_result = match &reply.data {
+                    PacketData::DeviceControl(DeviceMsg::PairingResult(outcome)) => {
+                        Some(outcome.clone())
+                    }
+                    _ => None,
+                };
                 match state.deliver(reply) {
                     Delivery::Delivered => {
                         debug!("Dispatcher: [ID:{dispatcher_id}] delivered packet id={id}");
+                    }
+                    Delivery::Unregistered | Delivery::LateReplyDropped
+                        if pairing_result.is_some() =>
+                    {
+                        // A pairing result outlives the request that started
+                        // it, so no waiting slot claims it.
+                        if let Some(outcome) = pairing_result
+                            && pairing_events.try_send(outcome).is_err()
+                        {
+                            warn!("pairing result dropped: nobody is waiting for it");
+                        }
                     }
                     Delivery::Unregistered => {
                         warn!("Packet received for unregistered slot {id}");

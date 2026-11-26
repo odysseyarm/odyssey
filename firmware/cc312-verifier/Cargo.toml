@@ -6,6 +6,11 @@ publish = false
 description = "nRF5340 CryptoCell Ed25519 verification with Oberon SHA-512"
 license = "MIT"
 
+[features]
+default = []
+shared-entry = []
+export-entry = []
+
 [dependencies]
 critical-section = "1"
 nrfxlib-sys = { git = "https://github.com/Abrahamh08/nrfxlib-sys", default-features = false, features = ["nrf5340", "cc312"] }

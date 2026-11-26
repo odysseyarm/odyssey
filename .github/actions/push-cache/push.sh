@@ -25,6 +25,8 @@ else
   exit 1
 fi
 
+system=$(nix eval --impure --raw --expr builtins.currentSystem)
+declare -A checked=()
 declare -A registered=()
 saw_change=false
 while IFS= read -r line; do
@@ -44,6 +46,13 @@ while IFS= read -r line; do
   if [[ ! $commit =~ ^[[:xdigit:]]{40,64}$ ]]; then
     echo "Unexpected commit id for proposed target $prefix: $commit" >&2
     exit 1
+  fi
+  if [[ ! ${checked[$commit]+present} ]]; then
+    uri="git+file://${repo}?rev=${commit}"
+    nix build --no-link --max-jobs 2 --cores 3 \
+      "$uri#checks.$system.host-lint" \
+      "$uri#checks.$system.host-lint-bins"
+    checked[$commit]=1
   fi
   remote_literal=$(jq -cn --arg remote "$remote" '$remote')
   outgoing=$(jj log --no-graph -r "(ancestors($commit) ~ ancestors(remote_bookmarks(remote=$remote_literal)) | $commit) ~ root()" -T 'commit_id ++ "\n"')

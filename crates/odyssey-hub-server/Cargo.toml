@@ -38,8 +38,8 @@ minicbor-serde = { git = "https://github.com/Abrahamh08/minicbor", features = ["
 nusb = { workspace = true }
 odyssey-protocol = { path = "../odyssey-protocol", default-features = false, features = ["std"] }
 odyssey-version = { path = "../odyssey-version" }
-odyssey-firmware-manifest = { workspace = true }
 release-signing = { path = "../../firmware/release-signing" }
+odyssey-firmware-manifest = { workspace = true }
 nalgebra = "0.35"
 cam-geom = { workspace = true }
 opencv-ros-camera = { git = "https://github.com/Abrahamh08/opencv-ros-camera", branch = "pod-minicbor-repro" }
@@ -54,6 +54,7 @@ interprocess = { workspace = true, features = ["tokio"] }
 btleplug = { workspace = true }
 uuid = { workspace = true }
 heapless = { workspace = true }
+eros = { workspace = true }
 dfu-core = { version = "0.8", features = ["std", "async"] }
 dfu-nusb = { workspace = true, features = ["tokio"] }
 reqwest = { workspace = true, features = ["json"] }

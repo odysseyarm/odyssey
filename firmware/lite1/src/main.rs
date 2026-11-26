@@ -18,6 +18,7 @@ use donger_common::usb_device as usb;
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_executor::Spawner;
 use embassy_nrf::gpio::{self, Input, Level, Output, OutputDrive, Pin, Pull};
+use embassy_nrf::mode::Async;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::twim::{self, Twim};
@@ -64,6 +65,20 @@ impl<'a> DfuMarker for AppDfuMarker<'a> {
     }
 }
 
+fn verify_lite1_ota(
+    component: release_signing::Component,
+    size: u32,
+    version: [u32; 3],
+    hash: &[u8; 32],
+    signature: &[u8; release_signing::SIGNATURE_LEN],
+) -> bool {
+    let Ok(policy) = lite1_secure_boot::handoff::current_policy() else {
+        return false;
+    };
+    let message = release_signing::message(component, size, version, hash);
+    release_signing::verify_with_keys(policy.keys(), &message, signature)
+}
+
 fn ota_flash_slots(
     flash: &'static Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
 ) -> atslite_common::ota::FlashSlots {
@@ -103,22 +118,90 @@ fn ota_flash_slots(
     } else {
         unreachable!("app code address must belong to one linked bank")
     };
-    atslite_common::ota::FlashSlots::new(atslite_common::ota::Layout {
-        flash,
-        app_banks: [app_a, app_b],
-        running_app,
-        app_ram,
-        netcore_stage: stage,
-        netcore_active: netcore,
-        netcore_ram,
-        boot_state,
-        boot_journal: &raw const __bootloader_journal_start as u32,
-        product: atslite_common::ota::Product::Lite1,
-    })
+    atslite_common::ota::FlashSlots::new_with_verifier(
+        atslite_common::ota::Layout {
+            flash,
+            app_banks: [app_a, app_b],
+            running_app,
+            app_ram,
+            netcore_stage: stage,
+            netcore_active: netcore,
+            netcore_ram,
+            boot_state,
+            boot_journal: &raw const __bootloader_journal_start as u32,
+            product: atslite_common::ota::Product::Lite1,
+        },
+        Some(verify_lite1_ota),
+    )
+}
+fn verify_boot_slots() {
+    unsafe extern "C" {
+        static __ota_app_a_slot_start: u32;
+        static __ota_app_a_slot_end: u32;
+        static __ota_app_b_slot_start: u32;
+        static __ota_app_b_slot_end: u32;
+        static __stage2_bootloader_start: u32;
+        static __stage2_bootloader_end: u32;
+    }
+    let addr = |symbol: *const u32| symbol as u32;
+    let (app_a, app_b, stage2_start, stage2_end) = unsafe {
+        (
+            addr(&raw const __ota_app_a_slot_start)..addr(&raw const __ota_app_a_slot_end),
+            addr(&raw const __ota_app_b_slot_start)..addr(&raw const __ota_app_b_slot_end),
+            addr(&raw const __stage2_bootloader_start),
+            addr(&raw const __stage2_bootloader_end),
+        )
+    };
+    let current = verify_boot_slots as *const () as usize as u32;
+    let app_start = if app_a.contains(&current) {
+        app_a.start
+    } else if app_b.contains(&current) {
+        app_b.start
+    } else {
+        panic!("running app outside signed slots")
+    };
+    let keys = lite1_secure_boot::handoff::current_policy()
+        .expect("missing or invalid operational trust policy");
+    let stage2_len = stage2_end - stage2_start;
+    let stage2 =
+        unsafe { core::slice::from_raw_parts(stage2_start as *const u8, stage2_len as usize) };
+    lite1_secure_boot::verify_slot(
+        stage2,
+        stage2_start,
+        release_signing::Component::Lite1SecureBootloader,
+        keys.keys(),
+    )
+    .expect("stage2 signature invalid");
+    let mut stage2_version = [0; 3];
+    for (version, bytes) in stage2_version
+        .iter_mut()
+        .zip(stage2[23..35].chunks_exact(4))
+    {
+        *version = u32::from_le_bytes(bytes.try_into().expect("four-byte version word"));
+    }
+    assert!(
+        stage2_version >= [2, 0, 0],
+        "stage2 version older than 2.0.0"
+    );
+    let app_len = if app_start == app_a.start {
+        app_a.end - app_start
+    } else {
+        app_b.end - app_start
+    };
+    let app = unsafe { core::slice::from_raw_parts(app_start as *const u8, app_len as usize) };
+    lite1_secure_boot::verify_slot(
+        app,
+        app_start,
+        release_signing::Component::Lite1SecureApp,
+        keys.keys(),
+    )
+    .expect("application signature invalid");
+    // Network flash is unreadable from this core; the network bootloader locks its slot.
 }
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    verify_boot_slots();
     defmt::info!("Lite1 board initialization starting...");
 
     defmt::info!("Calling nrf5340_init::init()...");
@@ -137,15 +220,15 @@ async fn main(spawner: Spawner) {
     defmt::info!("Creating TWIM...");
     let twim = Twim::new(
         p.SERIAL2,
-        Irqs,
-        board.pmic.sda,
         board.pmic.scl,
-        twim_cfg,
+        board.pmic.sda,
+        Irqs,
         twim_buf,
+        twim_cfg,
     );
     defmt::info!("TWIM created");
 
-    static PMIC: StaticCell<AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>> =
+    static PMIC: StaticCell<AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>> =
         StaticCell::new();
     defmt::info!("Creating NPM1300...");
     let mut pmic_dev = NPM1300::new(twim, Delay);
@@ -162,7 +245,7 @@ async fn main(spawner: Spawner) {
     let pmic = PMIC.init(AsyncMutex::new(pmic_dev));
 
     defmt::info!("Spawning pmic_irq_task...");
-    spawner.spawn(pmic_irq_task(board.pmic.int.into(), pmic).unwrap());
+    spawner.spawn(pmic_irq_task(board.pmic.int, pmic).unwrap());
 
     defmt::info!("Creating PmicLedAnimator...");
     let (anim, handle) = PmicLedAnimator::new(pmic, LedIdx::Ch0, LedIdx::Ch1, LedIdx::Ch2)
@@ -178,13 +261,13 @@ async fn main(spawner: Spawner) {
     use embassy_nrf::wdt::{Config as WdtConfig, HaltConfig, SleepConfig, Watchdog};
     let mut wdt_config = WdtConfig::default();
     wdt_config.timeout_ticks = 32768 * 60; // 60 s, has to match the bootloader's value
-    wdt_config.action_during_sleep = SleepConfig::RUN;
-    wdt_config.action_during_debug_halt = HaltConfig::PAUSE;
+    wdt_config.action_during_sleep = SleepConfig::Run;
+    wdt_config.action_during_debug_halt = HaltConfig::Pause;
     let (_wdt, [wdt_handle]) = Watchdog::try_new(p.WDT0, wdt_config).expect("Watchdog init failed");
     spawner.spawn(watchdog_feeder(wdt_handle).unwrap());
 
     defmt::info!("Power button handling...");
-    let mut pwr_btn = Input::new(board.pmic.pwr_btn, gpio::Pull::Up);
+    let mut pwr_btn = Input::new_async(board.pmic.pwr_btn, Irqs, gpio::Pull::Up);
     defmt::info!("handle_boot_vbus_policy...");
     handle_boot_vbus_policy(pmic, pmic_leds).await.unwrap();
     defmt::info!("handle_pending_ship...");
@@ -239,18 +322,18 @@ async fn main(spawner: Spawner) {
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M16;
     spim_config.mode = spim::MODE_3;
-    spim_config.bit_order = spim::BitOrder::MSB_FIRST;
+    spim_config.bit_order = spim::BitOrder::MsbFirst;
 
     let spim = Spim::new(
         p.SPIM4,
-        Irqs,
         board.pag7665qn.sck,
-        board.pag7665qn.miso,
         board.pag7665qn.mosi,
+        board.pag7665qn.miso,
+        Irqs,
         spim_config,
     );
     let cs = Output::new(board.pag7665qn.cs, Level::High, OutputDrive::Standard);
-    let int_o = Input::new(board.pag7665qn.int_o, Pull::None);
+    let int_o = Input::new_async(board.pag7665qn.int_o, Irqs, Pull::None);
     let spi_device = ExclusiveDevice::new(spim, cs, Delay).unwrap();
 
     let (mut pag, pag_int_wrapper) = Pag7665Qn::init_spi(spi_device, Delay, int_o, mode::Idle)
@@ -305,25 +388,23 @@ async fn main(spawner: Spawner) {
     };
 
     defmt::info!("Initializing IMU...");
-    let (imu_driver, imu_int_input) = imu::init(
+    let (imu_sensor, imu_int) = match imu::init(
         p.SERIAL0,
-        board.icm42688p.cs.into(),
-        board.icm42688p.sck.into(),
-        board.icm42688p.miso.into(),
-        board.icm42688p.mosi.into(),
-        board.icm42688p.int1.into(),
-        board.icm42688p.clkin.into(),
+        p.SERIAL1,
+        board.icm42688p,
+        board.lsm6dsv320x,
         p.TIMER1,
-        p.PPI_CH0.into(),
+        p.PPI_CH0,
         p.GPIOTE_CH0,
         DEFAULT_ACCEL_ODR,
     )
-    .await;
-    defmt::info!("IMU initialized");
-
-    let imu_sensor = sensors::Icm42688Sensor::new(imu_driver);
-    let imu_int = sensors::Icm42688Interrupt {
-        int1: imu_int_input.int1,
+    .await
+    {
+        Ok(imu) => imu,
+        Err(error) => {
+            defmt::error!("IMU initialization failed: {:?}", error);
+            return;
+        }
     };
 
     // boot-api caches the boot state here so later DFU requests can read it.
@@ -413,14 +494,10 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Generating BLE seed from CryptoCell...");
     let ble_seed = {
-        use embassy_nrf::cryptocell_rng::CcRng;
+        use embassy_nrf::crypto::rng::Rng;
         let mut seed = [0u8; 32];
-        let mut cc_rng = CcRng::new_blocking(p.CC_RNG);
-        cc_rng.blocking_fill_bytes(&mut seed);
-        drop(cc_rng);
-        embassy_nrf::pac::CRYPTOCELL
-            .enable()
-            .write(|w| w.set_enable(false));
+        let mut rng = Rng::new_blocking(p.CRYPTO_RNG);
+        rng.blocking_fill_bytes(&mut seed);
         seed
     };
 
@@ -450,7 +527,7 @@ async fn main(spawner: Spawner) {
         usb_snd,
         usb_rcv,
         usb_configured: usb_cfg,
-        ota: atslite_common::ota::OtaHandle,
+        ota: ota_channel::OtaHandle,
     };
 
     object_mode::run(ctx).await;
@@ -458,13 +535,13 @@ async fn main(spawner: Spawner) {
 
 #[embassy_executor::task]
 async fn pmic_irq_task(
-    irq_pin: embassy_nrf::Peri<'static, embassy_nrf::gpio::AnyPin>,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    irq_pin: embassy_nrf::Peri<'static, embassy_nrf::peripherals::P0_05>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
 ) {
     let port = irq_pin.port();
     let pin = irq_pin.pin();
-    utils::set_pin_sense(&port, pin, pac::gpio::vals::Sense::HIGH);
-    let mut irq = gpio::Input::new(irq_pin, gpio::Pull::None);
+    utils::set_pin_sense(&port, pin, pac::gpio::vals::Sense::High);
+    let mut irq = gpio::Input::new_async(irq_pin, Irqs, gpio::Pull::None);
 
     loop {
         irq.wait_for_high().await;
@@ -516,14 +593,14 @@ async fn pmic_irq_task(
 }
 
 #[embassy_executor::task]
-async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static>, Delay>) -> ! {
+async fn led_task(mut anim: PmicLedAnimator<'static, Twim<'static, Async>, Delay>) -> ! {
     anim.run().await
 }
 
 #[embassy_executor::task]
 async fn power_button_task(
-    btn: Input<'static>,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    btn: Input<'static, Async>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &'static PmicLedsHandle,
 ) {
     power_button::power_button_loop(btn, pmic, leds).await;
@@ -537,7 +614,7 @@ async fn ble_task(controller: ble::host::BleController, seed: [u8; 32]) {
 #[embassy_executor::task]
 async fn usb_pmic_config_task(
     configured: donger_common::usb_device::UsbConfigHandle,
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
 ) {
     configured.wait_until_active().await;
     pmic.lock()
@@ -556,17 +633,17 @@ fn active_transport() -> TransportMode {
 async fn watchdog_feeder(mut wdt_handle: embassy_nrf::wdt::WatchdogHandle) {
     loop {
         Timer::after_secs(30).await;
-        wdt_handle.pet();
+        wdt_handle.feed();
     }
 }
 
 async fn handle_pending_ship(
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &PmicLedsHandle,
-    pwr_btn: &mut Input<'_>,
+    pwr_btn: &mut Input<'_, Async>,
 ) -> Result<
     (),
-    npm1300_rs::NPM1300Error<<Twim<'static> as embedded_hal_async::i2c::ErrorType>::Error>,
+    npm1300_rs::NPM1300Error<<Twim<'static, Async> as embedded_hal_async::i2c::ErrorType>::Error>,
 > {
     if !power::take_pending_ship_flag() {
         return Ok(());
@@ -603,11 +680,11 @@ async fn handle_pending_ship(
 }
 
 async fn handle_boot_vbus_policy(
-    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static>, Delay>>,
+    pmic: &'static AsyncMutex<NoopRawMutex, NPM1300<Twim<'static, Async>, Delay>>,
     leds: &PmicLedsHandle,
 ) -> Result<
     (),
-    npm1300_rs::NPM1300Error<<Twim<'static> as embedded_hal_async::i2c::ErrorType>::Error>,
+    npm1300_rs::NPM1300Error<<Twim<'static, Async> as embedded_hal_async::i2c::ErrorType>::Error>,
 > {
     use embassy_nrf::reset::ResetReason;
     let rr = embassy_nrf::reset::read_reasons();

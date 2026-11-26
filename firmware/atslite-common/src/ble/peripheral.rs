@@ -4,8 +4,6 @@ use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 use trouble_host::prelude::*;
 
 use crate::settings;
@@ -16,11 +14,14 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2;
 
 type Pool = DefaultPacketPool;
+const HOST_BONDS_MAX: usize = 2 * odyssey_protocol::control::MAX_BONDS;
+const L2CAP_PSM_CTRL: u16 = 0x0080;
+const L2CAP_PSM_DATA: u16 = 0x0081;
 
 #[gatt_server]
 struct Server {}
 
-/// Runs the BLE host: loads the stored bond, advertises, and serves one connection at a time,
+/// Runs the BLE host: loads the stored bonds, advertises, and serves one connection at a time,
 /// advertising again whenever the connection ends. Never returns.
 ///
 /// Since: Odyssey Desktop 0.7.0.
@@ -42,21 +43,21 @@ pub async fn run<C>(
             }
         }
     });
-    let address = Address::random(defmt::unwrap!(crate::utils::device_id()[0..6].try_into()));
+    let address = Address::random(odyssey_protocol::control::ble_address(defmt::unwrap!(
+        crate::utils::device_id()[0..6].try_into()
+    )));
 
-    let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, HOST_BONDS_MAX> =
         HostResources::new();
 
-    let mut host_seed_rng = ChaCha20Rng::from_seed(seed);
+    ble_crypto::init(seed);
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(&mut host_seed_rng);
-
-    let Host {
-        mut peripheral,
-        runner,
-        ..
-    } = stack.build();
+        .register_l2cap_spsm(L2CAP_PSM_CTRL)
+        .register_l2cap_spsm(L2CAP_PSM_DATA)
+        .build();
+    let mut peripheral = stack.peripheral();
+    let runner = stack.runner();
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: device_name,
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
@@ -69,7 +70,7 @@ pub async fn run<C>(
             // a request raised before this point is already served.
             DISCONNECT_REQUEST.reset();
             ADVERTISING_STALE.reset();
-            let bond_stored = sync_bond(&stack);
+            let bond_stored = sync_bonds(&stack);
             defmt::info!("[adv] advertising (bond_stored={})", bond_stored);
 
             let current_name = get_device_name();
@@ -138,6 +139,7 @@ pub async fn run<C>(
             // custom_task may have been cancelled by either of the other futures. Cleanup belongs
             // to this connection owner, not to the tail of a cancellable child future.
             crate::ble::l2cap_bridge::channels().drain();
+            CONNECTED_PEER.lock(|peer| peer.set(None));
             crate::pmic_leds::set_ble_connected(false);
             crate::power_state::update_led_for_ble_state().await;
         }
@@ -151,38 +153,40 @@ const ADVERTISING_RESTART_DELAY: Duration = Duration::from_millis(500);
 /// How long the controller gets to confirm a local disconnect before advertising resumes.
 const DISCONNECT_GRACE: Duration = Duration::from_secs(1);
 
-/// Makes the host's bond table hold exactly the bond stored in settings, and returns whether
-/// there is one. Settings have a single bond slot, so any other bond in the table is stale.
-/// Run before each advertising cycle, so an `AddBond` from device control is usable on the
-/// next connection without a reboot.
-fn sync_bond<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
+/// Makes the host's bond table hold exactly the bonds stored in settings, and returns whether
+/// there is one. Run before each advertising cycle, so an `AddBond` or `RemoveBond` from
+/// device control takes effect on the next connection without a reboot.
+fn sync_bonds<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
     if !settings::is_initialized() {
         defmt::warn!("[ble] Settings not initialized, bond storage disabled");
         return false;
     }
-    let stored = settings::with_settings(|s| settings::ble_bond_to_bond_info(&s.ble_bond));
-    for bond in stack.get_bond_information() {
-        let keep = stored
-            .as_ref()
-            .is_some_and(|stored| stored.identity.match_identity(&bond.identity));
-        if !keep {
+    let stored: heapless::Vec<BondInformation, HOST_BONDS_MAX> =
+        settings::with_settings(|s| s.bond_infos().collect());
+    let current: heapless::Vec<BondInformation, HOST_BONDS_MAX> =
+        stack.with_bond_information(|bonds| bonds.iter().cloned().collect());
+    for bond in current {
+        if !stored
+            .iter()
+            .any(|kept| kept.identity.match_identity(&bond.identity))
+        {
             let _ = stack.remove_bond_information(bond.identity);
         }
     }
-    let Some(bond_info) = stored else {
-        defmt::info!("[ble] No bond stored in settings");
-        return false;
-    };
-    match stack.add_bond_information(bond_info) {
-        Ok(()) => true,
-        Err(e) => {
-            defmt::warn!(
+    let mut loaded = false;
+    for bond in stored {
+        match stack.add_bond_information(bond) {
+            Ok(()) => loaded = true,
+            Err(e) => defmt::warn!(
                 "[ble] Failed to load bond into host: {:?}",
                 defmt::Debug2Format(&e)
-            );
-            false
+            ),
         }
     }
+    if !loaded {
+        defmt::info!("[ble] No bond stored in settings");
+    }
+    loaded
 }
 
 async fn disconnect_and_wait<P: PacketPool>(conn: &GattConnection<'_, '_, P>) {
@@ -225,6 +229,11 @@ async fn gatt_events_task(
                 );
                 break reason;
             }
+            GattConnectionEvent::Encrypted {
+                bond: Some(bond), ..
+            } => {
+                settings::with_settings(|s| s.learn_bond_address(&bond));
+            }
             GattConnectionEvent::PairingComplete {
                 security_level: _,
                 bond,
@@ -232,31 +241,32 @@ async fn gatt_events_task(
                 defmt::info!("[peripheral] Pairing complete!");
                 if let Some(bond) = bond {
                     let pairing_active = is_pairing_active();
-                    let allowed = pairing_active
-                        || (settings::is_initialized()
-                            && settings::with_settings(|s| {
-                                settings::ble_bond_to_bond_info(&s.ble_bond).is_some_and(|stored| {
-                                    stored.identity.match_identity(&bond.identity)
-                                })
-                            }));
-                    if !allowed {
-                        // A cancelled/expired pairing must not replace the stored bond later.
+                    let known = settings::is_initialized()
+                        && settings::with_settings(|s| s.is_bonded_peer(&bond.identity));
+                    if !pairing_active && !known {
+                        // A cancelled/expired pairing must not add a bond later.
                         defmt::warn!("[peripheral] Rejecting bond outside the pairing window");
                         request_disconnect();
                         continue;
                     }
-                    if settings::is_initialized() {
-                        settings::with_settings(|s| {
-                            s.ble_bond = settings::ble_bond_from_bond_info(&bond);
-                            s.ble_bond_write();
-                        });
-                        defmt::info!("[peripheral] Bond queued for flash");
+                    let stored = !settings::is_initialized()
+                        || settings::with_settings(|s| s.bond_store_info(&bond).is_ok());
+                    if !stored {
+                        defmt::warn!("[peripheral] Rejecting bond: every slot is in use");
+                        if pairing_active {
+                            PAIRING_COMPLETE_SIGNAL.signal(Err(
+                                odyssey_protocol::control::device::PairingError::BondsFull,
+                            ));
+                        }
+                        request_disconnect();
+                        continue;
                     }
+                    defmt::info!("[peripheral] Bond queued for flash");
 
                     if pairing_active {
                         let mut addr = [0u8; 6];
-                        addr.copy_from_slice(bond.identity.bd_addr.raw());
-                        PAIRING_COMPLETE_SIGNAL.signal(addr);
+                        addr.copy_from_slice(bond.identity.addr.addr.raw());
+                        PAIRING_COMPLETE_SIGNAL.signal(Ok(addr));
                         // Keep the successful connection. Only cancellation tears one down.
                         PAIRING.store(false, Ordering::Relaxed);
                         ADVERTISING_STALE.signal(());
@@ -358,6 +368,9 @@ async fn advertise<'values, 'server, C: Controller>(
         )
         .await?;
     defmt::info!("[advertise] Now advertising, waiting for connection...");
+    if pairing_on {
+        PAIRING_ADVERTISING.signal(());
+    }
     let conn = advertiser.accept().await?.with_attribute_server(server)?;
     defmt::info!("[advertise] Connection accepted!");
     Ok(conn)
@@ -385,21 +398,27 @@ enum AcceptError<E> {
 /// Accepts L2CAP channel number `which` (for logging), retrying on timeout with no delay. Logs and
 /// returns `None` when the accept fails or every attempt times out.
 async fn accept_l2cap<'a, C: Controller, P: PacketPool>(
-    stack: &'a Stack<'a, C, P>,
-    conn: &GattConnection<'_, '_, P>,
-    psms: &[u16],
-    config: &L2capChannelConfig,
+    stack: &'a Stack<'_, C, P>,
+    listener: &L2capChannelListener<'a, C, P>,
+    configs: &[(u16, &L2capChannelConfig)],
     which: u8,
-) -> Option<L2capChannel<'a, P>> {
+) -> Option<(u16, L2capChannel<'a, P>)> {
     let mut attempts = 0usize;
     let accepted = (|| {
         attempts += 1;
         let attempt = attempts;
         async move {
-            match embassy_time::with_timeout(
-                L2CAP_ACCEPT_TIMEOUT,
-                L2capChannel::accept(stack, conn.raw(), psms, config),
-            )
+            match embassy_time::with_timeout(L2CAP_ACCEPT_TIMEOUT, async {
+                let pending = listener.next().await?;
+                let psm = pending.spsm();
+                let config = configs
+                    .iter()
+                    .find(|(candidate, _)| *candidate == psm)
+                    .map(|(_, config)| *config)
+                    .ok_or(Error::InvalidValue)?;
+                let channel = pending.accept(stack, config).await?;
+                Ok::<_, BleHostError<C::Error>>((psm, channel))
+            })
             .await
             {
                 Ok(Ok(ch)) => Ok(ch),
@@ -448,12 +467,9 @@ async fn accept_l2cap<'a, C: Controller, P: PacketPool>(
 async fn custom_task<'a, C: Controller, P: PacketPool>(
     _server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
-    stack: &'a Stack<'a, C, P>,
+    stack: &'a Stack<'_, C, P>,
 ) {
     defmt::info!("[custom_task] started");
-
-    const L2CAP_PSM_CTRL: u16 = 0x0080;
-    const L2CAP_PSM_DATA: u16 = 0x0081;
 
     const PAYLOAD_LEN_CTRL: u16 = 512;
     const L2CAP_MTU_CTRL: u16 = 251;
@@ -481,35 +497,44 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         L2CAP_PSM_DATA
     );
 
-    let Some(l2cap_control_channel) =
-        accept_l2cap(stack, conn, &[L2CAP_PSM_CTRL], &l2cap_control_config, 1).await
-    else {
+    let listener = L2capChannel::listen(stack, conn.raw());
+    let configs = [
+        (L2CAP_PSM_CTRL, &l2cap_control_config),
+        (L2CAP_PSM_DATA, &l2cap_data_config),
+    ];
+    let (mut control, mut data) = (None, None);
+    for which in 1..=2 {
+        let Some((psm, channel)) = accept_l2cap(stack, &listener, &configs, which).await else {
+            return;
+        };
+        let slot = if psm == L2CAP_PSM_CTRL {
+            &mut control
+        } else {
+            &mut data
+        };
+        if slot.replace(channel).is_some() {
+            defmt::warn!("[custom_task] Duplicate L2CAP PSM");
+            return;
+        }
+    }
+    let (Some(l2cap_control_channel), Some(l2cap_data_channel)) = (control, data) else {
         return;
     };
-    defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
-
-    let Some(l2cap_data_channel) =
-        accept_l2cap(stack, conn, &[L2CAP_PSM_DATA], &l2cap_data_config, 2).await
-    else {
-        return;
-    };
-    defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
 
     // L2CAP is independent of GATT: its accept path does not enforce GATT's encryption check.
-    // Only the stored peer may issue commands or receive reports, including after pairing.
+    // Only a stored peer may issue commands or receive reports, including after pairing.
     let encrypted = conn
         .raw()
         .security_level()
         .is_ok_and(|level| level.encrypted());
-    let known_peer = settings::is_initialized()
-        && settings::with_settings(|s| {
-            settings::ble_bond_to_bond_info(&s.ble_bond)
-                .is_some_and(|bond| bond.identity.match_identity(&conn.raw().peer_identity()))
-        });
+    let peer = conn.raw().peer_identity();
+    let known_peer =
+        settings::is_initialized() && settings::with_settings(|s| s.is_bonded_peer(&peer));
     if !encrypted || !known_peer {
         defmt::warn!("[custom_task] Rejecting unencrypted or unknown L2CAP peer");
         return;
     }
+    CONNECTED_PEER.lock(|connected| connected.set(Some(peer)));
 
     // The pumps run whatever transport carries reports. While USB does, object mode queues only
     // replies to requests that came over BLE, and the link otherwise idles until USB goes away.
@@ -548,7 +573,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
 }
 
 async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capControlTxChannel,
 ) {
@@ -572,6 +597,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
                 .await
                 {
                     Ok(Ok(())) => {
+                        crate::ble::l2cap_bridge::control_sent(tx_queue.is_empty());
                         let duration_ms = send_start.elapsed().as_millis();
                         defmt::info!(
                             "[control_tx_task] TX control: send complete (id={}, duration={}ms)",
@@ -602,7 +628,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capDataTxChannel,
 ) {
@@ -643,7 +669,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelReader<'a, P>,
     rx_queue: &'static crate::ble::l2cap_bridge::L2capControlRxChannel,
 ) {
@@ -676,7 +702,7 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelReader<'a, P>,
     rx_queue: &'static crate::ble::l2cap_bridge::L2capDataRxChannel,
 ) {
@@ -721,7 +747,17 @@ static DISCONNECT_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static ADVERTISING_STALE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static PAIRING: AtomicBool = AtomicBool::new(false);
-static PAIRING_COMPLETE_SIGNAL: Signal<CriticalSectionRawMutex, [u8; 6]> = Signal::new();
+static PAIRING_COMPLETE_SIGNAL: Signal<
+    CriticalSectionRawMutex,
+    Result<[u8; 6], odyssey_protocol::control::device::PairingError>,
+> = Signal::new();
+/// Raised once an advertising cycle with the pairing data is running, so device control can tell
+/// the host to pair only when the unit is actually connectable as a new peer.
+static PAIRING_ADVERTISING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Identity of the bonded host whose L2CAP session is open.
+static CONNECTED_PEER: BlockingMutex<BmRaw, core::cell::Cell<Option<Identity>>> =
+    BlockingMutex::new(core::cell::Cell::new(None));
 
 static CURRENT_NAME: BlockingMutex<BmRaw, RefCell<heapless::String<32>>> =
     BlockingMutex::new(RefCell::new(heapless::String::new()));
@@ -757,8 +793,16 @@ pub fn request_disconnect() {
 /// Since: Odyssey Desktop 0.7.0.
 pub fn enter_pairing_mode() {
     PAIRING_COMPLETE_SIGNAL.reset();
+    PAIRING_ADVERTISING.reset();
     PAIRING.store(true, Ordering::Relaxed);
     DISCONNECT_REQUEST.signal(());
+}
+
+/// Resolves once advertising with the pairing data has started after [`enter_pairing_mode`].
+///
+/// Since: Unreleased.
+pub async fn wait_for_pairing_advertising() {
+    PAIRING_ADVERTISING.wait().await;
 }
 
 /// Leaves pairing mode and aborts an in-flight pairing connection. Successful pairing clears
@@ -772,17 +816,76 @@ pub fn cancel_pairing_mode() {
     ADVERTISING_STALE.signal(());
 }
 
+/// Reloads stored bonds into the BLE host by restarting an advertising cycle in progress. An
+/// open link from another host stays up; the bonds load before the next cycle starts.
+///
+/// Since: Unreleased.
+pub fn reload_bonds() {
+    ADVERTISING_STALE.signal(());
+}
+
 /// Since: Odyssey Desktop 0.7.0.
 pub fn is_pairing_active() -> bool {
     PAIRING.load(Ordering::Relaxed)
 }
 
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn wait_for_pairing_complete() -> odyssey_protocol::control::BondedDevice {
-    let addr = PAIRING_COMPLETE_SIGNAL.wait().await;
-    let name = get_device_name();
-    odyssey_protocol::control::BondedDevice {
-        uuid: addr,
-        name: name.into(),
+pub async fn wait_for_pairing_complete() -> odyssey_protocol::control::device::PairingOutcome {
+    match PAIRING_COMPLETE_SIGNAL.wait().await {
+        Ok(addr) => odyssey_protocol::control::device::PairingOutcome::Ok(
+            odyssey_protocol::control::BondedDevice {
+                uuid: addr,
+                name: get_device_name().into(),
+            },
+        ),
+        Err(error) => odyssey_protocol::control::device::PairingOutcome::Err(error),
     }
+}
+
+/// The stored bonds, marking the host whose link is open.
+///
+/// Since: Unreleased.
+pub fn bond_slots() -> odyssey_protocol::List<
+    odyssey_protocol::control::BondSlot,
+    { odyssey_protocol::control::MAX_BONDS },
+> {
+    let connected = CONNECTED_PEER.lock(core::cell::Cell::get);
+    let mut slots = odyssey_protocol::List::default();
+    if settings::is_initialized() {
+        settings::with_settings(|s| {
+            for bond in s.bond_infos() {
+                let mut bd_addr = [0u8; 6];
+                bd_addr.copy_from_slice(bond.identity.addr.addr.raw());
+                if slots
+                    .0
+                    .iter()
+                    .any(|slot: &odyssey_protocol::control::BondSlot| slot.bd_addr == bd_addr)
+                {
+                    continue;
+                }
+                let _ = slots.0.push(odyssey_protocol::control::BondSlot {
+                    bd_addr,
+                    connected: connected.is_some_and(|peer| bond.identity.match_identity(&peer)),
+                });
+            }
+        });
+    }
+    slots
+}
+
+/// Whether an encrypted, bonded L2CAP session is up.
+///
+/// Since: Unreleased.
+pub fn is_connected() -> bool {
+    CONNECTED_PEER.lock(|peer| peer.get().is_some())
+}
+
+/// Whether the host with identity address `bd_addr` holds the BLE link.
+///
+/// Since: Unreleased.
+pub fn is_connected_peer(bd_addr: [u8; 6]) -> bool {
+    CONNECTED_PEER.lock(|peer| {
+        peer.get()
+            .is_some_and(|identity| identity.addr.addr.raw() == bd_addr.as_slice())
+    })
 }

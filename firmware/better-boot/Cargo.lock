@@ -81,7 +81,7 @@ dependencies = [
 [[package]]
 name = "embassy-boot"
 version = "0.7.0"
-source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"
 dependencies = [
  "document-features",
  "embassy-crypto",
@@ -94,7 +94,7 @@ dependencies = [
 [[package]]
 name = "embassy-crypto"
 version = "0.1.0"
-source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"
 dependencies = [
  "unitrait",
 ]
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.6.0"
-source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"
 dependencies = [
  "embassy-futures",
  "embassy-sync",
@@ -116,12 +116,12 @@ dependencies = [
 [[package]]
 name = "embassy-futures"
 version = "0.1.2"
-source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"
 
 [[package]]
 name = "embassy-sync"
 version = "0.8.0"
-source = "git+https://github.com/Abrahamh08/embassy?branch=integration#6956f911079b240f5928c7c367f2cb1bb2d6271f"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"
 dependencies = [
  "critical-section",
  "embedded-io-async",

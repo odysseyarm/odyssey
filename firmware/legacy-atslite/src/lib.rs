@@ -24,7 +24,7 @@ pub use atslite_common::{
 pub use embassy_executor;
 /// Since: Odyssey Desktop 0.7.0.
 pub use embassy_nrf;
-use embassy_nrf::{bind_interrupts, cryptocell_rng, interrupt, pac, peripherals, spim, twim};
+use embassy_nrf::{bind_interrupts, gpio, interrupt, pac, peripherals, spim, twim};
 // legacy-common: object mode, settings and the rest of the board-independent code.
 /// Since: Odyssey Desktop 0.7.0.
 pub use legacy_common;
@@ -40,7 +40,9 @@ bind_interrupts!(pub struct Irqs {
     USBREGULATOR => embassy_nrf::usb::vbus_detect::InterruptHandler;
     TIMER0 => TimerIrq;
     IPC => embassy_nrf::ipc::InterruptHandler<peripherals::IPC>;
-    CRYPTOCELL => cryptocell_rng::InterruptHandler<peripherals::CC_RNG>;
+    GPIOTE0 => gpio::InterruptHandler<peripherals::P0_04>,
+        gpio::InterruptHandler<peripherals::P0_05>,
+        gpio::InterruptHandler<peripherals::P0_21>;
 });
 
 /// Since: Odyssey Desktop 0.7.0.

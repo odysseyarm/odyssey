@@ -93,7 +93,7 @@ pub unsafe fn grant_spu(extdomain_idx: Option<usize>) {
 
     if let Some(idx) = extdomain_idx {
         spu.extdomain(idx).perm().write(|w| {
-            w.set_securemapping(vals::ExtdomainPermSecuremapping::NON_SECURE);
+            w.set_securemapping(vals::ExtdomainPermSecuremapping::NonSecure);
         });
     }
 }

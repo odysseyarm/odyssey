@@ -5,6 +5,7 @@ pub(crate) mod image_stream;
 mod manager;
 mod marker_hint_sender;
 mod messages;
+pub(crate) mod native_ble;
 mod netcore_probe;
 mod semver;
 mod sensor_streams;
@@ -20,5 +21,5 @@ mod usb_probe;
 pub(crate) use manager::Simulation;
 pub(crate) use manager::device_tasks;
 pub(crate) use messages::{
-    DeviceTaskMessage, DongleInfo, DongleTaskMessage, ImageRenewals, Message,
+    DeviceTaskMessage, DongleInfo, DongleTaskMessage, ImageRenewals, Message, SystemPairingOutcome,
 };

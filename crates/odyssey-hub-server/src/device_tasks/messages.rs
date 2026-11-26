@@ -20,6 +20,28 @@ impl std::fmt::Debug for ImageRenewals {
     }
 }
 
+/// One stored BLE bond of a unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BondInfo {
+    /// Identity address of the bonded host, little-endian as on air.
+    pub bd_addr: [u8; 6],
+    /// That host holds the unit's BLE link right now.
+    pub connected: bool,
+    /// The bonded host is this computer's Bluetooth adapter.
+    pub this_computer: bool,
+}
+
+/// How a system Bluetooth pairing ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SystemPairingOutcome {
+    Paired,
+    /// Every bond slot of the unit is in use.
+    BondsFull,
+    Timeout,
+    Cancelled,
+    NotBleMode,
+}
+
 /// Commands for one device's handler task.
 #[derive(Debug)]
 pub(crate) enum DeviceTaskMessage {
@@ -38,6 +60,8 @@ pub(crate) enum DeviceTaskMessage {
     /// Send a vendor packet. The USB layer rejects invalid tags and payloads over
     /// `VendorData::CAPACITY` bytes.
     WriteVendor(u8, Vec<u8>),
+    /// Send a marker hint on the events link, for units whose protocol carries it.
+    MarkerHint(odyssey_protocol::marker_hint::MarkerHint),
     /// Send one acknowledged OTA frame and return the device's raw OTA status.
     OtaExchange {
         frame: Vec<u8>,
@@ -96,7 +120,22 @@ pub(crate) enum DeviceTaskMessage {
     /// when the bootloader predates reporting. Sent by the probe that starts with the
     /// control endpoint or, for a unit with no cable, the Bluetooth events link.
     SetBootloaderVersion([u32; 3]),
-    /// Clear bonds: an ATS clears its single bond, a dongle clears all of its bonds.
+    /// List the unit's stored BLE bonds. Needs a USB control link and device protocol 0.2.2.
+    ListBonds {
+        reply: Reply<Vec<BondInfo>>,
+    },
+    /// Remove one stored BLE bond by identity address. Same requirements as `ListBonds`.
+    RemoveBond {
+        bd_addr: [u8; 6],
+        reply: Reply<()>,
+    },
+    /// Put the unit in pairing mode over USB and pair this computer's Bluetooth adapter
+    /// with it. The reply comes once the pairing is settled.
+    PairSystemBluetooth {
+        timeout_ms: u32,
+        reply: Reply<SystemPairingOutcome>,
+    },
+    /// Clear every bond of an ATS or a dongle.
     ClearBond {
         reply: Reply<()>,
     },

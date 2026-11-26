@@ -1353,6 +1353,7 @@ version = "0.0.0"
 dependencies = [
  "app_dirs2",
  "arrayvec",
+ "bitflags 2.13.2",
  "json5",
  "nalgebra",
  "odyssey-common",
@@ -1413,6 +1414,7 @@ dependencies = [
  "backon",
  "enumn",
  "heapless 0.9.3",
+ "libc",
  "minicbor",
  "nalgebra",
  "num-traits",

@@ -34,6 +34,9 @@ pub(crate) enum SignedComponent {
     DongleApp,
     Lite1Bootloader,
     LegacyAtsliteBootloader,
+    Lite1SecureApp,
+    Lite1SecureNetcore,
+    Lite1SecureBootloader,
 }
 
 impl SignedComponent {
@@ -47,11 +50,17 @@ impl SignedComponent {
             Self::Lite1Bootloader => Component::Lite1Bootloader,
             Self::LegacyAtsliteBootloader => Component::LegacyAtsliteBootloader,
             Self::DongleApp => Component::DongleApp,
+            Self::Lite1SecureApp => Component::Lite1SecureApp,
+            Self::Lite1SecureNetcore => Component::Lite1SecureNetCore,
+            Self::Lite1SecureBootloader => Component::Lite1SecureBootloader,
         }
     }
 
     fn is_net_core(self) -> bool {
-        matches!(self, Self::Lite1Netcore | Self::LegacyAtsliteNetcore)
+        matches!(
+            self,
+            Self::Lite1Netcore | Self::LegacyAtsliteNetcore | Self::Lite1SecureNetcore
+        )
     }
 }
 
@@ -81,7 +90,7 @@ pub(crate) enum Signer {
 }
 
 impl Signer {
-    fn parse(spec: &str) -> Self {
+    pub(super) fn parse(spec: &str) -> Self {
         if spec == "dev" {
             Self::Dev
         } else {
@@ -104,7 +113,7 @@ impl Signer {
         )?)
     }
 
-    fn sign(&self, message: &[u8; MESSAGE_LEN]) -> eros::Result<[u8; SIGNATURE_LEN]> {
+    pub(super) fn sign(&self, message: &[u8; MESSAGE_LEN]) -> eros::Result<[u8; SIGNATURE_LEN]> {
         match self {
             Self::Dev => {
                 eprintln!("warning: dev signer; only dev-signing-key builds trust this signature");

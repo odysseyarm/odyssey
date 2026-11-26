@@ -3,7 +3,7 @@
 
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 
 use crate::components::ui;
@@ -20,6 +20,7 @@ pub(crate) fn page(
 ) -> impl IntoElement {
     div()
         .id(id)
+        .test_support()
         .size_full()
         .overflow_y_scroll()
         .child(ui::page(p, title, description, children))

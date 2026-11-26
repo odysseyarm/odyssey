@@ -22,8 +22,16 @@ pub(crate) enum DeviceCommands {
     },
     /// Cancel pairing mode
     PairCancel,
-    /// Clear bond (for lite devices with single bond)
+    /// Clear every stored bond
     ClearBond,
+    /// List the bonds stored on the unit (firmware with device protocol 0.2.2 or newer)
+    ListBonds,
+    /// Remove one bond (firmware with device protocol 0.2.2 or newer)
+    RemoveBond {
+        /// Address of the bonded host as `list-bonds` prints it: six colon-separated hex
+        /// bytes, most significant first, the order Bluetooth tools display
+        addr: String,
+    },
     /// Calibrate accelerometer
     AccelCalib {
         /// Number of samples per orientation
@@ -47,16 +55,12 @@ pub(crate) enum DeviceCommands {
     Stream,
 }
 
-async fn list_devices(require_usb_mode: bool) -> eros::Result<Vec<nusb::DeviceInfo>> {
+// Firmware picks USB or BLE itself, so the reported mode never excludes a device.
+async fn list_devices() -> eros::Result<Vec<nusb::DeviceInfo>> {
     let mut devices = Vec::new();
-    let mut non_usb_devices = 0usize;
     for info in list_vm_usb_devices()? {
         match VmDevice::probe_transport_mode(&info).await {
             Ok(mode) => {
-                if require_usb_mode && !matches!(mode, TransportMode::Usb) {
-                    non_usb_devices += 1;
-                    continue;
-                }
                 if !matches!(mode, TransportMode::Usb) {
                     eprintln!(
                         "Info: {:04X}:{:04X} is in {:?} mode",
@@ -76,18 +80,10 @@ async fn list_devices(require_usb_mode: bool) -> eros::Result<Vec<nusb::DeviceIn
             }
         }
     }
-    if require_usb_mode && devices.is_empty() && non_usb_devices > 0 {
-        eprintln!(
-            "Found {non_usb_devices} device(s) not in USB mode; no USB-mode devices available"
-        );
-    }
     Ok(devices)
 }
 
-async fn connect_to_device(
-    device_index: Option<usize>,
-    require_usb_mode: bool,
-) -> eros::Result<VmDevice> {
+async fn connect_to_device(device_index: Option<usize>) -> eros::Result<VmDevice> {
     // Explicit indices refer to the unfiltered enumeration printed by
     // `list-devices`. Probing or filtering first would renumber devices.
     let device_info = if let Some(idx) = device_index {
@@ -100,7 +96,7 @@ async fn connect_to_device(
             })?
             .clone()
     } else {
-        let devices = list_devices(require_usb_mode).await?;
+        let devices = list_devices().await?;
         if devices.is_empty() {
             eros::bail!("No device found. Please connect a device.");
         }
@@ -113,15 +109,9 @@ async fn connect_to_device(
         devices[0].clone()
     };
 
-    if require_usb_mode {
-        Ok(VmDevice::connect_usb(device_info)
-            .await
-            .context("Failed to connect to device")?)
-    } else {
-        Ok(VmDevice::connect_usb_any_mode(device_info)
-            .await
-            .context("Failed to connect to device")?)
-    }
+    Ok(VmDevice::connect_usb_any_mode(device_info)
+        .await
+        .context("Failed to connect to device")?)
 }
 
 async fn cmd_list_devices() -> eros::Result<()> {
@@ -229,9 +219,55 @@ async fn cmd_pair_cancel(device: &VmDevice) -> eros::Result<()> {
 
 async fn cmd_clear_bond(device: &VmDevice) -> eros::Result<()> {
     device.clear_bond().await.context("Failed to clear bond")?;
-    println!("Bond cleared successfully");
+    println!("Every bond cleared successfully");
     Ok(())
 }
+/// The unit reports addresses little-endian, as on air. People read and type them
+/// the other way round.
+fn display_bond_addr(mut addr: [u8; 6]) -> String {
+    addr.reverse();
+    format_bd_addr(addr)
+}
+
+fn parse_bond_addr(text: &str) -> eros::Result<[u8; 6]> {
+    let mut addr = [0u8; 6];
+    let mut parts = text.split(':');
+    for byte in addr.iter_mut().rev() {
+        let part = parts
+            .next()
+            .ok_or_else(|| eros::error!("address must have six colon-separated bytes"))?;
+        *byte = u8::from_str_radix(part, 16).context("address byte is not hex")?;
+    }
+    if parts.next().is_some() {
+        return Err(eros::error!("address must have six colon-separated bytes"));
+    }
+    Ok(addr)
+}
+
+async fn cmd_list_bonds(device: &VmDevice) -> eros::Result<()> {
+    let bonds = device.list_bonds().await.context("Failed to list bonds")?;
+    if bonds.is_empty() {
+        println!("No bonds");
+    }
+    for bond in bonds {
+        println!(
+            "{}{}",
+            display_bond_addr(bond.bd_addr),
+            if bond.connected { " (connected)" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+async fn cmd_remove_bond(device: &VmDevice, addr: [u8; 6]) -> eros::Result<()> {
+    device
+        .remove_bond(addr)
+        .await
+        .context("Failed to remove bond")?;
+    println!("Bond removed");
+    Ok(())
+}
+
 pub(crate) async fn handle_command(
     device_index: Option<usize>,
     command: DeviceCommands,
@@ -239,20 +275,29 @@ pub(crate) async fn handle_command(
     match command {
         DeviceCommands::ListDevices => cmd_list_devices().await,
         DeviceCommands::Version => {
-            let device = connect_to_device(device_index, true).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_version(&device).await
         }
         DeviceCommands::Pair { timeout } => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_pair(&device, timeout).await
         }
         DeviceCommands::PairCancel => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_pair_cancel(&device).await
         }
         DeviceCommands::ClearBond => {
-            let device = connect_to_device(device_index, false).await?;
+            let device = connect_to_device(device_index).await?;
             cmd_clear_bond(&device).await
+        }
+        DeviceCommands::ListBonds => {
+            let device = connect_to_device(device_index).await?;
+            cmd_list_bonds(&device).await
+        }
+        DeviceCommands::RemoveBond { addr } => {
+            let addr = parse_bond_addr(&addr)?;
+            let device = connect_to_device(device_index).await?;
+            cmd_remove_bond(&device, addr).await
         }
         DeviceCommands::AccelCalib {
             samples,
@@ -261,16 +306,16 @@ pub(crate) async fn handle_command(
         } => {
             crate::calibration::validate_sample_count(samples)?;
             crate::calibration::validate_gravity(gravity)?;
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_accel_calib(&mut device, samples, gravity, &output).await
         }
         DeviceCommands::GyroCalib { samples, output } => {
             crate::calibration::validate_sample_count(samples)?;
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_gyro_calib(&mut device, samples, &output).await
         }
         DeviceCommands::Stream => {
-            let mut device = connect_to_device(device_index, true).await?;
+            let mut device = connect_to_device(device_index).await?;
             crate::calibration::cmd_stream(&mut device).await
         }
     }

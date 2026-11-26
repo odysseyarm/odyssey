@@ -26,6 +26,8 @@ on (and the home screen says why).
   Use the full installer (`...-win-x64-full.msi`): it carries Orbbec's camera software, so nothing
   needs downloading, and its app has no downloader at all. The standard installer accepts
   `OFFLINE_MODE=1` too. Neither turns offline mode on without it.
+  MSI writes `HKLM\SOFTWARE\OdysseyArm\Odyssey\OfflineMode`; uninstall removes that
+  installer-owned value, not the separate Group Policy setting.
 * **Registry (Windows; Group Policy or Intune).** `HKLM\SOFTWARE\Policies\OdysseyArm\Odyssey`
   or `HKLM\SOFTWARE\OdysseyArm\Odyssey`: `OfflineMode` (DWORD) = `1`.
 * **Policy file (every platform).** `policy.json` in the machine-wide folder; it may contain

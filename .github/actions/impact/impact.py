@@ -51,6 +51,7 @@ EVERYWHERE = (
     "flake.nix",
     "flake.lock",
     ".cargo",
+    ".config/nextest.toml",
     "nix/common.nix",
     "nix/default.nix",
     "nix/pkgs",
@@ -219,7 +220,9 @@ def build_rules(
             closure(graph, ["crates/odyssey-protocol"])
             + [
                 "firmware/better-ota",
+                "firmware/ota-channel",
                 "firmware/release-signing",
+                "firmware/lite1-secure-boot",
                 "Cargo.toml",
                 "Cargo.lock",
                 "clippy.toml",

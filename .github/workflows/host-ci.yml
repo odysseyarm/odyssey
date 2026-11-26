@@ -51,10 +51,13 @@ jobs:
         run: nix build -L --no-link .#checks.x86_64-linux.host-tests
       - name: Check postcard compatibility on host and firmware
         if: steps.impact.outputs.protocols == 'true'
-        run: nix build -L --no-link .#checks.x86_64-linux.postcard-compatibility .#checks.x86_64-linux.better-ota-tests .#checks.x86_64-linux.release-signing-tests
+        run: nix build -L --no-link .#checks.x86_64-linux.postcard-compatibility .#checks.x86_64-linux.better-ota-tests .#checks.x86_64-linux.ota-channel-tests .#checks.x86_64-linux.release-signing-tests .#checks.x86_64-linux.lite1-secure-boot-tests
       - name: Test repository tools
         if: steps.impact.outputs.xtask == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.xtask-tests
+      - name: Build nRF52840 tracker images
+        if: steps.impact.outputs.xtask == 'true'
+        run: nix build -L --no-link .#firmware-legacy-vm-images
       - name: Lint host applications
         if: steps.impact.outputs.host == 'true'
         run: nix build -L --no-link .#checks.x86_64-linux.host-lint .#checks.x86_64-linux.host-lint-bins

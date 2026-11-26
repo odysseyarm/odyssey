@@ -1,8 +1,9 @@
 use core::future::Future;
 
-use embassy_nrf::gpio::{AnyPin, Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pin, Pull};
 use embassy_nrf::gpiote::{self, OutputChannelPolarity};
-use embassy_nrf::peripherals::SPIM4;
+use embassy_nrf::mode::Async;
+use embassy_nrf::peripherals::{P0_21, SPIM4};
 use embassy_nrf::ppi::{self, Ppi};
 use embassy_nrf::timer::{self, Timer};
 use embassy_nrf::{Peri, interrupt, spim};
@@ -12,14 +13,14 @@ use icm426xx::{ICM42688, Ready};
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteImu {
-    inner: ICM42688<ExclusiveDevice<spim::Spim<'static>, Output<'static>, Delay>, Ready>,
+    inner: ICM42688<ExclusiveDevice<spim::Spim<'static, Async>, Output<'static>, Delay>, Ready>,
     // Sum of FIFO timestamp deltas, in microseconds.
     ts_micros: u32,
 }
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteImuInterrupt {
-    int1: Input<'static>,
+    int1: Input<'static, Async>,
 }
 
 /// Since: Odyssey Desktop 0.7.0.
@@ -123,14 +124,14 @@ pub fn round_accel_odr_hz(hz: u16) -> u16 {
 #[allow(clippy::too_many_arguments)]
 pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     spim_instance: Peri<'static, SPIM4>,
-    cs: Peri<'static, AnyPin>,
-    sck: Peri<'static, AnyPin>,
-    miso: Peri<'static, AnyPin>,
-    mosi: Peri<'static, AnyPin>,
-    int1: Peri<'static, AnyPin>,
-    clkin: Peri<'static, AnyPin>,
+    cs: Peri<'static, impl Pin>,
+    sck: Peri<'static, impl spim::SckPin<SPIM4>>,
+    miso: Peri<'static, impl spim::MisoPin<SPIM4>>,
+    mosi: Peri<'static, impl spim::MosiPin<SPIM4>>,
+    int1: Peri<'static, P0_21>,
+    clkin: Peri<'static, impl gpiote::GpiotePin>,
     clkin_timer_instance: Peri<'static, T>,
-    clkin_ppi_ch: Peri<'static, ppi::AnyConfigurableChannel>,
+    clkin_ppi_ch: Peri<'static, impl ppi::ConfigurableChannel>,
     clkin_gpiote_ch: Peri<'static, C>,
     accel_odr: u16,
 ) -> (AtsliteImu, AtsliteImuInterrupt)
@@ -140,7 +141,7 @@ where
             spim::InterruptHandler<SPIM4>,
         >,
 {
-    let int1 = Input::new(int1, Pull::None);
+    let int1 = Input::new_async(int1, crate::Irqs, Pull::None);
     let cs = Output::new(cs, Level::High, OutputDrive::Standard);
     let clkin_ch = gpiote::OutputChannel::new(
         clkin_gpiote_ch,
@@ -166,8 +167,8 @@ where
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M8;
     spim_config.mode = spim::MODE_3;
-    spim_config.bit_order = spim::BitOrder::MSB_FIRST;
-    let spim = spim::Spim::new(spim_instance, crate::Irqs, sck, miso, mosi, spim_config);
+    spim_config.bit_order = spim::BitOrder::MsbFirst;
+    let spim = spim::Spim::new(spim_instance, sck, mosi, miso, crate::Irqs, spim_config);
 
     let Ok(spi_device) = ExclusiveDevice::new(spim, cs, Delay);
     let imu = ICM42688::new(spi_device);

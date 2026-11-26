@@ -5,18 +5,19 @@
 //!
 //! 1. **Host sender.** `crates/odyssey-hub-server/src/firmware/ota.rs` reads the status, picks the
 //!    images that apply (net core first, then application), and sends `Begin`, `Data` chunks and
-//!    `Commit` through its `OtaTransport`. Chunks are sized to the link: 92 bytes on the vendor
-//!    packet link, 12 bytes on the marker GATT link. After `Commit` it waits for the device to
+//!    `Commit` through its `OtaTransport`. Chunks are sized to the link: 240 bytes on the packet
+//!    link, 12 bytes on the marker GATT link. After `Commit` it waits for the device to
 //!    reconnect with the new versions.
 //! 2. **Wire format.** Frames and the 22-byte status are defined in
 //!    `crates/odyssey-protocol/src/ota.rs`. Every request gets one status reply.
 //! 3. **Transport.** Three routes reach a device. All of them carry one frame per exchange and
 //!    never overlap two exchanges:
-//!    - Trackers (lite1, legacy-atslite): a vendor packet with tag `0xfe` over the BLE packet
-//!      link. The hub side is `crates/odyssey-hub-server/src/device_tasks/handler/commands.rs`;
-//!      the firmware side is the vendor branch in `firmware/atslite-common/src/object_mode.rs`
-//!      (and `firmware/legacy-common/src/object_mode.rs`), which hands the frame to
-//!      `OtaHandle::request` and sends the status back as the reply packet.
+//!    - Trackers (lite1, legacy-atslite): an `OtaRequest` packet over the BLE packet link,
+//!      answered by an `OtaStatus` packet. The hub side is
+//!      `crates/odyssey-hub-server/src/device_tasks/handler/commands.rs`; the firmware side is
+//!      the `OtaRequest` branch in `firmware/atslite-common/src/object_mode.rs` (and
+//!      `firmware/legacy-common/src/object_mode.rs`), which hands the frame to
+//!      `ota_channel::OtaHandle::request`.
 //!    - Marker board over the system Bluetooth stack: the hub writes the OTA GATT characteristic
 //!      with a write-with-response, then reads it for the status
 //!      (`crates/odyssey-hub-server/src/accessories/transport.rs`). The characteristic is served
@@ -35,9 +36,9 @@
 //!    status reports this as `signature_required`, which makes the host send the signature.
 //! 5. **[`Slots`] backends.** One per board, each owning the flash layout:
 //!    - `FlashSlots` in `firmware/atslite-common/src/ota.rs` (lite1 and legacy-atslite). It writes
-//!      the application into the inactive bank and the net core into a staging region, and its
-//!      `OtaHandle`/`run` pair is a task that owns the `Receiver` so the transports can stay
-//!      stateless.
+//!      the application into the inactive bank and the net core into a staging region.
+//!      `ota-channel` owns the `Receiver` and request/reply channels independently of that
+//!      nRF5340 backend.
 //!    - `MarkerSlots` in `firmware/marker-control-board/src/ble.rs`. It writes the application
 //!      into the DFU partition and has no net core.
 //! 6. **Commit.** `Slots::commit` records the activation in flash. On trackers

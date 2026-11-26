@@ -13,15 +13,14 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use donger_common::usb_device;
 /// Since: Odyssey Desktop 0.7.0.
-pub use donger_common::usb_device::{UsbConfigHandle, read_transfer, write_transfer};
-use embassy_futures::join::{join, join5};
+pub use donger_common::usb_device::UsbConfigHandle;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, ThreadModeRawMutex};
 use embassy_sync::mutex::Mutex as AsyncMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
-use embassy_usb::driver::{Endpoint as _, EndpointError};
+use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use nalgebra::Vector3;
 use odyssey_cv::exposure::{ExposureController, Limits, Spot};
 use odyssey_protocol::control::device::TransportMode;
@@ -29,13 +28,14 @@ use odyssey_protocol::image::{
     IMAGE_CHUNK_CAPACITY, IMAGE_LEASE_TIMEOUT_MS, ImageChunk, ImageCommand, ImageStatus,
     ImageStatusCode, ImageStreamConfig,
 };
-use odyssey_protocol::marker_hint::{self, MarkerHint};
+use odyssey_protocol::marker_hint::MarkerHint;
 use odyssey_protocol::wire::GeneralConfig;
 use odyssey_protocol::{
     BatteryReport, ConfigKind, Packet, PacketData, PacketType, Props, ReadRegisterResponse,
 };
 
 use crate::ble::l2cap_bridge::{self, L2capChannels};
+use crate::device_control;
 use crate::settings::PagSettings;
 
 mod image_state;
@@ -259,14 +259,19 @@ pub trait ImuSensor {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     async fn read_data(&mut self) -> Result<ImuData, Self::Error>;
+
+    /// Whether another captured sample can be read without waiting for an IRQ.
+    fn has_pending_data(&self) -> bool {
+        false
+    }
 }
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct ImuData {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub accel: [i32; 3],
-    /// Since: Odyssey Desktop 0.7.0.
-    pub gyro: [i32; 3],
+    /// Board-frame acceleration in m/s².
+    pub accel: [f32; 3],
+    /// Board-frame angular velocity in rad/s.
+    pub gyro: [f32; 3],
     /// Since: Odyssey Desktop 0.7.0.
     pub timestamp_micros: u32,
 }
@@ -361,7 +366,7 @@ where
     /// Since: Odyssey Desktop 0.7.0.
     pub usb_configured: UsbConfigHandle,
     /// Since: Unreleased.
-    pub ota: crate::ota::OtaHandle,
+    pub ota: ota_channel::OtaHandle,
 }
 
 /// Runs object mode forever: the USB reader and the receive, IMU, marker, battery and send
@@ -444,11 +449,24 @@ where
 
     let battery_task = battery_loop(REPORTS.sender(), &stream_infos);
 
-    join(
-        usb_read_task,
-        join5(recv_task, imu_task, obj_task, stream_task, battery_task),
-    )
-    .await;
+    let mut usb_read_task = core::pin::pin!(usb_read_task);
+    let mut recv_task = core::pin::pin!(recv_task);
+    let mut imu_task = core::pin::pin!(imu_task);
+    let mut obj_task = core::pin::pin!(obj_task);
+    let mut stream_task = core::pin::pin!(stream_task);
+    let mut battery_task = core::pin::pin!(async {
+        battery_task.await;
+    });
+    // Trait-object polling keeps task state machines out of one poll function.
+    let tasks: [core::pin::Pin<&mut (dyn Future<Output = ()> + '_)>; 6] = [
+        usb_read_task.as_mut(),
+        recv_task.as_mut(),
+        imu_task.as_mut(),
+        obj_task.as_mut(),
+        stream_task.as_mut(),
+        battery_task.as_mut(),
+    ];
+    embassy_futures::join::join_array(tasks).await;
 }
 
 /// Reads requests from USB bulk OUT into `requests` while a host has the endpoint enabled.
@@ -462,7 +480,7 @@ async fn usb_read_loop<const N: usize>(
         let generation = usb_configured.generation();
         let transfer = match select(
             usb_configured.wait_until_generation_changes(generation),
-            read_transfer(usb_rcv, &mut usb_buf),
+            usb_rcv.read_transfer(&mut usb_buf),
         )
         .await
         {
@@ -509,7 +527,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
     device_id: [u8; 6],
     product_id: u16,
     firmware_version: [u32; 3],
-    ota: crate::ota::OtaHandle,
+    ota: ota_channel::OtaHandle,
     usb_requests: Receiver<'_, UsbPacket, Q>,
     usb_replies: Sender<'_, UsbPacket, R>,
     image_requests: Sender<'_, ImageRequest, 2>,
@@ -744,21 +762,15 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
                         ImageStatusCode::UsbRequired,
                     ))
                 } else if let ImageCommand::Start { config, .. } = command
-                    && config.camera != odyssey_protocol::Port::Nf
+                    && (config.camera != odyssey_protocol::Port::Nf
+                        || !(1..=15).contains(&config.fps))
                 {
-                    Some(image_status(
-                        pkt.id,
-                        generation,
-                        ImageStatusCode::UnsupportedCamera,
-                    ))
-                } else if let ImageCommand::Start { config, .. } = command
-                    && !(1..=15).contains(&config.fps)
-                {
-                    Some(image_status(
-                        pkt.id,
-                        generation,
-                        ImageStatusCode::CaptureError,
-                    ))
+                    let status = if config.camera != odyssey_protocol::Port::Nf {
+                        ImageStatusCode::UnsupportedCamera
+                    } else {
+                        ImageStatusCode::CaptureError
+                    };
+                    Some(image_status(pkt.id, generation, status))
                 } else if image_requests
                     .try_send(ImageRequest {
                         id: pkt.id,
@@ -802,42 +814,35 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
             PacketData::ImpactReport(_) => None,
-            PacketData::Vendor(marker_hint::VENDOR_TAG, data) => {
-                match data
-                    .data
-                    .get(..usize::from(data.len))
-                    .map(MarkerHint::decode)
-                {
-                    Some(Ok(hint)) => MARKER_HINT.signal((hint, now_ms())),
-                    _ => defmt::warn!("[object_mode] Rejected malformed marker hint"),
+            PacketData::MarkerHint(hint) => {
+                match hint.validate() {
+                    Ok(()) => MARKER_HINT.signal((hint, now_ms())),
+                    Err(_) => defmt::warn!("[object_mode] Rejected invalid marker hint"),
                 }
                 None
             }
-            PacketData::Vendor(tag, data)
-                if tag == odyssey_protocol::ota::VENDOR_TAG
-                    && request_transport == TransportMode::Ble =>
-            {
-                let len = usize::from(data.len);
-                let Some(payload) = data.data.get(..len) else {
-                    continue;
-                };
-                if let Some(reply) = ota.request(payload).await {
+            PacketData::OtaRequest(frame) if request_transport == TransportMode::Ble => {
+                if let Some(reply) = ota.request(&frame).await {
                     reset_after_reply = reply.reset;
                     if reply.reset {
                         image_state.abort.signal(());
                     }
-                    let mut body = odyssey_protocol::VendorData {
-                        len: odyssey_protocol::ota::STATUS_LEN as u8,
-                        data: [0; odyssey_protocol::VendorData::CAPACITY],
-                    };
-                    body.data[..odyssey_protocol::ota::STATUS_LEN].copy_from_slice(&reply.status);
                     Some(Packet {
                         id: pkt.id,
-                        data: PacketData::Vendor(tag, body),
+                        data: PacketData::OtaStatus(reply.status),
                     })
                 } else {
                     None
                 }
+            }
+            PacketData::OtaRequest(_) => None,
+            PacketData::OtaStatus(_) => None,
+            PacketData::DeviceControl(msg) => {
+                // USB has its own control transfers; only BLE carries device control as packets.
+                if request_transport == TransportMode::Ble {
+                    device_control::try_send_ble_cmd(msg, pkt.id, ble_session);
+                }
+                None
             }
             PacketData::Vendor(_, _) => None,
             PacketData::ReadRegisterResponse(_) => None,
@@ -1006,7 +1011,7 @@ async fn stream_loop<const N: usize, const R: usize>(
                 };
                 match select(
                     usb_configured.wait_until_generation_changes(usb_generation),
-                    write_transfer(usb_snd, payload, true),
+                    usb_snd.write_transfer(payload, true),
                 )
                 .await
                 {
@@ -1040,16 +1045,12 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     pkt_snd: Sender<'_, Packet, N>,
     stream_infos: &StreamInfos,
 ) {
-    const G: f32 = 9.806_65;
-
-    // ICM-42688 sensitivity at the default full-scale ranges.
-    const ACC_LSB_PER_G: f32 = 32768.0;
-    const GYRO_LSB_PER_DPS: f32 = 262.144;
-
     let mut last_impact_ts_micros: Option<u32> = None;
 
     loop {
-        imu_int.wait().await;
+        if !imu.has_pending_data() {
+            imu_int.wait().await;
+        }
 
         let imu_data = match imu.read_data().await {
             Ok(data) => data,
@@ -1059,27 +1060,9 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
             }
         };
 
-        let acc = imu_data.accel;
-        let gyr = imu_data.gyro;
+        let accel = Vector3::from(imu_data.accel);
+        let gyro = Vector3::from(imu_data.gyro);
         let ts_micros = imu_data.timestamp_micros;
-
-        // The ICM on lite1 is rotated 90° CW relative to legacy atslite. Legacy maps
-        // raw axes as [raw[0], -raw[1], -raw[2]]. With legacy_x = new_y and legacy_y = -new_x
-        // that becomes [raw[1], raw[0], -raw[2]].
-        let (ax, ay, az) = (acc[1], acc[0], -acc[2]);
-        let (gx, gy, gz) = (gyr[1], gyr[0], -gyr[2]);
-
-        // m/s² and rad/s.
-        let accel = Vector3::new(
-            ax as f32 / ACC_LSB_PER_G * G,
-            ay as f32 / ACC_LSB_PER_G * G,
-            az as f32 / ACC_LSB_PER_G * G,
-        );
-        let gyro = Vector3::new(
-            (gx as f32 / GYRO_LSB_PER_DPS).to_radians(),
-            (gy as f32 / GYRO_LSB_PER_DPS).to_radians(),
-            (gz as f32 / GYRO_LSB_PER_DPS).to_radians(),
-        );
 
         if stream_infos.imu.enabled() {
             let id = stream_infos.imu.req_id();

@@ -6,6 +6,18 @@ use crate::message::MESSAGE_LEN;
 /// Since: Unreleased.
 pub const SIGNATURE_LEN: usize = 64;
 
+/// Whether any non-empty caller-supplied key signed `message`.
+///
+/// Since: Unreleased.
+#[must_use]
+pub fn verify_with_keys(
+    keys: &[PublicKey],
+    message: &[u8; MESSAGE_LEN],
+    signature: &[u8; SIGNATURE_LEN],
+) -> bool {
+    verify_with(keys.iter(), message, signature)
+}
+
 /// Whether any trusted, non-empty key signed `message`.
 ///
 /// Since: Unreleased.

@@ -31,6 +31,9 @@ impl Wizard {
     }
 
     pub(crate) fn back_to_setup(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         self.release_hardware(cx);
         // Ignore anything the stopped session still reports.
         self.session += 1;
@@ -104,5 +107,76 @@ impl Wizard {
             }
             _ => self.begin_position(cx),
         }
+    }
+}
+
+#[cfg(all(test, feature = "ui-automation"))]
+mod tests {
+    use gpui::{AppContext as _, TestAppContext, WindowOptions};
+
+    use super::{Stage, Wizard};
+    use crate::cli::CalibrateArgs;
+    use crate::hub::{Hub, HubHandle};
+    use crate::theme::{ActivePalette, Palette};
+    use crate::ui_state::UiStateWriter;
+    use crate::views::calibrate::automatic::calibrate_automatic::CalibrateAutomaticView;
+    use crate::workspace::{Workspace, WorkspaceHandle};
+
+    #[gpui::test]
+    fn back_to_setup_preserves_active_save(cx: &mut TestAppContext) {
+        crate::runtime::start().expect("Tokio runtime starts");
+        cx.update(gpui::init);
+        cx.update(|cx| {
+            cx.set_global(ActivePalette(Palette::for_appearance(
+                gpui::WindowAppearance::Light,
+            )));
+            cx.set_global(UiStateWriter::start());
+            let (_, server_ready) = tokio::sync::watch::channel(false);
+            let hub = cx.new(|cx| Hub::new(server_ready, cx));
+            cx.set_global(HubHandle(hub));
+            let workspace = cx.new(Workspace::new);
+            cx.set_global(WorkspaceHandle(workspace));
+        });
+        let mut wizard = None;
+        let (window, _) = cx
+            .update(|cx| {
+                gpui::open_window(WindowOptions::default(), cx, |window, cx| {
+                    let state = cx.new(|cx| {
+                        let mut state = Wizard::new(
+                            Some(CalibrateArgs {
+                                demo: true,
+                                ..CalibrateArgs::default()
+                            }),
+                            window,
+                            cx,
+                        );
+                        // Navigation needs no startup I/O that could wake GPUI from Tokio.
+                        state._tasks.clear();
+                        state.camera_poll = None;
+                        state.finding_task = None;
+                        state
+                    });
+                    wizard = Some(state.clone());
+                    cx.new(|cx| CalibrateAutomaticView::new(state, window, cx))
+                })
+            })
+            .expect("test window opens");
+        let wizard = wizard.expect("calibration view owns wizard");
+
+        cx.update_window(window, |_, _, cx| {
+            wizard.update(cx, |wizard, cx| {
+                wizard.stage = Stage::Review;
+                wizard.saving = true;
+                wizard.save_task = Some(cx.spawn(async move |_, _| {
+                    std::future::pending::<()>().await;
+                }));
+            });
+            wizard.update(cx, Wizard::back_to_setup);
+            let wizard = wizard.read(cx);
+            assert_eq!(wizard.stage, Stage::Review);
+            assert!(wizard.saving);
+            assert!(wizard.save_task.is_some());
+        })
+        .expect("test window remains open");
     }
 }

@@ -26,12 +26,11 @@ use core::convert::Infallible;
 
 /// Since: Odyssey Desktop 0.7.0.
 pub use embassy_nrf;
-use embassy_nrf::gpio::{AnyPin, Output};
+use embassy_nrf::gpio::Output;
+use embassy_nrf::mode::Async;
 use embassy_nrf::spim::{self, Spim};
 /// Since: Odyssey Desktop 0.7.0.
 pub use embassy_sync;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex as AsyncMutex;
 /// Since: Odyssey Desktop 0.7.0.
 pub use embassy_time;
 use embassy_time::Delay;
@@ -43,14 +42,10 @@ pub use odyssey_protocol;
 /// Since: Odyssey Desktop 0.7.0.
 pub use paj7025;
 
+/// A PAJ7025 on a register SPI bus that borrows its peripheral and pins for `'d`.
+///
 /// Since: Odyssey Desktop 0.7.0.
-pub type Paj = paj7025::Paj7025<
-    ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
+pub type Paj<'d> = paj7025::Paj7025<
+    ExclusiveDevice<Spim<'d, Async>, Output<'d>, Delay>,
     DeviceError<spim::Error, Infallible>,
 >;
-/// Since: Odyssey Desktop 0.7.0.
-pub type PajGroup<'a, C> = (
-    &'a AsyncMutex<NoopRawMutex, Paj>,
-    embassy_nrf::Peri<'a, AnyPin>,
-    embassy_nrf::Peri<'a, C>,
-);

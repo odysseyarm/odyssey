@@ -11,7 +11,7 @@
 +    // Upstream gates this script on `target_os = "windows"`, which inside a build
 +    // script is the HOST. Cross-compiling from Linux/macOS for windows-msvc then
 +    // skips the shaders and the renderer's `include!` of shaders_bytes.rs fails.
-+    // The target is what decides whether HLSL is needed. (gpui-pre-windows 0.3.11)
++    // The target is what decides whether HLSL is needed. (gpui-pre-windows 0.3.12)
 +    let target_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
 +    if !(target_windows && cfg!(not(debug_assertions))) {
 +        println!("cargo:rerun-if-changed=build.rs");
@@ -28,7 +28,7 @@
  mod shader_compilation {
      use std::{
          fs,
-@@ -71,6 +76,7 @@
+@@ -59,6 +64,7 @@
      }
  
      /// Locate `binary` in the newest installed Windows SDK.
@@ -36,7 +36,7 @@
      pub fn find_latest_windows_sdk_binary(
          binary: &str,
      ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
-@@ -122,19 +128,23 @@
+@@ -110,19 +116,23 @@
              return path;
          }
  
@@ -71,7 +71,7 @@
          }
  
          panic!("Failed to find fxc.exe");
-@@ -240,5 +250,5 @@
+@@ -228,5 +238,5 @@
      }
  }
  

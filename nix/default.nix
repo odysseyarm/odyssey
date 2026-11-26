@@ -284,11 +284,22 @@ in
             ];
           };
         in
-        pkgs.runCommand "odyssey-python-types" { nativeBuildInputs = [ pkgs.mypy ]; } ''
-          cd ${pythonSource}
-          mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
-          touch "$out"
-        '';
+        pkgs.runCommand "odyssey-python-types"
+          {
+            nativeBuildInputs = [
+              (pkgs.python3.withPackages (ps: [
+                ps.mypy
+                ps.cryptography
+                ps.pyscard
+                (ps.toPythonModule pkgs.yubikey-manager)
+              ]))
+            ];
+          }
+          ''
+            cd ${pythonSource}
+            mypy --config-file mypy.ini --cache-dir "$TMPDIR/mypy" $(find . -name '*.py')
+            touch "$out"
+          '';
     }
     // lib.optionalAttrs (system == "x86_64-linux") {
       release-proofs = releaseProofs;

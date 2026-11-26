@@ -6,14 +6,17 @@ use bmi2::config;
 use bmi2::interface::SpiInterface;
 use bmi2::types::{Burst, Error, IntIoCtrl, IntLatch, IntMapData, MapData, PwrCtrl};
 use embassy_nrf::Peri;
-use embassy_nrf::gpio::{AnyPin, Input, Output, Pull};
+use embassy_nrf::gpio::{self, Input, Output, Pin, Pull};
 use embassy_nrf::interrupt::typelevel::Binding;
+use embassy_nrf::mode::Async;
 use embassy_nrf::spim::{self, Spim};
 use embassy_time::Delay;
 use embedded_hal_bus::spi::DeviceError;
 
 type Bmi2Type<const N: usize> = Bmi2<
-    SpiInterface<embedded_hal_bus::spi::ExclusiveDevice<Spim<'static>, Output<'static>, Delay>>,
+    SpiInterface<
+        embedded_hal_bus::spi::ExclusiveDevice<Spim<'static, Async>, Output<'static>, Delay>,
+    >,
     Delay,
     N,
 >;
@@ -28,7 +31,7 @@ pub struct VmImu<const N: usize> {
 
 /// Since: Odyssey Desktop 0.7.0.
 pub struct VmImuInterrupt {
-    irq: Input<'static>,
+    irq: Input<'static, Async>,
 }
 
 impl<const N: usize> legacy_common::platform::Imu for VmImu<N> {
@@ -119,25 +122,39 @@ pub fn round_accel_odr_hz(hz: u16) -> u16 {
 }
 
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn init<SPI, IRQ, const N: usize, const MAX: u16>(
+pub async fn init<SPI, IRQ, SCK, MOSI, MISO, CS, IRQ_PIN, const N: usize, const MAX: u16>(
     spi: Peri<'static, SPI>,
     irqs: IRQ,
-    pins: legacy_common::utils::SpiPins,
-    irq: Peri<'static, AnyPin>,
+    sck: Peri<'static, SCK>,
+    mosi: Peri<'static, MOSI>,
+    miso: Peri<'static, MISO>,
+    cs: Peri<'static, CS>,
+    irq: Peri<'static, IRQ_PIN>,
     accel_odr: u16,
 ) -> Result<(VmImu<N>, VmImuInterrupt), Error<DeviceError<spim::Error, Infallible>>>
 where
     SPI: spim::Instance,
-    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>> + 'static,
+    IRQ: Binding<<SPI as spim::Instance>::Interrupt, spim::InterruptHandler<SPI>>
+        + Binding<
+            <IRQ_PIN as embassy_nrf::gpiote::GpiotePin>::Interrupt,
+            gpio::InterruptHandler<IRQ_PIN>,
+        > + Copy
+        + 'static,
+    SCK: spim::SckPin<SPI>,
+    MOSI: spim::MosiPin<SPI>,
+    MISO: spim::MisoPin<SPI>,
+    CS: Pin,
+    IRQ_PIN: embassy_nrf::gpiote::GpiotePin,
 {
-    let irq = Input::new(irq, Pull::None);
+    let irq = Input::new_async(irq, irqs, Pull::None);
 
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M8;
     spim_config.mode = spim::MODE_0;
-    spim_config.bit_order = spim::BitOrder::MSB_FIRST;
+    spim_config.bit_order = spim::BitOrder::MsbFirst;
 
-    let spi_device = legacy_common::utils::make_spi_dev(spi, irqs, pins, spim_config);
+    let spi_device =
+        legacy_common::utils::make_spi_dev(spi, irqs, sck, mosi, miso, cs, spim_config);
 
     let mut imu: Bmi2Type<N> = Bmi2::new_spi(spi_device, Delay, Burst::new(MAX)).await;
 

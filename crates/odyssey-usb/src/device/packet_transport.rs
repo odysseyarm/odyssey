@@ -11,6 +11,8 @@ use super::hex_address::HexAddress;
 use super::mux_device::MuxDevice;
 use super::mux_transport::{DevicePacketRoute, register_route, unregister_route};
 use super::usb_bulk_io::{MessageReader, spawn_writer};
+#[cfg(target_os = "linux")]
+use crate::Result;
 use crate::packets::vm::Packet;
 
 /// Packets queued towards the device before `send` waits.
@@ -23,11 +25,14 @@ const INCOMING_CAPACITY: usize = 128;
 pub(super) enum LinkKind {
     Usb,
     Multiplexed,
+    /// The host's own Bluetooth adapter, straight to the unit.
+    #[cfg(target_os = "linux")]
+    Ble,
     Simulated,
 }
 
-/// A link that carries vision-module packets, either straight over USB or
-/// tunnelled through a dongle.
+/// A link that carries vision-module packets: straight over USB, tunnelled
+/// through a dongle, or (on Linux) over the host's own Bluetooth adapter.
 ///
 /// Since: Odyssey Desktop 0.6.0.
 #[derive(Debug)]
@@ -190,6 +195,30 @@ impl PacketTransport {
             cancel: Arc::new(cancel_token),
             kind: LinkKind::Multiplexed,
         }
+    }
+
+    /// A transport straight to the unit with BLE address `address` (little-endian,
+    /// as on air: the order of the unit's uuid), over the host's own Bluetooth
+    /// adapter. The host must be one of the unit's bonds. Dropping the transport
+    /// closes the link.
+    ///
+    /// # Errors
+    /// Returns the socket error when the unit cannot be reached, does not accept
+    /// the channels, or the kernel cannot encrypt the link.
+    /// Since: Unreleased.
+    #[cfg(target_os = "linux")]
+    pub async fn l2cap(address: [u8; 6]) -> Result<Self> {
+        let link = super::l2cap_transport::connect(address).await?;
+        let (writer, writer_rx) = mpsc::channel::<Packet>(OUTGOING_CAPACITY);
+        let (incoming_tx, incoming_rx) = mpsc::channel::<Packet>(INCOMING_CAPACITY);
+        let cancel = CancellationToken::new();
+        super::l2cap_transport::spawn(link, writer_rx, incoming_tx, &cancel);
+        Ok(Self {
+            writer,
+            incoming_rx,
+            cancel: Arc::new(cancel),
+            kind: LinkKind::Ble,
+        })
     }
 
     /// Sends packet through bounded USB transport.
