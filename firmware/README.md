@@ -296,7 +296,9 @@ Desktop. The modern bootloader release profile uses size optimization to fit its
 flash region.
 
 The ATS Lite direct-XIP development port uses `embassy-boot` from the fork's
-`integration` branch, patched by `firmware/.cargo/config.toml`. Application
+`integration` branch, pinned by revision in `firmware/.cargo/config.toml`. The
+application firmware pins every other Embassy crate to that same revision, so one
+copy of each links. Application
 trials use a two-page journal at `0xF6000..0xF8000`; DFU requests and net-core
 commands stay in the stage2 state page (`0xFA000` on legacy ATS Lite, `0xF5000` on
 modern). An unconfirmed application gets one boot before
@@ -501,6 +503,13 @@ boards), plus packages that run the same `cargo xtask` conversion and packaging
 on those ELFs: `firmware-<board>-images` (`build`),
 `firmware-<board>-images-dual-bank`, `bootloader-dist-<board>`,
 `netcore-dist-<board>` and `dongle-dist`. The release workflows build these.
+
+Nix firmware release builds use `DEFMT_LOG=info`; warnings and errors remain
+enabled. Local Lite1 Cargo builds default to `debug` through
+`lite1/.cargo/config.toml`, including `cargo build --release`: defmt does not
+select its filter from Cargo's profile. Use `DEFMT_LOG=info cargo build --release`
+for a local production build, or set `DEFMT_LOG=debug` explicitly for diagnosis.
+
 xtask takes the ELFs from `ODYSSEY_PREBUILT` (a tree laid out like the checkout)
 and does not run cargo, and `ODYSSEY_REPO` names the scratch checkout it writes
 into. A Nix build cannot check for a clean tree.
@@ -513,3 +522,18 @@ Run `nix/update-firmware-git-hashes.sh` after changing one.
 nrf5sdk-tools). `dongle-fw/fanstel-debug.pem` and `laird-dongle.pem` are tracked
 private keys. They are the vendors' published DFU signing keys, and only
 `dongle-dist` receives them.
+
+### Lite1 IMU selection
+
+Startup probes ICM first and otherwise initializes LSM6DSV320X on SERIAL1.
+Unpopulated MISO pins have pull-downs; interrupt inputs have pull-ups. When both
+chips exist, ICM supplies motion and LSM is reset into standby. Neither usable
+sensor means startup fails before boot confirmation.
+
+Both adapters provide board-frame m/s², rad/s and wrapping microseconds.
+ICM retains its 100 Hz external-clock configuration and drains each FIFO sample;
+LSM runs at 120 Hz using its factory-trimmed internal timestamp counter.
+LSM timestamps currently mark the paired-ready observation, not an exact FIFO
+sample edge. Its assumed `[y, x, -z]` axis mapping requires PCB or six-axis
+hardware verification before production.
+

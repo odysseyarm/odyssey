@@ -4,8 +4,6 @@ use embassy_futures::select::{Either3, select3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
 use trouble_host::prelude::*;
 
 use crate::settings;
@@ -16,6 +14,9 @@ const CONNECTIONS_MAX: usize = 1;
 const L2CAP_CHANNELS_MAX: usize = 2;
 
 type Pool = DefaultPacketPool;
+const HOST_BONDS_MAX: usize = 2 * odyssey_protocol::control::MAX_BONDS;
+const L2CAP_PSM_CTRL: u16 = 0x0080;
+const L2CAP_PSM_DATA: u16 = 0x0081;
 
 #[gatt_server]
 struct Server {}
@@ -46,19 +47,17 @@ pub async fn run<C>(
         crate::utils::device_id()[0..6].try_into()
     )));
 
-    let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    let mut resources: HostResources<Pool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, HOST_BONDS_MAX> =
         HostResources::new();
 
-    let mut host_seed_rng = ChaCha20Rng::from_seed(seed);
+    ble_crypto::init(seed);
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
-        .set_random_generator_seed(&mut host_seed_rng);
-
-    let Host {
-        mut peripheral,
-        runner,
-        ..
-    } = stack.build();
+        .register_l2cap_spsm(L2CAP_PSM_CTRL)
+        .register_l2cap_spsm(L2CAP_PSM_DATA)
+        .build();
+    let mut peripheral = stack.peripheral();
+    let runner = stack.runner();
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: device_name,
         appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
@@ -162,9 +161,11 @@ fn sync_bonds<C: Controller, P: PacketPool>(stack: &Stack<'_, C, P>) -> bool {
         defmt::warn!("[ble] Settings not initialized, bond storage disabled");
         return false;
     }
-    let stored: heapless::Vec<BondInformation, { odyssey_protocol::control::MAX_BONDS }> =
+    let stored: heapless::Vec<BondInformation, HOST_BONDS_MAX> =
         settings::with_settings(|s| s.bond_infos().collect());
-    for bond in stack.get_bond_information() {
+    let current: heapless::Vec<BondInformation, HOST_BONDS_MAX> =
+        stack.with_bond_information(|bonds| bonds.iter().cloned().collect());
+    for bond in current {
         if !stored
             .iter()
             .any(|kept| kept.identity.match_identity(&bond.identity))
@@ -228,6 +229,11 @@ async fn gatt_events_task(
                 );
                 break reason;
             }
+            GattConnectionEvent::Encrypted {
+                bond: Some(bond), ..
+            } => {
+                settings::with_settings(|s| s.learn_bond_address(&bond));
+            }
             GattConnectionEvent::PairingComplete {
                 security_level: _,
                 bond,
@@ -244,10 +250,7 @@ async fn gatt_events_task(
                         continue;
                     }
                     let stored = !settings::is_initialized()
-                        || settings::with_settings(|s| {
-                            s.bond_store(settings::ble_bond_from_bond_info(&bond))
-                                .is_ok()
-                        });
+                        || settings::with_settings(|s| s.bond_store_info(&bond).is_ok());
                     if !stored {
                         defmt::warn!("[peripheral] Rejecting bond: every slot is in use");
                         if pairing_active {
@@ -262,7 +265,7 @@ async fn gatt_events_task(
 
                     if pairing_active {
                         let mut addr = [0u8; 6];
-                        addr.copy_from_slice(bond.identity.bd_addr.raw());
+                        addr.copy_from_slice(bond.identity.addr.addr.raw());
                         PAIRING_COMPLETE_SIGNAL.signal(Ok(addr));
                         // Keep the successful connection. Only cancellation tears one down.
                         PAIRING.store(false, Ordering::Relaxed);
@@ -395,21 +398,27 @@ enum AcceptError<E> {
 /// Accepts L2CAP channel number `which` (for logging), retrying on timeout with no delay. Logs and
 /// returns `None` when the accept fails or every attempt times out.
 async fn accept_l2cap<'a, C: Controller, P: PacketPool>(
-    stack: &'a Stack<'a, C, P>,
-    conn: &GattConnection<'_, '_, P>,
-    psms: &[u16],
-    config: &L2capChannelConfig,
+    stack: &'a Stack<'_, C, P>,
+    listener: &L2capChannelListener<'a, C, P>,
+    configs: &[(u16, &L2capChannelConfig)],
     which: u8,
-) -> Option<L2capChannel<'a, P>> {
+) -> Option<(u16, L2capChannel<'a, P>)> {
     let mut attempts = 0usize;
     let accepted = (|| {
         attempts += 1;
         let attempt = attempts;
         async move {
-            match embassy_time::with_timeout(
-                L2CAP_ACCEPT_TIMEOUT,
-                L2capChannel::accept(stack, conn.raw(), psms, config),
-            )
+            match embassy_time::with_timeout(L2CAP_ACCEPT_TIMEOUT, async {
+                let pending = listener.next().await?;
+                let psm = pending.spsm();
+                let config = configs
+                    .iter()
+                    .find(|(candidate, _)| *candidate == psm)
+                    .map(|(_, config)| *config)
+                    .ok_or(Error::InvalidValue)?;
+                let channel = pending.accept(stack, config).await?;
+                Ok::<_, BleHostError<C::Error>>((psm, channel))
+            })
             .await
             {
                 Ok(Ok(ch)) => Ok(ch),
@@ -458,12 +467,9 @@ async fn accept_l2cap<'a, C: Controller, P: PacketPool>(
 async fn custom_task<'a, C: Controller, P: PacketPool>(
     _server: &Server<'_>,
     conn: &GattConnection<'_, '_, P>,
-    stack: &'a Stack<'a, C, P>,
+    stack: &'a Stack<'_, C, P>,
 ) {
     defmt::info!("[custom_task] started");
-
-    const L2CAP_PSM_CTRL: u16 = 0x0080;
-    const L2CAP_PSM_DATA: u16 = 0x0081;
 
     const PAYLOAD_LEN_CTRL: u16 = 512;
     const L2CAP_MTU_CTRL: u16 = 251;
@@ -491,19 +497,29 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
         L2CAP_PSM_DATA
     );
 
-    let Some(l2cap_control_channel) =
-        accept_l2cap(stack, conn, &[L2CAP_PSM_CTRL], &l2cap_control_config, 1).await
-    else {
+    let listener = L2capChannel::listen(stack, conn.raw());
+    let configs = [
+        (L2CAP_PSM_CTRL, &l2cap_control_config),
+        (L2CAP_PSM_DATA, &l2cap_data_config),
+    ];
+    let (mut control, mut data) = (None, None);
+    for which in 1..=2 {
+        let Some((psm, channel)) = accept_l2cap(stack, &listener, &configs, which).await else {
+            return;
+        };
+        let slot = if psm == L2CAP_PSM_CTRL {
+            &mut control
+        } else {
+            &mut data
+        };
+        if slot.replace(channel).is_some() {
+            defmt::warn!("[custom_task] Duplicate L2CAP PSM");
+            return;
+        }
+    }
+    let (Some(l2cap_control_channel), Some(l2cap_data_channel)) = (control, data) else {
         return;
     };
-    defmt::info!("[custom_task] L2CAP channel 1 accepted (control PSM 0x0080)");
-
-    let Some(l2cap_data_channel) =
-        accept_l2cap(stack, conn, &[L2CAP_PSM_DATA], &l2cap_data_config, 2).await
-    else {
-        return;
-    };
-    defmt::info!("[custom_task] L2CAP channel 2 accepted (data PSM 0x0081)");
 
     // L2CAP is independent of GATT: its accept path does not enforce GATT's encryption check.
     // Only a stored peer may issue commands or receive reports, including after pairing.
@@ -557,7 +573,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
 }
 
 async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capControlTxChannel,
 ) {
@@ -612,7 +628,7 @@ async fn control_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capDataTxChannel,
 ) {
@@ -653,7 +669,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelReader<'a, P>,
     rx_queue: &'static crate::ble::l2cap_bridge::L2capControlRxChannel,
 ) {
@@ -686,7 +702,7 @@ async fn control_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 }
 
 async fn data_rx_task<'a, C: trouble_host::Controller, P: PacketPool>(
-    stack: &'a trouble_host::Stack<'a, C, P>,
+    stack: &'a trouble_host::Stack<'_, C, P>,
     mut channel: trouble_host::l2cap::L2capChannelReader<'a, P>,
     rx_queue: &'static crate::ble::l2cap_bridge::L2capDataRxChannel,
 ) {
@@ -839,7 +855,14 @@ pub fn bond_slots() -> odyssey_protocol::List<
         settings::with_settings(|s| {
             for bond in s.bond_infos() {
                 let mut bd_addr = [0u8; 6];
-                bd_addr.copy_from_slice(bond.identity.bd_addr.raw());
+                bd_addr.copy_from_slice(bond.identity.addr.addr.raw());
+                if slots
+                    .0
+                    .iter()
+                    .any(|slot: &odyssey_protocol::control::BondSlot| slot.bd_addr == bd_addr)
+                {
+                    continue;
+                }
                 let _ = slots.0.push(odyssey_protocol::control::BondSlot {
                     bd_addr,
                     connected: connected.is_some_and(|peer| bond.identity.match_identity(&peer)),
@@ -863,6 +886,6 @@ pub fn is_connected() -> bool {
 pub fn is_connected_peer(bd_addr: [u8; 6]) -> bool {
     CONNECTED_PEER.lock(|peer| {
         peer.get()
-            .is_some_and(|identity| identity.bd_addr.raw() == bd_addr.as_slice())
+            .is_some_and(|identity| identity.addr.addr.raw() == bd_addr.as_slice())
     })
 }

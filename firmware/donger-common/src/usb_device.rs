@@ -5,8 +5,6 @@
 
 mod connection_state;
 
-use core::cmp::max;
-
 use defmt::info;
 use embassy_nrf::Peri;
 use embassy_nrf::interrupt::typelevel::Binding;
@@ -15,10 +13,9 @@ use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{Driver as NrfUsbDriver, Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
-use embassy_usb::driver::{Endpoint as _, EndpointError, EndpointIn as _, EndpointOut as _};
 use embassy_usb::msos::windows_version;
 use embassy_usb::types::StringIndex;
-use embassy_usb::{Config as UsbConfig, UsbDevice, msos};
+use embassy_usb::{Config as UsbConfig, EndpointOptions, UsbDevice, msos};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use self::connection_state::ConnectionState;
@@ -252,8 +249,8 @@ where
     ));
     let mut interface = function.interface();
     let mut alt = interface.alt_setting(0xFF, 0, 0, None);
-    let ep_out = alt.endpoint_bulk_out(None, 64);
-    let ep_in = alt.endpoint_bulk_in(None, 64);
+    let ep_out = alt.endpoint_bulk_out(None, endpoint_options());
+    let ep_in = alt.endpoint_bulk_in(None, endpoint_options());
     drop(function);
 
     let usb = builder.build();
@@ -371,47 +368,9 @@ impl embassy_usb::Handler for MyHandler {
     }
 }
 
-/// Reads through a short packet, including a ZLP after a full-size payload.
-/// An exact-fit payload still needs its terminating packet consumed; the
-/// endpoint reports overflow if that packet contains more data instead.
-///
-/// Since: Odyssey Desktop 0.7.0.
-pub async fn read_transfer<'d>(
-    ep: &mut Endpoint<'d, Out>,
-    buf: &mut [u8],
-) -> Result<usize, EndpointError> {
-    let max_packet = max(ep.info().max_packet_size, 1) as usize;
-    let mut offset = 0;
-
-    loop {
-        let n = ep.read(&mut buf[offset..]).await?;
-        offset += n;
-
-        if n < max_packet {
-            break;
-        }
-    }
-
-    Ok(offset)
-}
-
-/// Since: Odyssey Desktop 0.7.0.
-pub async fn write_transfer<'d>(
-    ep: &mut Endpoint<'d, In>,
-    payload: &[u8],
-    send_zlp: bool,
-) -> Result<(), EndpointError> {
-    let max_packet = max(ep.info().max_packet_size, 1) as usize;
-
-    for chunk in payload.chunks(max_packet) {
-        if !chunk.is_empty() {
-            ep.write(chunk).await?;
-        }
-    }
-
-    if send_zlp && payload.len() % max_packet == 0 {
-        ep.write(&[]).await?;
-    }
-
-    Ok(())
+/// Full-speed bulk endpoints keep the 64-byte packets the host tools expect.
+fn endpoint_options() -> EndpointOptions {
+    let mut options = EndpointOptions::new();
+    options.max_packet_size = Some(64);
+    options
 }

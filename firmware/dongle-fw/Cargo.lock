@@ -2468,3 +2468,8 @@ name = "zeroize"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+
+[[patch.unused]]
+name = "embassy-boot"
+version = "0.7.0"
+source = "git+https://github.com/Abrahamh08/embassy?rev=6956f911079b240f5928c7c367f2cb1bb2d6271f#6956f911079b240f5928c7c367f2cb1bb2d6271f"

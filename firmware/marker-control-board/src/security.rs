@@ -2,8 +2,18 @@ use embedded_storage_async::nor_flash::NorFlash;
 use odyssey_protocol::marker_control::ENROLLMENT_SECONDS;
 /// Since: Odyssey Desktop 0.7.4.
 pub const BOND_PAGE_SIZE: u32 = 4096;
+const MCB1: [u8; 4] = *b"MCB1";
+const MCB2: [u8; 4] = *b"MCB2";
 const RECORD_SIZE: usize = 92;
-const COMMITTED: [u8; 4] = *b"MCB1";
+
+/// Address kind of a BLE owner identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnerAddressKind {
+    /// Public identity address.
+    Public,
+    /// Random static identity address.
+    Random,
+}
 
 /// Since: Odyssey Desktop 0.7.4.
 #[expect(
@@ -15,6 +25,8 @@ pub struct OwnerBond {
     /// Since: Odyssey Desktop 0.7.4.
     pub address: [u8; 6],
     /// Since: Odyssey Desktop 0.7.4.
+    pub address_kind: Option<OwnerAddressKind>,
+    /// Since: Odyssey Desktop 0.7.4.
     pub ltk: [u8; 16],
     /// Since: Odyssey Desktop 0.7.4.
     pub irk: Option<[u8; 16]>,
@@ -22,10 +34,66 @@ pub struct OwnerBond {
     pub security_level: u8,
 }
 
+// Test assertions need Debug; keys stay out of the output.
+#[cfg(test)]
+impl core::fmt::Debug for OwnerBond {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OwnerBond")
+            .field("address", &self.address)
+            .field("address_kind", &self.address_kind)
+            .field("security_level", &self.security_level)
+            .field("has_irk", &self.irk.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl OwnerBond {
+    fn matches_address_key_security(&self, other: &Self) -> bool {
+        self.address == other.address
+            && self.ltk == other.ltk
+            && self.security_level == other.security_level
+    }
+
+    /// Compares persisted keys and peer address while ignoring unknown legacy address kind.
+    pub fn matches_key_material(&self, other: &Self) -> bool {
+        self.matches_address_key_security(other) && self.irk == other.irk
+    }
+
+    /// Migrates address kind only after encrypted authentication through a registered legacy alias.
+    pub fn migrate_address_kind(
+        &self,
+        candidate: Self,
+        encrypted: bool,
+        registered_alias: Option<&Self>,
+    ) -> Option<Self> {
+        let public_alias = self.address_kind.is_none()
+            && candidate.address_kind == Some(OwnerAddressKind::Public)
+            && candidate.irk.is_none()
+            && registered_alias.is_some_and(|alias| {
+                alias.address_kind == Some(OwnerAddressKind::Public)
+                    && alias.irk.is_none()
+                    && self.matches_address_key_security(alias)
+                    && candidate.matches_address_key_security(alias)
+            });
+        (encrypted
+            && candidate.address_kind.is_some()
+            && (self.matches_key_material(&candidate) || public_alias))
+            .then_some(Self {
+                irk: self.irk,
+                ..candidate
+            })
+    }
     /// Since: Odyssey Desktop 0.7.4.
     pub fn permits(&self, encrypted: bool, current: Option<&Self>) -> bool {
-        encrypted && current.is_some_and(|bond| bond == self)
+        encrypted
+            && current.is_some_and(|bond| {
+                (self.matches_key_material(bond)
+                    && (self.address_kind.is_none() || self.address_kind == bond.address_kind))
+                    || (self.address_kind.is_none()
+                        && bond.address_kind == Some(OwnerAddressKind::Public)
+                        && bond.irk.is_none()
+                        && self.matches_address_key_security(bond))
+            })
     }
 }
 
@@ -90,34 +158,60 @@ pub enum StoreError<E> {
 #[repr(align(4))]
 struct Record([u8; RECORD_SIZE]);
 
-fn encode(bond: OwnerBond, generation: u32) -> Record {
+fn encode(bond: OwnerBond, generation: u32) -> Option<Record> {
+    let kind_bit = match bond.address_kind? {
+        OwnerAddressKind::Public => 0,
+        OwnerAddressKind::Random => 0x80,
+    };
+    if !matches!(bond.security_level, 1..=2) {
+        return None;
+    }
     let mut bytes = [0xff; RECORD_SIZE];
     bytes[4..8].copy_from_slice(&generation.to_le_bytes());
     bytes[8..14].copy_from_slice(&bond.address);
-    bytes[14] = bond.security_level;
+    bytes[14] = bond.security_level | kind_bit;
     bytes[15] = u8::from(bond.irk.is_some());
     bytes[16..32].copy_from_slice(&bond.ltk);
     bytes[32..48].copy_from_slice(&bond.irk.unwrap_or([0; 16]));
     for index in 4..48 {
         bytes[index + 44] = !bytes[index];
     }
-    Record(bytes)
+    Some(Record(bytes))
 }
 
 fn decode(bytes: &[u8; RECORD_SIZE]) -> Option<(OwnerBond, u32)> {
-    if bytes[..4] != COMMITTED
-        || bytes[15] > 1
+    let address_kind = if bytes[..4] == MCB1 {
+        None
+    } else if bytes[..4] == MCB2 {
+        Some(if bytes[14] & 0x80 == 0 {
+            OwnerAddressKind::Public
+        } else {
+            OwnerAddressKind::Random
+        })
+    } else {
+        return None;
+    };
+    let security_level = if address_kind.is_some() {
+        if bytes[14] & 0x7c != 0 {
+            return None;
+        }
+        bytes[14] & 0x7f
+    } else {
+        bytes[14]
+    };
+    if bytes[15] > 1
         || (4..48).any(|index| bytes[index + 44] != !bytes[index])
-        || !matches!(bytes[14], 1..=2)
+        || !matches!(security_level, 1..=2)
     {
         return None;
     }
     Some((
         OwnerBond {
             address: bytes[8..14].try_into().ok()?,
+            address_kind,
             ltk: bytes[16..32].try_into().ok()?,
             irk: (bytes[15] == 1).then(|| bytes[32..48].try_into().unwrap()),
-            security_level: bytes[14],
+            security_level,
         },
         u32::from_le_bytes(bytes[4..8].try_into().ok()?),
     ))
@@ -177,13 +271,13 @@ impl<F: NorFlash> BondStore<F> {
         bond: OwnerBond,
         allowed: impl Fn() -> bool,
     ) -> Result<(), StoreError<F::Error>> {
-        if !matches!(bond.security_level, 1..=2) {
+        if !matches!(bond.security_level, 1..=2) || bond.address_kind.is_none() {
             return Err(StoreError::Verification);
         }
         let slot = 1 - self.slot;
         let address = self.start + slot as u32 * BOND_PAGE_SIZE;
         let generation = self.generation.wrapping_add(1);
-        let mut record = encode(bond, generation);
+        let mut record = encode(bond, generation).ok_or(StoreError::Verification)?;
         self.flash
             .erase(address, address + BOND_PAGE_SIZE)
             .await
@@ -204,7 +298,7 @@ impl<F: NorFlash> BondStore<F> {
             return Err(StoreError::Expired);
         }
         // Commit last: interrupted writes retain previous owner, never unwritten replacement.
-        record.0[..4].copy_from_slice(&COMMITTED);
+        record.0[..4].copy_from_slice(&MCB2);
         self.flash
             .write(address, &record.0[..4])
             .await
@@ -306,17 +400,127 @@ mod tests {
     fn bond(key: u8) -> OwnerBond {
         OwnerBond {
             address: [7; 6],
+            address_kind: Some(OwnerAddressKind::Random),
             ltk: [key; 16],
             irk: Some([9; 16]),
             security_level: 1,
         }
     }
+    fn committed_record(bond: OwnerBond, generation: u32) -> Record {
+        let mut record = encode(bond, generation).unwrap();
+        record.0[..4].copy_from_slice(&MCB2);
+        record
+    }
+
+    #[test]
+    fn legacy_record_keeps_unknown_address_kind() {
+        let mut record = committed_record(bond(1), 4);
+        record.0[14] = bond(1).security_level;
+        record.0[58] = !record.0[14];
+        record.0[..4].copy_from_slice(&MCB1);
+        let mut expected = bond(1);
+        expected.address_kind = None;
+        assert_eq!(decode(&record.0), Some((expected, 4)));
+    }
+
+    #[test]
+    fn version_two_preserves_both_address_kinds_and_rejects_unknown_values() {
+        for kind in [OwnerAddressKind::Public, OwnerAddressKind::Random] {
+            let mut owner = bond(1);
+            owner.address_kind = Some(kind);
+            let record = committed_record(owner, 5);
+            assert_eq!(decode(&record.0), Some((owner, 5)));
+        }
+        let mut invalid = committed_record(bond(1), 6);
+        invalid.0[14] = 0x41;
+        invalid.0[58] = !0x41;
+        assert_eq!(decode(&invalid.0), None);
+    }
+
+    #[test]
+    fn legacy_owner_migration_requires_encrypted_matching_keys_and_alias() {
+        let mut legacy = bond(1);
+        legacy.address_kind = None;
+        let mut random = bond(1);
+        random.address_kind = Some(OwnerAddressKind::Random);
+        assert_eq!(legacy.migrate_address_kind(random, false, None), None);
+        assert_eq!(
+            legacy.migrate_address_kind(random, true, None),
+            Some(random)
+        );
+
+        let mut public_alias = bond(1);
+        public_alias.address_kind = Some(OwnerAddressKind::Public);
+        public_alias.irk = None;
+        assert_eq!(legacy.migrate_address_kind(public_alias, true, None), None);
+        assert_eq!(
+            legacy.migrate_address_kind(public_alias, true, Some(&public_alias)),
+            Some(OwnerBond {
+                irk: legacy.irk,
+                ..public_alias
+            })
+        );
+        assert_eq!(
+            legacy.migrate_address_kind(bond(2), true, Some(&public_alias)),
+            None
+        );
+        let mut unregistered = public_alias;
+        unregistered.address = [6; 6];
+        assert_eq!(
+            legacy.migrate_address_kind(public_alias, true, Some(&unregistered)),
+            None
+        );
+    }
+
+    #[test]
+    fn encrypted_legacy_owner_migration_persists_recovered_address_kind_and_irk() {
+        let flash = Flash {
+            bytes: [0xff; 8192],
+            fail_commit: false,
+        };
+        let mut store = run(BondStore::load(flash, 0)).unwrap();
+        run(store.persist(bond(1), || true)).unwrap();
+        store.flash.bytes[14] = bond(1).security_level;
+        store.flash.bytes[58] = !store.flash.bytes[14];
+        store.flash.bytes[..4].copy_from_slice(&MCB1);
+        let mut store = run(BondStore::load(store.flash, 0)).unwrap();
+        let legacy = store.owner().unwrap();
+        assert_eq!(legacy.address_kind, None);
+        let mut public_alias = bond(1);
+        public_alias.address_kind = Some(OwnerAddressKind::Public);
+        public_alias.irk = None;
+        let migrated = legacy
+            .migrate_address_kind(public_alias, true, Some(&public_alias))
+            .unwrap();
+        assert_eq!(migrated.irk, legacy.irk);
+        run(store.persist(migrated, || true)).unwrap();
+        let expected = OwnerBond {
+            irk: legacy.irk,
+            ..public_alias
+        };
+        assert_eq!(
+            run(BondStore::load(store.flash, 0)).unwrap().owner(),
+            Some(expected)
+        );
+    }
+
     #[test]
     fn encryption_and_address_without_owner_key_never_authorize() {
         assert!(!bond(1).permits(false, Some(&bond(1))));
         assert!(!bond(1).permits(true, None));
         assert!(!bond(1).permits(true, Some(&bond(2))));
         assert!(bond(1).permits(true, Some(&bond(1))));
+
+        let mut legacy = bond(1);
+        legacy.address_kind = None;
+        let mut public_alias = bond(1);
+        public_alias.address_kind = Some(OwnerAddressKind::Public);
+        public_alias.irk = None;
+        assert!(legacy.permits(true, Some(&public_alias)));
+        assert!(!legacy.permits(false, Some(&public_alias)));
+        let mut impostor = public_alias;
+        impostor.ltk = [2; 16];
+        assert!(!legacy.permits(true, Some(&impostor)));
     }
     #[test]
     fn physical_window_reports_exact_countdown_boundaries() {
@@ -413,13 +617,13 @@ mod tests {
     }
     #[test]
     fn every_interrupted_record_prefix_rejects_new_owner() {
-        let mut record = encode(bond(2), 2);
+        let mut record = encode(bond(2), 2).unwrap();
         for count in 0..RECORD_SIZE - 4 {
             let mut torn = [0xff; RECORD_SIZE];
             torn[4..4 + count].copy_from_slice(&record.0[4..4 + count]);
             assert!(decode(&torn).is_none());
         }
-        record.0[..4].copy_from_slice(&COMMITTED);
+        record.0[..4].copy_from_slice(&MCB2);
         assert!(decode(&record.0).is_some());
         record.0[16] ^= 1;
         assert!(decode(&record.0).is_none());

@@ -51,7 +51,7 @@ unused_dependencies = "deny"
 unused_workspace_dependencies = "deny"
 
 [dependencies]
-embassy-nrf = { version = "0.9.0", features = ["nrf5340-app-s", "unstable-pac"] }
+embassy-nrf = { version = "0.11.0", features = ["nrf5340-app-s", "unstable-pac"] }
 embedded-storage = "0.3"
 better-boot = { path = "../better-boot" }
 defmt = { version = "0.3", optional = true }

@@ -9,7 +9,6 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use defmt::Format;
 use embassy_futures::join::join3;
 use embassy_futures::select::{Either, Either3, select, select3};
-use embassy_nrf::ppi::AnyConfigurableChannel;
 use embassy_nrf::spim::Error;
 use embassy_nrf::usb::{Endpoint, In, Out};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -19,8 +18,9 @@ use embedded_hal_bus::spi::DeviceError;
 use nalgebra::Vector3;
 use paj7025::Paj7025Error;
 
+use crate::Paj;
 use crate::fodtrigger::FodTrigger;
-use crate::image_mode::{ImageReceivers, ImageStart};
+use crate::image_mode::{ImageHandoff, ImageStart};
 use crate::odyssey_protocol::control::device::TransportMode;
 use crate::odyssey_protocol::image::{ImageCommand, ImageStatus, ImageStatusCode};
 use crate::odyssey_protocol::{
@@ -31,7 +31,6 @@ use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSend
 use crate::settings::{PajsSettings, Settings};
 use crate::usb::{self, UsbConfigHandle};
 use crate::utils::impl_from;
-use crate::{Paj, PajGroup};
 
 mod transport;
 
@@ -42,22 +41,19 @@ type Receiver<'a, T, const N: usize> = embassy_sync::channel::Receiver<'a, NoopR
 /// Everything object_mode needs from the board.
 ///
 /// Since: Odyssey Desktop 0.7.0.
-pub struct ObjectModeContext<
-    'd,
-    P: Platform,
-    C1: embassy_nrf::gpiote::Channel,
-    C2: embassy_nrf::gpiote::Channel,
-> {
+pub struct ObjectModeContext<'a, 'd, P: Platform> {
+    /// Near-field sensor.
+    ///
     /// Since: Odyssey Desktop 0.7.0.
-    pub paj7025r2_group: PajGroup<'d, C1>,
+    pub paj7025r2: &'a AsyncMutex<NoopRawMutex, Paj<'d>>,
+    /// Wide-field sensor.
+    ///
     /// Since: Odyssey Desktop 0.7.0.
-    pub paj7025r3_group: PajGroup<'d, C2>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fod_set_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fod_clr_ch: embassy_nrf::Peri<'d, AnyConfigurableChannel>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub timer: embassy_nrf::Peri<'d, P::Timer>,
+    pub paj7025r3: &'a AsyncMutex<NoopRawMutex, Paj<'d>>,
+    /// Frame-of-detection trigger for both sensors; started when tracking runs.
+    ///
+    /// Since: Unreleased.
+    pub fod: FodTrigger<'d, P::Timer>,
     /// Since: Odyssey Desktop 0.7.0.
     pub imu: P::Imu,
     /// Since: Odyssey Desktop 0.7.0.
@@ -69,7 +65,7 @@ pub struct ObjectModeContext<
     /// Since: Odyssey Desktop 0.7.0.
     pub usb_configured: UsbConfigHandle,
     /// Since: Odyssey Desktop 0.7.0.
-    pub settings: &'d mut Settings,
+    pub settings: &'a mut Settings,
     /// Since: Odyssey Desktop 0.7.0.
     pub l2cap_channels: P::L2capChannels,
     /// Transport that carries reports right now. Requests are accepted from every transport.
@@ -88,21 +84,22 @@ pub struct ObjectModeContext<
     ///
     /// Since: Odyssey Desktop 0.7.0.
     pub battery_charging: &'static AtomicBool,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub image_receivers: ImageReceivers,
     pub ota: atslite_common::ota::OtaHandle,
 }
 
+/// Runs tracking until the host requests image mode. The chosen sensor is then switched to
+/// image output, which releases its register SPI for good. The returned handoff lets the board
+/// drop both sensors and build the image receiver on the same peripheral and pins.
+///
+/// # Errors
+///
+/// Returns the sensor error that ended tracking.
+///
 /// Since: Odyssey Desktop 0.7.0.
-pub async fn object_mode<
-    'd,
-    P: Platform,
-    C1: embassy_nrf::gpiote::Channel,
-    C2: embassy_nrf::gpiote::Channel,
->(
+pub async fn object_mode<P: Platform>(
     pid: u16,
-    mut ctx: ObjectModeContext<'d, P, C1, C2>,
-) -> Result<(), Paj7025Error<DeviceError<Error, Infallible>>> {
+    mut ctx: ObjectModeContext<'_, '_, P>,
+) -> Result<ImageHandoff<P::L2capChannels>, Paj7025Error<DeviceError<Error, Infallible>>> {
     defmt::info!("Entering Object Mode on {}", P::NAME);
     let pkt_writer = PacketWriter {
         snd: &mut ctx.usb_snd,
@@ -111,13 +108,13 @@ pub async fn object_mode<
     let pkt_channel = Channel::<Packet, 64>::new();
     let stream_infos = StreamInfos::new();
     let impact_settings = ImpactSettings::new(&ctx.settings.general);
-    let near = ctx.paj7025r2_group.0;
-    let wide = ctx.paj7025r3_group.0;
+    let near = ctx.paj7025r2;
+    let wide = ctx.paj7025r3;
 
     let a = usb_rcv_loop(
         pid,
-        ctx.paj7025r2_group.0,
-        ctx.paj7025r3_group.0,
+        near,
+        wide,
         &stream_infos,
         pkt_channel.sender(),
         &mut pkt_rcv,
@@ -148,15 +145,7 @@ pub async fn object_mode<
         &stream_infos,
         &impact_settings,
     );
-    let d = obj_loop(
-        ctx.paj7025r2_group,
-        ctx.paj7025r3_group,
-        ctx.fod_set_ch,
-        ctx.fod_clr_ch,
-        ctx.timer,
-        pkt_channel.sender(),
-        &stream_infos,
-    );
+    let d = obj_loop(near, wide, ctx.fod, pkt_channel.sender(), &stream_infos);
     let e = battery_loop(
         pkt_channel.sender(),
         &stream_infos,
@@ -173,18 +162,23 @@ pub async fn object_mode<
     };
     // select3 has dropped tracking, register request handling and FOD before
     // the irreversible sensor transition. No sensor-register task survives it.
-    crate::image_mode::run(
-        near,
-        wide,
-        ctx.image_receivers,
-        ctx.usb_snd,
-        ctx.usb_rcv,
-        ctx.usb_configured,
+    let sensor = if start.config.camera == odyssey_protocol::Port::Nf {
+        near
+    } else {
+        wide
+    };
+    let prepared = crate::image_mode::prepare(&mut *sensor.lock().await, start.config.camera)
+        .await
+        .is_ok();
+    Ok(ImageHandoff {
         start,
-        &ctx.l2cap_channels,
-        ctx.ota,
-    )
-    .await
+        prepared,
+        usb_snd: ctx.usb_snd,
+        usb_rcv: ctx.usb_rcv,
+        usb_configured: ctx.usb_configured,
+        l2cap_channels: ctx.l2cap_channels,
+        ota: ctx.ota,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -193,10 +187,10 @@ enum PacketSource {
     Ble,
 }
 
-async fn usb_rcv_loop<L: L2capChannels>(
+async fn usb_rcv_loop<'d, L: L2capChannels>(
     pid: u16,
-    paj7025r2: &AsyncMutex<NoopRawMutex, Paj>,
-    paj7025r3: &AsyncMutex<NoopRawMutex, Paj>,
+    paj7025r2: &AsyncMutex<NoopRawMutex, Paj<'d>>,
+    paj7025r3: &AsyncMutex<NoopRawMutex, Paj<'d>>,
     stream_infos: &StreamInfos,
     pkt_snd: Sender<'_, Packet, 64>,
     pkt_rcv: &mut PacketReader<'_>,
@@ -213,324 +207,342 @@ async fn usb_rcv_loop<L: L2capChannels>(
     set_ble_name: fn(&str),
     data_mode: fn() -> TransportMode,
 ) -> Result<ImageStart, Paj7025Error<DeviceError<Error, Infallible>>> {
-    loop {
-        // Requests are taken from every transport whichever one carries reports, so neither is
-        // parked on a transport choice that has gone stale.
-        let (src, pkt) = match select3(
-            async {
-                loop {
-                    match pkt_rcv.wait_for_packet().await {
-                        Ok(pkt) => break pkt,
-                        Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
-                            defmt::debug!("USB endpoint disabled; waiting for a host...");
-                            usb_configured.wait_until_active().await;
-                            defmt::debug!("USB host attached; resuming packet handling");
-                        }
-                        Err(e) => {
-                            defmt::error!("Failed to read USB packet: {}", e);
-                            embassy_time::Timer::after_millis(100).await;
-                        }
-                    }
+    // A cancelled USB read loses the packets the driver already copied, so the reader runs for
+    // the whole loop and hands complete packets over through `inbox`.
+    let inbox = Channel::<Packet, 1>::new();
+    let usb_reader = async {
+        loop {
+            match pkt_rcv.wait_for_packet().await {
+                Ok(pkt) => inbox.send(pkt).await,
+                Err(WaitForPacketError::Usb(EndpointError::Disabled)) => {
+                    defmt::debug!("USB endpoint disabled; waiting for a host...");
+                    usb_configured.wait_until_active().await;
+                    defmt::debug!("USB host attached; resuming packet handling");
                 }
-            },
-            l2cap_channels.control_rx().receive(),
-            l2cap_channels.data_rx().receive(),
-        )
-        .await
-        {
-            Either3::First(pkt) => (PacketSource::Usb, pkt),
-            Either3::Second(pkt) => (PacketSource::Ble, pkt),
-            Either3::Third(pkt) => (PacketSource::Ble, pkt),
-        };
-        let ble_generation =
-            matches!(src, PacketSource::Ble).then(|| l2cap_channels.session_generation());
+                Err(e) => {
+                    defmt::error!("Failed to read USB packet: {}", e);
+                    embassy_time::Timer::after_millis(100).await;
+                }
+            }
+        }
+    };
+    let handler = async {
+        loop {
+            // Requests are taken from every transport whichever one carries reports, so neither is
+            // parked on a transport choice that has gone stale.
+            let (src, pkt) = match select3(
+                inbox.receive(),
+                l2cap_channels.control_rx().receive(),
+                l2cap_channels.data_rx().receive(),
+            )
+            .await
+            {
+                Either3::First(pkt) => (PacketSource::Usb, pkt),
+                Either3::Second(pkt) => (PacketSource::Ble, pkt),
+                Either3::Third(pkt) => (PacketSource::Ble, pkt),
+            };
+            let ble_generation =
+                matches!(src, PacketSource::Ble).then(|| l2cap_channels.session_generation());
 
-        let mut reset_after_reply = false;
-        let response = match pkt.data {
-            PacketData::WriteRegister(register) => {
-                let paj = match register.port {
-                    odyssey_protocol::Port::Nf => paj7025r2,
-                    odyssey_protocol::Port::Wf => paj7025r3,
-                };
-                let mut paj = paj.lock().await;
-                paj.write_register(register.bank, register.address, &[register.data])
-                    .await?;
-                paj.ll
-                    .control()
-                    .bank_0()
-                    .bank_0_sync_updated_flag()
-                    .write_async(|x| x.set_value(1))
-                    .await?;
-                paj.ll
-                    .control()
-                    .bank_1()
-                    .bank_1_sync_updated_flag()
-                    .write_async(|x| x.set_value(1))
-                    .await?;
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
-            }
-            PacketData::ReadRegister(register) => {
-                defmt::debug!("[app] ReadRegister: acquiring paj lock");
-                let paj = match register.port {
-                    odyssey_protocol::Port::Nf => paj7025r2,
-                    odyssey_protocol::Port::Wf => paj7025r3,
-                };
-                let mut paj = paj.lock().await;
-                defmt::debug!(
-                    "[app] ReadRegister: lock acquired, reading bank={}, addr={}",
-                    register.bank,
-                    register.address
-                );
-                let mut data: [u8; 1] = [0];
-                paj.read_register(register.bank, register.address, &mut data)
-                    .await?;
-                defmt::debug!("[app] ReadRegister: read complete, data={}", data[0]);
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::ReadRegisterResponse(ReadRegisterResponse {
-                        bank: register.bank,
-                        address: register.address,
-                        data: data[0],
-                    }),
-                })
-            }
-            PacketData::WriteConfig(config) => {
-                let mut wire_config: wire::GeneralConfig = config.into();
-                // Round accel_odr to the nearest rate this platform's sensor supports.
-                if let wire::GeneralConfig::AccelConfig(ref mut ac) = wire_config {
-                    ac.accel_odr = round_accel_odr(ac.accel_odr);
-                }
-                settings.general.set_general_config(&wire_config);
-                // imu_loop reads the impact settings through atomics.
-                match &wire_config {
-                    wire::GeneralConfig::ImpactThreshold(v) => impact_settings.set_threshold(*v),
-                    wire::GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
-                    _ => {}
-                }
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
-            }
-            PacketData::ReadConfig(kind) => {
-                defmt::info!("[app] building ReadConfig response for {:?}", kind);
-                let wire_config = match kind {
-                    ConfigKind::ImpactThreshold => {
-                        wire::GeneralConfig::ImpactThreshold(settings.general.impact_threshold)
-                    }
-                    ConfigKind::SuppressMs => {
-                        wire::GeneralConfig::SuppressMs(settings.general.suppress_ms)
-                    }
-                    ConfigKind::AccelConfig => {
-                        wire::GeneralConfig::AccelConfig(settings.general.accel_config.into())
-                    }
-                    ConfigKind::GyroConfig => {
-                        wire::GeneralConfig::GyroConfig(settings.general.gyro_config.clone())
-                    }
-                    ConfigKind::CameraModelNf => {
-                        wire::GeneralConfig::CameraModelNf(settings.general.camera_model_nf.clone())
-                    }
-                    ConfigKind::CameraModelWf => {
-                        wire::GeneralConfig::CameraModelWf(settings.general.camera_model_wf.clone())
-                    }
-                    ConfigKind::StereoIso => {
-                        wire::GeneralConfig::StereoIso(settings.general.stereo_iso.clone())
-                    }
-                };
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::ReadConfigResponse(wire_config.into()),
-                })
-            }
-            PacketData::FlashSettings() => {
-                defmt::info!(
-                    "[app] FlashSettings received. Current impact_threshold={}, suppress_ms={}",
-                    settings.general.impact_threshold,
-                    settings.general.suppress_ms
-                );
-                settings.pajs = PajsSettings::read_from_pajs(
-                    &mut *paj7025r2.lock().await,
-                    &mut *paj7025r3.lock().await,
-                )
-                .await?;
-                settings.write();
-                defmt::info!("[app] FlashSettings: settings written to flash");
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
-            }
-            PacketData::ReadProp(kind) => {
-                let prop = match kind {
-                    PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
-                    PropKind::ProductId => Props::ProductId(pid),
-                    PropKind::Name => Props::Name(settings.general.name.clone().into()),
-                    PropKind::Version => Props::Version(odyssey_protocol::Version::new(version)),
-                    PropKind::NetCoreRelease => Props::NetCoreRelease(netcore_release()),
-                    PropKind::BootloaderVersion => Props::BootloaderVersion(bootloader_version()),
-                };
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::ReadPropResponse(prop),
-                })
-            }
-            PacketData::StreamUpdate(s) => {
-                use odyssey_protocol::StreamUpdateAction as S;
-                match s.action {
-                    S::Enable => stream_infos.enable(pkt.id, s.packet_id),
-                    S::Disable => stream_infos.disable(s.packet_id),
-                    S::DisableAll => stream_infos.disable_all(),
-                }
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
-            }
-            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Object) => {
-                settings.transient.mode = odyssey_protocol::legacy::Mode::Object;
-                settings.transient_write();
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::Ack(),
-                })
-            }
-            PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Image) => Some(Packet {
-                id: pkt.id,
-                data: PacketData::ImageStatus(ImageStatus {
-                    generation: 0,
-                    status: ImageStatusCode::Unsupported,
-                }),
-            }),
-            PacketData::ImageCommand(command) => {
-                let (generation, status) = match command {
-                    ImageCommand::Renew { .. } => continue,
-                    ImageCommand::Start { generation, config }
-                        if !(1..=15).contains(&config.fps) =>
-                    {
-                        (generation, ImageStatusCode::CaptureError)
-                    }
-                    ImageCommand::Start { generation, config }
-                        if matches!(src, PacketSource::Usb)
-                            && data_mode() == TransportMode::Usb =>
-                    {
-                        return Ok(ImageStart {
-                            id: pkt.id,
-                            generation,
-                            config,
-                        });
-                    }
-                    ImageCommand::Start { generation, .. } => {
-                        (generation, ImageStatusCode::UsbRequired)
-                    }
-                    ImageCommand::Stop { generation } => (
-                        generation,
-                        if matches!(src, PacketSource::Usb) {
-                            ImageStatusCode::Stopped
-                        } else {
-                            ImageStatusCode::UsbRequired
-                        },
-                    ),
-                };
-                Some(Packet {
-                    id: pkt.id,
-                    data: PacketData::ImageStatus(ImageStatus { generation, status }),
-                })
-            }
-            PacketData::ReadVersion() => Some(Packet {
-                id: pkt.id,
-                data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(version)),
-            }),
-            PacketData::LegacyObjectReportRequest() => None,
-            PacketData::Ack() => None,
-            PacketData::ReadConfigResponse(_) => None,
-            PacketData::ReadPropResponse(_) => None,
-            PacketData::LegacyObjectReport(_) => None,
-            PacketData::LegacyCombinedMarkersReport(_) => None,
-            PacketData::MarkersReport(_) => None,
-            PacketData::AccelReport(_) => None,
-            PacketData::ImpactReport(_) => None,
-            PacketData::OtaRequest(frame) if matches!(src, PacketSource::Ble) => {
-                if let Some(reply) = ota.request(&frame).await {
-                    reset_after_reply = reply.reset;
+            let mut reset_after_reply = false;
+            let response = match pkt.data {
+                PacketData::WriteRegister(register) => {
+                    let paj = match register.port {
+                        odyssey_protocol::Port::Nf => paj7025r2,
+                        odyssey_protocol::Port::Wf => paj7025r3,
+                    };
+                    let mut paj = paj.lock().await;
+                    paj.write_register(register.bank, register.address, &[register.data])
+                        .await?;
+                    paj.ll
+                        .control()
+                        .bank_0()
+                        .bank_0_sync_updated_flag()
+                        .write_async(|x| x.set_value(1))
+                        .await?;
+                    paj.ll
+                        .control()
+                        .bank_1()
+                        .bank_1_sync_updated_flag()
+                        .write_async(|x| x.set_value(1))
+                        .await?;
                     Some(Packet {
                         id: pkt.id,
-                        data: PacketData::OtaStatus(reply.status),
+                        data: PacketData::Ack(),
                     })
-                } else {
-                    None
                 }
-            }
-            PacketData::OtaRequest(_) => None,
-            PacketData::OtaStatus(_) => None,
-            PacketData::MarkerHint(_) => None,
-            PacketData::DeviceControl(_) => None,
-            PacketData::Vendor(_, _) => None,
-            PacketData::ReadRegisterResponse(_) => None,
-            PacketData::ReadVersionResponse(_) => None,
-            PacketData::BatteryReport(_) => None,
-            PacketData::ImageStatus(_) => None,
-            PacketData::ImageChunk(_) => None,
-            PacketData::ImageObject(_) => None,
-            PacketData::SetDeviceName(name) => {
-                defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
-                set_ble_name(name.as_str());
-                settings.general.name = name.into();
-                settings.write();
-                Some(Packet {
+                PacketData::ReadRegister(register) => {
+                    defmt::debug!("[app] ReadRegister: acquiring paj lock");
+                    let paj = match register.port {
+                        odyssey_protocol::Port::Nf => paj7025r2,
+                        odyssey_protocol::Port::Wf => paj7025r3,
+                    };
+                    let mut paj = paj.lock().await;
+                    defmt::debug!(
+                        "[app] ReadRegister: lock acquired, reading bank={}, addr={}",
+                        register.bank,
+                        register.address
+                    );
+                    let mut data: [u8; 1] = [0];
+                    paj.read_register(register.bank, register.address, &mut data)
+                        .await?;
+                    defmt::debug!("[app] ReadRegister: read complete, data={}", data[0]);
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::ReadRegisterResponse(ReadRegisterResponse {
+                            bank: register.bank,
+                            address: register.address,
+                            data: data[0],
+                        }),
+                    })
+                }
+                PacketData::WriteConfig(config) => {
+                    let mut wire_config: wire::GeneralConfig = config.into();
+                    // Round accel_odr to the nearest rate this platform's sensor supports.
+                    if let wire::GeneralConfig::AccelConfig(ref mut ac) = wire_config {
+                        ac.accel_odr = round_accel_odr(ac.accel_odr);
+                    }
+                    settings.general.set_general_config(&wire_config);
+                    // imu_loop reads the impact settings through atomics.
+                    match &wire_config {
+                        wire::GeneralConfig::ImpactThreshold(v) => {
+                            impact_settings.set_threshold(*v)
+                        }
+                        wire::GeneralConfig::SuppressMs(v) => impact_settings.set_suppress_ms(*v),
+                        _ => {}
+                    }
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Ack(),
+                    })
+                }
+                PacketData::ReadConfig(kind) => {
+                    defmt::info!("[app] building ReadConfig response for {:?}", kind);
+                    let wire_config = match kind {
+                        ConfigKind::ImpactThreshold => {
+                            wire::GeneralConfig::ImpactThreshold(settings.general.impact_threshold)
+                        }
+                        ConfigKind::SuppressMs => {
+                            wire::GeneralConfig::SuppressMs(settings.general.suppress_ms)
+                        }
+                        ConfigKind::AccelConfig => {
+                            wire::GeneralConfig::AccelConfig(settings.general.accel_config.into())
+                        }
+                        ConfigKind::GyroConfig => {
+                            wire::GeneralConfig::GyroConfig(settings.general.gyro_config.clone())
+                        }
+                        ConfigKind::CameraModelNf => wire::GeneralConfig::CameraModelNf(
+                            settings.general.camera_model_nf.clone(),
+                        ),
+                        ConfigKind::CameraModelWf => wire::GeneralConfig::CameraModelWf(
+                            settings.general.camera_model_wf.clone(),
+                        ),
+                        ConfigKind::StereoIso => {
+                            wire::GeneralConfig::StereoIso(settings.general.stereo_iso.clone())
+                        }
+                    };
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::ReadConfigResponse(wire_config.into()),
+                    })
+                }
+                PacketData::FlashSettings() => {
+                    defmt::info!(
+                        "[app] FlashSettings received. Current impact_threshold={}, suppress_ms={}",
+                        settings.general.impact_threshold,
+                        settings.general.suppress_ms
+                    );
+                    settings.pajs = PajsSettings::read_from_pajs(
+                        &mut *paj7025r2.lock().await,
+                        &mut *paj7025r3.lock().await,
+                    )
+                    .await?;
+                    settings.write();
+                    defmt::info!("[app] FlashSettings: settings written to flash");
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Ack(),
+                    })
+                }
+                PacketData::ReadProp(kind) => {
+                    let prop = match kind {
+                        PropKind::Uuid => Props::Uuid(device_id[..6].try_into().unwrap()),
+                        PropKind::ProductId => Props::ProductId(pid),
+                        PropKind::Name => Props::Name(settings.general.name.clone().into()),
+                        PropKind::Version => {
+                            Props::Version(odyssey_protocol::Version::new(version))
+                        }
+                        PropKind::NetCoreRelease => Props::NetCoreRelease(netcore_release()),
+                        PropKind::BootloaderVersion => {
+                            Props::BootloaderVersion(bootloader_version())
+                        }
+                    };
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::ReadPropResponse(prop),
+                    })
+                }
+                PacketData::StreamUpdate(s) => {
+                    use odyssey_protocol::StreamUpdateAction as S;
+                    match s.action {
+                        S::Enable => stream_infos.enable(pkt.id, s.packet_id),
+                        S::Disable => stream_infos.disable(s.packet_id),
+                        S::DisableAll => stream_infos.disable_all(),
+                    }
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Ack(),
+                    })
+                }
+                PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Object) => {
+                    settings.transient.mode = odyssey_protocol::legacy::Mode::Object;
+                    settings.transient_write();
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::Ack(),
+                    })
+                }
+                PacketData::LegacyWriteMode(odyssey_protocol::legacy::Mode::Image) => {
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::ImageStatus(ImageStatus {
+                            generation: 0,
+                            status: ImageStatusCode::Unsupported,
+                        }),
+                    })
+                }
+                PacketData::ImageCommand(command) => {
+                    let (generation, status) = match command {
+                        ImageCommand::Renew { .. } => continue,
+                        ImageCommand::Start { generation, config }
+                            if !(1..=15).contains(&config.fps) =>
+                        {
+                            (generation, ImageStatusCode::CaptureError)
+                        }
+                        ImageCommand::Start { generation, config }
+                            if matches!(src, PacketSource::Usb)
+                                && data_mode() == TransportMode::Usb =>
+                        {
+                            return Ok(ImageStart {
+                                id: pkt.id,
+                                generation,
+                                config,
+                            });
+                        }
+                        ImageCommand::Start { generation, .. } => {
+                            (generation, ImageStatusCode::UsbRequired)
+                        }
+                        ImageCommand::Stop { generation } => (
+                            generation,
+                            if matches!(src, PacketSource::Usb) {
+                                ImageStatusCode::Stopped
+                            } else {
+                                ImageStatusCode::UsbRequired
+                            },
+                        ),
+                    };
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::ImageStatus(ImageStatus { generation, status }),
+                    })
+                }
+                PacketData::ReadVersion() => Some(Packet {
                     id: pkt.id,
-                    data: PacketData::SetDeviceNameResponse(
-                        odyssey_protocol::SetDeviceNameResult::Ok(),
-                    ),
-                })
-            }
-            PacketData::SetDeviceNameResponse(_) => None,
-        };
+                    data: PacketData::ReadVersionResponse(odyssey_protocol::Version::new(version)),
+                }),
+                PacketData::LegacyObjectReportRequest() => None,
+                PacketData::Ack() => None,
+                PacketData::ReadConfigResponse(_) => None,
+                PacketData::ReadPropResponse(_) => None,
+                PacketData::LegacyObjectReport(_) => None,
+                PacketData::LegacyCombinedMarkersReport(_) => None,
+                PacketData::MarkersReport(_) => None,
+                PacketData::AccelReport(_) => None,
+                PacketData::ImpactReport(_) => None,
+                PacketData::OtaRequest(frame) if matches!(src, PacketSource::Ble) => {
+                    if let Some(reply) = ota.request(&frame).await {
+                        reset_after_reply = reply.reset;
+                        Some(Packet {
+                            id: pkt.id,
+                            data: PacketData::OtaStatus(reply.status),
+                        })
+                    } else {
+                        None
+                    }
+                }
+                PacketData::OtaRequest(_) => None,
+                PacketData::OtaStatus(_) => None,
+                PacketData::MarkerHint(_) => None,
+                PacketData::DeviceControl(_) => None,
+                PacketData::Vendor(_, _) => None,
+                PacketData::ReadRegisterResponse(_) => None,
+                PacketData::ReadVersionResponse(_) => None,
+                PacketData::BatteryReport(_) => None,
+                PacketData::ImageStatus(_) => None,
+                PacketData::ImageChunk(_) => None,
+                PacketData::ImageObject(_) => None,
+                PacketData::SetDeviceName(name) => {
+                    defmt::info!("[object_mode] SetDeviceName: {:?}", name.as_str());
+                    set_ble_name(name.as_str());
+                    settings.general.name = name.into();
+                    settings.write();
+                    Some(Packet {
+                        id: pkt.id,
+                        data: PacketData::SetDeviceNameResponse(
+                            odyssey_protocol::SetDeviceNameResult::Ok(),
+                        ),
+                    })
+                }
+                PacketData::SetDeviceNameResponse(_) => None,
+            };
 
-        if let Some(r) = response
-            && r.id != 255
-        {
-            match src {
-                PacketSource::Usb => {
-                    pkt_snd.send(r).await;
-                }
-                PacketSource::Ble => {
-                    // Sensor I/O can span a disconnect/reconnect. Never hand
-                    // the new central a response belonging to the old session.
-                    if ble_generation != Some(l2cap_channels.session_generation()) {
-                        if reset_after_reply {
-                            atslite_common::settings::settings_wait_settled(
-                                embassy_time::Duration::from_millis(500),
-                            )
-                            .await;
-                            cortex_m::peripheral::SCB::sys_reset();
-                        }
-                        continue;
+            if let Some(r) = response
+                && r.id != 255
+            {
+                match src {
+                    PacketSource::Usb => {
+                        pkt_snd.send(r).await;
                     }
-                    if r.is_control() {
-                        if reset_after_reply {
-                            l2cap_channels.control_tx().send(r).await;
-                        } else if l2cap_channels.control_tx().try_send(r).is_err() {
-                            defmt::warn!("[app] Dropped control response - channel full");
+                    PacketSource::Ble => {
+                        // Sensor I/O can span a disconnect/reconnect. Never hand
+                        // the new central a response belonging to the old session.
+                        if ble_generation != Some(l2cap_channels.session_generation()) {
+                            if reset_after_reply {
+                                atslite_common::settings::settings_wait_settled(
+                                    embassy_time::Duration::from_millis(500),
+                                )
+                                .await;
+                                cortex_m::peripheral::SCB::sys_reset();
+                            }
+                            continue;
                         }
-                    } else if reset_after_reply {
-                        l2cap_channels.data_tx().send(r).await;
-                    } else if l2cap_channels.data_tx().try_send(r).is_err() {
-                        defmt::warn!("[app] Dropped data response - channel full");
+                        if r.is_control() {
+                            if reset_after_reply {
+                                l2cap_channels.control_tx().send(r).await;
+                            } else if l2cap_channels.control_tx().try_send(r).is_err() {
+                                defmt::warn!("[app] Dropped control response - channel full");
+                            }
+                        } else if reset_after_reply {
+                            l2cap_channels.data_tx().send(r).await;
+                        } else if l2cap_channels.data_tx().try_send(r).is_err() {
+                            defmt::warn!("[app] Dropped data response - channel full");
+                        }
                     }
                 }
             }
+            if reset_after_reply {
+                embassy_time::Timer::after_millis(100).await;
+                atslite_common::settings::settings_wait_settled(
+                    embassy_time::Duration::from_millis(500),
+                )
+                .await;
+                cortex_m::peripheral::SCB::sys_reset();
+            }
         }
-        if reset_after_reply {
-            embassy_time::Timer::after_millis(100).await;
-            atslite_common::settings::settings_wait_settled(embassy_time::Duration::from_millis(
-                500,
-            ))
-            .await;
-            cortex_m::peripheral::SCB::sys_reset();
-        }
+    };
+    match select(handler, usb_reader).await {
+        Either::First(result) => result,
+        Either::Second(()) => unreachable!("the USB reader never returns"),
     }
 }
 
@@ -686,35 +698,13 @@ async fn imu_loop<P: Platform>(
     }
 }
 
-async fn obj_loop<
-    T: embassy_nrf::timer::Instance,
-    C1: embassy_nrf::gpiote::Channel,
-    C2: embassy_nrf::gpiote::Channel,
->(
-    r2_group: PajGroup<'_, C1>,
-    r3_group: PajGroup<'_, C2>,
-    ppi_set: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
-    ppi_clr: embassy_nrf::Peri<'_, AnyConfigurableChannel>,
-    timer: embassy_nrf::Peri<'_, T>,
+async fn obj_loop<'d, T: embassy_nrf::timer::Instance>(
+    r2: &AsyncMutex<NoopRawMutex, Paj<'d>>,
+    r3: &AsyncMutex<NoopRawMutex, Paj<'d>>,
+    mut trigger: FodTrigger<'_, T>,
     pkt_snd: Sender<'_, Packet, 64>,
     stream_infos: &StreamInfos,
 ) -> Result<Infallible, Paj7025Error<DeviceError<Error, Infallible>>> {
-    let (r2, r2_fod, nf_ch) = r2_group;
-    let (r3, r3_fod, wf_ch) = r3_group;
-
-    let mut trigger = FodTrigger::new(
-        r2_fod,
-        r3_fod,
-        nf_ch,
-        wf_ch,
-        timer,
-        ppi_set,
-        ppi_clr,
-        embassy_nrf::timer::Frequency::F1MHz,
-        5,
-        2,
-    );
-
     // TODO: starting the trigger freezes everything when used with the raw USB driver.
     trigger.start();
 

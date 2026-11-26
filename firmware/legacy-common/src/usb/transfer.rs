@@ -27,7 +27,8 @@ impl<const N: usize> TransferReader<N> {
         }
     }
 
-    /// The endpoint's single-packet read must be cancellation-safe, as nRF USB is.
+    /// Reads one packet at a time. A cancelled read can lose the packet the driver already
+    /// copied, so keep one read future alive instead of racing it against other sources.
     ///
     /// Since: Odyssey Desktop 0.7.0.
     pub async fn read<'a>(
@@ -43,9 +44,10 @@ impl<const N: usize> TransferReader<N> {
             // terminating ZLP without incorrectly reporting overflow.
             let direct = !self.overflow && self.data.len() - self.len >= max_packet;
             let result = if direct {
-                ep.read(&mut self.data[self.len..]).await
+                ep.read_transfer(&mut self.data[self.len..self.len + max_packet])
+                    .await
             } else {
-                ep.read(&mut tail).await
+                ep.read_transfer(&mut tail[..max_packet]).await
             };
             let n = match result {
                 Ok(n) => n,
@@ -128,7 +130,7 @@ mod tests {
     }
 
     impl EndpointOut for EndpointStub {
-        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
+        async fn read_transfer(&mut self, buf: &mut [u8]) -> Result<usize, EndpointError> {
             poll_fn(
                 |_| match self.reads.pop_front().expect("unexpected endpoint read") {
                     Read::Packet(packet) => {

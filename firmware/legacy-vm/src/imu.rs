@@ -135,7 +135,7 @@ where
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M8;
     spim_config.mode = spim::MODE_0;
-    spim_config.bit_order = spim::BitOrder::MSB_FIRST;
+    spim_config.bit_order = spim::BitOrder::MsbFirst;
 
     let spi_device = legacy_common::utils::make_spi_dev(spi, irqs, pins, spim_config);
 

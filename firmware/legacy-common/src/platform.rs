@@ -2,13 +2,7 @@
 //! logic here stays board-independent.
 use core::future::Future;
 
-use embassy_nrf::usb::{Endpoint, In, Out};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex as AsyncMutex;
-
-use crate::Paj;
 use crate::odyssey_protocol::Packet;
-use crate::settings::Settings;
 
 /// One IMU sample.
 ///
@@ -145,32 +139,4 @@ pub trait Platform {
     fn bootloader_version() -> [u32; 3] {
         [0, 0, 0]
     }
-}
-
-/// Context passed to object_mode containing platform-specific state
-///
-/// Since: Odyssey Desktop 0.7.0.
-pub struct PlatformContext<P: Platform> {
-    /// Since: Odyssey Desktop 0.7.0.
-    pub paj7025r2: &'static AsyncMutex<NoopRawMutex, Paj>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub paj7025r3: &'static AsyncMutex<NoopRawMutex, Paj>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub imu: P::Imu,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub imu_int: P::ImuInterrupt,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub usb_snd: Endpoint<'static, In>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub usb_rcv: Endpoint<'static, Out>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub settings: &'static mut Settings,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub l2cap_channels: P::L2capChannels,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub timer: embassy_nrf::Peri<'static, P::Timer>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fod_set_ch: embassy_nrf::Peri<'static, embassy_nrf::ppi::AnyConfigurableChannel>,
-    /// Since: Odyssey Desktop 0.7.0.
-    pub fod_clr_ch: embassy_nrf::Peri<'static, embassy_nrf::ppi::AnyConfigurableChannel>,
 }
