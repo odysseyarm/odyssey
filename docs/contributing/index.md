@@ -254,10 +254,67 @@ versions use the next patch and include UTC timestamp plus source commit, such a
 prereleases. Desktop has no self-updater; users choose releases and install them
 manually.
 
+For lab-only verification, dispatch with `publish_release=false`; build,
+installer and GUI checks still run, but no GitHub release or website is published.
+
 The app reports full SemVer. Windows Installer accepts only three numeric
 version fields, so MSI upgrade checks use the numeric `X.Y.Z` core; firmware
 compatibility checks compare full SemVer, keeping a Nightly below matching
 Stable floor.
+
+### Windows desktop smoke
+
+`desktop-release.yml` runs hosted Windows MSI install/uninstall checks, then a
+hosted waiting job. The public repository has no registered lab runners. The
+waiting job accepts only the host broker's commit status for that exact workflow
+run and attempt, so a rerun cannot reuse an earlier success.
+
+Private `odysseyarm/odyssey-lab` owns the lab workflows. Its hosted guard
+validates the source run, the successful build and installer jobs, and the
+immutable artifact metadata. The host broker independently checks permissions
+and approval, downloads the exact artifact, verifies its REST SHA256 digest and
+extracts it safely. A read-only ISO supplies the package, the exact-source
+launcher and a single-run JIT runner configuration; the guest never receives a
+reusable registration token or personal access token.
+
+Windows needs an unlocked `odyssey-lab` desktop and healthy AMD hardware
+rendering. The separate `desktop-windows-gui` package holds an instrumented app
+and the Rust test executable; the launcher verifies both SHA256 hashes. Shipping
+online and full binaries do not enable automation. The same `gpui-goo` scenario
+drives native widgets locally and in QEMU, with no OCR or coordinate matching.
+The private control run uploads PNGs, widget snapshots and logs (including
+failure evidence) as `windows-gui-evidence-<run>-<attempt>`. The public waiting
+job links that run, and organization members can download the evidence there.
+Screenshots are not pixel baselines. Hosted MSI checks and simulator GUI checks
+make no USB, BLE or DFU claims.
+
+From repository root, run either smoke locally:
+
+```powershell
+./.github/scripts/windows-installer-smoke.ps1 -InstallerPath C:\path\Odyssey.msi
+./.github/scripts/windows-desktop-smoke.ps1 -PackagePath C:\path\windows-gui-package -OutputDirectory C:\path\evidence -RequireHardwareGpu
+```
+
+Build the Windows GUI package on Linux with
+`nix build .#desktop-windows-gui`; copy its complete output to the Windows lab.
+CI orchestrates lab runs; QEMU supplies interactive Windows and passed-through
+Radeon GPU. Physical HITL needs separately enrolled devices and exclusive
+ownership; simulator smoke does not substitute for hardware checks.
+
+#### Lab admission and hardware coverage
+
+Maintainer-authenticated pushes may run on an isolated Windows GUI worker.
+Other sources require maintainer approval tied to the exact source run attempt
+and immutable build artifact; changed attempts or artifacts need new approval.
+Fork CI runs on GitHub-hosted runners, not directly on lab machines.
+
+GUI evidence includes screenshots, semantic widget snapshots and application
+logs. This workflow does not establish physical USB, Bluetooth or DFU coverage:
+those checks require separately enrolled hardware and exclusive device leases.
+Missing hardware must fail a requested hardware check.
+
+Operator provisioning, access, maintenance and recovery procedures belong in
+the private infrastructure repository, not this contributor guide.
 
 ### NixOS package
 
@@ -363,8 +420,8 @@ These still live next to the code they describe:
 
 Calibration saves belong to the wizard task, not the confirmation UI. Confirming
 replacement removes that UI before persistence completes. Keep the accepted
-result and screen ID fixed for the duration of the save; a failed write must
-leave the review available for retry.
+result and screen ID fixed for the duration of the save; Back and Escape must
+not reset it. A failed write must leave the review available for retry.
 
 The headless save regression uses isolated simulator storage and covers
 replacement, remembered display settings and preservation after invalid input:
@@ -374,7 +431,33 @@ cargo nextest run -p odyssey-desktop --features sim \
   -E 'test(saving_replaces_a_screen_and_a_rejected_calibration_keeps_it)'
 ```
 
+Use a native display or Xvfb; ensure no other Odyssey hub is running. The test
+starts an owned desktop with `--sim --no-discovery --temp-config calibrate --demo --diagonal 55`,
+using isolated settings, `HOME` and runtime directories plus a random loopback
+secret. It scrolls the calibration page, edits real screen-size text, checks
+dialog Escape/Close behavior and visits sidebar Settings, Devices and Home.
+Artifacts go under `target/gui-smoke/<PID-nonce>/`: calibration and dialog
+screenshots, each destination page with its widget snapshot, and app logs.
+`ODYSSEY_GUI_EXECUTABLE` selects a separately packaged instrumented app;
+`ODYSSEY_GUI_ARTIFACTS` changes the artifact root. On failure, the test attempts
+to capture `failure.png` and `failure.json` while automation remains connected.
+Windows release workflow runs this scenario in the lab as a release gate.
+
+Screenshots are manual review artifacts, not pixel baselines. Open them for
+first-run review, intentional layout changes, or failures; passing behavior
+assertions do not establish visual correctness.
+
+```sh
+cargo nextest run --offline --locked -p odyssey-desktop \
+  --features ui-automation,sim --test gui_smoke --profile gui --run-ignored only
+```
+
 Calibration text beside icons needs `flex_1().min_w_0()` on the text column
 and `flex_shrink_0()` on the icon wrapper so paragraphs wrap within the card.
 Check “How big is the screen?” at 600px and 760px window widths, including
 the missing-display-size advice, setup hint and tape/card measurement prompt.
+
+Size inputs synchronize from the wizard only when its value changes. Rendering
+must not overwrite an input edit before its queued change event reaches the model.
+CLI calibration initialization runs on the foreground executor, outside platform
+callbacks that may hold an X11 display borrow.

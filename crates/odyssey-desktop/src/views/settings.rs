@@ -1,6 +1,7 @@
 use gpui::component::radio::Radio;
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
+    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    Styled as _, TestSupportExt as _, Window, div,
 };
 use odyssey_hub_server::firmware::FirmwareChannel;
 
@@ -106,5 +107,7 @@ impl Render for SettingsView {
             None,
             [updates.into_any_element(), about.into_any_element()],
         )
+        .id("settings")
+        .test_support()
     }
 }

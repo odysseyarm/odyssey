@@ -87,7 +87,7 @@
                         <Condition>OFFLINE_MODE = "1"</Condition>
                         <RegistryValue
                             Root="HKLM"
-                            Key="SOFTWARE\{{manufacturer}}\{{product_name}}"
+                            Key="SOFTWARE\[Manufacturer]\[ProductName]"
                             Name="OfflineMode"
                             Type="integer"
                             Value="1"
@@ -125,7 +125,7 @@
                         <RemoveFolder Id="RemoveProgramMenuSubfolder" On="uninstall" />
                         <RegistryValue
                             Root="HKCU"
-                            Key="Software\{{manufacturer}}\{{product_name}}"
+                            Key="Software\[Manufacturer]\[ProductName]"
                             Name="installed"
                             Type="integer"
                             Value="1"
@@ -145,7 +145,7 @@
                         WorkingDirectory="INSTALLDIR" />
                     <RegistryValue
                         Root="HKCU"
-                        Key="Software\{{manufacturer}}\{{product_name}}"
+                        Key="Software\[Manufacturer]\[ProductName]"
                         Name="desktop_shortcut"
                         Type="integer"
                         Value="1"

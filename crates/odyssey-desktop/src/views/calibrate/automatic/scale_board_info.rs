@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use gpui::{
     Context, ElementId, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
     KeyDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, anchored, deferred, div, point, px,
+    Styled as _, TestSupportExt as _, Window, anchored, deferred, div, point, px,
 };
 
 use super::ui::link_button;
@@ -177,6 +177,9 @@ impl Render for ScaleBoardInfo {
 
         let dialog = div()
             .id("scale-board-dialog")
+            .test_support()
+            .role(gpui::Role::Dialog)
+            .aria_label("The scale board (experimental)")
             .occlude()
             .flex()
             .flex_col()

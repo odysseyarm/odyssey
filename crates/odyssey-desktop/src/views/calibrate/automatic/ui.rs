@@ -4,7 +4,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, div, px,
+    StatefulInteractiveElement as _, Styled, TestSupportExt as _, Window, div, px,
 };
 
 use super::wizard::Wizard;
@@ -154,6 +154,9 @@ pub(super) fn plain_details(
     let mut el = div().text_sm().text_color(p.fg_muted).child(
         div()
             .id(ElementId::Name(format!("{id}-summary").into()))
+            .test_support()
+            .role(gpui::Role::Button)
+            .aria_label(summary)
             .cursor_pointer()
             .font_weight(FontWeight::MEDIUM)
             .child(format!(
@@ -195,15 +198,19 @@ pub(super) fn link_button(
     label: impl Into<SharedString>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let label = label.into();
     div()
         .id(id)
+        .test_support()
+        .role(gpui::Role::Button)
+        .aria_label(label.clone())
         .w_auto()
         .cursor_pointer()
         .text_base()
         .font_weight(FontWeight::MEDIUM)
         .text_color(p.accent_ink)
         .hover(Styled::underline)
-        .child(label.into())
+        .child(label)
         .on_click(on_click)
 }
 
