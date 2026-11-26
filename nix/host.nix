@@ -84,26 +84,40 @@ in
     inherit host tracking xtask;
   };
   checks = {
-    tracking-tests = craneLib.cargoTest (
+    tracking-tests = craneLib.cargoNextest (
       common.withPrivateSource trackingArgs
       // {
         cargoArtifacts = trackingArtifacts;
         cargoExtraArgs = "--locked --offline -p odyssey-sim -p odyssey-hub-server --features odyssey-hub-server/tracking-regression";
+        cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+        postCheck = ''
+          cargo test ''${CARGO_PROFILE:+--profile $CARGO_PROFILE} --locked --offline -p odyssey-sim -p odyssey-hub-server \
+            --features odyssey-hub-server/tracking-regression --doc
+        '';
       }
     );
-    host-tests = craneLib.cargoTest (
-      common.withPrivateSource hostArgs // { cargoArtifacts = hostArtifacts; }
+    host-tests = craneLib.cargoNextest (
+      common.withPrivateSource hostArgs
+      // {
+        cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+        cargoArtifacts = hostArtifacts;
+        postCheck = ''
+          cargo test ''${CARGO_PROFILE:+--profile $CARGO_PROFILE} --locked --offline --workspace \
+            --features odyssey-hub-server/tracking-regression,odyssey-desktop/sim,odyssey-vision-tool/sim --doc
+        '';
+      }
     );
     postcard-compatibility = craneLib.mkCargoDerivation (
       (common.mkArgs {
         pname = "odyssey-postcard-compatibility";
       })
       // {
+        nativeBuildInputs = [ pkgs.cargo-nextest ];
         cargoArtifacts = null;
         buildPhaseCargoCommand = ''
-          cargo test --locked --offline -p odyssey-protocol -p odyssey-protocol-macros \
+          cargo nextest run --test-threads "$NIX_BUILD_CORES" --locked --offline -p odyssey-protocol -p odyssey-protocol-macros \
             --features odyssey-protocol/schema,odyssey-protocol/minicbor --lib --tests
-          cargo test --locked --offline -p odyssey-protocol --no-default-features \
+          cargo nextest run --test-threads "$NIX_BUILD_CORES" --locked --offline -p odyssey-protocol --no-default-features \
             --features schema,serde-no-std,device,minicbor --lib --tests
           cargo clippy --locked --offline -p odyssey-protocol -p odyssey-protocol-macros \
             --features odyssey-protocol/schema,odyssey-protocol/minicbor \
@@ -127,7 +141,13 @@ in
         cargoClippyExtraArgs = "--bins -- -D warnings";
       }
     );
-    xtask-tests = craneLib.cargoTest (xtaskArgs // { cargoArtifacts = xtaskArtifacts; });
+    xtask-tests = craneLib.cargoNextest (
+      xtaskArgs
+      // {
+        cargoArtifacts = xtaskArtifacts;
+        cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+      }
+    );
     xtask-lint = craneLib.cargoClippy (
       xtaskArgs
       // {

@@ -377,7 +377,13 @@ let
     }
   );
 
-  uniffiTests = craneLib.cargoTest (uniffiHostArgs // { cargoArtifacts = uniffiHostDeps; });
+  uniffiTests = craneLib.cargoNextest (
+    uniffiHostArgs
+    // {
+      cargoArtifacts = uniffiHostDeps;
+      cargoNextestExtraArgs = "--test-threads $NIX_BUILD_CORES";
+    }
+  );
 
   # `pip install <wheel>; import ohc_uniffi` for the wheel this builder can run.
   wheelImport =

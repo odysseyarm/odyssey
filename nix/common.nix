@@ -16,6 +16,10 @@ let
         top = builtins.head (lib.splitString "/" relative);
         rustInput =
           path == toString src
+          || builtins.elem relative [
+            ".config"
+            ".config/nextest.toml"
+          ]
           || builtins.elem top [
             "crates"
             "firmware"

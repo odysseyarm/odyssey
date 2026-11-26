@@ -51,6 +51,7 @@ EVERYWHERE = (
     "flake.nix",
     "flake.lock",
     ".cargo",
+    ".config/nextest.toml",
     "nix/common.nix",
     "nix/default.nix",
     "nix/pkgs",
