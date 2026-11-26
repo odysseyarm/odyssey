@@ -261,25 +261,116 @@ Stable floor.
 
 ### Windows desktop smoke
 
-`desktop-release.yml` runs hosted Windows MSI install/uninstall smoke for online
-and full installers, then requires `windows-lab` environment approval before
-scheduling hardware UI smoke on `[self-hosted, Windows, X64, odyssey-windows-ui]`.
-Configure protected `windows-lab` environment reviewers, allowed branches/tags,
-and all-external-contributor pull-request approval before use. GitHub may limit
-environment reviewers to same-organization users; external approval needs
-organization-level configuration or maintainer approval. Workflow has no
-pull-request trigger, and self-hosted job never runs for pull requests. The
-runner needs an unlocked interactive desktop session logged in as `odyssey-lab`;
-the UI smoke requires healthy AMD hardware rendering. CI verifies the executable
-SHA256 against same-run `prebuilt.json` before launching. Hosted MSI validation
-does not exercise hardware; UI validation makes no USB, BLE or DFU claims.
+`desktop-release.yml` runs hosted Windows MSI install/uninstall checks, then a
+hosted waiting job. Public repository has no registered lab runners. The waiting
+job accepts only the host broker's commit status for that exact workflow run
+and attempt; a rerun cannot reuse an earlier success.
+
+Private `odysseyarm/odyssey-lab` owns lab workflows. Its hosted guard validates
+source run, successful build/installer jobs and immutable artifact metadata.
+Host broker independently checks permissions and approval, downloads the exact
+artifact, verifies its REST SHA256 digest and safely extracts it. Read-only ISO
+supplies the package, exact-source launcher and single-run JIT configuration;
+guest receives no reusable registration token or personal access token.
+
+Windows needs an unlocked `odyssey-lab` desktop and healthy AMD hardware rendering.
+Separate `desktop-windows-gui` package contains instrumented app and Rust test
+executable; launcher verifies both SHA256 hashes. Shipping online/full binaries
+do not enable automation. Same `gpui-goo` scenario drives native widgets locally
+and in QEMU; no OCR or coordinate matching. Private control run uploads PNGs,
+widget snapshots and logs as `windows-gui-evidence-<run>-<attempt>`, including
+failure evidence. Public waiting job links that run; organization members can
+download evidence there. Screenshots are not pixel baselines. Hosted MSI checks
+and simulator GUI checks make no USB, BLE or DFU claims.
 
 From repository root, run either smoke locally:
 
 ```powershell
 ./.github/scripts/windows-installer-smoke.ps1 -InstallerPath C:\path\Odyssey.msi
-./.github/scripts/windows-desktop-smoke.ps1 -ExecutablePath C:\path\odyssey-desktop.exe -OutputDirectory C:\path\evidence -RequireHardwareGpu
+./.github/scripts/windows-desktop-smoke.ps1 -PackagePath C:\path\windows-gui-package -OutputDirectory C:\path\evidence -RequireHardwareGpu
 ```
+
+Build the Windows GUI package on Linux with
+`nix build .#desktop-windows-gui`; copy its complete output to the Windows lab.
+CI orchestrates lab runs; QEMU supplies interactive Windows and passed-through
+Radeon GPU. Physical HITL needs separately enrolled devices and exclusive
+ownership; simulator smoke does not substitute for hardware checks.
+
+#### Lab admission and hardware isolation
+
+Admission and reset boundaries:
+
+- A push authenticated as a repository maintainer or administrator auto-authorizes
+  its exact source commit and build artifacts. Commit author/email is not evidence
+  of that permission. Scheduled runs and reruns must not inherit trust merely
+  because a maintainer clicked Run.
+- Other contributors need maintainer approval bound to the exact commit and
+  artifacts before HITL receives devices. Changed code or artifacts invalidate
+  that approval. Fork CI runs on GitHub-hosted runners.
+- GUI worker receives no USB/BLE devices. Physical HITL jobs are not enabled by
+  this workflow; they require separately enrolled hardware and exclusive leases
+  across Linux and Windows. Missing hardware must fail a requested hardware check.
+- Public workflows cannot address a lab runner directly. Private control repo
+  permits only maintainers to dispatch approval. Broker registers a unique
+  single-job JIT runner only after admission; host deletes registration on cleanup.
+- Each job starts from a sealed disk, NVRAM and TPM baseline. Disposable disk
+  overlay and copied firmware/TPM state are reset outside guest after completion,
+  failure or cancellation. Failed graceful shutdown quarantines worker rather
+  than reusing dirty state; host never forces power off.
+- QEMU runs unprivileged. Host firewall denies guest access to host services,
+  LAN and tailnet; host DNS/DHCP remain available. Public web traffic and NTP
+  remain allowed. No personal credentials or signing keys belong in baseline.
+
+For local USB, use libvirt passthrough of explicitly enrolled physical ports and
+serial numbers. Allowlist application and bootloader VID/PID transitions on that
+same device, including modes without a serial number; do not attach every matching
+VID/PID. Validate disconnect, DFU/recovery re-enumeration and return to application
+mode before claiming firmware HITL coverage.
+
+For remote USB, the source machine exports the device: `usbipd-win` for a Windows
+source, Linux USB/IP for a Linux source. A dedicated lab host imports it over a
+restricted tailnet connection and supplies the imported USB device to QEMU.
+Guest gets no general tailnet access. Remote export/rebind must follow the same
+enrolled port through bootloader transitions. Native local passthrough needs
+neither WSL nor USB/IP.
+
+Windows BLE tests own a dedicated USB Bluetooth adapter passed through in full.
+Host Bluetooth keeps its own adapter; no shared host HCI stack or desktop adapter
+takeover. Preserve the product's refusal of BLE pairing and exercise discovery,
+unpaired connections and reconnects against real devices. Guest reset cannot undo
+firmware, bonds or other persistent state changed on physical hardware.
+
+Interactive Windows lab console uses SPICE at host loopback `127.0.0.1:5930`.
+From a remote workstation, forward it through authenticated SSH:
+`ssh -N -L 5930:127.0.0.1:5930 kybrdgmr@nixos`, then open
+`spice://127.0.0.1:5930` in remote-viewer. Substitute the host's reachable SSH
+name or tailnet address. Clipboard, file transfer and viewer USB redirection
+are disabled. Existing VGA and Radeon passthrough are preserved; guest-agent
+installation and automatic guest resolution changes are not configured.
+
+Host starts `odyssey-lab.service` on boot, not an idle Windows desktop. Manual
+maintenance is mutually exclusive with controller:
+
+```sh
+sudo systemctl stop odyssey-lab
+sudo systemctl start odyssey-windows
+# Finish maintenance, shut Windows down, then resume controller:
+sudo systemctl stop odyssey-windows
+sudo systemctl start odyssey-lab
+```
+
+For a non-auto-admitted run, inspect its exact run attempt and GUI artifact
+digest, then dispatch private workflow as a maintainer:
+
+```sh
+gh workflow run windows-gui.yml -R odysseyarm/odyssey-lab \
+  -f source_run_id="$run" -f source_run_attempt="$attempt" \
+  -f approved_artifact_digest="$digest"
+```
+
+Approval applies only to that source run attempt and immutable artifact digest.
+Changing either requires new approval. Private repo scripts contain baseline
+installation/sealing commands and host controller CLI; never seal a running VM.
 
 ### NixOS package
 
@@ -400,10 +491,13 @@ Use a native display or Xvfb; ensure no other Odyssey hub is running. The test
 starts an owned desktop with `--sim --no-discovery --temp-config calibrate --demo --diagonal 55`,
 using isolated settings, `HOME` and runtime directories plus a random loopback
 secret. It scrolls the calibration page, edits real screen-size text, checks
-dialog Escape/Close behavior and visits sidebar Settings, Devices and Home. Artifacts go under
-`target/gui-smoke/<PID-nonce>/`: `scale-board.png`, `setup.png` and app logs.
-On failure, it attempts to capture `failure.png` and `failure.json` while the
-automation connection is available. This smoke test is not a release-workflow gate.
+dialog Escape/Close behavior and visits sidebar Settings, Devices and Home.
+Artifacts go under `target/gui-smoke/<PID-nonce>/`: calibration and dialog
+screenshots, each destination page with its widget snapshot, and app logs.
+`ODYSSEY_GUI_EXECUTABLE` selects a separately packaged instrumented app;
+`ODYSSEY_GUI_ARTIFACTS` changes the artifact root. On failure, the test attempts
+to capture `failure.png` and `failure.json` while automation remains connected.
+Windows release workflow runs this scenario in the lab as a release gate.
 
 Screenshots are manual review artifacts, not pixel baselines. Open them for
 first-run review, intentional layout changes, or failures; passing behavior

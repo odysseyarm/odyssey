@@ -178,6 +178,49 @@ let
     variant = "full";
     flags = "--no-default-features";
   };
+  gui = crane.mkCargoDerivation (
+    common.withPrivateSource appBase
+    // {
+      pnameSuffix = "-gui";
+      cargoArtifacts = appDeps;
+      nativeBuildInputs = appBase.nativeBuildInputs ++ scrub ++ [ pkgs.jq ];
+      buildPhaseCargoCommand = ''
+        cargo xwin test --release --locked --offline --target ${target} -p odyssey-desktop \
+          --no-default-features --features ui-automation,sim --test gui_smoke --no-run \
+          --message-format=json-render-diagnostics > cargo-test-output.json
+        jq -ers '[.[] | select(.reason == "compiler-artifact" and .target.name == "gui_smoke" and .executable != null) | .executable]
+          | if length == 1 then .[0] else error("expected exactly one gui_smoke executable") end' \
+          cargo-test-output.json > gui-smoke-executable.txt
+      '';
+      installPhaseCommand = ''
+        mkdir -p $out/app $out/tests
+        cp target/${target}/release/odyssey-desktop.exe $out/app/
+        cp "$(cat gui-smoke-executable.txt)" $out/tests/gui_smoke.exe
+      '';
+    }
+  );
+  desktopWindowsGui =
+    pkgs.runCommand "odyssey-desktop-windows-gui"
+      {
+        nativeBuildInputs = [
+          pkgs.jq
+          pkgs.llvmPackages.llvm
+        ];
+        allowedReferences = [ ];
+        meta.platforms = [ "x86_64-linux" ];
+      }
+      ''
+        mkdir -p $out/app $out/tests
+        cp ${gui}/app/odyssey-desktop.exe $out/app/
+        cp ${gui}/tests/gui_smoke.exe $out/tests/
+        for exe in $out/app/odyssey-desktop.exe $out/tests/gui_smoke.exe; do
+          llvm-readobj --file-headers "$exe" | grep -q IMAGE_FILE_MACHINE_AMD64 \
+            || { echo "$exe is not an x86-64 PE file" >&2; exit 1; }
+        done
+        cd $out
+        sha256sum app/odyssey-desktop.exe tests/gui_smoke.exe \
+          | jq -Rn '{sha256: ([inputs | capture("^(?<hash>[0-9a-f]{64})  (?<file>.+)$") | {key: .file, value: .hash}] | from_entries)}' > manifest.json
+      '';
 
   # ---- xtask (its own workspace and lockfile) ---------------------------------------
   xtaskCommon = common.mkArgs {
@@ -340,6 +383,7 @@ in
 {
   packages = {
     desktop-windows = desktopWindows;
+    desktop-windows-gui = desktopWindowsGui;
     desktop-windows-online = online;
     desktop-windows-full = full;
     xtask-windows = xtask;

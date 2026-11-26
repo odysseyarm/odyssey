@@ -11,6 +11,7 @@ struct Desktop {
     child: Child,
     client: Option<Client>,
     artifacts: PathBuf,
+    app_log: PathBuf,
 }
 
 impl Drop for Desktop {
@@ -27,6 +28,9 @@ impl Drop for Desktop {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if self.app_log.is_file() {
+            let _ = fs::copy(&self.app_log, self.artifacts.join("latest.log"));
+        }
     }
 }
 
@@ -67,8 +71,11 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
         .duration_since(UNIX_EPOCH)
         .expect("clock follows epoch")
         .as_nanos();
-    let artifacts = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/gui-smoke")
+    let artifacts = std::env::var_os("ODYSSEY_GUI_ARTIFACTS")
+        .map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/gui-smoke"),
+            PathBuf::from,
+        )
         .join(format!("{}-{nonce}", std::process::id()));
     fs::create_dir_all(&artifacts).expect("create artifact directory");
     // Unix socket paths must fit sockaddr_un even when the checkout path is long.
@@ -91,7 +98,11 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
     let address = listener.local_addr().expect("bound listener has address");
     drop(listener);
     let token = hex::encode(rand::random::<[u8; 32]>());
-    let child = Command::new(env!("CARGO_BIN_EXE_odyssey-desktop"))
+    let executable = std::env::var_os("ODYSSEY_GUI_EXECUTABLE").map_or_else(
+        || PathBuf::from(env!("CARGO_BIN_EXE_odyssey-desktop")),
+        PathBuf::from,
+    );
+    let child = Command::new(executable)
         .args([
             "--sim",
             "--no-discovery",
@@ -108,6 +119,11 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
         .env("XDG_STATE_HOME", temporary.path().join("state"))
         .env("XDG_RUNTIME_DIR", temporary.path())
         .env("LOCALAPPDATA", temporary.path().join("appdata"))
+        .env("ODYSSEY_OFFLINE", "1")
+        .env(
+            "ODYSSEY_FIRMWARE_PACK_DIR",
+            temporary.path().join("empty-firmware-pack"),
+        )
         .env("TMPDIR", temporary.path())
         .env("TMP", temporary.path())
         .env("TEMP", temporary.path())
@@ -120,6 +136,9 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
         child,
         client: None,
         artifacts,
+        app_log: temporary
+            .path()
+            .join("appdata/Odyssey.Desktop/logs/latest.log"),
     };
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
@@ -180,6 +199,9 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
     client.press("tab").expect("leave size input");
     let after = size_value(&client.snapshot().expect("read edited size")).to_owned();
     assert_eq!(after, "48", "native input edits reach wizard state");
+    client
+        .screenshot(&desktop.artifacts.join("calibration-size.png"))
+        .expect("capture edited calibration size");
     for _ in 0..8 {
         let nodes = client.snapshot().expect("read details position");
         if nodes
@@ -252,6 +274,15 @@ fn calibration_input_dialog_and_sidebar_use_real_widgets() {
             .wait_visible(&Selector::id(page), Duration::from_secs(5))
             .expect("destination page appears");
         pages.push(node.path.last().expect("page has native identity").clone());
+        client
+            .screenshot(&desktop.artifacts.join(format!("{page}.png")))
+            .expect("capture destination page");
+        fs::write(
+            desktop.artifacts.join(format!("{page}.json")),
+            serde_json::to_vec_pretty(&client.snapshot().expect("read destination widgets"))
+                .expect("serialize destination widgets"),
+        )
+        .expect("write destination widget snapshot");
     }
     assert_eq!(
         format!("size: {before} -> {after}\npages: {}", pages.join(" -> ")),
