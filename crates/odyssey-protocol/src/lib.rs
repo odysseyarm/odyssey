@@ -10,6 +10,9 @@
 //! Availability metadata changes no discriminants, payloads or negotiation.
 //! `DEVICE_PROTOCOL` versions packet contents, including packets nested inside
 //! mux messages. `MUX_PROTOCOL` versions only the mux envelope, independently.
+//!
+//! The [report transport design](https://github.com/odysseyarm/odyssey/blob/master/docs/contributing/report-transport.md)
+//! describes compact reports, USB/BLE packing, measurement timing and release compatibility.
 // Assumes a little-endian target.
 #![no_std]
 
