@@ -9,6 +9,7 @@
 //! tools/cargo-packager.exe     the version pinned in [workspace.metadata.bin] of Cargo.toml
 //! tools/xtask.exe              this program
 //! packager.json                [package.metadata.packager] of crates/odyssey-desktop
+//! THIRD_PARTY_NOTICES.txt      notices installed beside the application
 //! prebuilt.json                app version, packager version and the sha256 of every file above
 //! ```
 //!
@@ -87,7 +88,7 @@ fn verify(
     let app = format!("{}/odyssey-desktop.exe", variant.name());
     let config = "packager.json";
     let mut config_json = Vec::new();
-    for relative in [app.as_str(), PACKAGER, config] {
+    for relative in [app.as_str(), PACKAGER, config, "THIRD_PARTY_NOTICES.txt"] {
         let Some(expected) = manifest.sha256.get(relative) else {
             eros::bail!(
                 "{} does not list {relative}",
@@ -107,6 +108,10 @@ fn verify(
         .to_str()
         .context("the prebuilt directory is not UTF-8")?;
     config["binariesDir"] = binaries.into();
+    config["resources"] = serde_json::json!([{
+        "src": dir.join("THIRD_PARTY_NOTICES.txt").to_string_lossy(),
+        "target": "THIRD_PARTY_NOTICES.txt"
+    }]);
     Ok(config)
 }
 
@@ -141,12 +146,13 @@ mod tests {
 
     use super::{Manifest, Variant, pinned_packager, verify};
 
-    const FILES: [(&str, &[u8]); 5] = [
+    const FILES: [(&str, &[u8]); 6] = [
         ("online/odyssey-desktop.exe", b"online app"),
         ("full/odyssey-desktop.exe", b"full app"),
         ("tools/cargo-packager.exe", b"packager"),
         ("tools/xtask.exe", b"xtask"),
         ("packager.json", br#"{"productName":"Odyssey"}"#),
+        ("THIRD_PARTY_NOTICES.txt", b"notices"),
     ];
 
     /// A prebuilt directory as Nix lays it out, and the manifest that describes it.
@@ -182,6 +188,21 @@ mod tests {
             PathBuf::from(config["binariesDir"].as_str().unwrap()),
             dir.join("full")
         );
+    }
+    #[test]
+    fn missing_notice_is_refused() {
+        let (dir, mut manifest) = fixture("missing-notice");
+        manifest.sha256.remove("THIRD_PARTY_NOTICES.txt");
+        let error = check(Variant::Online, &dir, &manifest).unwrap_err();
+        assert!(format!("{error:?}").contains("THIRD_PARTY_NOTICES.txt"));
+    }
+
+    #[test]
+    fn a_tampered_notice_is_refused() {
+        let (dir, manifest) = fixture("tampered-notice");
+        fs::write(dir.join("THIRD_PARTY_NOTICES.txt"), b"notices altered").unwrap();
+        let error = check(Variant::Online, &dir, &manifest).unwrap_err();
+        assert!(format!("{error:?}").contains("THIRD_PARTY_NOTICES.txt"));
     }
 
     #[test]

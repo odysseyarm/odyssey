@@ -27,6 +27,7 @@ let
     lib.findFirst (lib.hasSuffix ".png") (throw "odyssey-desktop packager metadata has no png icon")
       packager.icons;
   icon = common.source + "/crates/odyssey-desktop/${iconPath}";
+  notices = ../THIRD_PARTY_NOTICES.txt;
   runtimeLibraries = (lib.filter (p: lib.getName p != "opencv") nativeLibraries) ++ [
     pkgs.freetype
     pkgs.stdenv.cc.cc.lib
@@ -64,6 +65,7 @@ let
         wrapProgram "$out/bin/${mainBinary}" \
           --prefix LD_LIBRARY_PATH : "${runtimeLibraryPath}"
         install -Dm644 ${icon} "$out/share/icons/hicolor/256x256/apps/${mainBinary}.png"
+        install -Dm644 ${notices} "$out/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt"
         mkdir -p "$out/share/applications"
         cat > "$out/share/applications/${mainBinary}.desktop" <<EOF
         [Desktop Entry]
@@ -87,6 +89,7 @@ in
         nativeBuildInputs = [ pkgs.patchelf ];
       }
       ''
+        test -s ${desktop}/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt
         exe=${desktop}/bin/.${mainBinary}-wrapped
         test "$(patchelf --print-interpreter "$exe")" = "${pkgs.glibc}/lib/ld-linux-x86-64.so.2"
         touch $out

@@ -27,6 +27,7 @@ let
     lib.findFirst (lib.hasSuffix ".png") (throw "odyssey-desktop packager metadata has no png icon")
       packager.icons;
   icon = common.source + "/crates/odyssey-desktop/${iconPath}";
+  notices = ../THIRD_PARTY_NOTICES.txt;
   imageName = "Odyssey-${version}-x86_64.AppImage";
 
   # The desktop app only: no opencv (nothing in its dependency graph links it),
@@ -150,7 +151,7 @@ let
     buildPhase = ''
       runHook preBuild
       python3 ${./appimage/bundle.py} --exe ${desktop}/bin/${mainBinary} --appdir AppDir \
-        --policy ${policy} --search ${lib.makeLibraryPath libs}
+        --policy ${policy} --search ${lib.makeLibraryPath libs} --notices ${notices}
       install -Dm755 ${appRun} AppDir/AppRun
       install -Dm644 ${desktopFile} AppDir/${mainBinary}.desktop
       install -Dm644 ${desktopFile} AppDir/usr/share/applications/${mainBinary}.desktop
@@ -213,6 +214,8 @@ let
           patchelf --set-rpath ${pkgs.glibc}/lib usr/bin/${mainBinary}
         reject host "host library must not be bundled" \
           cp ${pkgs.glibc}/lib/libc.so.6 usr/lib/libc.so.6
+        reject notices "missing or empty usr/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt" \
+          rm usr/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt
         touch $out
       '';
 in

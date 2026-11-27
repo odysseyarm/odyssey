@@ -86,6 +86,7 @@ description = "Odyssey PC application"
 icons = ["icons/icon.ico", "icons/icon.png"]
 # Not the sim-control helper bin.
 binaries = [{ path = "odyssey-desktop", main = true }]
+resources = [{ src = "../../THIRD_PARTY_NOTICES.txt", target = "THIRD_PARTY_NOTICES.txt" }]
 
 # The installer is built in two variants from one tree (see wix/main.wxs and
 # crates/xtask/src/desktop/orbbec.rs): online carries no camera SDK and the app

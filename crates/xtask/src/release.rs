@@ -950,7 +950,8 @@ fn publish_app(
                 "release", "create", tag, "--draft", "--target", head, "--title", &title,
                 "--notes", &notes,
             ])
-            .args(&assets),
+            .args(&assets)
+            .arg(cmd::root().join("THIRD_PARTY_NOTICES.txt")),
     )?;
     cmd::run(cmd::at(".", "gh").args(["release", "edit", tag, "--draft=false"]))?;
     println!("Published {tag}");

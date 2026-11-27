@@ -97,6 +97,7 @@ def main() -> None:
     ap.add_argument("--exe", required=True)
     ap.add_argument("--appdir", required=True)
     ap.add_argument("--policy", required=True)
+    ap.add_argument("--notices", required=True)
     ap.add_argument("--search", default="")
     a = ap.parse_args()
 
@@ -107,6 +108,11 @@ def main() -> None:
     lib_dir = os.path.join(a.appdir, "usr", "lib")
     os.makedirs(bin_dir, exist_ok=True)
     os.makedirs(lib_dir, exist_ok=True)
+    notices = os.path.join(
+        a.appdir, "usr", "share", "licenses", "odyssey", "THIRD_PARTY_NOTICES.txt"
+    )
+    os.makedirs(os.path.dirname(notices), exist_ok=True)
+    shutil.copyfile(a.notices, notices)
 
     exe = os.path.join(bin_dir, name)
     shutil.copyfile(a.exe, exe)
