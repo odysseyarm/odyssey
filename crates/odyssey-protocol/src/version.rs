@@ -14,10 +14,10 @@ use odyssey_protocol_macros::protocol_type;
 /// `NotFound` errors. Version 0.3.0 appends the `OtaRequest`, `OtaStatus`,
 /// `MarkerHint` and `DeviceControl` packets; OTA frames and marker hints no
 /// longer travel in vendor packets. From version 0.4.0 a unit sends the compact
-/// report forms of `crate::ble_data` on its BLE data channel, which a reader
-/// (dongle or Desktop) below 0.4.0 cannot decode.
+/// report forms as ordinary `PacketData` variants over USB and BLE. These packet
+/// variants are device protocol changes; the independent `MUX_PROTOCOL` covers
+/// only the mux envelope and does not version nested device packets.
 ///
-/// Since: Odyssey Desktop 0.6.0.
 pub const DEVICE_PROTOCOL: [u16; 3] = [0, 4, 0];
 
 /// Since: Odyssey Desktop 0.6.0.

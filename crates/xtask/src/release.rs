@@ -123,7 +123,7 @@ struct Component {
     /// Files outside the crate and its path dependencies that shape the image.
     extra: &'static [&'static str],
     role: Role,
-    wire: Option<Wire>,
+    wires: &'static [Wire],
     /// Bumped only by name.
     manual: bool,
 }
@@ -134,7 +134,7 @@ const fn component(name: &'static str, dir: &'static str, role: Role) -> Compone
         dir,
         extra: &[],
         role,
-        wire: None,
+        wires: &[],
         manual: false,
     }
 }
@@ -177,8 +177,7 @@ const COMPONENTS: [Component; COMPONENT_COUNT] = [
         )
     },
     Component {
-        extra: LITE1_MEMORY,
-        wire: Some(DEVICE_WIRE),
+        wires: &[DEVICE_WIRE],
         ..component("atslite1", "firmware/lite1", Role::App(AtsLite::Lite1))
     },
     part(
@@ -199,8 +198,7 @@ const COMPONENTS: [Component; COMPONENT_COUNT] = [
         )
     },
     Component {
-        extra: LEGACY_MEMORY,
-        wire: Some(DEVICE_WIRE),
+        wires: &[DEVICE_WIRE],
         ..component(
             "legacy-atslite1",
             "firmware/legacy-atslite",
@@ -219,7 +217,7 @@ const COMPONENTS: [Component; COMPONENT_COUNT] = [
         Role::Workflow,
     ),
     Component {
-        wire: Some(MUX_WIRE),
+        wires: &[DEVICE_WIRE, MUX_WIRE],
         ..component("dongle", "firmware/dongle-fw", Role::Dongle)
     },
     Component {
@@ -605,52 +603,71 @@ fn wire_constant(source: &str, name: &str) -> Option<[u64; 3]> {
     parts.try_into().ok()
 }
 
-/// Index of the oldest release from which every later one speaks at least
-/// `want`. `speaks` is oldest first; `None` marks a release without the wire
-/// constant.
-fn oldest_covering(want: [u64; 3], speaks: &[Option<[u64; 3]>]) -> Option<usize> {
+fn oldest_covering_all(
+    wants: &[[u64; 3]],
+    speaks: &[impl AsRef<[Option<[u64; 3]>]>],
+) -> Option<usize> {
     let covering = speaks
         .iter()
         .rev()
-        .take_while(|speaks| speaks.is_some_and(|speaks| speaks >= want))
+        .take_while(|versions| {
+            let versions = versions.as_ref();
+            versions.len() == wants.len()
+                && versions
+                    .iter()
+                    .zip(wants)
+                    .all(|(version, want)| version.is_some_and(|version| version >= *want))
+        })
         .count();
     (covering > 0).then(|| speaks.len() - covering)
 }
 
-/// The `min_desktop` of the row's next manifest entry: the oldest Desktop release
-/// that speaks its wire version, and never below its previous entry's floor,
-/// which records what the wire version cannot (an updater capability).
+/// The `min_desktop` of the row's next manifest entry: oldest Desktop release
+/// that speaks every listed wire version, never below previous entry's floor.
+/// That floor also records updater capability, which wire versions cannot.
 fn min_desktop(row: &Row, plan: &Plan) -> eros::Result<Option<String>> {
-    let Some(wire) = row.component.wire else {
+    let wires = row.component.wires;
+    if wires.is_empty() {
         return Ok(None);
-    };
-    let path = cmd::root().join(wire.file);
-    let source =
-        fs::read_to_string(&path).with_context(|| format!("could not read {}", path.display()))?;
-    let want = wire_constant(&source, wire.constant)
-        .with_context(|| format!("no {} in {}", wire.constant, wire.file))?;
+    }
+    let mut wants = Vec::with_capacity(wires.len());
+    for wire in wires {
+        let path = cmd::root().join(wire.file);
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("could not read {}", path.display()))?;
+        wants.push((
+            wire,
+            wire_constant(&source, wire.constant)
+                .with_context(|| format!("no {} in {}", wire.constant, wire.file))?,
+        ));
+    }
     let prefix = format!("{DESKTOP}-v");
     let mut desktops = Vec::new();
     for (tag, commit) in &plan.tags {
         let Some(version) = tag.strip_prefix(&prefix).and_then(parse_version) else {
             continue;
         };
-        let speaks = quiet("git", &["show", &format!("{commit}:{}", wire.file)])
-            .and_then(|text| wire_constant(&text, wire.constant));
+        let speaks = wants
+            .iter()
+            .map(|(wire, _)| {
+                quiet("git", &["show", &format!("{commit}:{}", wire.file)])
+                    .and_then(|text| wire_constant(&text, wire.constant))
+            })
+            .collect::<Vec<_>>();
         desktops.push((version, speaks));
     }
-    desktops.sort();
-    let speaks: Vec<Option<[u64; 3]>> = desktops.iter().map(|(_, speaks)| *speaks).collect();
-    let mut floor = if let Some(oldest) = oldest_covering(want, &speaks) {
+    desktops.sort_by(|left, right| left.0.cmp(&right.0));
+    let speaks = desktops
+        .iter()
+        .map(|(_, versions)| versions.as_slice())
+        .collect::<Vec<_>>();
+    let want_versions = wants.iter().map(|(_, want)| *want).collect::<Vec<_>>();
+    let mut floor = if let Some(oldest) = oldest_covering_all(&want_versions, &speaks) {
         desktops[oldest].0.clone()
     } else {
         let desktop = plan.row(DESKTOP)?;
         if desktop.state != State::Ready {
-            eros::bail!(
-                "no released Desktop speaks {} {}: bump {DESKTOP} first",
-                wire.constant,
-                dotted(&want)
-            );
+            eros::bail!("no released Desktop speaks required wire versions: bump {DESKTOP} first");
         }
         desktop.source.clone()
     };
@@ -1083,8 +1100,38 @@ mod tests {
             (&[exact, None, newer], Some(2)),
         ];
         for (speaks, floor) in cases {
-            assert_eq!(oldest_covering(want, speaks), floor, "{speaks:?}");
+            let releases: Vec<_> = speaks.iter().map(|version| [*version]).collect();
+            assert_eq!(oldest_covering_all(&[want], &releases), floor, "{speaks:?}");
         }
+    }
+
+    #[test]
+    fn nested_device_and_mux_versions_both_raise_the_desktop_floor() {
+        let wants = [[2, 0, 0], [1, 0, 0]];
+        let mux_unchanged = [
+            [Some([1, 0, 0]), Some([1, 0, 0])],
+            [Some([2, 0, 0]), Some([1, 0, 0])],
+        ];
+        assert_eq!(oldest_covering_all(&wants, &mux_unchanged), Some(1));
+
+        let wants = [[1, 0, 0], [2, 0, 0]];
+        let device_unchanged = [
+            [Some([1, 0, 0]), Some([1, 0, 0])],
+            [Some([1, 0, 0]), Some([2, 0, 0])],
+        ];
+        assert_eq!(oldest_covering_all(&wants, &device_unchanged), Some(1));
+    }
+
+    #[test]
+    fn combined_desktop_floor_uses_oldest_release_covering_both_versions() {
+        let wants = [[2, 0, 0], [2, 0, 0]];
+        let releases = [
+            [Some([2, 0, 0]), Some([1, 0, 0])],
+            [Some([2, 0, 0]), Some([2, 0, 0])],
+            [Some([3, 0, 0]), Some([3, 0, 0])],
+        ];
+        assert_eq!(oldest_covering_all(&wants, &releases), Some(1));
+        assert_eq!(oldest_covering_all(&wants, &releases[..1]), None);
     }
 
     #[test]

@@ -511,14 +511,21 @@ async fn run_connection(
         };
         loop {
             match data_reader.receive(stack, &mut rx_buf).await {
-                Ok(len) => match odyssey_protocol::ble_data::decode(&rx_buf[..len]) {
-                    Ok(packets) => {
-                        for pkt in packets {
-                            forward(pkt);
+                Ok(len) => {
+                    let mut remaining = &rx_buf[..len];
+                    while !remaining.is_empty() {
+                        match postcard::take_from_bytes::<odyssey_protocol::Packet>(remaining) {
+                            Ok((pkt, rest)) => {
+                                remaining = rest;
+                                forward(pkt);
+                            }
+                            Err(_) => {
+                                error!("Failed to deserialize L2CAP data packet");
+                                break;
+                            }
                         }
                     }
-                    Err(_) => error!("Failed to deserialize L2CAP data packet"),
-                },
+                }
                 Err(e) => {
                     error!("L2CAP data receive error: {:?}", defmt::Debug2Format(&e));
                     shutdown.signal(());

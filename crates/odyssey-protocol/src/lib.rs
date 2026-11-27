@@ -8,15 +8,14 @@
 //! characteristic has no wire-version counter of its own.
 //!
 //! Availability metadata changes no discriminants, payloads or negotiation.
+//! `DEVICE_PROTOCOL` versions packet contents, including packets nested inside
+//! mux messages. `MUX_PROTOCOL` versions only the mux envelope, independently.
 // Assumes a little-endian target.
 #![no_std]
 
 #[cfg(feature = "std")]
 extern crate std;
 
-/// Since: Unreleased.
-#[cfg(feature = "serde")]
-pub mod ble_data;
 #[cfg(feature = "minicbor")]
 mod cbor;
 mod config;
@@ -87,10 +86,14 @@ pub use register::{Port, ReadRegisterResponse, Register, WriteRegister};
 /// # Since
 ///
 /// - `AccelReport`: Odyssey Desktop 0.6.0.
-/// - `BatteryReport`: Odyssey Desktop 0.6.0.
-/// - `ImpactReport`: Odyssey Desktop 0.6.0.
+/// - `AccelBatch`: Unreleased.
+/// - `BatteryReport`, `ImpactReport`: Odyssey Desktop 0.6.0.
 /// - `MarkersReport`: Odyssey Desktop 0.7.5.
-pub use reports::{AccelReport, BatteryReport, ImpactReport, MarkersReport};
+/// - `SparseMarkersReport`: Unreleased.
+pub use reports::{
+    AccelBatch, AccelReport, BatteryReport, ImpactReport, MarkersReport, SparseMarkersError,
+    SparseMarkersReport,
+};
 /// Since: Odyssey Desktop 0.6.0.
 pub use stream_update::{StreamUpdate, StreamUpdateAction};
 /// Since: Odyssey Desktop 0.6.0.

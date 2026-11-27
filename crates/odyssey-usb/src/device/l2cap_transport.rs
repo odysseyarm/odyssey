@@ -1,12 +1,10 @@
 //! A unit reached over the host's own Bluetooth adapter, through `BlueZ` kernel sockets.
 //!
 //! The unit is the peripheral. It accepts two LE credit-based L2CAP channels, the
-//! control PSM first and the data PSM second, and carries one postcard-encoded
-//! [`Packet`] per SDU on each (`firmware/atslite-common/src/ble/peripheral.rs`,
-//! `custom_task`). From device protocol 0.4.0 its data SDUs may instead be the
-//! compact forms of `odyssey_protocol::ble_data`. It closes the link unless the central
-//! is a stored bond and the link is encrypted, so both sockets ask the kernel for
-//! medium security before they connect.
+//! control PSM first and the data PSM second, and carries postcard-encoded
+//! [`Packet`] records per SDU on each (`firmware/atslite-common/src/ble/peripheral.rs`,
+//! `custom_task`). It closes the link unless the central is a stored bond and the
+//! link is encrypted, so both sockets ask the kernel for medium security before connecting.
 
 use std::io;
 use std::sync::Arc;
@@ -339,14 +337,18 @@ async fn read_packets(
             Channel::Control => &control_buffer[..length],
             Channel::Data => &data_buffer[..length],
         };
-        let packets = match odyssey_protocol::ble_data::decode(sdu) {
-            Ok(packets) => packets,
-            Err(e) => {
-                warn!("l2cap {channel:?} SDU of {length} bytes is not a packet: {e}");
-                continue;
-            }
-        };
-        for packet in packets {
+        let mut remaining = sdu;
+        while !remaining.is_empty() {
+            let (packet, rest) = match take_packet(remaining) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    warn!(
+                        "l2cap {channel:?} SDU of {length} bytes has malformed packet data: {error}"
+                    );
+                    break;
+                }
+            };
+            remaining = rest;
             tokio::select! {
                 () = cancel.cancelled() => break 'read,
                 result = incoming_tx.send(packet) => if result.is_err() { break 'read; },
@@ -355,6 +357,10 @@ async fn read_packets(
     }
     cancel.cancel();
     info!("l2cap reader exits");
+}
+
+fn take_packet(sdu: &[u8]) -> std::result::Result<(Packet, &[u8]), postcard::Error> {
+    postcard::take_from_bytes(sdu)
 }
 
 async fn write_packets(
@@ -467,5 +473,44 @@ mod tests {
         let decoded: Packet = postcard::from_bytes(&sdu).expect("the SDU decodes");
         assert_eq!(decoded.id, 7);
         assert!(matches!(decoded.data, PacketData::ReadVersion()));
+    }
+
+    #[test]
+    fn one_sdu_carries_multiple_packets_and_rejects_truncated_trailing_data() {
+        let packets = [
+            Packet {
+                id: 6,
+                data: PacketData::Ack(),
+            },
+            Packet {
+                id: 7,
+                data: PacketData::ReadVersion(),
+            },
+        ];
+        let mut sdu: Vec<u8> = packets
+            .iter()
+            .flat_map(|packet| postcard::to_stdvec(packet).unwrap())
+            .collect();
+        sdu.push(0x80);
+        for expected in packets {
+            let (actual, rest) = take_packet(&sdu).unwrap();
+            assert_eq!(actual.id, expected.id);
+            assert!(matches!(
+                (actual.data, expected.data),
+                (PacketData::Ack(), PacketData::Ack())
+                    | (PacketData::ReadVersion(), PacketData::ReadVersion())
+            ));
+            sdu = rest.to_vec();
+        }
+        take_packet(&sdu).expect_err("truncated trailing variant");
+
+        let next_sdu = postcard::to_stdvec(&Packet {
+            id: 8,
+            data: PacketData::Ack(),
+        })
+        .unwrap();
+        let (next_packet, rest) = take_packet(&next_sdu).unwrap();
+        assert_eq!(next_packet.id, 8);
+        assert_eq!(rest, b"");
     }
 }

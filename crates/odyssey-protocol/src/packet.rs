@@ -12,6 +12,7 @@ use crate::{
 const VENDOR_START_ID: u8 = 0x80;
 /// Last id of the vendor range.
 const VENDOR_END_ID: u8 = 0xff;
+const VENDOR_DATA_CAPACITY: usize = 98;
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
@@ -271,6 +272,20 @@ pub enum PacketData {
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::postcard_only"))]
         crate::control::device::DeviceMsg,
     ),
+    /// Marker report encoded as occupied slots plus original-slot mask.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(32))]
+    SparseMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] crate::SparseMarkersReport),
+    /// Several acceleration reports sharing one packet id.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(33))]
+    AccelBatch(#[cfg_attr(feature = "minicbor", n(0))] crate::AccelBatch),
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -288,17 +303,17 @@ pub struct VendorData {
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "minicbor", n(1))]
-    pub data: [u8; Self::CAPACITY],
+    pub data: [u8; VENDOR_DATA_CAPACITY],
     /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "serde"))]
-    pub data: [u8; Self::CAPACITY],
+    pub data: [u8; VENDOR_DATA_CAPACITY],
 }
 
 impl VendorData {
     /// Payload bytes a vendor packet can carry.
     ///
     /// Since: Odyssey Desktop 0.7.0.
-    pub const CAPACITY: usize = 98;
+    pub const CAPACITY: usize = VENDOR_DATA_CAPACITY;
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -482,6 +497,16 @@ pub enum PacketType {
     /// Wire baseline: device protocol 0.3.0.
     #[cfg_attr(feature = "minicbor", n(34))]
     DeviceControl(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(35))]
+    SparseMarkersReport(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(36))]
+    AccelBatch(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -520,6 +545,8 @@ impl TryFrom<u8> for PacketType {
             0x1d => Ok(Self::OtaStatus()),
             0x1e => Ok(Self::MarkerHint()),
             0x1f => Ok(Self::DeviceControl()),
+            0x20 => Ok(Self::SparseMarkersReport()),
+            0x21 => Ok(Self::AccelBatch()),
             VENDOR_START_ID => Ok(Self::VendorStart()),
             VENDOR_END_ID => Ok(Self::VendorEnd()),
             n if (VENDOR_START_ID..VENDOR_END_ID).contains(&n) => Ok(Self::Vendor(n)),
@@ -563,6 +590,8 @@ impl From<PacketType> for u8 {
             PacketType::OtaStatus() => 0x1d,
             PacketType::MarkerHint() => 0x1e,
             PacketType::DeviceControl() => 0x1f,
+            PacketType::SparseMarkersReport() => 0x20,
+            PacketType::AccelBatch() => 0x21,
             PacketType::VendorStart() => VENDOR_START_ID,
             PacketType::VendorEnd() => VENDOR_END_ID,
             PacketType::Vendor(n) => n,
@@ -606,6 +635,8 @@ impl Packet {
             PacketData::OtaStatus(_) => PacketType::OtaStatus(),
             PacketData::MarkerHint(_) => PacketType::MarkerHint(),
             PacketData::DeviceControl(_) => PacketType::DeviceControl(),
+            PacketData::SparseMarkersReport(_) => PacketType::SparseMarkersReport(),
+            PacketData::AccelBatch(_) => PacketType::AccelBatch(),
         }
     }
 
@@ -646,6 +677,8 @@ impl Packet {
             | PacketData::LegacyCombinedMarkersReport(_)
             | PacketData::MarkersReport(_)
             | PacketData::AccelReport(_)
+            | PacketData::SparseMarkersReport(_)
+            | PacketData::AccelBatch(_)
             | PacketData::ImpactReport(_)
             | PacketData::ImageChunk(_)
             | PacketData::ImageObject(_)
@@ -746,8 +779,8 @@ mod tests {
     #[test]
     fn ids_outside_the_tables_are_rejected() {
         assert!(matches!(
-            PacketType::try_from(0x20),
-            Err(Error::UnrecognizedPacketId(0x20))
+            PacketType::try_from(0x22),
+            Err(Error::UnrecognizedPacketId(0x22))
         ));
         assert!(matches!(
             PacketType::try_from(0x7f),

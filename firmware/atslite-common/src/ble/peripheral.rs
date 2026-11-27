@@ -632,9 +632,7 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capDataTxChannel,
 ) {
-    defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
-    // Taken off the queue while collecting a batch it does not belong to.
     let mut held = None;
 
     loop {
@@ -642,57 +640,50 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
             Some(pkt) => pkt,
             None => tx_queue.receive().await,
         };
-
-        let encoded = if let odyssey_protocol::PacketData::AccelReport(report) = pkt.data {
-            // Only reports already waiting behind the radio join the batch, so batching
-            // delays none of them.
-            let mut batch = heapless::Vec::<_, { odyssey_protocol::ble_data::MAX_BATCH }>::new();
-            let _ = batch.push((pkt.id, report));
-            while !batch.is_full() {
-                match tx_queue.try_receive() {
-                    Ok(odyssey_protocol::Packet {
-                        id,
-                        data: odyssey_protocol::PacketData::AccelReport(report),
-                    }) => {
-                        let _ = batch.push((id, report));
-                    }
-                    Ok(other) => {
-                        held = Some(other);
-                        break;
-                    }
-                    Err(_) => break,
-                }
+        let mut used = match postcard::to_slice(&pkt, &mut tx_buf) {
+            Ok(encoded) => encoded.len(),
+            Err(e) => {
+                defmt::error!("[data_tx_task] Failed to serialize data packet: {:?}", e);
+                continue;
             }
-            odyssey_protocol::ble_data::encode_accel_batch(&batch, &mut tx_buf)
-        } else {
-            odyssey_protocol::ble_data::encode(&pkt, &mut tx_buf)
         };
 
-        match encoded.map(|len| &tx_buf[..len]) {
-            Ok(data) => {
-                match embassy_time::with_timeout(
-                    embassy_time::Duration::from_secs(5),
-                    channel.send(stack, data),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        defmt::warn!(
-                            "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
-                            defmt::Debug2Format(&e)
-                        );
-                        return;
-                    }
-                    Err(_) => {
-                        // Dropping a timed-out send may leave a partial SDU on the peer.
-                        defmt::warn!("[data_tx_task] L2CAP data send timeout, closing link");
-                        return;
+        // The 245-byte payload target accounts for the two-byte SDU length in one 247-byte
+        // PDU. A packet larger than target still travels alone; only queued packets are packed.
+        if used <= 245 {
+            loop {
+                let next = match tx_queue.try_receive() {
+                    Ok(next) => next,
+                    Err(_) => break,
+                };
+                match postcard::to_slice(&next, &mut tx_buf[used..]) {
+                    Ok(encoded) if used + encoded.len() <= 245 => used += encoded.len(),
+                    _ => {
+                        held = Some(next);
+                        break;
                     }
                 }
             }
+        }
+
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_secs(5),
+            channel.send(stack, &tx_buf[..used]),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                defmt::warn!(
+                    "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                return;
+            }
             Err(_) => {
-                defmt::error!("[data_tx_task] Failed to serialize data packet");
+                // Dropping a timed-out send may leave a partial SDU on the peer.
+                defmt::warn!("[data_tx_task] L2CAP data send timeout, closing link");
+                return;
             }
         }
     }

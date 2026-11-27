@@ -17,9 +17,8 @@ use crate::components::ui::{ButtonKind, button, card, card_title};
 use crate::runtime;
 use crate::theme::Palette;
 
-/// First device protocol whose units send reports a dongle below it cannot decode
-/// (`odyssey_protocol::ble_data`). A dongle reports the device protocol it was built with as
-/// its control protocol.
+/// First device protocol with compact report variants that require a matching dongle
+/// decoder. The dongle reports the device protocol used by its decoder on control.
 const COMPACT_REPORTS_PROTOCOL: [u16; 3] = [0, 4, 0];
 
 #[derive(Clone)]

@@ -5,6 +5,8 @@ fits together, how to build and test it, and how releases are made.
 
 - How tracking works inside the hub is documented in the private odyssey-cv
   repository, alongside the tracking code.
+- [Report transport](report-transport.md) describes typed reports, USB and BLE
+  packing, measurement time, protocol versions and update compatibility.
 
 ## Developer tools
 
@@ -121,7 +123,9 @@ Postcard compatibility is checked with `postcard-schema-ng` against
 records the established wire contract at gate introduction, not schemas recovered
 from every historical firmware image. Existing variant slots, field order, payload
 types and bounds stay fixed; enums may append variants, including nested enums.
-New variants still need peer-version or capability gates before transmission.
+Transmission of appended variants requires a compatibility policy: peer-version or
+capability gates, or the release-level minimum Desktop contract described in
+[report transport](report-transport.md#compatibility-and-updates).
 CBOR and packed legacy codecs retain their separate frozen-wire tests and proofs.
 
 ```sh
