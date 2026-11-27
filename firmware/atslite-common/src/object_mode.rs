@@ -1046,7 +1046,7 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
     stream_infos: &StreamInfos,
 ) {
     let mut last_impact_ts_micros: Option<u32> = None;
-    let mut integrator = odyssey_protocol::ImuIntegrator::default();
+    let mut integrator = odyssey_cv::imu::Integrator::default();
 
     loop {
         if !imu.has_pending_data() {
@@ -1066,12 +1066,16 @@ async fn imu_loop<I: ImuSensor, II: ImuInterrupt, const N: usize>(
         let ts_micros = imu_data.timestamp_micros;
 
         let report_hz = crate::settings::with_settings(|s| s.general.accel_config.accel_odr);
-        if let Some(report) = integrator.push(ts_micros, accel, gyro, report_hz)
+        if let Some(motion) = integrator.push(ts_micros, accel, gyro, report_hz)
             && stream_infos.imu.enabled()
         {
             let pkt = Packet {
                 id: stream_infos.imu.req_id(),
-                data: PacketData::AccelReport(report),
+                data: PacketData::AccelReport(odyssey_protocol::AccelReport {
+                    timestamp: ts_micros,
+                    accel: motion.accel,
+                    gyro: motion.gyro,
+                }),
             };
             if pkt_snd.try_send(pkt).is_err() {
                 defmt::warn!("[object_mode] IMU channel full, dropping packet");

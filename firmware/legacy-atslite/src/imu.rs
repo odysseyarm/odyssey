@@ -94,6 +94,29 @@ impl legacy_common::platform::ImuInterrupt for AtsliteImuInterrupt {
     }
 }
 
+/// Sums the 1 kHz samples into one report per `accel_odr`.
+///
+/// Since: Unreleased.
+#[derive(Default)]
+pub struct AtsliteImuReporter(odyssey_cv::imu::Integrator);
+
+impl legacy_common::platform::ImuReporter for AtsliteImuReporter {
+    fn push(
+        &mut self,
+        timestamp: u32,
+        accel: nalgebra::Vector3<f32>,
+        gyro: nalgebra::Vector3<f32>,
+        report_hz: u16,
+    ) -> Option<legacy_common::odyssey_protocol::AccelReport> {
+        let motion = self.0.push(timestamp, accel, gyro, report_hz)?;
+        Some(legacy_common::odyssey_protocol::AccelReport {
+            timestamp,
+            accel: motion.accel,
+            gyro: motion.gyro,
+        })
+    }
+}
+
 const VALID_ODRS_ICM42688: &[(u16, icm426xx::config::AccelOdr)] = {
     use icm426xx::config::AccelOdr;
     &[

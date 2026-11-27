@@ -27,7 +27,9 @@ use crate::odyssey_protocol::{
     self, BatteryReport, ConfigKind, Packet, PacketData, PacketType, PropKind, Props,
     ReadRegisterResponse, wire,
 };
-use crate::platform::{Imu, ImuInterrupt, L2capChannels, L2capReceiver, L2capSender, Platform};
+use crate::platform::{
+    Imu, ImuInterrupt, ImuReporter, L2capChannels, L2capReceiver, L2capSender, Platform,
+};
 use crate::settings::{PajsSettings, Settings};
 use crate::usb::{self, UsbConfigHandle};
 use crate::utils::impl_from;
@@ -616,7 +618,7 @@ async fn imu_loop<P: Platform>(
 
     // Last impact time, for the suppression window.
     let mut last_impact_ts_micros: Option<u32> = None;
-    let mut integrator = odyssey_protocol::ImuIntegrator::default();
+    let mut reporter = P::ImuReporter::default();
 
     loop {
         if !imu.has_pending_data() {
@@ -648,7 +650,7 @@ async fn imu_loop<P: Platform>(
         let gz = (gyr_transformed[2] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
 
         let gyro = Vector3::new(gx, gy, gz);
-        if let Some(report) = integrator.push(ts_micros, accel, gyro, crate::settings::accel_odr())
+        if let Some(report) = reporter.push(ts_micros, accel, gyro, crate::settings::accel_odr())
             && stream_infos.imu.enabled()
         {
             let pkt = Packet {

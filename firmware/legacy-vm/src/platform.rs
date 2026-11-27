@@ -7,6 +7,7 @@ pub struct VmPlatform;
 impl legacy_common::platform::Platform for VmPlatform {
     type Imu = VmImu<2048>; // 2048 byte burst buffer
     type ImuInterrupt = VmImuInterrupt;
+    type ImuReporter = legacy_common::platform::EverySample;
     type L2capChannels = VmL2capChannels;
     type Timer = embassy_nrf::peripherals::TIMER1;
 

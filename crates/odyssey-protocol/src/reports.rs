@@ -29,6 +29,7 @@ impl MarkersReport {
 
 /// Motion since the previous report: mean acceleration (m/s²) and mean rotation rate (rad/s)
 /// over the interval ending at `timestamp` (µs, wrapping). See [`ImuIntegrator`].
+/// over the interval ending at `timestamp` (µs, wrapping).
 ///
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]

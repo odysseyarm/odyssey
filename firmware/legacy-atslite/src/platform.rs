@@ -7,6 +7,7 @@ pub struct AtslitePlatform;
 impl legacy_common::platform::Platform for AtslitePlatform {
     type Imu = AtsliteImu;
     type ImuInterrupt = AtsliteImuInterrupt;
+    type ImuReporter = crate::imu::AtsliteImuReporter;
     type L2capChannels = AtsliteL2capChannels;
     type Timer = embassy_nrf::peripherals::TIMER0;
 

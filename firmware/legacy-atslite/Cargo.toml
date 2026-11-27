@@ -57,6 +57,7 @@ path = "src/main.rs"
 [dependencies]
 legacy-common = { path = "../legacy-common" }
 atslite-common = { path = "../atslite-common", features = ["signed-ota"] }
+odyssey-cv = { git = "ssh://git@github.com/odysseyarm/odyssey-cv.git", default-features = false }
 atslite-transport = { path = "../atslite-transport" }
 ota-channel = { path = "../ota-channel" }
 legacy-atslite-boot-api = { path = "../legacy-atslite-boot-api", features = ["defmt"] }
