@@ -347,19 +347,18 @@ application version and compatibility floor for review and squash-merge before
 publishing. The final release tag must point to the merged `master` SHA, never
 to a pre-squash branch SHA.
 
-*Marker Control Board Release* builds the application plus factory images and
-publishes immutable GitHub assets. It then downloads the published `app.bin`,
-computes SHA256 and size, and opens a PR adding a newest-first nightly entry
-onto latest master. The generated entry describes the immutable published bytes.
-Existing releases are not overwritten. Reruns accept identical manifest entries,
-reject changed hashes, and reuse an open matching PR without replacing branch
-contents. A branch without an open PR causes refusal. The PR receives explicit
-host-ci, fmt, and tracking-regression workflow dispatches, because token-created
-PRs do not trigger `pull_request` checks.
+*Marker Control Board Release* builds application and factory images, then
+publishes immutable GitHub assets. It never writes an unsigned manifest entry.
+Run `cargo xtask release publish marker-control-board` with `ODYSSEY_SIGNER`
+set to a production-key signer. The command waits for those assets, hashes the
+published `app.bin`, and signs its nightly entry with bootloader floor `1.0.0`.
+The Desktop floor comes from the tagged package's `min-desktop` metadata.
+Review and commit the resulting manifest through a separate PR before offering
+the update to units. Existing release assets are not overwritten.
 
 A manual *Marker Control Board Release* dispatch builds and uploads artifacts
 only. The factory bootloader release uses the existing *Bootloader Release*
-workflow with `marker-control-board-bootloader-v1`. No separate component
+workflow with `marker-control-board-bootloader-v1.0.0`. No separate component
 release is required before application publication. Factory images install
 through SWD only.
 
