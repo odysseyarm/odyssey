@@ -224,6 +224,10 @@ mod tests {
         let velocity_error = (report.accel * 0.01 - velocity).norm();
         let naive_error = (naive_accel * 0.01 - velocity).norm();
         assert!(
+            rotation_error < 1e-5,
+            "rotation off by {rotation_error} rad"
+        );
+        assert!(
             velocity_error < 1e-4 && velocity_error * 10.0 < naive_error,
             "velocity off by {velocity_error} m/s, plain averaging by {naive_error} m/s"
         );
