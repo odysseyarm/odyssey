@@ -354,7 +354,6 @@ async fn main(spawner: Spawner) {
         p.TIMER1, // TIMER0 is reserved for object mode
         p.PPI_CH0,
         p.GPIOTE_CH0,
-        legacy_common::settings::accel_odr(),
     )
     .await;
     defmt::info!("IMU initialized");

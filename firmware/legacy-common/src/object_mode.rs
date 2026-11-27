@@ -616,9 +616,12 @@ async fn imu_loop<P: Platform>(
 
     // Last impact time, for the suppression window.
     let mut last_impact_ts_micros: Option<u32> = None;
+    let mut integrator = odyssey_protocol::ImuIntegrator::default();
 
     loop {
-        imu_int.wait().await;
+        if !imu.has_pending_data() {
+            imu_int.wait().await;
+        }
 
         let imu_data = match imu.read_data().await {
             Ok(data) => data,
@@ -644,15 +647,13 @@ async fn imu_loop<P: Platform>(
         let gy = (gyr_transformed[1] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
         let gz = (gyr_transformed[2] as f32 / P::GYRO_LSB_PER_DPS) * DEG_TO_RAD;
 
-        if stream_infos.imu.enabled() {
-            let id = stream_infos.imu.req_id();
+        let gyro = Vector3::new(gx, gy, gz);
+        if let Some(report) = integrator.push(ts_micros, accel, gyro, crate::settings::accel_odr())
+            && stream_infos.imu.enabled()
+        {
             let pkt = Packet {
-                id,
-                data: PacketData::AccelReport(odyssey_protocol::AccelReport {
-                    timestamp: ts_micros,
-                    accel,
-                    gyro: Vector3::new(gx, gy, gz),
-                }),
+                id: stream_infos.imu.req_id(),
+                data: PacketData::AccelReport(report),
             };
             if pkt_snd.try_send(pkt).is_err() {
                 defmt::warn!("Failed to send IMU data due to full channel");

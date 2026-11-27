@@ -64,10 +64,6 @@ fn nearest_odr_index(hz: u16) -> usize {
     best
 }
 
-fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
-    VALID_ODRS_ICM42688[nearest_odr_index(hz)].1
-}
-
 /// Rounds `hz` to the nearest accelerometer ODR the ICM-42688-P supports.
 ///
 /// Since: Odyssey Desktop 0.6.0.
@@ -91,7 +87,6 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     clkin_timer_instance: Peri<'static, T>,
     clkin_ppi_ch: Peri<'static, impl ppi::ConfigurableChannel>,
     clkin_gpiote_ch: Peri<'static, C>,
-    accel_odr: u16,
 ) -> Result<(Imu, SensorInterrupt), InitError> {
     let icm_int = Input::new_async(icm_pins.int1, Irqs, Pull::Up);
     let lsm_int = Input::new_async(lsm_pins.int1, Irqs, Pull::Up);
@@ -170,8 +165,9 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
         let mut imu_config = icm426xx::Config::default();
         {
             use icm426xx::config::{AccelMode, Drive, GyroOdr, Pin9Function, Polarity};
-            imu_config.gyro.odr = GyroOdr::_100Hz;
-            imu_config.accel.odr = round_odr_icm42688(accel_odr);
+            // Sampled faster than reported; object mode sums the samples into each report.
+            imu_config.gyro.odr = GyroOdr::_1kHz;
+            imu_config.accel.odr = icm426xx::config::AccelOdr::_1kHz;
             imu_config.accel.mode = AccelMode::LowNoise;
             imu_config.int1.drive = Drive::PushPull;
             imu_config.int1.polarity = Polarity::ActiveLow;

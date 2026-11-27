@@ -87,7 +87,7 @@ pub use register::{Port, ReadRegisterResponse, Register, WriteRegister};
 /// - `BatteryReport`: Odyssey Desktop 0.6.0.
 /// - `ImpactReport`: Odyssey Desktop 0.6.0.
 /// - `MarkersReport`: Odyssey Desktop 0.7.5.
-pub use reports::{AccelReport, BatteryReport, ImpactReport, MarkersReport};
+pub use reports::{AccelReport, BatteryReport, ImpactReport, ImuIntegrator, MarkersReport};
 /// Since: Odyssey Desktop 0.6.0.
 pub use stream_update::{StreamUpdate, StreamUpdateAction};
 /// Since: Odyssey Desktop 0.6.0.

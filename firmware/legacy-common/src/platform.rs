@@ -28,6 +28,11 @@ pub trait Imu {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     fn read_data(&mut self) -> impl Future<Output = Result<ImuData, Self::Error>>;
+
+    /// Whether another captured sample can be read without waiting for an interrupt.
+    fn has_pending_data(&self) -> bool {
+        false
+    }
 }
 
 /// Since: Odyssey Desktop 0.7.0.

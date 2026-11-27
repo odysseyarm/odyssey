@@ -192,10 +192,13 @@ impl ImuSensor for Imu {
     }
 }
 
+/// FIFO read header word, then room for 16 packets of 20 bytes.
+const ICM_FIFO_WORDS: usize = 1 + 16 * 5;
+
 /// The ICM-42688-P with buffered FIFO samples and its 32 kHz timestamp.
 pub struct Icm42688Sensor {
     driver: crate::imu::IcmDriver,
-    buffer: &'static mut [u32; 521],
+    buffer: &'static mut [u32; ICM_FIFO_WORDS],
     packet_count: usize,
     next_packet: usize,
     ts_micros: u32,
@@ -204,7 +207,8 @@ pub struct Icm42688Sensor {
 
 impl Icm42688Sensor {
     pub fn new(driver: crate::imu::IcmDriver) -> Self {
-        static BUFFER: ConstStaticCell<[u32; 521]> = ConstStaticCell::new([0; 521]);
+        static BUFFER: ConstStaticCell<[u32; ICM_FIFO_WORDS]> =
+            ConstStaticCell::new([0; ICM_FIFO_WORDS]);
         Self {
             driver,
             buffer: BUFFER.take(),
@@ -221,14 +225,15 @@ impl ImuSensor for Icm42688Sensor {
 
     async fn read_data(&mut self) -> Result<ImuData, Self::Error> {
         if !self.has_pending_data() {
+            // Packets beyond the buffer stay in the FIFO for the next read.
             self.packet_count = self
                 .driver
                 .read_fifo(self.buffer)
                 .await
-                .map_err(|_| SensorError::Spi)?;
+                .map_err(|_| SensorError::Spi)?
+                .min((ICM_FIFO_WORDS - 1) / 5);
             self.next_packet = 0;
-            if self.packet_count == 0 || self.packet_count > (self.buffer.len() * 4 - 4) / 20 {
-                self.packet_count = 0;
+            if self.packet_count == 0 {
                 return Err(SensorError::InvalidData);
             }
         }
