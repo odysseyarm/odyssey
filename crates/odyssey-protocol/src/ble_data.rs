@@ -294,6 +294,22 @@ mod tests {
     }
 
     #[test]
+    fn batch_decodes_without_the_batch_sent_before_it() {
+        let earlier = [(1, accel(300_000_000, [1; 6]))];
+        let later = [
+            (2, accel(300_001_000, [2; 6])),
+            (3, accel(300_002_000, [3; 6])),
+        ];
+        let mut lost = [0; 64];
+        encode_accel_batch(&earlier, &mut lost).expect("fits");
+        let mut sdu = [0; 64];
+        let len = encode_accel_batch(&later, &mut sdu).expect("fits");
+        let mut want = accel_packets(&later);
+        let want = [(); 2].map(|()| want.next().expect("two reports"));
+        assert!(decodes_to(&sdu[..len], &want));
+    }
+
+    #[test]
     fn rejects_cut_short_overlong_and_overfull_compact_sdus() {
         let mut sdu = [0; 256];
         let len = encode(&markers(0x8202), &mut sdu).expect("fits");
