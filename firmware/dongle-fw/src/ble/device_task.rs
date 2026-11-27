@@ -497,19 +497,24 @@ async fn run_connection(
 
     let data_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
+        let forward = |pkt| {
+            let device_packet = DevicePacket {
+                dev: target.into_inner(),
+                pkt,
+            };
+            if device_packets.try_send(device_packet).is_err() {
+                let c = DROPPED_DATA_TO_HOST.fetch_add(1, Ordering::AcqRel) + 1;
+                if c % 64 == 0 {
+                    warn!("Dropped {} data packets to host (channel full)", c);
+                }
+            }
+        };
         loop {
             match data_reader.receive(stack, &mut rx_buf).await {
-                Ok(len) => match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
-                    Ok(pkt) => {
-                        let device_packet = DevicePacket {
-                            dev: target.into_inner(),
-                            pkt,
-                        };
-                        if device_packets.try_send(device_packet).is_err() {
-                            let c = DROPPED_DATA_TO_HOST.fetch_add(1, Ordering::AcqRel) + 1;
-                            if c % 64 == 0 {
-                                warn!("Dropped {} data packets to host (channel full)", c);
-                            }
+                Ok(len) => match odyssey_protocol::ble_data::decode(&rx_buf[..len]) {
+                    Ok(packets) => {
+                        for pkt in packets {
+                            forward(pkt);
                         }
                     }
                     Err(_) => error!("Failed to deserialize L2CAP data packet"),

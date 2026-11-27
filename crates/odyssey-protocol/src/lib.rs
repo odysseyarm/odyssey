@@ -14,6 +14,9 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+/// Since: Unreleased.
+#[cfg(feature = "serde")]
+pub mod ble_data;
 #[cfg(feature = "minicbor")]
 mod cbor;
 mod config;

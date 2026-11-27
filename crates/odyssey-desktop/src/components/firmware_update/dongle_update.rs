@@ -17,6 +17,11 @@ use crate::components::ui::{ButtonKind, button, card, card_title};
 use crate::runtime;
 use crate::theme::Palette;
 
+/// First device protocol whose units send reports a dongle below it cannot decode
+/// (`odyssey_protocol::ble_data`). A dongle reports the device protocol it was built with as
+/// its control protocol.
+const COMPACT_REPORTS_PROTOCOL: [u16; 3] = [0, 4, 0];
+
 #[derive(Clone)]
 pub(super) struct VersionSnapshot {
     pub(super) observed_at: Instant,
@@ -193,6 +198,13 @@ pub(crate) fn dongle_update_cards(
                         .text_color(p.accent_ink)
                         .child(state.status_text()),
                 );
+            }
+            None if versions.iter().any(|info| {
+                info.id.eq_ignore_ascii_case(&target.id)
+                    && info.control_protocol_version < COMPACT_REPORTS_PROTOCOL
+            }) =>
+            {
+                content = content.child(div().text_sm().text_color(p.danger_ink).child("Trackers with current firmware cannot track through this dongle until it is updated. Connected trackers and accessories will disconnect during the update."));
             }
             None => {
                 content = content.child(div().text_sm().text_color(p.fg_muted).child("Connected trackers and accessories will disconnect during the update. Leave the dongle plugged in until Desktop confirms completion."));

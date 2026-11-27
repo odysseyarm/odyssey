@@ -1562,6 +1562,7 @@ dependencies = [
  "odyssey-common",
  "odyssey-protocol-macros",
  "opencv-ros-camera 0.17.0",
+ "postcard",
  "serde",
  "serde_bytes",
 ]

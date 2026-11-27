@@ -2171,6 +2171,7 @@ dependencies = [
  "odyssey-common",
  "odyssey-protocol-macros",
  "opencv-ros-camera 0.17.0 (git+https://github.com/Abrahamh08/opencv-ros-camera?branch=pod-minicbor-repro)",
+ "postcard",
  "serde",
  "serde_bytes",
 ]

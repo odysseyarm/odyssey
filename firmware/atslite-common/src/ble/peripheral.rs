@@ -634,11 +634,41 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
+    // Taken off the queue while collecting a batch it does not belong to.
+    let mut held = None;
 
     loop {
-        let pkt = tx_queue.receive().await;
+        let pkt = match held.take() {
+            Some(pkt) => pkt,
+            None => tx_queue.receive().await,
+        };
 
-        match postcard::to_slice(&pkt, &mut tx_buf) {
+        let encoded = if let odyssey_protocol::PacketData::AccelReport(report) = pkt.data {
+            // Only reports already waiting behind the radio join the batch, so batching
+            // delays none of them.
+            let mut batch = heapless::Vec::<_, { odyssey_protocol::ble_data::MAX_BATCH }>::new();
+            let _ = batch.push((pkt.id, report));
+            while !batch.is_full() {
+                match tx_queue.try_receive() {
+                    Ok(odyssey_protocol::Packet {
+                        id,
+                        data: odyssey_protocol::PacketData::AccelReport(report),
+                    }) => {
+                        let _ = batch.push((id, report));
+                    }
+                    Ok(other) => {
+                        held = Some(other);
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+            odyssey_protocol::ble_data::encode_accel_batch(&batch, &mut tx_buf)
+        } else {
+            odyssey_protocol::ble_data::encode(&pkt, &mut tx_buf)
+        };
+
+        match encoded.map(|len| &tx_buf[..len]) {
             Ok(data) => {
                 match embassy_time::with_timeout(
                     embassy_time::Duration::from_secs(5),

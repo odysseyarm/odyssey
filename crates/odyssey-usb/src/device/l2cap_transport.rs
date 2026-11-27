@@ -3,9 +3,10 @@
 //! The unit is the peripheral. It accepts two LE credit-based L2CAP channels, the
 //! control PSM first and the data PSM second, and carries one postcard-encoded
 //! [`Packet`] per SDU on each (`firmware/atslite-common/src/ble/peripheral.rs`,
-//! `custom_task`). It closes the link unless the central is a stored bond and the
-//! link is encrypted, so both sockets ask the kernel for medium security before they
-//! connect.
+//! `custom_task`). From device protocol 0.4.0 its data SDUs may instead be the
+//! compact forms of `odyssey_protocol::ble_data`. It closes the link unless the central
+//! is a stored bond and the link is encrypted, so both sockets ask the kernel for
+//! medium security before they connect.
 
 use std::io;
 use std::sync::Arc;
@@ -314,7 +315,7 @@ async fn read_packets(
 ) {
     let mut control_buffer = vec![0; RECV_BUFFER_SIZE];
     let mut data_buffer = vec![0; RECV_BUFFER_SIZE];
-    loop {
+    'read: loop {
         let (channel, received) = tokio::select! {
             biased;
             () = cancel.cancelled() => break,
@@ -338,16 +339,18 @@ async fn read_packets(
             Channel::Control => &control_buffer[..length],
             Channel::Data => &data_buffer[..length],
         };
-        let packet = match postcard::from_bytes::<Packet>(sdu) {
-            Ok(packet) => packet,
+        let packets = match odyssey_protocol::ble_data::decode(sdu) {
+            Ok(packets) => packets,
             Err(e) => {
                 warn!("l2cap {channel:?} SDU of {length} bytes is not a packet: {e}");
                 continue;
             }
         };
-        tokio::select! {
-            () = cancel.cancelled() => break,
-            result = incoming_tx.send(packet) => if result.is_err() { break; },
+        for packet in packets {
+            tokio::select! {
+                () = cancel.cancelled() => break 'read,
+                result = incoming_tx.send(packet) => if result.is_err() { break 'read; },
+            }
         }
     }
     cancel.cancel();

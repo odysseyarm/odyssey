@@ -13,10 +13,12 @@ use odyssey_protocol_macros::protocol_type;
 /// multi-bond messages (`ListBonds`, `RemoveBond`) and the `BondsFull` and
 /// `NotFound` errors. Version 0.3.0 appends the `OtaRequest`, `OtaStatus`,
 /// `MarkerHint` and `DeviceControl` packets; OTA frames and marker hints no
-/// longer travel in vendor packets.
+/// longer travel in vendor packets. From version 0.4.0 a unit sends the compact
+/// report forms of `crate::ble_data` on its BLE data channel, which a reader
+/// (dongle or Desktop) below 0.4.0 cannot decode.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 3, 0];
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 4, 0];
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
