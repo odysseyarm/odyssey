@@ -12,6 +12,8 @@ use opencv_ros_camera::RosOpenCvIntrinsicsPod;
 )]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AccelConfig {
+    /// How often the unit sends an `AccelReport`, in Hz. The sensor may sample faster.
+    ///
     /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub accel_odr: u16,

@@ -44,9 +44,6 @@ const DFU_INTERFACE_GUID: &str = "{72DC6483-1013-4BC3-B1CF-6A02DDAEFCE5}";
 
 const FIRMWARE_VERSION: [u32; 3] = odyssey_version::cargo_version!();
 
-// Same accelerometer rate the legacy atslite firmware used.
-const DEFAULT_ACCEL_ODR: u16 = 100;
-
 struct AppDfuMarker<'a> {
     flash: &'a Mutex<NoopRawMutex, RefCell<Nvmc<'static>>>,
 }
@@ -396,7 +393,6 @@ async fn main(spawner: Spawner) {
         p.TIMER1,
         p.PPI_CH0,
         p.GPIOTE_CH0,
-        DEFAULT_ACCEL_ODR,
     )
     .await
     {

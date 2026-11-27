@@ -11,9 +11,15 @@ use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use icm426xx::{ICM42688, Ready};
 
+/// FIFO read header word, then room for 16 packets of 20 bytes.
+const FIFO_WORDS: usize = 1 + 16 * 5;
+
 /// Since: Odyssey Desktop 0.7.0.
 pub struct AtsliteImu {
     inner: ICM42688<ExclusiveDevice<spim::Spim<'static, Async>, Output<'static>, Delay>, Ready>,
+    buffer: [u32; FIFO_WORDS],
+    packet_count: usize,
+    next_packet: usize,
     // Sum of FIFO timestamp deltas, in microseconds.
     ts_micros: u32,
 }
@@ -35,17 +41,23 @@ impl legacy_common::platform::Imu for AtsliteImu {
         &mut self,
     ) -> impl Future<Output = Result<legacy_common::platform::ImuData, Self::Error>> {
         async move {
-            // 521 words, the FIFO buffer size the earlier firmware used.
-            let mut buffer = [0u32; 521];
-            let _items = self
-                .inner
-                .read_fifo(&mut buffer)
-                .await
-                .map_err(|_| ImuError)?;
-
-            // First FIFO packet: skip the 4-byte header, then a 20-byte packet.
+            if self.next_packet >= self.packet_count {
+                // Packets beyond the buffer stay in the FIFO for the next read.
+                self.packet_count = self
+                    .inner
+                    .read_fifo(&mut self.buffer)
+                    .await
+                    .map_err(|_| ImuError)?
+                    .min((FIFO_WORDS - 1) / 5);
+                self.next_packet = 0;
+                if self.packet_count == 0 {
+                    return Err(ImuError);
+                }
+            }
+            let start = 4 + self.next_packet * 20;
+            self.next_packet += 1;
             let pkt = bytemuck::from_bytes::<icm426xx::fifo::FifoPacket4>(
-                &bytemuck::cast_slice(&buffer)[4..24],
+                &bytemuck::cast_slice(&self.buffer)[start..start + 20],
             );
 
             // Raw axes. Common applies the axis transforms via the Platform
@@ -70,11 +82,38 @@ impl legacy_common::platform::Imu for AtsliteImu {
             })
         }
     }
+
+    fn has_pending_data(&self) -> bool {
+        self.next_packet < self.packet_count
+    }
 }
 
 impl legacy_common::platform::ImuInterrupt for AtsliteImuInterrupt {
     fn wait(&mut self) -> impl Future<Output = ()> {
         self.int1.wait_for_low()
+    }
+}
+
+/// Sums the 1 kHz samples into one report per `accel_odr`.
+///
+/// Since: Unreleased.
+#[derive(Default)]
+pub struct AtsliteImuReporter(odyssey_cv::imu::Integrator);
+
+impl legacy_common::platform::ImuReporter for AtsliteImuReporter {
+    fn push(
+        &mut self,
+        timestamp: u32,
+        accel: nalgebra::Vector3<f32>,
+        gyro: nalgebra::Vector3<f32>,
+        report_hz: u16,
+    ) -> Option<legacy_common::odyssey_protocol::AccelReport> {
+        let motion = self.0.push(timestamp, accel, gyro, report_hz)?;
+        Some(legacy_common::odyssey_protocol::AccelReport {
+            timestamp,
+            accel: motion.accel,
+            gyro: motion.gyro,
+        })
     }
 }
 
@@ -111,10 +150,6 @@ fn nearest_odr_index(hz: u16) -> usize {
     best
 }
 
-fn round_odr_icm42688(hz: u16) -> icm426xx::config::AccelOdr {
-    VALID_ODRS_ICM42688[nearest_odr_index(hz)].1
-}
-
 /// Since: Odyssey Desktop 0.7.0.
 pub fn round_accel_odr_hz(hz: u16) -> u16 {
     VALID_ODRS_ICM42688[nearest_odr_index(hz)].0
@@ -133,7 +168,6 @@ pub async fn init<T: timer::Instance, C: gpiote::Channel>(
     clkin_timer_instance: Peri<'static, T>,
     clkin_ppi_ch: Peri<'static, impl ppi::ConfigurableChannel>,
     clkin_gpiote_ch: Peri<'static, C>,
-    accel_odr: u16,
 ) -> (AtsliteImu, AtsliteImuInterrupt)
 where
     crate::Irqs: interrupt::typelevel::Binding<
@@ -175,8 +209,9 @@ where
     let mut imu_config = icm426xx::Config::default();
     {
         use icm426xx::config::{AccelMode, Drive, GyroOdr, Pin9Function, Polarity};
-        imu_config.gyro.odr = GyroOdr::_100Hz;
-        imu_config.accel.odr = round_odr_icm42688(accel_odr);
+        // Sampled faster than reported; object mode sums the samples into each report.
+        imu_config.gyro.odr = GyroOdr::_1kHz;
+        imu_config.accel.odr = icm426xx::config::AccelOdr::_1kHz;
         imu_config.accel.mode = AccelMode::LowNoise;
         imu_config.int1.drive = Drive::PushPull;
         imu_config.int1.polarity = Polarity::ActiveLow;
@@ -190,6 +225,9 @@ where
     (
         AtsliteImu {
             inner: imu,
+            buffer: [0; FIFO_WORDS],
+            packet_count: 0,
+            next_packet: 0,
             ts_micros: 0,
         },
         AtsliteImuInterrupt { int1 },

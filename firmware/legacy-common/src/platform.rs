@@ -28,6 +28,11 @@ pub trait Imu {
     ///
     /// Since: Odyssey Desktop 0.7.0.
     fn read_data(&mut self) -> impl Future<Output = Result<ImuData, Self::Error>>;
+
+    /// Whether another captured sample can be read without waiting for an interrupt.
+    fn has_pending_data(&self) -> bool {
+        false
+    }
 }
 
 /// Since: Odyssey Desktop 0.7.0.
@@ -76,12 +81,50 @@ pub trait L2capSender {
     fn try_send(&self, pkt: Packet) -> Result<(), ()>;
 }
 
+/// Turns IMU samples into the reports a board sends.
+///
+/// Since: Unreleased.
+pub trait ImuReporter: Default {
+    /// Takes a sample taken at `timestamp` and returns a report when one is due.
+    fn push(
+        &mut self,
+        timestamp: u32,
+        accel: nalgebra::Vector3<f32>,
+        gyro: nalgebra::Vector3<f32>,
+        report_hz: u16,
+    ) -> Option<crate::odyssey_protocol::AccelReport>;
+}
+
+/// One report per sample, for sensors whose own filter sets the report rate.
+///
+/// Since: Unreleased.
+#[derive(Default)]
+pub struct EverySample;
+
+impl ImuReporter for EverySample {
+    fn push(
+        &mut self,
+        timestamp: u32,
+        accel: nalgebra::Vector3<f32>,
+        gyro: nalgebra::Vector3<f32>,
+        _report_hz: u16,
+    ) -> Option<crate::odyssey_protocol::AccelReport> {
+        Some(crate::odyssey_protocol::AccelReport {
+            timestamp,
+            accel,
+            gyro,
+        })
+    }
+}
+
 /// Since: Odyssey Desktop 0.7.0.
 pub trait Platform {
     /// Since: Odyssey Desktop 0.7.0.
     type Imu: Imu;
     /// Since: Odyssey Desktop 0.7.0.
     type ImuInterrupt: ImuInterrupt;
+    /// Since: Unreleased.
+    type ImuReporter: ImuReporter;
     /// Since: Odyssey Desktop 0.7.0.
     type L2capChannels: L2capChannels;
     /// Since: Odyssey Desktop 0.7.0.
