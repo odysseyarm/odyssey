@@ -17,7 +17,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     odyssey-cv = {
-      url = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git?rev=7570e6457e0121b2e19d62975748b1c8941cb66e";
+      url = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git?rev=0726310b937f2dea019923336f80a4e633b91f5a";
       flake = false;
     };
   };

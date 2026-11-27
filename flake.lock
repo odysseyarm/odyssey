@@ -52,16 +52,16 @@
     "odyssey-cv": {
       "flake": false,
       "locked": {
-        "lastModified": 1794815134,
-        "narHash": "sha256-7ae8iEYDbTOY8vsEnvx0dtIG4ZzUEmLqJ+nGEvzKmog=",
+        "lastModified": 1795747349,
+        "narHash": "sha256-ynEsmToD4Vu9h2F697nIxx/8E03lsEQhCdIlWz4gdTw=",
         "ref": "refs/heads/main",
-        "rev": "7570e6457e0121b2e19d62975748b1c8941cb66e",
-        "revCount": 241,
+        "rev": "0726310b937f2dea019923336f80a4e633b91f5a",
+        "revCount": 242,
         "type": "git",
         "url": "ssh://git@github.com/odysseyarm/odyssey-cv.git"
       },
       "original": {
-        "rev": "7570e6457e0121b2e19d62975748b1c8941cb66e",
+        "rev": "0726310b937f2dea019923336f80a4e633b91f5a",
         "type": "git",
         "url": "ssh://git@github.com/odysseyarm/odyssey-cv.git"
       }
