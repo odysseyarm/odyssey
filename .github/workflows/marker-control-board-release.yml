@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: marker-control-board-release
@@ -69,9 +68,7 @@ jobs:
     if: github.ref_type == 'tag' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: write
-      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.build.outputs.version }}
@@ -92,66 +89,3 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" --draft=false
           fi
           test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = false
-      - name: Open or reuse manifest pull request
-        run: |
-          set -eu
-          # Desktop compatibility floor comes from tagged source, not latest master.
-          min_desktop=$(python3 -c 'import tomllib; print(tomllib.load(open("firmware/marker-control-board/Cargo.toml", "rb"))["package"]["metadata"]["firmware"]["min-desktop"])')
-          git fetch origin master
-          git checkout -B manifest-update origin/master
-          # Merge published bytes onto latest master while preserving tagged package metadata.
-          gh release download "$GITHUB_REF_NAME" --pattern app.bin --dir published
-          VERSION="$VERSION" MIN_DESKTOP="$min_desktop" python3 - <<'PY'
-          import datetime, hashlib, json, os, re
-          from pathlib import Path
-          version, floor = os.environ['VERSION'], os.environ['MIN_DESKTOP']
-          assert re.fullmatch(r'\d+\.\d+\.\d+', floor), floor
-          path = Path('firmware/manifests/releases.nightly.json')
-          manifest = json.loads(path.read_text())
-          assert manifest['version'] == 2, 'unsupported firmware manifest schema'
-          entries = manifest['devices'].setdefault('marker-control-board', {}).setdefault('firmwares', [])
-          data = Path('published/app.bin').read_bytes()
-          assert data, 'empty app.bin'
-          entry = dict(version=version, requires_bootloader='0.0.1', requires_netcore=0, min_desktop=floor,
-                       files={'app': dict(sha256=hashlib.sha256(data).hexdigest(), size=len(data))},
-                       released=datetime.date.today().isoformat())
-          old = next((e for e in entries if e['version'] == version), None)
-          if old:
-              assert all(old[k] == entry[k] for k in entry if k != 'released'), 'published entry differs'
-          else:
-              key = lambda v: tuple(map(int, v.split('.')))
-              assert not entries or key(version) > key(entries[0]['version']), 'release older than nightly head'
-              entries.insert(0, entry)
-              tmp = path.with_suffix('.json.tmp')
-              tmp.write_text(json.dumps(manifest, indent=2) + '\n')
-              tmp.replace(path)
-          PY
-          git add firmware/manifests/releases.nightly.json
-          if git diff --cached --quiet; then
-            echo "Manifest already records marker-control-board $VERSION; no PR needed."
-            exit 0
-          fi
-          branch="marker-control-board-manifest-v$VERSION"
-          pr=$(gh pr list --base master --head "$branch" --state open --json url --jq '.[0].url // empty')
-          if [ -n "$pr" ]; then
-            echo "Reusing existing manifest PR: $pr"
-          else
-            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
-              echo "::error::Branch $branch exists without an open PR; refusing to overwrite it."
-              exit 1
-            fi
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git checkout -b "$branch"
-            git commit -m "Publish marker-control-board $VERSION nightly manifest"
-            git push origin "$branch"
-            pr=$(gh pr create --base master --head "$branch" \
-              --title "Publish marker-control-board $VERSION nightly manifest" \
-              --body "Generated from immutable published app.bin; SHA256 and size checked. Review and squash-merge to master.")
-          fi
-          # GITHUB_TOKEN PRs do not trigger pull_request workflows, so dispatch checks on branch HEAD.
-          gh workflow run host-ci.yml --ref "$branch"
-          gh workflow run fmt.yml --ref "$branch"
-          gh workflow run tracking-regression.yml --ref "$branch"
-          gh workflow run ffi-ci.yml --ref "$branch"
-          gh workflow run uniffi-ci.yml --ref "$branch"

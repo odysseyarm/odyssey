@@ -123,7 +123,7 @@ jobs:
   github-release:
     name: Create GitHub Release
     needs: [resolve, build]
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write

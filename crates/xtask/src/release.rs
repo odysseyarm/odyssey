@@ -89,6 +89,7 @@ enum Role {
     Workflow,
     /// A workflow publishes the packages. The nightly manifest entry is added here.
     Dongle,
+    Marker,
     /// Built and published here, with its nightly manifest entry.
     App(AtsLite),
     /// A bootloader `SemVer` release or net-core counter release delivered through
@@ -226,7 +227,7 @@ const COMPONENTS: [Component; COMPONENT_COUNT] = [
         ..component(
             "marker-control-board",
             "firmware/marker-control-board",
-            Role::Workflow,
+            Role::Marker,
         )
     },
 ];
@@ -495,7 +496,7 @@ static INSIDE: LazyLock<Vec<Vec<usize>>> = LazyLock::new(|| {
                     .position(|other| other.name == app)
                     .unwrap_or(usize::MAX),
             ],
-            Role::App(_) | Role::Workflow | Role::Dongle => Vec::new(),
+            Role::App(_) | Role::Workflow | Role::Dongle | Role::Marker => Vec::new(),
         })
         .collect()
 });
@@ -872,6 +873,22 @@ fn release(row: &Row, plan: &Plan, head: &str, dry_run: bool) -> eros::Result<()
             let min_desktop = floor.context("the dongle has no wire version")?;
             dongle::run(dongle::Cmd::GenRelease { min_desktop })?;
         }
+        Role::Marker => {
+            push_tag(&tag, head)?;
+            wait_for_release(&tag)?;
+            let package = cmd::output(cmd::at(row.component.dir, "cargo").arg("read-manifest"))?;
+            let package: Value = serde_json::from_str(&package)
+                .context("cargo read-manifest printed invalid JSON")?;
+            let min_desktop = package["metadata"]["firmware"]["min-desktop"]
+                .as_str()
+                .context("marker package has no min-desktop")?
+                .to_owned();
+            firmware::run(firmware::Cmd::MarkerControlBoard(Task::GenRelease {
+                requires_bootloader: semver::Version::new(1, 0, 0),
+                requires_netcore: 0,
+                min_desktop,
+            }))?;
+        }
         Role::App(board) => {
             let min_desktop = floor.context("the application has no wire version")?;
             publish_app(row, board, &tag, &version, min_desktop, head)?;
@@ -923,9 +940,9 @@ fn publish_app(
     }))?;
     let title = format!("{device} v{version}");
     let notes = format!("{} application firmware {version}", board.product());
-    let mut assets = vec!["build/app-a.bin", "build/app-b.bin"];
+    let mut assets = vec!["build/app-a.bin", "build/app-b.bin", "build/merged.hex"];
     if matches!(board, AtsLite::Lite1) {
-        assets.extend(["build/merged.hex", "build/merged.trace"]);
+        assets.push("build/merged.trace");
     }
     cmd::run(
         cmd::at(row.component.dir, "gh")
