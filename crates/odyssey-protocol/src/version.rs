@@ -1,7 +1,7 @@
 use odyssey_protocol_macros::protocol_type;
 
 /// Version of the device wire format, reported by a device in
-/// [`Props::Version`] and over the control endpoint. Bump when packet shape or
+/// [`crate::Props::Version`] and over the control endpoint. Bump when packet shape or
 /// accepted value ranges change.
 ///
 /// This is a separate axis from the crate version in `Cargo.toml`. The crate

@@ -32,6 +32,8 @@ impl MarkersReport {
 /// `mask` bit `i` marks occupied slot `i`; `points` stores occupied positions in
 /// ascending slot order.
 ///
+/// See the [crate documentation](crate) for the report transport design.
+///
 /// Since: Unreleased.
 #[protocol_type]
 #[repr(C)]
@@ -99,6 +101,8 @@ impl TryFrom<MarkersReport> for SparseMarkersReport {
 }
 
 /// Bounded sequence of independent acceleration reports.
+///
+/// See the [crate documentation](crate) for the report transport design.
 ///
 /// Since: Unreleased.
 #[protocol_type]

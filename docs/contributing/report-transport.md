@@ -2,6 +2,8 @@
 
 Odyssey transports sensor reports as typed `PacketData` values over USB and BLE. Firmware reduces the representation of reports without changing their measurement values. Transfer packing reduces the number of transport submissions without changing report order.
 
+The wire contracts live with the protocol definitions: [packet variants](../../crates/odyssey-protocol/src/packet.rs), [sensor report payloads](../../crates/odyssey-protocol/src/reports.rs), [device versions](../../crates/odyssey-protocol/src/version.rs) and [mux messages](../../crates/odyssey-protocol/src/mux.rs). This page explains the transport and release decisions that use those contracts.
+
 ## Protocol boundaries
 
 | Version | Contract | Reported by |
