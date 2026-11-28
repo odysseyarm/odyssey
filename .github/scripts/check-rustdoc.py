@@ -10,6 +10,24 @@ VOID_TAGS = frozenset(
 
 
 class AvailabilityParser(HTMLParser):
+    """Catch duplicate labels and grouped re-export lists in generated pages.
+
+    >>> AvailabilityParser(Path("report.html")).feed(
+    ...     '<div class="docblock"><p>Since: 0.6.0.</p><p>Since: 0.6.0.</p></div>'
+    ... )
+    Traceback (most recent call last):
+        ...
+    ValueError: Repeated availability metadata in report.html
+
+    >>> AvailabilityParser(Path("report.html")).feed(
+    ...     '<div class="docblock"><h2>Since</h2>'
+    ...     '<ul><li>AccelReport: 0.6.0.</li><li>MarkersReport: 0.7.5.</li></ul></div>'
+    ... )
+    Traceback (most recent call last):
+        ...
+    ValueError: Repeated availability metadata in report.html
+    """
+
     def __init__(self, file: Path) -> None:
         super().__init__()
         self.file = file
@@ -18,6 +36,8 @@ class AvailabilityParser(HTMLParser):
         self.text: list[str] = []
         self.heading = False
         self.since_headings = 0
+        self.since_section = False
+        self.since_entries = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in VOID_TAGS:
@@ -27,20 +47,29 @@ class AvailabilityParser(HTMLParser):
             self.block_depth = self.depth
             self.text = []
             self.since_headings = 0
+            self.since_section = False
+            self.since_entries = 0
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             self.heading = True
+            self.since_section = False
+        if tag == "li" and self.since_section:
+            self.since_entries += 1
 
     def handle_data(self, data: str) -> None:
         if self.block_depth is not None:
             self.text.append(data)
             if self.heading and data.strip() == "Since":
                 self.since_headings += 1
+                self.since_section = True
 
     def handle_endtag(self, tag: str) -> None:
         if tag in VOID_TAGS:
             return
         if self.depth == self.block_depth:
-            if "".join(self.text).count("Since:") + self.since_headings > 1:
+            if (
+                "".join(self.text).count("Since:") + self.since_headings > 1
+                or self.since_entries > 1
+            ):
                 raise ValueError(f"Repeated availability metadata in {self.file}")
             self.block_depth = None
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:

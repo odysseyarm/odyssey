@@ -88,6 +88,7 @@ jobs:
             exit 1
           fi
           cargo doc --locked --manifest-path sdk/odyssey-hub-client-ffi/Cargo.toml --no-deps -p odyssey-protocol -p odyssey-hub-client
+          python3 -m doctest .rustdoc-tools/.github/scripts/check-rustdoc.py
           python3 .rustdoc-tools/.github/scripts/check-rustdoc.py "$CARGO_TARGET_DIR/doc"
           mkdir -p "api/$version"
           cp -a "$CARGO_TARGET_DIR/doc/." "api/$version/"
