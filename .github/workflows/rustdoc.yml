@@ -60,6 +60,7 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           version: "29.3"
+          repo-token: ${{ github.token }}
       - name: Generate public Rust API docs
         env:
           DOCS_TAG: ${{ inputs.tag }}
