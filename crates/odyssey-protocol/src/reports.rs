@@ -27,12 +27,12 @@ impl MarkersReport {
     pub const UNITS_PER_PX: f64 = 64.0;
 }
 
-/// Marker positions encoded densely while retaining original slot positions.
+/// Marker positions without the empty slots of a [`MarkersReport`].
 ///
-/// `mask` bit `i` marks occupied slot `i`; `points` stores occupied positions in
-/// ascending slot order.
+/// Bit `i` of `mask` is set when slot `i` holds a marker. `points` lists the occupied
+/// slots in ascending slot order, so its length equals the number of set bits.
 ///
-/// See the [crate documentation](crate) for the report transport design.
+/// The [crate documentation](crate) links the report streaming design.
 ///
 /// Since: Unreleased.
 #[protocol_type]
@@ -50,7 +50,11 @@ pub struct SparseMarkersReport {
     pub points: crate::List<Point2<u16>, 16>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A [`SparseMarkersReport`] whose point count differs from the number of set mask bits.
+/// Its points cannot be assigned to slots, so the report is discarded.
+///
+/// Since: Unreleased.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SparseMarkersError;
 
 impl core::fmt::Display for SparseMarkersError {
@@ -61,48 +65,46 @@ impl core::fmt::Display for SparseMarkersError {
 
 impl core::error::Error for SparseMarkersError {}
 
-impl SparseMarkersReport {
-    /// Reconstructs dense report, preserving marker slot positions.
-    ///
-    /// # Errors
-    /// Returns [`SparseMarkersError`] if the point count differs from the occupancy mask.
-    pub fn into_markers_report(self) -> Result<MarkersReport, SparseMarkersError> {
-        if self.mask.count_ones() as usize != self.points.len() {
+impl From<MarkersReport> for SparseMarkersReport {
+    fn from(report: MarkersReport) -> Self {
+        let occupied = |point: &Point2<u16>| *point != Point2::origin();
+        let mut mask = 0;
+        for (slot, point) in report.points.iter().enumerate() {
+            if occupied(point) {
+                mask |= 1 << slot;
+            }
+        }
+        let points: heapless::Vec<_, 16> = report.points.into_iter().filter(occupied).collect();
+        Self {
+            mask,
+            points: points.into(),
+        }
+    }
+}
+
+impl TryFrom<SparseMarkersReport> for MarkersReport {
+    type Error = SparseMarkersError;
+
+    /// Returns each point to its slot and leaves the other slots at the origin.
+    fn try_from(sparse: SparseMarkersReport) -> Result<Self, Self::Error> {
+        if sparse.mask.count_ones() as usize != sparse.points.len() {
             return Err(SparseMarkersError);
         }
         let mut points = [Point2::origin(); 16];
-        let mut occupied = self.points.iter();
-        for (slot, point) in points.iter_mut().enumerate() {
-            if self.mask & (1 << slot) != 0 {
-                *point = *occupied.next().ok_or(SparseMarkersError)?;
-            }
+        let occupied_slots = (0..16).filter(|slot| sparse.mask & (1 << slot) != 0);
+        for (slot, point) in occupied_slots.zip(sparse.points.iter()) {
+            points[slot] = *point;
         }
-        Ok(MarkersReport { points })
+        Ok(Self { points })
     }
 }
 
-impl TryFrom<MarkersReport> for SparseMarkersReport {
-    type Error = SparseMarkersError;
-
-    fn try_from(report: MarkersReport) -> Result<Self, Self::Error> {
-        let mut mask = 0u16;
-        let mut points = heapless::Vec::new();
-        for (slot, point) in report.points.into_iter().enumerate() {
-            if point != Point2::origin() {
-                mask |= 1 << slot;
-                points.push(point).map_err(|_point| SparseMarkersError)?;
-            }
-        }
-        Ok(Self {
-            mask,
-            points: points.into(),
-        })
-    }
-}
-
-/// Bounded sequence of independent acceleration reports.
+/// IMU reports of one stream in measurement order.
 ///
-/// See the [crate documentation](crate) for the report transport design.
+/// Each report keeps its own timestamp and values. A batch holds at most eight reports,
+/// which keeps a full batch within one PDU of the BLE data channel.
+///
+/// The [crate documentation](crate) links the report streaming design.
 ///
 /// Since: Unreleased.
 #[protocol_type]
@@ -114,13 +116,6 @@ pub struct AccelBatch {
     #[cfg_attr(feature = "minicbor", n(0))]
     #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::serde_with"))]
     pub reports: crate::List<AccelReport, 8>,
-}
-
-impl AccelBatch {
-    /// Iterates reports independently, with original timestamps and float values.
-    pub fn iter(&self) -> impl Iterator<Item = AccelReport> + '_ {
-        self.reports.iter().copied()
-    }
 }
 
 /// Motion since the previous report: mean acceleration (m/s²) and mean rotation rate (rad/s)
@@ -205,8 +200,23 @@ impl AccelReport {
 mod tests {
     use nalgebra::{Point2, Vector3};
 
-    use super::{AccelBatch, AccelReport, MarkersReport, SparseMarkersError, SparseMarkersReport};
-    use crate::List;
+    use super::{AccelReport, MarkersReport, SparseMarkersError, SparseMarkersReport};
+    use crate::{List, Packet, PacketData};
+
+    fn accel_report(timestamp: u32) -> AccelReport {
+        AccelReport {
+            timestamp,
+            accel: Vector3::new(-0.0, f32::from_bits(0x7fc0_1234), 1.0),
+            gyro: Vector3::new(2.0, 3.0, 4.0),
+        }
+    }
+
+    fn accel_packet(id: u8, timestamp: u32) -> Packet {
+        Packet {
+            id,
+            data: PacketData::AccelReport(accel_report(timestamp)),
+        }
+    }
 
     #[test]
     fn sparse_marker_conversion_preserves_slots_and_rejects_wrong_count() {
@@ -219,30 +229,69 @@ mod tests {
                 }
             }),
         };
-        let sparse = SparseMarkersReport::try_from(report).expect("valid sparse report");
+        let sparse = SparseMarkersReport::from(report);
         assert_eq!(sparse.mask, (1 << 2) | (1 << 14));
         assert_eq!(sparse.points.len(), 2);
+        assert_eq!(MarkersReport::try_from(sparse), Ok(report));
         assert_eq!(
-            sparse.into_markers_report().expect("reconstruct").points,
-            report.points
-        );
-        assert_eq!(
-            SparseMarkersReport {
+            MarkersReport::try_from(SparseMarkersReport {
                 mask: 1,
                 points: List::default()
-            }
-            .into_markers_report(),
+            }),
             Err(SparseMarkersError)
         );
-        let invalid = heapless::Vec::from_slice(&[Point2::new(1, 2)]).expect("fits");
+        let unmasked = heapless::Vec::from_slice(&[Point2::new(1, 2)]).expect("fits");
         assert_eq!(
-            SparseMarkersReport {
+            MarkersReport::try_from(SparseMarkersReport {
                 mask: 0,
-                points: invalid.into()
-            }
-            .into_markers_report(),
+                points: unmasked.into()
+            }),
             Err(SparseMarkersError)
         );
+    }
+
+    #[test]
+    fn a_full_marker_report_survives_the_sparse_form() {
+        let report = MarkersReport {
+            points: core::array::from_fn(|slot| Point2::new(slot as u16 + 1, u16::MAX)),
+        };
+        let sparse = SparseMarkersReport::from(report);
+        assert_eq!(sparse.mask, u16::MAX);
+        assert_eq!(MarkersReport::try_from(sparse), Ok(report));
+    }
+
+    #[test]
+    fn queued_accel_reports_join_in_order_up_to_one_full_batch() {
+        let mut joined = accel_packet(91, 0);
+        for timestamp in 1..8 {
+            joined = joined
+                .join_accel(&accel_packet(91, timestamp))
+                .expect("eight reports share a batch");
+        }
+        let PacketData::AccelBatch(batch) = &joined.data else {
+            panic!("joined reports form a batch");
+        };
+        assert_eq!(joined.id, 91);
+        let timestamps: heapless::Vec<u32, 8> = batch
+            .reports
+            .iter()
+            .map(|report| report.timestamp)
+            .collect();
+        assert_eq!(timestamps, [0, 1, 2, 3, 4, 5, 6, 7]);
+
+        assert!(joined.join_accel(&accel_packet(91, 8)).is_none(), "ninth");
+        assert!(
+            accel_packet(91, 0)
+                .join_accel(&accel_packet(92, 1))
+                .is_none(),
+            "another stream id"
+        );
+        let ack = Packet {
+            id: 91,
+            data: PacketData::Ack(),
+        };
+        assert!(accel_packet(91, 0).join_accel(&ack).is_none(), "not IMU");
+        assert!(ack.join_accel(&accel_packet(91, 0)).is_none(), "not IMU");
     }
 
     #[cfg(feature = "serde")]
@@ -253,21 +302,21 @@ mod tests {
             accel: Vector3::new(f32::from_bits(0x7fc0_1234), -0.0, f32::from_bits(1)),
             gyro: Vector3::new(f32::from_bits(0xffc0_5678), 3.0, 4.0),
         };
-        let batch = AccelBatch {
+        let batch = super::AccelBatch {
             reports: heapless::Vec::from_slice(&[report])
                 .expect("one report fits")
                 .into(),
         };
-        let packet = crate::Packet {
-            data: crate::PacketData::AccelBatch(batch),
+        let packet = Packet {
+            data: PacketData::AccelBatch(batch),
             id: 91,
         };
         let bytes = postcard::to_stdvec(&packet).expect("serialize packet");
-        let decoded: crate::Packet = postcard::from_bytes(&bytes).expect("deserialize packet");
-        let crate::PacketData::AccelBatch(decoded) = decoded.data else {
+        let decoded: Packet = postcard::from_bytes(&bytes).expect("deserialize packet");
+        let PacketData::AccelBatch(decoded) = decoded.data else {
             panic!("batch variant preserved");
         };
-        let report = decoded.iter().next().expect("batch has report");
+        let report = decoded.reports.first().expect("batch has report");
         assert_eq!(report.timestamp, 0xdead_beef);
         assert_eq!(report.accel.x.to_bits(), 0x7fc0_1234);
         assert_eq!(report.accel.y.to_bits(), 0x8000_0000);
@@ -277,18 +326,8 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn full_batch_fits_one_pdu_and_decodes_after_an_earlier_batch_is_lost() {
-        let report = AccelReport {
-            timestamp: u32::MAX,
-            accel: Vector3::new(-0.0, f32::from_bits(0x7fc0_1234), 1.0),
-            gyro: Vector3::new(2.0, 3.0, 4.0),
-        };
-        let earlier = AccelBatch {
-            reports: heapless::Vec::from_slice(&[report])
-                .expect("one report fits")
-                .into(),
-        };
-        let _lost = postcard::to_stdvec(&earlier).expect("earlier batch encodes");
+    fn full_batch_fits_one_pdu_and_a_ninth_report_is_rejected() {
+        let report = accel_report(u32::MAX);
         let mut reports = heapless::Vec::new();
         for n in 0..8 {
             reports
@@ -298,24 +337,28 @@ mod tests {
                 })
                 .expect("eight reports fit");
         }
-        let packet = crate::Packet {
-            data: crate::PacketData::AccelBatch(AccelBatch {
+        let packet = Packet {
+            data: PacketData::AccelBatch(super::AccelBatch {
                 reports: reports.into(),
             }),
             id: 91,
         };
         let encoded = postcard::to_stdvec(&packet).expect("batch encodes");
-        assert!(encoded.len() + 2 <= 247);
-        let decoded: crate::Packet =
-            postcard::from_bytes(&encoded).expect("batch decodes independently");
+        // Timestamps above 2^28 take the longest varint, so this is the largest batch packet.
+        assert_eq!(
+            encoded.len(),
+            235,
+            "must stay within the 245-byte BLE packing target"
+        );
+        let decoded: Packet = postcard::from_bytes(&encoded).expect("batch decodes independently");
         assert_eq!(
             postcard::to_stdvec(&decoded).expect("batch reencodes"),
             encoded
         );
-        let crate::PacketData::AccelBatch(decoded) = decoded.data else {
+        let PacketData::AccelBatch(decoded) = decoded.data else {
             panic!("batch variant preserved");
         };
-        for (n, decoded) in decoded.iter().enumerate() {
+        for (n, decoded) in decoded.reports.iter().enumerate() {
             assert_eq!(
                 decoded.timestamp,
                 u32::MAX.wrapping_sub(u32::try_from(n).expect("eight reports"))
@@ -325,6 +368,7 @@ mod tests {
         for _ in 0..9 {
             overfull.extend(postcard::to_stdvec(&report).expect("report encodes"));
         }
-        postcard::from_bytes::<AccelBatch>(&overfull).expect_err("nine reports exceed the bound");
+        postcard::from_bytes::<super::AccelBatch>(&overfull)
+            .expect_err("nine reports exceed the bound");
     }
 }

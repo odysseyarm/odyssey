@@ -12,7 +12,6 @@ use crate::{
 const VENDOR_START_ID: u8 = 0x80;
 /// Last id of the vendor range.
 const VENDOR_END_ID: u8 = 0xff;
-const VENDOR_DATA_CAPACITY: usize = 98;
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]
@@ -272,14 +271,14 @@ pub enum PacketData {
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::postcard_only"))]
         crate::control::device::DeviceMsg,
     ),
-    /// Marker report encoded as occupied slots plus original-slot mask.
+    /// Marker report without its empty slots.
     ///
     /// Since: Unreleased.
     ///
     /// Wire baseline: device protocol 0.4.0.
     #[cfg_attr(feature = "minicbor", n(32))]
     SparseMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] crate::SparseMarkersReport),
-    /// Several acceleration reports sharing one packet id.
+    /// IMU reports of one stream that were queued together.
     ///
     /// Since: Unreleased.
     ///
@@ -303,17 +302,17 @@ pub struct VendorData {
     #[cfg(feature = "serde")]
     #[serde(with = "serde_bytes")]
     #[cfg_attr(feature = "minicbor", n(1))]
-    pub data: [u8; VENDOR_DATA_CAPACITY],
+    pub data: [u8; Self::CAPACITY],
     /// Since: Odyssey Desktop 0.6.0.
     #[cfg(not(feature = "serde"))]
-    pub data: [u8; VENDOR_DATA_CAPACITY],
+    pub data: [u8; Self::CAPACITY],
 }
 
 impl VendorData {
     /// Payload bytes a vendor packet can carry.
     ///
     /// Since: Odyssey Desktop 0.7.0.
-    pub const CAPACITY: usize = VENDOR_DATA_CAPACITY;
+    pub const CAPACITY: usize = 98;
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -685,9 +684,40 @@ impl Packet {
             | PacketData::BatteryReport(_) => false,
         }
     }
+
+    /// The IMU reports of `self` followed by those of `next`, as one
+    /// [`AccelBatch`](crate::AccelBatch) packet.
+    ///
+    /// Returns `None` unless both packets carry IMU reports for the same id and
+    /// the reports fit one batch. A sender merges reports that are queued back to
+    /// back this way; a receiver splits the batch into single reports again.
+    ///
+    /// Since: Unreleased.
+    pub fn join_accel(&self, next: &Self) -> Option<Self> {
+        if self.id != next.id {
+            return None;
+        }
+        let mut reports = heapless::Vec::new();
+        reports.extend_from_slice(self.data.accel_reports()?).ok()?;
+        reports.extend_from_slice(next.data.accel_reports()?).ok()?;
+        Some(Self {
+            id: self.id,
+            data: PacketData::AccelBatch(crate::AccelBatch {
+                reports: reports.into(),
+            }),
+        })
+    }
 }
 
 impl PacketData {
+    pub(crate) fn accel_reports(&self) -> Option<&[AccelReport]> {
+        match self {
+            Self::AccelReport(report) => Some(core::slice::from_ref(report)),
+            Self::AccelBatch(batch) => Some(&batch.reports),
+            _ => None,
+        }
+    }
+
     /// Since: Odyssey Desktop 0.6.0.
     pub fn read_register_response(self) -> Option<ReadRegisterResponse> {
         match self {

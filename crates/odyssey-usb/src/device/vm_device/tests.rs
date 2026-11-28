@@ -731,7 +731,7 @@ async fn sparse_markers_and_accel_batches_reach_legacy_streams_in_order() {
             _ => Point2::origin(),
         }),
     };
-    let sparse = crate::packets::vm::SparseMarkersReport::try_from(expected_markers).unwrap();
+    let sparse = crate::packets::vm::SparseMarkersReport::from(expected_markers);
     let reports = [
         AccelReport {
             timestamp: 100,

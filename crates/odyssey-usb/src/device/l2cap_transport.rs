@@ -1,8 +1,8 @@
 //! A unit reached over the host's own Bluetooth adapter, through `BlueZ` kernel sockets.
 //!
 //! The unit is the peripheral. It accepts two LE credit-based L2CAP channels, the
-//! control PSM first and the data PSM second, and carries postcard-encoded
-//! [`Packet`] records per SDU on each (`firmware/atslite-common/src/ble/peripheral.rs`,
+//! control PSM first and the data PSM second. Each SDU carries one or more
+//! postcard-encoded [`Packet`]s back to back (`firmware/atslite-common/src/ble/peripheral.rs`,
 //! `custom_task`). It closes the link unless the central is a stored bond and the
 //! link is encrypted, so both sockets ask the kernel for medium security before connecting.
 

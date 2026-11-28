@@ -152,8 +152,8 @@ impl ReadErrorBudget {
     }
 }
 
-/// Reads postcard records from bulk IN transfers, including multiple records
-/// carried by one USB transfer.
+/// Reads messages off the bulk IN endpoint. One transfer, ended by a short
+/// packet, carries one or more postcard messages back to back.
 pub(super) struct MessageReader {
     in_ep: EndpointRead<Bulk>,
     budget: ReadErrorBudget,
@@ -192,7 +192,8 @@ impl MessageReader {
         }
     }
 
-    /// Next postcard record, or `None` once link has failed.
+    /// The next decodable message, or `None` once the link has failed.
+    /// A message that does not decode is logged and discards the rest of its transfer.
     pub(super) async fn next_message<M: DeserializeOwned>(&mut self) -> Option<M> {
         let label = self.label;
         loop {
@@ -281,54 +282,55 @@ mod tests {
         budget.on_success();
         assert_eq!(budget.on_error(ErrorKind::Other), ReadErrorAction::Tolerate);
     }
+
     #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-    enum Record {
+    enum Message {
         Marker(u8),
         Accel(u16),
     }
 
     #[test]
-    fn decodes_multiple_mixed_records_in_order() {
-        let records = [Record::Marker(3), Record::Accel(8), Record::Marker(5)];
-        let transfer: Vec<u8> = records
+    fn decodes_multiple_mixed_messages_in_order() {
+        let messages = [Message::Marker(3), Message::Accel(8), Message::Marker(5)];
+        let transfer: Vec<u8> = messages
             .iter()
-            .flat_map(|record| postcard::to_stdvec(record).unwrap())
+            .flat_map(|message| postcard::to_stdvec(message).unwrap())
             .collect();
 
         let mut position = 0;
-        for expected in records {
+        for expected in messages {
             assert_eq!(
-                MessageReader::decode_buffer::<Record>(&transfer, &mut position).unwrap(),
+                MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
                 Some(expected)
             );
         }
         assert_eq!(
-            MessageReader::decode_buffer::<Record>(&transfer, &mut position).unwrap(),
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
             None
         );
     }
 
     #[test]
-    fn malformed_or_truncated_trailing_record_is_dropped_before_next_transfer() {
-        let first = Record::Marker(3);
-        let second = Record::Accel(8);
+    fn malformed_or_truncated_trailing_message_is_dropped_before_next_transfer() {
+        let first = Message::Marker(3);
+        let second = Message::Accel(8);
         let mut transfer = postcard::to_stdvec(&first).unwrap();
         transfer.extend([0x01, 0x80]);
         let mut position = 0;
         assert_eq!(
-            MessageReader::decode_buffer::<Record>(&transfer, &mut position).unwrap(),
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
             Some(first)
         );
-        MessageReader::decode_buffer::<Record>(&transfer, &mut position)
+        MessageReader::decode_buffer::<Message>(&transfer, &mut position)
             .expect_err("truncated u16");
         assert_eq!(
-            MessageReader::decode_buffer::<Record>(&transfer, &mut position).unwrap(),
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
             None
         );
         transfer = postcard::to_stdvec(&second).unwrap();
         position = 0;
         assert_eq!(
-            MessageReader::decode_buffer::<Record>(&transfer, &mut position).unwrap(),
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
             Some(second)
         );
     }
