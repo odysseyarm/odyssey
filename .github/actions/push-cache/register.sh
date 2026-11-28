@@ -5,7 +5,7 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 export ODYSSEY_CACHE_FLAKE=$1 ODYSSEY_CACHE_REPO
-repo=$(jj root)
+repo=$(jj git root)
 revision=$(jj log --no-graph -r @ -T commit_id)
 ODYSSEY_CACHE_REPO="git+file://${repo}?rev=${revision}"
 if [ "$ODYSSEY_CACHE_FLAKE" = . ]; then ODYSSEY_CACHE_FLAKE=$ODYSSEY_CACHE_REPO; fi

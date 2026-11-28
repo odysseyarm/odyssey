@@ -26,15 +26,15 @@ if [ -z "$private_sources" ]; then
   private_sources=$(nix-store --print-fixed-path --recursive sha256 "$private_hash" source)
 fi
 derivations=
-outputs=
+output_paths=
 for path in $paths; do
   case "$path" in
   *.drv) derivations="$derivations $path" ;;
-  *) outputs="$outputs $path" ;;
+  *) output_paths="$output_paths $path" ;;
   esac
 done
-if [ -n "$outputs" ]; then
-  derivations="$derivations $(xargs nix-store --query --valid-derivers <<<"$outputs")"
+if [ -n "$output_paths" ]; then
+  derivations="$derivations $(xargs nix-store --query --valid-derivers <<<"$output_paths")"
 fi
 provenance=
 if [ -n "$derivations" ]; then
