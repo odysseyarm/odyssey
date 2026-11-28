@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Check multi-revision uploads and push blocking against a real local jj remote."""
 
+import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import local
 
@@ -21,6 +22,11 @@ def check(shell: str, private: str) -> None:
         jj_config = root / "jj.toml"
         jj_config.write_text(
             '[user]\nname = "Cache Test"\nemail = "cache-test@example.invalid"\n'
+            "[aliases]\npush = "
+            + json.dumps(
+                ["util", "exec", "--", "bash", str(SCRIPTS / "local.sh"), "--push"]
+            )
+            + '\n[remotes.origin]\nauto-track-bookmarks = "*"\n'
         )
         env = os.environ | {
             "JJ_CONFIG": str(jj_config),
@@ -29,14 +35,16 @@ def check(shell: str, private: str) -> None:
             "NIX_SIGNING_KEY_FILE": str(root / "missing-key"),
         }
 
-        def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        def run(
+            *args: str, check: bool = True, cwd: Path = repo
+        ) -> subprocess.CompletedProcess[str]:
             result = subprocess.run(
                 args,
-                cwd=repo,
+                cwd=cwd,
                 env=env,
                 text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
+                check=False,
             )
             if check and result.returncode:
                 raise RuntimeError(f"{args}: {result.stdout}\n{result.stderr}")
@@ -53,19 +61,33 @@ def check(shell: str, private: str) -> None:
             "nix", "eval", "--impure", "--raw", "--expr", "builtins.currentSystem"
         ).stdout
 
-        def write_flake(name: str, policy: bool) -> None:
-            (repo / "flake.nix").write_text(f'''{{
+        def write_flake(name: str, policy: bool, cwd: Path = repo) -> None:
+            name = f"{name}-{root.name}"
+            (cwd / "flake.nix").write_text(f'''{{
   inputs.odyssey-cv = {{ url = "path:{private}"; flake = false; }};
-  outputs = inputs: let drv = builtins.derivation {{
-    name = "{name}"; system = "{system}";
+  outputs = inputs: let
     builder = builtins.appendContext "{shell}" {{ "{Path(shell).parent.parent}" = {{ path = true; }}; }};
-    outputs = [ "out" ];
-    args = [ "-c" "printf fixture > $out" ];
-  }}; in {{
+    drv = builtins.derivation {{
+      name = "{name}"; system = "{system}"; inherit builder;
+      outputs = [ "out" ];
+      args = [ "-c" "printf fixture > $out" ];
+    }};
+    artifacts = builtins.derivation {{
+      name = "{name}-deps"; system = "{system}"; inherit builder;
+      outputs = [ "out" ];
+      args = [ "-c" "printf dependency > $out" ];
+    }};
+    lint = builtins.derivation {{
+      name = "{name}-lint"; system = "{system}"; inherit builder;
+      outputs = [ "out" ];
+      args = [ "-c" "printf lint > $out" ];
+    }};
+  in {{
     packages.{system}.xtask = drv;
-    checks.{system}.host-lint = drv;
-    checks.{system}.host-lint-bins = drv;
-    {f"legacyPackages.{system}.publicCache = {{ closures.xtask = drv; outputs = {{}}; }};" if policy else ""}
+    packages.{system}.host = drv // {{ cargoArtifacts = artifacts; }};
+    checks.{system}.host-lint = lint;
+    checks.{system}.host-lint-bins = lint;
+    {f"legacyPackages.{system}.publicCache = {{ closures = {{ xtask = drv; host-artifacts = artifacts; }}; outputs = {{}}; }};" if policy else ""}
   }};
 }}''')
 
@@ -85,37 +107,34 @@ def check(shell: str, private: str) -> None:
         write_flake("cache-revision-second", True)
         run("jj", "describe", "-m", "test: Second cache revision")
         second = run("jj", "log", "--no-graph", "-r", "@", "-T", "commit_id").stdout
-        run(
-            "nix",
-            "build",
-            "--impure",
-            "--no-link",
-            f"git+file://{repo}?rev={second}#xtask",
-        )
         run("jj", "bookmark", "create", "cache-test")
-        run("jj", "new", "-m", "test: Failing lint revision")
-        write_flake("cache-revision-lint-failure", True)
-        flake = repo / "flake.nix"
-        flake.write_text(flake.read_text().replace("printf fixture > $out", "exit 17"))
-        run("jj", "bookmark", "create", "lint-failure")
-        lint_failed = run(
-            "bash", str(SCRIPTS / "push.sh"), "--bookmark", "lint-failure", check=False
-        )
-        assert lint_failed.returncode != 0, lint_failed.stdout + lint_failed.stderr
-        assert not (state / "queue.sqlite").exists()
-        assert not run(
-            "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
-        ).stdout
-        run("jj", "bookmark", "delete", "lint-failure")
-        run("jj", "new", "-r", second, "-m", "test: Push linted revision")
+        for label, command in (
+            ("dependency", "printf dependency > $out"),
+            ("lint", "printf lint > $out"),
+        ):
+            run("jj", "new", "-r", second, "-m", f"test: Failing {label} revision")
+            write_flake(f"cache-revision-{label}-failure", True)
+            flake = repo / "flake.nix"
+            flake.write_text(flake.read_text().replace(command, "exit 17"))
+            run("jj", "bookmark", "create", "build-failure")
+            rejected = run(
+                "jj",
+                "push",
+                "--bookmark",
+                "build-failure",
+                check=False,
+            )
+            assert rejected.returncode != 0, rejected.stdout + rejected.stderr
+            assert not (state / "queue.sqlite").exists()
+            assert not run(
+                "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
+            ).stdout
+            run("jj", "bookmark", "delete", "build-failure")
+        run("jj", "new", "-r", second, "-m", "test: Push checked revision")
 
-        dry = run(
-            "bash", str(SCRIPTS / "push.sh"), "--bookmark", "cache-test", "--dry-run"
-        )
+        dry = run("jj", "push", "--bookmark", "cache-test", "--dry-run")
         assert not (state / "queue.sqlite").exists(), dry.stdout + dry.stderr
-        failed = run(
-            "bash", str(SCRIPTS / "push.sh"), "--bookmark", "cache-test", check=False
-        )
+        failed = run("jj", "push", "--bookmark", "cache-test", check=False)
         assert failed.returncode != 0
         assert not run(
             "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
@@ -123,7 +142,14 @@ def check(shell: str, private: str) -> None:
         assert (state / "queue.sqlite").exists(), failed.stdout + failed.stderr
         db = local.open_queue(state)
         rows, _selection = local.pending_selection(db)
-        assert len(rows) == 2, failed.stdout + failed.stderr
+        assert len(rows) == 3, failed.stdout + failed.stderr
+        dependencies = run(
+            "nix",
+            "eval",
+            "--raw",
+            f"git+file://{repo}?rev={second}#host.cargoArtifacts.drvPath",
+        ).stdout
+        assert dependencies in _selection["PUBLIC_BUILDS"].split(), _selection
 
         def copy(selection: dict[str, str]) -> None:
             selected = subprocess.check_output(
@@ -136,26 +162,26 @@ def check(shell: str, private: str) -> None:
 
         local.flush(db, state, copy)
         db.close()
-        pushed = run("bash", str(SCRIPTS / "push.sh"), "--bookmark", "cache-test")
+        pushed = run("jj", "push", "--bookmark", "cache-test")
         assert (
             run(
                 "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
             ).stdout
             == second
         ), pushed.stdout + pushed.stderr
-        run("bash", str(SCRIPTS / "push.sh"), "--bookmark", "cache-test")
+        run("jj", "push", "--bookmark", "cache-test")
         run("jj", "bookmark", "create", "cache-ancestor", "-r", first)
         env["ODYSSEY_CACHE_STATE"] = str(root / "ancestor-queue")
         failed = run(
-            "bash",
-            str(SCRIPTS / "push.sh"),
+            "jj",
+            "push",
             "--bookmark",
             "cache-ancestor",
             check=False,
         )
         assert failed.returncode != 0
         db = local.open_queue(root / "ancestor-queue")
-        assert len(local.pending_selection(db)[0]) == 1, failed.stdout + failed.stderr
+        assert len(local.pending_selection(db)[0]) == 2, failed.stdout + failed.stderr
         db.close()
         assert (
             run(
@@ -164,14 +190,87 @@ def check(shell: str, private: str) -> None:
             == second
         )
         env["ODYSSEY_CACHE_STATE"] = str(state)
+        db = local.open_queue(state)
+        local.discover(db, state)
+        local.flush(db, state, copy)
+        db.close()
         run("jj", "bookmark", "delete", "cache-ancestor")
         run("jj", "bookmark", "delete", "cache-test")
-        deleted = run("bash", str(SCRIPTS / "push.sh"), "--deleted")
+        deleted = run("jj", "push", "--deleted")
         assert not run(
             "jj", "log", "--no-graph", "-r", "remote_bookmarks()", "-T", "commit_id"
         ).stdout, deleted.stdout + deleted.stderr
+        linked = root / "linked"
+        default_revision = run(
+            "jj", "log", "--no-graph", "-r", "@", "-T", "commit_id"
+        ).stdout
+        run("jj", "workspace", "list")
+        run(
+            "jj",
+            "workspace",
+            "add",
+            "--sparse-patterns",
+            "empty",
+            "--name",
+            "linked",
+            "-r",
+            second,
+            str(linked),
+        )
+        run(
+            "jj",
+            "sparse",
+            "set",
+            "--clear",
+            "--add",
+            "flake.nix",
+            "--add",
+            "flake.lock",
+            cwd=linked,
+        )
+        write_flake("cache-revision-linked", True, cwd=linked)
+        run("jj", "describe", "-m", "test: Push linked workspace", cwd=linked)
+        run("jj", "bookmark", "create", "linked-cache", cwd=linked)
+        linked_revision = run(
+            "jj", "log", "--no-graph", "-r", "@", "-T", "commit_id", cwd=linked
+        ).stdout
+        assert not (linked / ".git").exists()
+        preview = run("jj", "push", "--revisions", "@", "--dry-run", cwd=linked)
+        assert "bookmark: linked-cache" in preview.stdout + preview.stderr, (
+            preview.stdout + preview.stderr
+        )
+        rejected = run("jj", "push", "--revisions", "@", cwd=linked, check=False)
+        assert rejected.returncode != 0, rejected.stdout + rejected.stderr
+        git_repo = run("jj", "git", "root", cwd=linked).stdout.strip()
+        dependencies = run(
+            "nix",
+            "eval",
+            "--raw",
+            f"git+file://{git_repo}?rev={linked_revision}#host.cargoArtifacts.drvPath",
+        ).stdout
+        db = local.open_queue(state)
+        assert dependencies in local.pending_selection(db)[1]["PUBLIC_BUILDS"].split()
+        local.flush(db, state, copy)
+        db.close()
+        run("jj", "push", "--revisions", "@", cwd=linked)
+        assert (
+            run(
+                "jj",
+                "log",
+                "--no-graph",
+                "-r",
+                "linked-cache@origin",
+                "-T",
+                "commit_id",
+            ).stdout
+            == linked_revision
+        )
+        assert (
+            run("jj", "log", "--no-graph", "-r", "@", "-T", "commit_id").stdout
+            == default_revision
+        )
     print(
-        "Revision gate self-check passed: legacy and current revisions, dry run, failed upload blocks push, successful upload permits push, no-op and deletion"
+        "Revision gate self-check passed: configured jj push alias, linked-workspace selection and shared Git store, exact-revision dependencies, build and lint failures, legacy and current revisions, dry run, failed upload blocks push, successful upload permits push, no-op and deletion"
     )
 
 
