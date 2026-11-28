@@ -203,8 +203,6 @@ impl AccelReport {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
-
     use nalgebra::{Point2, Vector3};
 
     use super::{AccelBatch, AccelReport, MarkersReport, SparseMarkersError, SparseMarkersReport};
@@ -323,7 +321,7 @@ mod tests {
                 u32::MAX.wrapping_sub(u32::try_from(n).expect("eight reports"))
             );
         }
-        let mut overfull = vec![9u8];
+        let mut overfull = postcard::to_stdvec(&9u8).expect("report count encodes");
         for _ in 0..9 {
             overfull.extend(postcard::to_stdvec(&report).expect("report encodes"));
         }
