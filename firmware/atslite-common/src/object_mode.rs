@@ -1407,7 +1407,7 @@ fn send_markers<const N: usize>(
         };
         let _ = reports.try_send(Packet {
             id: streams.marker.req_id(),
-            data: PacketData::SparseMarkersReport(report.into()),
+            data: report.into(),
         });
     }
 }

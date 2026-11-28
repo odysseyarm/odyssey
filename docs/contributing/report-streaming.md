@@ -32,7 +32,7 @@ The unit packs at the point of transmission on both transports. On direct USB th
 
 `SparseMarkersReport` carries an occupancy mask and the occupied marker positions in slot order. Expansion returns the positions to their slots and fills the empty slots with the origin. The coordinates keep their integer precision. The host rejects a report whose point count differs from its mask and logs the rejection.
 
-The modern ATS Lite firmware sends every marker report in the sparse form. A dense `MarkersReport` spends two bytes on each empty slot. The sparse form spends one to three bytes on the mask and one byte on the point count instead. It is shorter when three or more slots are empty, and it is at most four bytes longer when all sixteen slots are occupied. These sizes follow from the postcard varint encoding. Readers also accept the dense form.
+The modern ATS Lite firmware sends each marker report in whichever form encodes shorter. A dense `MarkersReport` spends two bytes on each empty slot. The sparse form spends one to three bytes on the mask and one byte on the point count instead. The sparse form is never longer when two or more slots are empty, and the dense form is two to four bytes shorter otherwise. `From<MarkersReport> for PacketData` therefore sends the dense form when at most one slot is empty. These sizes follow from the postcard varint encoding, and a protocol test checks every occupancy count.
 
 `AccelBatch` carries up to eight IMU reports (`AccelReport`) of one stream in measurement order. Each report keeps its timestamp and the bits of its acceleration and rotation-rate floats. The outer packet id identifies the stream, so reports with different ids cannot share a batch. The capacity is a maximum. A sender never waits to fill a batch.
 

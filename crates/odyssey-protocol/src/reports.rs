@@ -82,6 +82,21 @@ impl From<MarkersReport> for SparseMarkersReport {
     }
 }
 
+impl From<MarkersReport> for crate::PacketData {
+    /// Picks the marker form with the shorter postcard encoding: the dense form when
+    /// at most one slot is empty, the sparse form otherwise.
+    fn from(report: MarkersReport) -> Self {
+        let sparse = SparseMarkersReport::from(report);
+        // Sparse spends a mask of up to three bytes and a count byte; dense spends two
+        // bytes on each empty slot.
+        if sparse.points.len() <= 14 {
+            Self::SparseMarkersReport(sparse)
+        } else {
+            Self::MarkersReport(report)
+        }
+    }
+}
+
 impl TryFrom<SparseMarkersReport> for MarkersReport {
     type Error = SparseMarkersError;
 
@@ -258,6 +273,32 @@ mod tests {
         let sparse = SparseMarkersReport::from(report);
         assert_eq!(sparse.mask, u16::MAX);
         assert_eq!(MarkersReport::try_from(sparse), Ok(report));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn the_chosen_marker_form_is_never_longer_than_the_dense_form() {
+        for occupied in 0..=16 {
+            // The highest slots give the longest mask.
+            let report = MarkersReport {
+                points: core::array::from_fn(|slot| {
+                    if slot >= 16 - occupied {
+                        Point2::new(u16::MAX, u16::MAX)
+                    } else {
+                        Point2::origin()
+                    }
+                }),
+            };
+            let dense = postcard::to_stdvec(&PacketData::MarkersReport(report)).expect("encodes");
+            let chosen = PacketData::from(report);
+            let encoded = postcard::to_stdvec(&chosen).expect("encodes");
+            assert!(encoded.len() <= dense.len(), "{occupied} occupied");
+            assert_eq!(
+                matches!(chosen, PacketData::SparseMarkersReport(_)),
+                occupied <= 14,
+                "{occupied} occupied"
+            );
+        }
     }
 
     #[test]
