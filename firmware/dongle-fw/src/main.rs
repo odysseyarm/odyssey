@@ -684,17 +684,19 @@ async fn device_packets_tx_task(
         let mut idle_count: u32 = 0;
         let mut tx_count: u32 = 0;
         loop {
-            let first = match held.take() {
-                Some(pkt) => pkt,
+            let msg = match held.take() {
+                Some(msg) => msg,
+                // Bounded wait so a deconfigure is noticed while idle.
                 None => match embassy_time::with_timeout(
                     embassy_time::Duration::from_millis(250),
                     device_packets.receive(),
                 )
                 .await
                 {
-                    Ok(pkt) => pkt,
+                    Ok(pkt) => MuxMsg::DevicePacket(pkt),
                     Err(_) => {
                         idle_count += 1;
+                        // Log every 20 timeouts, about 5 s of idle.
                         if idle_count % 20 == 0 {
                             info!("USB TX data: idle {}s, sent {}", idle_count / 4, tx_count);
                         }
@@ -706,7 +708,6 @@ async fn device_packets_tx_task(
                 },
             };
             idle_count = 0;
-            let msg = MuxMsg::DevicePacket(first);
             let mut used = match postcard::to_slice(&msg, &mut write_buf) {
                 Ok(data) => data.len(),
                 Err(_) => {
@@ -714,25 +715,19 @@ async fn device_packets_tx_task(
                     continue;
                 }
             };
-            loop {
-                let next = match device_packets.try_receive() {
-                    Ok(pkt) => pkt,
-                    Err(_) => break,
-                };
-                let msg = MuxMsg::DevicePacket(next);
-                match postcard::to_slice(&msg, &mut write_buf[used..]) {
+            while let Ok(next) = device_packets.try_receive() {
+                let next = MuxMsg::DevicePacket(next);
+                match postcard::to_slice(&next, &mut write_buf[used..]) {
                     Ok(data) => used += data.len(),
                     Err(_) => {
-                        held = Some(match msg {
-                            MuxMsg::DevicePacket(pkt) => pkt,
-                            _ => unreachable!(),
-                        });
+                        held = Some(next);
                         break;
                     }
                 }
             }
 
-            // Hold the lock across the write so host responses cannot race endpoint access.
+            // Hold the lock across the write. The other task then waits for the
+            // endpoint instead of finding None and dropping its message.
             let mut ep_guard = ep_mutex.lock().await;
             if let Some(ref mut endpoint) = *ep_guard {
                 use embassy_usb::driver::EndpointIn;
@@ -741,6 +736,7 @@ async fn device_packets_tx_task(
                 if result.is_ok() {
                     tx_count += 1;
                 } else {
+                    // A real driver error. The endpoint is likely disabled or stalled.
                     warn!("USB TX data: write failed after {} sent", tx_count);
                     break;
                 }

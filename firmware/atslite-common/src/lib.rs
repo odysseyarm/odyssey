@@ -25,6 +25,7 @@ pub mod nrf5340_init;
 pub mod object_mode;
 /// Since: Unreleased.
 pub mod ota;
+mod packing;
 /// Since: Odyssey Desktop 0.7.0.
 pub mod pmic_leds;
 /// Since: Odyssey Desktop 0.7.0.

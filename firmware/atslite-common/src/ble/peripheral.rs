@@ -18,6 +18,10 @@ const HOST_BONDS_MAX: usize = 2 * odyssey_protocol::control::MAX_BONDS;
 const L2CAP_PSM_CTRL: u16 = 0x0080;
 const L2CAP_PSM_DATA: u16 = 0x0081;
 
+/// Largest PDU payload on the data channel: a 251-byte link-layer payload less the four-byte
+/// L2CAP header.
+pub(crate) const DATA_MPS: u16 = 251 - 4;
+
 #[gatt_server]
 struct Server {}
 
@@ -475,7 +479,6 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     const L2CAP_MTU_CTRL: u16 = 251;
 
     const PAYLOAD_LEN_THROUGHPUT: u16 = 2510;
-    const L2CAP_MTU_THROUGHPUT: u16 = 251;
 
     let l2cap_control_config = L2capChannelConfig {
         mtu: Some(PAYLOAD_LEN_CTRL - 6),
@@ -486,7 +489,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
 
     let l2cap_data_config = L2capChannelConfig {
         mtu: Some(PAYLOAD_LEN_THROUGHPUT - 6),
-        mps: Some(L2CAP_MTU_THROUGHPUT - 4),
+        mps: Some(DATA_MPS),
         flow_policy: CreditFlowPolicy::Every(4),
         initial_credits: Some(16),
     };
@@ -632,39 +635,26 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
     mut channel: trouble_host::l2cap::L2capChannelWriter<'a, P>,
     tx_queue: &'static crate::ble::l2cap_bridge::L2capDataTxChannel,
 ) {
+    defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
     let mut held = None;
 
     loop {
-        let pkt = match held.take() {
+        let first = match held.take() {
             Some(pkt) => pkt,
             None => tx_queue.receive().await,
         };
-        let mut used = match postcard::to_slice(&pkt, &mut tx_buf) {
-            Ok(encoded) => encoded.len(),
+        let queued = || tx_queue.try_receive().ok();
+        let used = match crate::packing::pack_queued(first, queued, &mut tx_buf) {
+            Ok((used, unsent)) => {
+                held = unsent;
+                used
+            }
             Err(e) => {
                 defmt::error!("[data_tx_task] Failed to serialize data packet: {:?}", e);
                 continue;
             }
         };
-
-        // The 245-byte payload target accounts for the two-byte SDU length in one 247-byte
-        // PDU. A packet larger than target still travels alone; only queued packets are packed.
-        if used <= 245 {
-            loop {
-                let next = match tx_queue.try_receive() {
-                    Ok(next) => next,
-                    Err(_) => break,
-                };
-                match postcard::to_slice(&next, &mut tx_buf[used..]) {
-                    Ok(encoded) if used + encoded.len() <= 245 => used += encoded.len(),
-                    _ => {
-                        held = Some(next);
-                        break;
-                    }
-                }
-            }
-        }
 
         match embassy_time::with_timeout(
             embassy_time::Duration::from_secs(5),
