@@ -457,6 +457,7 @@ async fn usb_rcv_loop<'d, P: Platform>(
                 PacketData::LegacyCombinedMarkersReport(_) => None,
                 PacketData::MarkersReport(_) => None,
                 PacketData::AccelReport(_) => None,
+                PacketData::SparseMarkersReport(_) | PacketData::AccelBatch(_) => None,
                 PacketData::ImpactReport(_) => None,
                 PacketData::OtaRequest(frame) if matches!(src, PacketSource::Ble) => {
                     if let Some(ota) = P::OTA

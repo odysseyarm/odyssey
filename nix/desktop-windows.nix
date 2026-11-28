@@ -14,6 +14,7 @@
 #   tools/cargo-packager.exe     version and source hash pinned from Cargo.toml
 #   tools/xtask.exe              crates/xtask
 #   packager.json                [package.metadata.packager] of crates/odyssey-desktop
+#   THIRD_PARTY_NOTICES.txt      notices installed beside the application
 #   prebuilt.json                versions and sha256 of every file above
 #
 # Parity with the native MSVC build this replaces: the same rustc, `--release`, the
@@ -358,6 +359,7 @@ let
         cp ${full}/bin/odyssey-desktop.exe $out/full/
         cp ${cargoPackager}/bin/cargo-packager.exe ${xtask}/bin/xtask.exe $out/tools/
         cp ${packagerConfig} $out/packager.json
+        cp ${common.source}/THIRD_PARTY_NOTICES.txt $out/
 
         # Each is a 64-bit Windows binary, and the apps carry their icon and manifest.
         for exe in $out/online/odyssey-desktop.exe $out/full/odyssey-desktop.exe \
@@ -372,7 +374,7 @@ let
 
         cd $out
         sha256sum online/odyssey-desktop.exe full/odyssey-desktop.exe \
-          tools/cargo-packager.exe tools/xtask.exe packager.json \
+          tools/cargo-packager.exe tools/xtask.exe packager.json THIRD_PARTY_NOTICES.txt \
           | jq -Rn --arg version ${lib.escapeShellArg desktopVersion} --arg packager ${lib.escapeShellArg packagerPin.version} '{
               version: $version,
               cargoPackager: $packager,

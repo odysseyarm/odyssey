@@ -707,6 +707,71 @@ async fn report_with_an_id_from_another_link_reaches_the_stream_of_its_type() {
     );
 }
 
+#[tokio::test]
+async fn sparse_markers_and_accel_batches_reach_legacy_streams_in_order() {
+    use nalgebra::{Point2, Vector3};
+    use tokio_stream::StreamExt as _;
+
+    use crate::packets::vm::{AccelBatch, AccelReport, MarkersReport};
+
+    let Harness {
+        device,
+        mut sent,
+        incoming_tx,
+    } = harness();
+    let mut markers = Box::pin(device.stream_markers().await.unwrap());
+    let markers_id = sent.recv().await.unwrap().id;
+    let mut accel = Box::pin(device.stream_accel().await.unwrap());
+    let accel_id = sent.recv().await.unwrap().id;
+
+    let expected_markers = MarkersReport {
+        points: std::array::from_fn(|slot| match slot {
+            2 => Point2::new(17, 23),
+            13 => Point2::new(41, 59),
+            _ => Point2::origin(),
+        }),
+    };
+    let sparse = crate::packets::vm::SparseMarkersReport::from(expected_markers);
+    let reports = [
+        AccelReport {
+            timestamp: 100,
+            accel: Vector3::new(1.25, -2.5, 3.75),
+            gyro: Vector3::new(4.5, 5.25, -6.0),
+        },
+        AccelReport {
+            timestamp: 117,
+            accel: Vector3::new(-7.0, 8.125, 9.5),
+            gyro: Vector3::new(10.0, -11.25, 12.5),
+        },
+    ];
+    let mut batch = heapless::Vec::new();
+    batch.extend_from_slice(&reports).unwrap();
+    incoming_tx
+        .send(Packet {
+            id: markers_id,
+            data: PacketData::SparseMarkersReport(sparse),
+        })
+        .await
+        .unwrap();
+    incoming_tx
+        .send(Packet {
+            id: accel_id,
+            data: PacketData::AccelBatch(AccelBatch {
+                reports: batch.into(),
+            }),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(markers.next().await, Some(expected_markers));
+    for expected in reports {
+        let actual = accel.next().await.unwrap();
+        assert_eq!(actual.timestamp, expected.timestamp);
+        assert_eq!(actual.accel, expected.accel);
+        assert_eq!(actual.gyro, expected.gyro);
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod packet_control {
     use odyssey_protocol::control::device::{

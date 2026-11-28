@@ -271,6 +271,20 @@ pub enum PacketData {
         #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::postcard_only"))]
         crate::control::device::DeviceMsg,
     ),
+    /// Marker report without its empty slots.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(32))]
+    SparseMarkersReport(#[cfg_attr(feature = "minicbor", n(0))] crate::SparseMarkersReport),
+    /// IMU reports of one stream that were queued together.
+    ///
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(33))]
+    AccelBatch(#[cfg_attr(feature = "minicbor", n(0))] crate::AccelBatch),
 }
 
 /// Since: Odyssey Desktop 0.6.0.
@@ -482,6 +496,16 @@ pub enum PacketType {
     /// Wire baseline: device protocol 0.3.0.
     #[cfg_attr(feature = "minicbor", n(34))]
     DeviceControl(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(35))]
+    SparseMarkersReport(),
+    /// Since: Unreleased.
+    ///
+    /// Wire baseline: device protocol 0.4.0.
+    #[cfg_attr(feature = "minicbor", n(36))]
+    AccelBatch(),
 }
 
 impl TryFrom<u8> for PacketType {
@@ -520,6 +544,8 @@ impl TryFrom<u8> for PacketType {
             0x1d => Ok(Self::OtaStatus()),
             0x1e => Ok(Self::MarkerHint()),
             0x1f => Ok(Self::DeviceControl()),
+            0x20 => Ok(Self::SparseMarkersReport()),
+            0x21 => Ok(Self::AccelBatch()),
             VENDOR_START_ID => Ok(Self::VendorStart()),
             VENDOR_END_ID => Ok(Self::VendorEnd()),
             n if (VENDOR_START_ID..VENDOR_END_ID).contains(&n) => Ok(Self::Vendor(n)),
@@ -563,6 +589,8 @@ impl From<PacketType> for u8 {
             PacketType::OtaStatus() => 0x1d,
             PacketType::MarkerHint() => 0x1e,
             PacketType::DeviceControl() => 0x1f,
+            PacketType::SparseMarkersReport() => 0x20,
+            PacketType::AccelBatch() => 0x21,
             PacketType::VendorStart() => VENDOR_START_ID,
             PacketType::VendorEnd() => VENDOR_END_ID,
             PacketType::Vendor(n) => n,
@@ -606,6 +634,8 @@ impl Packet {
             PacketData::OtaStatus(_) => PacketType::OtaStatus(),
             PacketData::MarkerHint(_) => PacketType::MarkerHint(),
             PacketData::DeviceControl(_) => PacketType::DeviceControl(),
+            PacketData::SparseMarkersReport(_) => PacketType::SparseMarkersReport(),
+            PacketData::AccelBatch(_) => PacketType::AccelBatch(),
         }
     }
 
@@ -646,15 +676,48 @@ impl Packet {
             | PacketData::LegacyCombinedMarkersReport(_)
             | PacketData::MarkersReport(_)
             | PacketData::AccelReport(_)
+            | PacketData::SparseMarkersReport(_)
+            | PacketData::AccelBatch(_)
             | PacketData::ImpactReport(_)
             | PacketData::ImageChunk(_)
             | PacketData::ImageObject(_)
             | PacketData::BatteryReport(_) => false,
         }
     }
+
+    /// The IMU reports of `self` followed by those of `next`, as one
+    /// [`AccelBatch`](crate::AccelBatch) packet.
+    ///
+    /// Returns `None` unless both packets carry IMU reports for the same id and
+    /// the reports fit one batch. A sender merges reports that are queued back to
+    /// back this way; a receiver splits the batch into single reports again.
+    ///
+    /// Since: Unreleased.
+    pub fn join_accel(&self, next: &Self) -> Option<Self> {
+        if self.id != next.id {
+            return None;
+        }
+        let mut reports = heapless::Vec::new();
+        reports.extend_from_slice(self.data.accel_reports()?).ok()?;
+        reports.extend_from_slice(next.data.accel_reports()?).ok()?;
+        Some(Self {
+            id: self.id,
+            data: PacketData::AccelBatch(crate::AccelBatch {
+                reports: reports.into(),
+            }),
+        })
+    }
 }
 
 impl PacketData {
+    pub(crate) fn accel_reports(&self) -> Option<&[AccelReport]> {
+        match self {
+            Self::AccelReport(report) => Some(core::slice::from_ref(report)),
+            Self::AccelBatch(batch) => Some(&batch.reports),
+            _ => None,
+        }
+    }
+
     /// Since: Odyssey Desktop 0.6.0.
     pub fn read_register_response(self) -> Option<ReadRegisterResponse> {
         match self {
@@ -746,8 +809,8 @@ mod tests {
     #[test]
     fn ids_outside_the_tables_are_rejected() {
         assert!(matches!(
-            PacketType::try_from(0x20),
-            Err(Error::UnrecognizedPacketId(0x20))
+            PacketType::try_from(0x22),
+            Err(Error::UnrecognizedPacketId(0x22))
         ));
         assert!(matches!(
             PacketType::try_from(0x7f),

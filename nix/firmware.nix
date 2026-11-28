@@ -351,6 +351,7 @@ let
         xtask ${command}
         mkdir -p "$out"
         cp -r "$ODYSSEY_REPO/${boardDir}/${outDir}/." "$out/"
+        install -Dm644 ${common.source}/THIRD_PARTY_NOTICES.txt "$out/THIRD_PARTY_NOTICES.txt"
         for file in ${lib.escapeShellArgs expect}; do
           test -s "$out/$file" || { echo "missing or empty: $file" >&2; exit 1; }
         done

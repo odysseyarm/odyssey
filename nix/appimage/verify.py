@@ -155,6 +155,9 @@ def main() -> None:
     ):
         fail("AppRun must be an executable #!/bin/sh script")
     check_desktop(a.root, name, policy["desktopName"], policy["iconName"])
+    notices = os.path.join(a.root, "usr/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt")
+    if not os.path.isfile(notices) or os.path.getsize(notices) == 0:
+        fail("missing or empty usr/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt")
 
     if not os.path.isfile(exe):
         fail(f"missing usr/bin/{name}")

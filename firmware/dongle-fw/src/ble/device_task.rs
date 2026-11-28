@@ -497,23 +497,35 @@ async fn run_connection(
 
     let data_rx_fut = async {
         let mut rx_buf = [0u8; 1024];
+        let forward = |pkt| {
+            let device_packet = DevicePacket {
+                dev: target.into_inner(),
+                pkt,
+            };
+            if device_packets.try_send(device_packet).is_err() {
+                let c = DROPPED_DATA_TO_HOST.fetch_add(1, Ordering::AcqRel) + 1;
+                if c % 64 == 0 {
+                    warn!("Dropped {} data packets to host (channel full)", c);
+                }
+            }
+        };
         loop {
             match data_reader.receive(stack, &mut rx_buf).await {
-                Ok(len) => match postcard::from_bytes::<odyssey_protocol::Packet>(&rx_buf[..len]) {
-                    Ok(pkt) => {
-                        let device_packet = DevicePacket {
-                            dev: target.into_inner(),
-                            pkt,
-                        };
-                        if device_packets.try_send(device_packet).is_err() {
-                            let c = DROPPED_DATA_TO_HOST.fetch_add(1, Ordering::AcqRel) + 1;
-                            if c % 64 == 0 {
-                                warn!("Dropped {} data packets to host (channel full)", c);
+                Ok(len) => {
+                    let mut remaining = &rx_buf[..len];
+                    while !remaining.is_empty() {
+                        match postcard::take_from_bytes::<odyssey_protocol::Packet>(remaining) {
+                            Ok((pkt, rest)) => {
+                                remaining = rest;
+                                forward(pkt);
+                            }
+                            Err(_) => {
+                                error!("Failed to deserialize L2CAP data packet");
+                                break;
                             }
                         }
                     }
-                    Err(_) => error!("Failed to deserialize L2CAP data packet"),
-                },
+                }
                 Err(e) => {
                     error!("L2CAP data receive error: {:?}", defmt::Debug2Format(&e));
                     shutdown.signal(());

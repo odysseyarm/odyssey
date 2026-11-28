@@ -738,6 +738,67 @@ fn is_ble(_transport: &PacketTransport) -> bool {
     false
 }
 
+/// Hands `reply` to the request or stream waiting for its id.
+fn deliver(
+    state: &State,
+    pairing_events: &mpsc::Sender<PairingOutcome>,
+    dispatcher_id: u32,
+    reply: Packet,
+) {
+    let id = reply.id;
+    let pairing_result = match &reply.data {
+        PacketData::DeviceControl(DeviceMsg::PairingResult(outcome)) => Some(outcome.clone()),
+        _ => None,
+    };
+    match state.deliver(reply) {
+        Delivery::Delivered => {
+            debug!("Dispatcher: [ID:{dispatcher_id}] delivered packet id={id}");
+        }
+        Delivery::Unregistered | Delivery::LateReplyDropped if pairing_result.is_some() => {
+            // A pairing result outlives the request that started
+            // it, so no waiting slot claims it.
+            if let Some(outcome) = pairing_result
+                && pairing_events.try_send(outcome).is_err()
+            {
+                warn!("pairing result dropped: nobody is waiting for it");
+            }
+        }
+        Delivery::Unregistered => {
+            warn!("Packet received for unregistered slot {id}");
+        }
+        Delivery::LateReplyDropped => {
+            debug!("Dispatcher: [ID:{dispatcher_id}] dropping late reply for abandoned slot {id}");
+        }
+        Delivery::Undeliverable(why) => {
+            debug!("Dispatcher: [ID:{dispatcher_id}] dropped reply id={id}: {why:?}");
+        }
+    }
+}
+
+/// Delivers `reply`, first splitting the compact report forms into the single
+/// dense reports that streams carry. The reports keep their id and order.
+fn deliver_expanded(
+    state: &State,
+    pairing_events: &mpsc::Sender<PairingOutcome>,
+    dispatcher_id: u32,
+    reply: Packet,
+) {
+    let id = reply.id;
+    let send = |data| deliver(state, pairing_events, dispatcher_id, Packet { id, data });
+    match reply.data {
+        PacketData::SparseMarkersReport(sparse) => match MarkersReport::try_from(sparse) {
+            Ok(report) => send(PacketData::MarkersReport(report)),
+            Err(error) => warn!("sparse marker report rejected: {error}"),
+        },
+        PacketData::AccelBatch(batch) => {
+            for report in batch.reports.0 {
+                send(PacketData::AccelReport(report));
+            }
+        }
+        data => send(data),
+    }
+}
+
 /// Routes every packet the device sends to the request or stream waiting for
 /// its id, until the transport closes or `cancel` fires.
 ///
@@ -772,40 +833,7 @@ async fn run_dispatcher(
                     }
                     continue;
                 }
-                let id = reply.id;
-                let pairing_result = match &reply.data {
-                    PacketData::DeviceControl(DeviceMsg::PairingResult(outcome)) => {
-                        Some(outcome.clone())
-                    }
-                    _ => None,
-                };
-                match state.deliver(reply) {
-                    Delivery::Delivered => {
-                        debug!("Dispatcher: [ID:{dispatcher_id}] delivered packet id={id}");
-                    }
-                    Delivery::Unregistered | Delivery::LateReplyDropped
-                        if pairing_result.is_some() =>
-                    {
-                        // A pairing result outlives the request that started
-                        // it, so no waiting slot claims it.
-                        if let Some(outcome) = pairing_result
-                            && pairing_events.try_send(outcome).is_err()
-                        {
-                            warn!("pairing result dropped: nobody is waiting for it");
-                        }
-                    }
-                    Delivery::Unregistered => {
-                        warn!("Packet received for unregistered slot {id}");
-                    }
-                    Delivery::LateReplyDropped => {
-                        debug!(
-                            "Dispatcher: [ID:{dispatcher_id}] dropping late reply for abandoned slot {id}"
-                        );
-                    }
-                    Delivery::Undeliverable(why) => {
-                        debug!("Dispatcher: [ID:{dispatcher_id}] dropped reply id={id}: {why:?}");
-                    }
-                }
+                deliver_expanded(&state, &pairing_events, dispatcher_id, reply);
             }
             () = cancel.cancelled() => {
                 debug!("Dispatcher: [ID:{dispatcher_id}] cancelled, exiting");

@@ -309,9 +309,13 @@ jobs:
             "Odyssey-$VERSION-win-x64-full.msi" \
             "Odyssey-$VERSION-x86_64.AppImage" \
             "odyssey-desktop-nixos-store-path.txt"
-  # A release created with GITHUB_TOKEN starts no workflows, so docs-site.yml's
-  # `release` trigger never sees this one. Call it directly instead.
   website:
-    needs: github-release
-    uses: ./.github/workflows/docs-site.yml
+    needs: [check-version, github-release]
+    if: needs.check-version.outputs.release_type == 'stable'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/rustdoc.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}
+      tag: ${{ needs.check-version.outputs.release_tag }}
     secrets: inherit

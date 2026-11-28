@@ -1,7 +1,7 @@
 use odyssey_protocol_macros::protocol_type;
 
 /// Version of the device wire format, reported by a device in
-/// [`Props::Version`] and over the control endpoint. Bump when packet shape or
+/// [`crate::Props::Version`] and over the control endpoint. Bump when packet shape or
 /// accepted value ranges change.
 ///
 /// This is a separate axis from the crate version in `Cargo.toml`. The crate
@@ -13,10 +13,14 @@ use odyssey_protocol_macros::protocol_type;
 /// multi-bond messages (`ListBonds`, `RemoveBond`) and the `BondsFull` and
 /// `NotFound` errors. Version 0.3.0 appends the `OtaRequest`, `OtaStatus`,
 /// `MarkerHint` and `DeviceControl` packets; OTA frames and marker hints no
-/// longer travel in vendor packets.
+/// longer travel in vendor packets. Version 0.4.0 appends the
+/// `SparseMarkersReport` and `AccelBatch` packets, which a unit sends over USB
+/// and BLE without negotiation. Packet variants are device protocol changes;
+/// the independent `MUX_PROTOCOL` covers only the mux envelope and does not
+/// version nested device packets.
 ///
 /// Since: Odyssey Desktop 0.6.0.
-pub const DEVICE_PROTOCOL: [u16; 3] = [0, 3, 0];
+pub const DEVICE_PROTOCOL: [u16; 3] = [0, 4, 0];
 
 /// Since: Odyssey Desktop 0.6.0.
 #[protocol_type]

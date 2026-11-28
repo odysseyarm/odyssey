@@ -32,6 +32,7 @@ let
             "rustfmt.toml"
             "clippy.toml"
             "LICENSE"
+            "THIRD_PARTY_NOTICES.txt"
           ];
       in
       rustInput

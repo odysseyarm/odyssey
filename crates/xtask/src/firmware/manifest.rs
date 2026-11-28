@@ -31,7 +31,8 @@ const PACK_README: &str = "Odyssey offline firmware pack.\n\n\
 Put this folder where the 'firmware_pack_dir' policy points (by default\n\
 %ProgramData%\\OdysseyArm\\Odyssey\\firmware-pack) and restart Odyssey. Keep the layout\n\
 as it is; Odyssey only offers a firmware release when every file it lists is here.\n\
-SHA256SUMS lists the checksum of every firmware file.\n";
+SHA256SUMS lists the checksum of every firmware file.\n\
+THIRD_PARTY_NOTICES.txt contains dependency license texts and attribution.\n";
 
 pub(super) fn read(path: &Path) -> eros::Result<Value> {
     let text =
@@ -335,6 +336,10 @@ pub(super) fn build_pack(args: &PackArgs) -> eros::Result<()> {
             }
         }
     }
+    super::copy(
+        &cmd::root().join("THIRD_PARTY_NOTICES.txt"),
+        &out.join("THIRD_PARTY_NOTICES.txt"),
+    )?;
     let mut sums = String::new();
     for (relative, (digest, _)) in &have {
         writeln!(sums, "{digest}  {relative}").expect("writing to String cannot fail");
