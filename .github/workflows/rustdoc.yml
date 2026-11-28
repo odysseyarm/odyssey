@@ -1,0 +1,132 @@
+name: Rust API docs
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - crates/odyssey-protocol/**
+      - crates/odyssey-hub-client/**
+      - crates/odyssey-protocol-macros/**
+      - crates/odyssey-hub-common/**
+      - crates/odyssey-hub-server-interface/**
+      - crates/odyssey-common/**
+      - crates/odyssey-usb/**
+      - Cargo.toml
+      - Cargo.lock
+      - sdk/odyssey-hub-client-ffi/Cargo.toml
+      - sdk/odyssey-hub-client-ffi/Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/config.toml
+      - .github/workflows/rustdoc.yml
+  schedule:
+    - cron: '23 6 * * 1'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Rust API docs version label
+        required: true
+        type: string
+      tag:
+        description: Existing Desktop release tag
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'schedule' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'odyssey-desktop-v') && github.event.release.prerelease == false) || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.sha }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-18
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+      - name: Generate public Rust API docs
+        env:
+          DOCS_TAG: ${{ inputs.tag }}
+          DOCS_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/rustdoc-target
+        run: |
+          if [ -n "$DOCS_TAG" ]; then
+            tag="$DOCS_TAG"
+            version="$DOCS_VERSION"
+          elif [ -n "$RELEASE_TAG" ]; then
+            tag="$RELEASE_TAG"
+            version="${tag#odyssey-desktop-v}"
+          else
+            tag=
+            version=master
+          fi
+          if [ "$version" != master ] && { ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$tag" != "odyssey-desktop-v$version" ]; }; then
+            echo "Docs version and Desktop release tag do not match: $version / $tag" >&2
+            exit 1
+          fi
+          cargo doc --locked --manifest-path sdk/odyssey-hub-client-ffi/Cargo.toml --no-deps -p odyssey-protocol -p odyssey-hub-client
+          mkdir -p "api/$version"
+          cp -a "$CARGO_TARGET_DIR/doc/." "api/$version/"
+          printf '%s\n' \
+            '<!doctype html>' \
+            '<html lang="en"><meta charset="utf-8"><title>Odyssey Rust API</title>' \
+            "<h1>Odyssey Rust API — $version</h1>" \
+            '<p>Master documentation is unreleased. Numbered snapshots correspond to Odyssey Desktop releases.</p>' \
+            '<ul><li><a href="odyssey_protocol/index.html">odyssey-protocol</a></li><li><a href="odyssey_hub_client/index.html">odyssey-hub-client</a></li></ul>' \
+            '</html>' > "api/$version/index.html"
+          test -s "api/$version/index.html"
+          echo "version=$version" >> "$GITHUB_ENV"
+      - name: Pack master docs archive
+        if: (github.event_name == 'push' || github.event_name == 'schedule') && inputs.tag == ''
+        run: tar -czf rustdoc-master.tar.gz api/master
+      - name: Upload master docs artifact
+        if: (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/master' && inputs.tag == ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: rustdoc-master
+          path: rustdoc-master.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach durable release docs
+        if: inputs.tag != '' || github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCS_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tar -czf "rustdoc-${version}.tar.gz" "api/${version}"
+          tag="${DOCS_TAG:-$RELEASE_TAG}"
+          gh release upload "$tag" "rustdoc-${version}.tar.gz" --clobber
+      - name: Rebuild website
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+          DOCS_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          API_REF: ${{ inputs.tag || github.event.release.tag_name || github.sha }}
+          EVENT: ${{ (inputs.tag != '' || github.event_name == 'release') && 'odyssey-release' || 'odyssey-docs-updated' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::SITE_DISPATCH_TOKEN is not set; website will pick docs up on its next scheduled build."
+            exit 0
+          fi
+          gh api repos/odysseyarm/odysseyarm.github.io/dispatches \
+            -f event_type="$EVENT" \
+            -f "client_payload[ref]=$API_REF" \
+            -f "client_payload[label]=$version"

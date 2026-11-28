@@ -18,6 +18,10 @@ const HOST_BONDS_MAX: usize = 2 * odyssey_protocol::control::MAX_BONDS;
 const L2CAP_PSM_CTRL: u16 = 0x0080;
 const L2CAP_PSM_DATA: u16 = 0x0081;
 
+/// Largest PDU payload on the data channel: a 251-byte link-layer payload less the four-byte
+/// L2CAP header.
+pub(crate) const DATA_MPS: u16 = 251 - 4;
+
 #[gatt_server]
 struct Server {}
 
@@ -475,7 +479,6 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
     const L2CAP_MTU_CTRL: u16 = 251;
 
     const PAYLOAD_LEN_THROUGHPUT: u16 = 2510;
-    const L2CAP_MTU_THROUGHPUT: u16 = 251;
 
     let l2cap_control_config = L2capChannelConfig {
         mtu: Some(PAYLOAD_LEN_CTRL - 6),
@@ -486,7 +489,7 @@ async fn custom_task<'a, C: Controller, P: PacketPool>(
 
     let l2cap_data_config = L2capChannelConfig {
         mtu: Some(PAYLOAD_LEN_THROUGHPUT - 6),
-        mps: Some(L2CAP_MTU_THROUGHPUT - 4),
+        mps: Some(DATA_MPS),
         flow_policy: CreditFlowPolicy::Every(4),
         initial_credits: Some(16),
     };
@@ -634,35 +637,43 @@ async fn data_tx_task<'a, C: trouble_host::Controller, P: PacketPool>(
 ) {
     defmt::info!("[data_tx_task] started");
     let mut tx_buf = [0u8; 1024];
+    let mut held = None;
 
     loop {
-        let pkt = tx_queue.receive().await;
+        let first = match held.take() {
+            Some(pkt) => pkt,
+            None => tx_queue.receive().await,
+        };
+        let queued = || tx_queue.try_receive().ok();
+        let used = match crate::packing::pack_queued(first, queued, &mut tx_buf) {
+            Ok((used, unsent)) => {
+                held = unsent;
+                used
+            }
+            Err(e) => {
+                defmt::error!("[data_tx_task] Failed to serialize data packet: {:?}", e);
+                continue;
+            }
+        };
 
-        match postcard::to_slice(&pkt, &mut tx_buf) {
-            Ok(data) => {
-                match embassy_time::with_timeout(
-                    embassy_time::Duration::from_secs(5),
-                    channel.send(stack, data),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        defmt::warn!(
-                            "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
-                            defmt::Debug2Format(&e)
-                        );
-                        return;
-                    }
-                    Err(_) => {
-                        // Dropping a timed-out send may leave a partial SDU on the peer.
-                        defmt::warn!("[data_tx_task] L2CAP data send timeout, closing link");
-                        return;
-                    }
-                }
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_secs(5),
+            channel.send(stack, &tx_buf[..used]),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                defmt::warn!(
+                    "[data_tx_task] L2CAP data send failed (dropping packet): {:?}",
+                    defmt::Debug2Format(&e)
+                );
+                return;
             }
             Err(_) => {
-                defmt::error!("[data_tx_task] Failed to serialize data packet");
+                // Dropping a timed-out send may leave a partial SDU on the peer.
+                defmt::warn!("[data_tx_task] L2CAP data send timeout, closing link");
+                return;
             }
         }
     }

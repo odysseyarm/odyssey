@@ -669,7 +669,9 @@ async fn device_packets_tx_task(
     >,
     device_packets: &'static DevicePacketChannel,
 ) {
-    let mut write_buf = [0u8; 256];
+    // A BLE receive buffer holds 1024 bytes; the mux adds a variant tag and device address.
+    let mut write_buf = [0u8; 1024 + 1 + size_of::<odyssey_protocol::mux::Uuid>()];
+    let mut held = None;
 
     loop {
         let mut cfg = crate::usb::usb_config_receiver();
@@ -682,36 +684,54 @@ async fn device_packets_tx_task(
         let mut idle_count: u32 = 0;
         let mut tx_count: u32 = 0;
         loop {
-            // Bounded wait so a deconfigure is noticed while idle.
-            let device_pkt = match embassy_time::with_timeout(
-                embassy_time::Duration::from_millis(250),
-                device_packets.receive(),
-            )
-            .await
-            {
-                Ok(pkt) => pkt,
-                Err(_) => {
-                    idle_count += 1;
-                    // Log every 20 timeouts, about 5 s of idle.
-                    if idle_count % 20 == 0 {
-                        info!("USB TX data: idle {}s, sent {}", idle_count / 4, tx_count);
-                    }
-                    if let Some(v) = cfg.try_get() {
-                        if !v {
+            let msg = match held.take() {
+                Some(msg) => msg,
+                // Bounded wait so a deconfigure is noticed while idle.
+                None => match embassy_time::with_timeout(
+                    embassy_time::Duration::from_millis(250),
+                    device_packets.receive(),
+                )
+                .await
+                {
+                    Ok(pkt) => MuxMsg::DevicePacket(pkt),
+                    Err(_) => {
+                        idle_count += 1;
+                        // Log every 20 timeouts, about 5 s of idle.
+                        if idle_count % 20 == 0 {
+                            info!("USB TX data: idle {}s, sent {}", idle_count / 4, tx_count);
+                        }
+                        if let Some(false) = cfg.try_get() {
                             break;
                         }
+                        continue;
                     }
+                },
+            };
+            idle_count = 0;
+            let mut used = match postcard::to_slice(&msg, &mut write_buf) {
+                Ok(data) => data.len(),
+                Err(_) => {
+                    warn!("USB TX data: packet exceeds transfer buffer");
                     continue;
                 }
             };
-            idle_count = 0;
-            let msg = MuxMsg::DevicePacket(device_pkt);
+            while let Ok(next) = device_packets.try_receive() {
+                let next = MuxMsg::DevicePacket(next);
+                match postcard::to_slice(&next, &mut write_buf[used..]) {
+                    Ok(data) => used += data.len(),
+                    Err(_) => {
+                        held = Some(next);
+                        break;
+                    }
+                }
+            }
 
             // Hold the lock across the write. The other task then waits for the
             // endpoint instead of finding None and dropping its message.
             let mut ep_guard = ep_mutex.lock().await;
             if let Some(ref mut endpoint) = *ep_guard {
-                let result = send_mux_msg(&msg, &mut write_buf, endpoint).await;
+                use embassy_usb::driver::EndpointIn;
+                let result = EndpointIn::write_transfer(endpoint, &write_buf[..used], true).await;
                 drop(ep_guard);
                 if result.is_ok() {
                     tx_count += 1;

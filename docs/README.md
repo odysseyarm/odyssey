@@ -10,6 +10,37 @@ The website ([odysseyarm/odysseyarm.github.io](https://github.com/odysseyarm/ody
 copies `sdk/` in when it builds. Docs for people who use Odyssey without
 building on it are written on the website itself.
 
+## Hosted Rust API
+
+The website serves public `odyssey-protocol` and `odyssey-hub-client` rustdoc at
+`/api/master/` and `/api/<Desktop version>/`. `/api/latest/` links to the highest
+documented stable Desktop version. Master is unreleased.
+
+`.github/workflows/rustdoc.yml` builds from the standalone FFI workspace so Cargo
+does not resolve the root workspace's private tracking dependency. It documents
+the two Rust crates without dependency documentation or private items. The full
+fresh rustdoc output includes its shared scripts, styles and search indexes.
+
+Master builds upload the `rustdoc-master` Actions artifact containing
+`rustdoc-master.tar.gz`. A weekly build refreshes it within its 30-day retention
+period. Stable Desktop releases attach `rustdoc-X.Y.Z.tar.gz` to the matching
+release. The Desktop release workflow calls this workflow explicitly because a
+release created with `GITHUB_TOKEN` does not trigger another release workflow.
+The website imports these archives and deploys through its existing Cloudflare
+workflow.
+
+To bootstrap an existing stable release, run the Rust API docs workflow manually
+with its `version` and matching `odyssey-desktop-vX.Y.Z` tag. This uploads only
+documentation; it does not republish application or firmware binaries. Publish
+master and the latest stable archive before merging the website importer.
+
+For local documentation, enter the development shell and run:
+
+```sh
+cargo doc --locked --offline --manifest-path sdk/odyssey-hub-client-ffi/Cargo.toml \
+  --no-deps -p odyssey-protocol -p odyssey-hub-client --open
+```
+
 ## Writing SDK pages
 
 Pages are GitHub-flavored Markdown and must read well here on GitHub. The site

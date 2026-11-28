@@ -152,12 +152,14 @@ impl ReadErrorBudget {
     }
 }
 
-/// Reads whole messages off the bulk IN endpoint, one per short packet.
+/// Reads messages off the bulk IN endpoint. One transfer, ended by a short
+/// packet, carries one or more postcard messages back to back.
 pub(super) struct MessageReader {
     in_ep: EndpointRead<Bulk>,
     budget: ReadErrorBudget,
     label: &'static str,
     buffer: Vec<u8>,
+    position: usize,
 }
 
 impl MessageReader {
@@ -167,45 +169,70 @@ impl MessageReader {
             budget: ReadErrorBudget::default(),
             label,
             buffer: Vec::with_capacity(READ_SCRATCH_CAPACITY),
+            position: 0,
+        }
+    }
+
+    fn decode_buffer<M: DeserializeOwned>(
+        buffer: &[u8],
+        position: &mut usize,
+    ) -> std::result::Result<Option<M>, postcard::Error> {
+        if *position == buffer.len() {
+            return Ok(None);
+        }
+        match postcard::take_from_bytes::<M>(&buffer[*position..]) {
+            Ok((message, remaining)) => {
+                *position = buffer.len() - remaining.len();
+                Ok(Some(message))
+            }
+            Err(error) => {
+                *position = buffer.len();
+                Err(error)
+            }
         }
     }
 
     /// The next decodable message, or `None` once the link has failed.
-    /// A message that does not decode is logged and skipped.
+    /// A message that does not decode is logged and discards the rest of its transfer.
     pub(super) async fn next_message<M: DeserializeOwned>(&mut self) -> Option<M> {
         let label = self.label;
-        let mut reader = self.in_ep.until_short_packet();
         loop {
+            match Self::decode_buffer(&self.buffer, &mut self.position) {
+                Ok(Some(message)) => return Some(message),
+                Ok(None) => {}
+                Err(error) => error!("{label} postcard decode failed: {error:?}"),
+            }
             self.buffer.clear();
+            self.position = 0;
+            let mut reader = self.in_ep.until_short_packet();
             match (&mut reader)
                 .take((MAX_MESSAGE_SIZE + 1) as u64)
                 .read_to_end(&mut self.buffer)
                 .await
             {
                 Ok(_) => self.budget.on_success(),
-                Err(e) => match self.budget.on_error(e.kind()) {
-                    ReadErrorAction::Idle => continue,
-                    ReadErrorAction::Tolerate => {
-                        warn!("{label} read error (ignored): {e}");
-                        continue;
+                Err(e) => {
+                    self.buffer.clear();
+                    match self.budget.on_error(e.kind()) {
+                        ReadErrorAction::Idle => continue,
+                        ReadErrorAction::Tolerate => {
+                            warn!("{label} read error (ignored): {e}");
+                            continue;
+                        }
+                        ReadErrorAction::GiveUp => {
+                            error!("{label} read error: {e:?} (kind: {:?})", e.kind());
+                            return None;
+                        }
                     }
-                    ReadErrorAction::GiveUp => {
-                        error!("{label} read error: {e:?} (kind: {:?})", e.kind());
-                        return None;
-                    }
-                },
+                }
             }
             if self.buffer.len() > MAX_MESSAGE_SIZE {
-                error!("{label} message exceeds {MAX_MESSAGE_SIZE} bytes");
+                error!("{label} transfer exceeds {MAX_MESSAGE_SIZE} bytes");
                 return None;
             }
             if let Err(e) = reader.consume_end() {
                 warn!("{label} consume_end failed: {e:?}");
-                continue;
-            }
-            match postcard::from_bytes::<M>(&self.buffer) {
-                Ok(msg) => return Some(msg),
-                Err(e) => error!("{label} postcard decode failed: {e:?}"),
+                self.buffer.clear();
             }
         }
     }
@@ -254,5 +281,57 @@ mod tests {
         }
         budget.on_success();
         assert_eq!(budget.on_error(ErrorKind::Other), ReadErrorAction::Tolerate);
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    enum Message {
+        Marker(u8),
+        Accel(u16),
+    }
+
+    #[test]
+    fn decodes_multiple_mixed_messages_in_order() {
+        let messages = [Message::Marker(3), Message::Accel(8), Message::Marker(5)];
+        let transfer: Vec<u8> = messages
+            .iter()
+            .flat_map(|message| postcard::to_stdvec(message).unwrap())
+            .collect();
+
+        let mut position = 0;
+        for expected in messages {
+            assert_eq!(
+                MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn malformed_or_truncated_trailing_message_is_dropped_before_next_transfer() {
+        let first = Message::Marker(3);
+        let second = Message::Accel(8);
+        let mut transfer = postcard::to_stdvec(&first).unwrap();
+        transfer.extend([0x01, 0x80]);
+        let mut position = 0;
+        assert_eq!(
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
+            Some(first)
+        );
+        MessageReader::decode_buffer::<Message>(&transfer, &mut position)
+            .expect_err("truncated u16");
+        assert_eq!(
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
+            None
+        );
+        transfer = postcard::to_stdvec(&second).unwrap();
+        position = 0;
+        assert_eq!(
+            MessageReader::decode_buffer::<Message>(&transfer, &mut position).unwrap(),
+            Some(second)
+        );
     }
 }

@@ -813,6 +813,7 @@ async fn recv_loop<P: PagSensor, const Q: usize, const R: usize>(
             PacketData::LegacyCombinedMarkersReport(_) => None,
             PacketData::MarkersReport(_) => None,
             PacketData::AccelReport(_) => None,
+            PacketData::SparseMarkersReport(_) | PacketData::AccelBatch(_) => None,
             PacketData::ImpactReport(_) => None,
             PacketData::MarkerHint(hint) => {
                 match hint.validate() {
@@ -946,48 +947,56 @@ async fn stream_loop<const N: usize, const R: usize>(
     defmt::info!("[stream_loop] Started");
     let mut pkt_count: u32 = 0;
     let mut usb_snd_buf = [0u8; 1024];
+    let mut held_report = None;
 
     loop {
-        let (pkt, transport, usb_generation) = match select3(
-            usb_replies.receive(),
-            reports.receive(),
-            image_data.receive(),
-        )
-        .await
-        {
-            Either3::First(reply) => {
-                if reply.generation != usb_configured.generation() {
-                    continue;
-                }
-                (
-                    reply.packet,
-                    atslite_transport::reply_transport(TransportMode::Usb, usb_device::is_active()),
-                    reply.generation,
-                )
-            }
-            Either3::Second(pkt) => (
-                pkt,
-                Some(atslite_transport::report_transport(usb_device::is_active())),
-                usb_configured.generation(),
-            ),
-            Either3::Third(pkt) => {
-                let generation = match &pkt.data {
-                    PacketData::ImageChunk(chunk) => chunk.generation,
-                    _ => continue,
-                };
-                if !image_state
-                    .ownership
-                    .accepts(generation, usb_configured.generation())
-                {
-                    continue;
-                }
-                (
-                    pkt,
-                    atslite_transport::reply_transport(TransportMode::Usb, usb_device::is_active()),
-                    image_state.ownership.usb_generation(),
-                )
+        let next_report = async {
+            match held_report.take() {
+                Some(pkt) => pkt,
+                None => reports.receive().await,
             }
         };
+        let (pkt, transport, usb_generation) =
+            match select3(usb_replies.receive(), next_report, image_data.receive()).await {
+                Either3::First(reply) => {
+                    if reply.generation != usb_configured.generation() {
+                        continue;
+                    }
+                    (
+                        reply.packet,
+                        atslite_transport::reply_transport(
+                            TransportMode::Usb,
+                            usb_device::is_active(),
+                        ),
+                        reply.generation,
+                    )
+                }
+                Either3::Second(pkt) => (
+                    pkt,
+                    Some(atslite_transport::report_transport(usb_device::is_active())),
+                    usb_configured.generation(),
+                ),
+                Either3::Third(pkt) => {
+                    let generation = match &pkt.data {
+                        PacketData::ImageChunk(chunk) => chunk.generation,
+                        _ => continue,
+                    };
+                    if !image_state
+                        .ownership
+                        .accepts(generation, usb_configured.generation())
+                    {
+                        continue;
+                    }
+                    (
+                        pkt,
+                        atslite_transport::reply_transport(
+                            TransportMode::Usb,
+                            usb_device::is_active(),
+                        ),
+                        image_state.ownership.usb_generation(),
+                    )
+                }
+            };
         pkt_count = pkt_count.wrapping_add(1);
         if pkt_count % 100 == 0 {
             defmt::debug!("[stream_loop] Processed {} packets", pkt_count);
@@ -999,8 +1008,12 @@ async fn stream_loop<const N: usize, const R: usize>(
                 // the newer ones on USB, so they are dropped. The data queue holds only reports;
                 // replies to BLE requests are on the control queue and still go out.
                 l2cap.data_tx.clear();
-                let payload = match postcard::to_slice(&pkt, &mut usb_snd_buf) {
-                    Ok(payload) => payload,
+                let queued = || reports.try_receive().ok();
+                let used = match crate::packing::pack_queued(pkt, queued, &mut usb_snd_buf) {
+                    Ok((used, unsent)) => {
+                        held_report = unsent;
+                        used
+                    }
                     Err(e) => {
                         defmt::error!(
                             "[stream_loop] USB packet serialization failed: {:?}",
@@ -1009,6 +1022,7 @@ async fn stream_loop<const N: usize, const R: usize>(
                         continue;
                     }
                 };
+                let payload = &usb_snd_buf[..used];
                 match select(
                     usb_configured.wait_until_generation_changes(usb_generation),
                     usb_snd.write_transfer(payload, true),
@@ -1388,11 +1402,12 @@ fn send_markers<const N: usize>(
     objs: &[pag7665qn::types::Object; 16],
 ) {
     if streams.marker.enabled() {
+        let report = odyssey_protocol::MarkersReport {
+            points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
+        };
         let _ = reports.try_send(Packet {
             id: streams.marker.req_id(),
-            data: PacketData::MarkersReport(odyssey_protocol::MarkersReport {
-                points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
-            }),
+            data: report.into(),
         });
     }
 }

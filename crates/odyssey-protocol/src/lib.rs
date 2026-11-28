@@ -8,6 +8,11 @@
 //! characteristic has no wire-version counter of its own.
 //!
 //! Availability metadata changes no discriminants, payloads or negotiation.
+//! `DEVICE_PROTOCOL` versions packet contents, including packets nested inside
+//! mux messages. `MUX_PROTOCOL` versions only the mux envelope, independently.
+//!
+//! The [report streaming design](https://github.com/odysseyarm/odyssey/blob/master/docs/contributing/report-streaming.md)
+//! describes compact reports, USB and BLE packing, measurement timing and release compatibility.
 // Assumes a little-endian target.
 #![no_std]
 
@@ -36,6 +41,7 @@ mod schema;
 #[cfg(all(feature = "serde", feature = "device", not(feature = "std")))]
 mod serde_reject;
 mod stream_update;
+mod transfer;
 mod version;
 
 /// Since: Odyssey Desktop 0.7.4.
@@ -84,11 +90,19 @@ pub use register::{Port, ReadRegisterResponse, Register, WriteRegister};
 /// # Since
 ///
 /// - `AccelReport`: Odyssey Desktop 0.6.0.
+/// - `AccelBatch`: Unreleased.
 /// - `BatteryReport`: Odyssey Desktop 0.6.0.
 /// - `ImpactReport`: Odyssey Desktop 0.6.0.
 /// - `MarkersReport`: Odyssey Desktop 0.7.5.
-pub use reports::{AccelReport, BatteryReport, ImpactReport, MarkersReport};
+/// - `SparseMarkersError`: Unreleased.
+/// - `SparseMarkersReport`: Unreleased.
+pub use reports::{
+    AccelBatch, AccelReport, BatteryReport, ImpactReport, MarkersReport, SparseMarkersError,
+    SparseMarkersReport,
+};
 /// Since: Odyssey Desktop 0.6.0.
 pub use stream_update::{StreamUpdate, StreamUpdateAction};
+/// Since: Unreleased.
+pub use transfer::pack_queued;
 /// Since: Odyssey Desktop 0.6.0.
 pub use version::{DEVICE_PROTOCOL, Version};
