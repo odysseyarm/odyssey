@@ -69,40 +69,18 @@ pub mod mux;
 ///
 pub mod wire;
 
-/// Since: Odyssey Desktop 0.6.0.
 pub use config::{AccelConfig, ConfigKind, GeneralConfig, GyroConfig};
-/// Since: Odyssey Desktop 0.6.0.
 pub use device_name::{DeviceName, SetDeviceNameError, SetDeviceNameResult};
-/// Since: Odyssey Desktop 0.6.0.
 pub use error::Error;
-/// Since: Odyssey Desktop 0.6.0.
 pub use list::List;
-/// Since: Odyssey Desktop 0.6.0.
 pub use packet::{Packet, PacketData, PacketType, VendorData};
-/// Since: Odyssey Desktop 0.6.0.
 pub use product_id::ProductId;
-/// Since: Odyssey Desktop 0.6.0.
 pub use props::{PropKind, Props};
-/// Since: Odyssey Desktop 0.6.0.
 pub use register::{Port, ReadRegisterResponse, Register, WriteRegister};
-/// Device event payloads.
-///
-/// # Since
-///
-/// - `AccelReport`: Odyssey Desktop 0.6.0.
-/// - `AccelBatch`: Unreleased.
-/// - `BatteryReport`: Odyssey Desktop 0.6.0.
-/// - `ImpactReport`: Odyssey Desktop 0.6.0.
-/// - `MarkersReport`: Odyssey Desktop 0.7.5.
-/// - `SparseMarkersError`: Unreleased.
-/// - `SparseMarkersReport`: Unreleased.
 pub use reports::{
     AccelBatch, AccelReport, BatteryReport, ImpactReport, MarkersReport, SparseMarkersError,
     SparseMarkersReport,
 };
-/// Since: Odyssey Desktop 0.6.0.
 pub use stream_update::{StreamUpdate, StreamUpdateAction};
-/// Since: Unreleased.
 pub use transfer::pack_queued;
-/// Since: Odyssey Desktop 0.6.0.
 pub use version::{DEVICE_PROTOCOL, Version};

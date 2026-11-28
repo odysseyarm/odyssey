@@ -44,13 +44,10 @@ fn rpc_message(status: &tonic::Status) -> String {
 /// Since: Odyssey Desktop 0.6.3.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Rpc(#[from] RpcError),
-    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
-    /// Since: Odyssey Desktop 0.6.3.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

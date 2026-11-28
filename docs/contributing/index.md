@@ -111,6 +111,15 @@ Items present in the earliest available tagged release identify that evidence
 limit; current-only items say `Unreleased`. Check symbol history across file
 moves rather than dating APIs from their current path.
 
+Keep availability metadata on the item's declaration, not on `pub use`:
+rustdoc merges re-export comments into the item and can repeat them during
+inlining. A grouped re-export's comment applies to every exported item.
+When a re-export path has a later introduction date, label that path explicitly
+rather than adding another unqualified `Since`. The Rust API docs workflow checks
+rendered documentation blocks for repeated availability metadata.
+Fields and variants inherit their containing type's availability; repeat metadata
+only when their introduction date differs.
+
 Protocol variants also record a `Wire baseline`: the protocol counter in their
 first tagged Desktop snapshot, not a minimum-support guarantee. Explicit minimum
 device, mux and dongle-control contracts remain documented where established.
