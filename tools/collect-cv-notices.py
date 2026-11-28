@@ -6,22 +6,26 @@ private workspaces. Pass the saved JSON files to this script. Cargo's source
 cache must be available, because the notices come from the resolved sources.
 """
 
+from collections.abc import Iterator, Sequence
 import json
 from pathlib import Path
 import re
 import sys
+from typing import Any
 
 
 SUPPLEMENTS = Path(__file__).with_name("license-notices")
 COMMENTS = re.compile(r"/\*.*?\*/|(?:^[ \t]*//[^\n]*(?:\n|$))+", re.M | re.S)
 
 
-def selected_license(expression):
+def selected_license(expression: str) -> str:
     if expression == "(MIT OR Apache-2.0) AND Unicode-3.0":
         return "MIT AND Unicode-3.0"
     if "AND" in expression or "WITH" in expression and " OR " not in expression:
         raise ValueError(f"License expression needs review: {expression}")
-    if "MIT" in [part.strip() for part in expression.replace("/", " OR ").split(" OR ")]:
+    if "MIT" in [
+        part.strip() for part in expression.replace("/", " OR ").split(" OR ")
+    ]:
         return "MIT"
     if expression == "Apache-2.0 OR BSL-1.0":
         return "BSL-1.0"
@@ -30,7 +34,7 @@ def selected_license(expression):
     raise ValueError(f"License expression needs review: {expression}")
 
 
-def dependencies(metadata):
+def dependencies(metadata: dict[str, Any]) -> Iterator[dict[str, Any]]:
     packages = {p["id"]: p for p in metadata["packages"]}
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
     pending = [p["id"] for p in packages.values() if p["name"] == "odyssey-cv"]
@@ -44,12 +48,13 @@ def dependencies(metadata):
         seen.add(ident)
         yield packages[ident]
         pending.extend(
-            dep["pkg"] for dep in nodes[ident]["deps"]
+            dep["pkg"]
+            for dep in nodes[ident]["deps"]
             if any(kind["kind"] is None for kind in dep["dep_kinds"])
         )
 
 
-def notices(package):
+def notices(package: dict[str, Any]) -> tuple[str, list[tuple[str, str]]]:
     root = Path(package["manifest_path"]).parent
     expression = package["license"]
     if package["name"] == "sqpnp" and expression is None:
@@ -65,7 +70,9 @@ def notices(package):
     else:
         texts = []
     if not texts:
-        texts = [p for p in files if p.name.upper() in ("LICENSE", "LICENSE.TXT", "COPYING")]
+        texts = [
+            p for p in files if p.name.upper() in ("LICENSE", "LICENSE.TXT", "COPYING")
+        ]
     if not texts:
         if package["name"] == "r-efi":
             texts = [root / "AUTHORS"]
@@ -83,26 +90,36 @@ def notices(package):
     return chosen, result
 
 
-def collect(metadata_files):
-    packages = {}
+def collect(metadata_files: Sequence[str]) -> str:
+    packages: dict[tuple[str, str, str], dict[str, Any]] = {}
     for filename in metadata_files:
         for package in dependencies(json.loads(Path(filename).read_text())):
             if package["name"] in ("odyssey-cv", "odyssey-common"):
                 continue
             key = (package["name"], package["version"], package["source"] or "")
             packages[key] = package
-    sections = {}
+    sections: dict[str, list[str]] = {}
     for key, package in sorted(packages.items()):
         chosen, texts = notices(package)
         label = f"{package['name']} {package['version']} — {chosen}"
         authors = ", ".join(package["authors"])
-        origin = package["repository"] or package["homepage"] or "https://crates.io/crates/" + package["name"]
-        if package["source"] and package["source"].startswith("git+") and package["name"] != "eskf":
+        origin = (
+            package["repository"]
+            or package["homepage"]
+            or "https://crates.io/crates/" + package["name"]
+        )
+        if (
+            package["source"]
+            and package["source"].startswith("git+")
+            and package["name"] != "eskf"
+        ):
             origin = package["source"].removeprefix("git+")
         attribution = f"{label}\nAuthors: {authors}\nSource: {origin}\n"
         if chosen == "MPL-2.0":
             if not (package["source"] or "").startswith("registry+"):
-                raise ValueError("MPL source availability needs review for non-registry sources")
+                raise ValueError(
+                    "MPL source availability needs review for non-registry sources"
+                )
             attribution += (
                 "The MPL-covered source is available without charge at:\n"
                 f"https://crates.io/api/v1/crates/{package['name']}/{package['version']}/download\n"
@@ -123,10 +140,15 @@ def collect(metadata_files):
         "Regenerate this file with public Odyssey's tools/collect-cv-notices.py after\n"
         "changes, using locked Cargo metadata from each affected workspace.\n"
     )
-    return header + "\n\n" + "\n\n".join(
-        "=" * 72 + "\n\n" + "\n".join(entries) + "\n" + body
-        for body, entries in sections.items()
-    ) + "\n"
+    return (
+        header
+        + "\n\n"
+        + "\n\n".join(
+            "=" * 72 + "\n\n" + "\n".join(entries) + "\n" + body
+            for body, entries in sections.items()
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":
