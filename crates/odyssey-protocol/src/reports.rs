@@ -142,15 +142,12 @@ pub struct AccelBatch {
 #[cfg_attr(feature = "pyo3", pyo3::pyclass)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AccelReport {
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     pub timestamp: u32,
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::serde_with"))]
     #[cfg_attr(feature = "schema", postcard_type = "[f32; 3]")]
     pub accel: Vector3<f32>,
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(2))]
     #[cfg_attr(feature = "minicbor", cbor(with = "crate::cbor::serde_with"))]
     #[cfg_attr(feature = "schema", postcard_type = "[f32; 3]")]

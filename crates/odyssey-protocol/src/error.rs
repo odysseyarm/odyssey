@@ -9,23 +9,17 @@ use crate::PacketType;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(0))]
     UnexpectedEof {
-        /// Since: Odyssey Desktop 0.6.0.
         #[cfg_attr(feature = "minicbor", n(0))]
         packet_type: Option<PacketType>,
     },
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(1))]
     UnrecognizedPacketId(#[cfg_attr(feature = "minicbor", n(0))] u8),
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(2))]
     UnrecognizedPort,
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(3))]
     UnrecognizedStreamUpdateAction(#[cfg_attr(feature = "minicbor", n(0))] u8),
-    /// Since: Odyssey Desktop 0.6.0.
     #[cfg_attr(feature = "minicbor", n(4))]
     InvalidBitPattern,
 }

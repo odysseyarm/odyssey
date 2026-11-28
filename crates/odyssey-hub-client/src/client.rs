@@ -6,15 +6,13 @@ use interprocess::local_socket::{
 };
 use odyssey_hub_common as common;
 use odyssey_hub_server_interface as proto;
-/// Since: Unreleased.
+/// Re-exported by this client since: Unreleased.
 pub use odyssey_hub_server_interface::SystemPairingResult;
 use odyssey_hub_server_interface::service_client::ServiceClient;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
 
-/// Since: Odyssey Desktop 0.5.0 (earliest tagged release).
 pub use crate::dongle::DongleInfo;
-/// Since: Odyssey Desktop 0.6.3.
 pub use crate::error::{ClientError, RpcError};
 
 /// Connection to the hub's local gRPC socket.

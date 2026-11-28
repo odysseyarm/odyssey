@@ -9,7 +9,7 @@
 
 mod codec;
 
-/// Since: Odyssey Desktop 0.7.0.
+/// Available through `odyssey_protocol::legacy` since Desktop 0.7.0.
 pub use codec::{Parse, Serialize};
 use nalgebra::Point2;
 use odyssey_protocol_macros::protocol_type;
