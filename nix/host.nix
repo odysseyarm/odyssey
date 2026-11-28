@@ -7,6 +7,7 @@
   nativeEnvironment,
 }:
 let
+  notices = ../THIRD_PARTY_NOTICES.txt;
   hostArgs =
     common.mkArgs {
       pname = "odyssey-host";
@@ -29,6 +30,7 @@ let
           wrapProgram "$out/bin/$program" \
             --prefix LD_LIBRARY_PATH : "${nativeEnvironment.LD_LIBRARY_PATH}"
         done
+        install -Dm644 ${notices} "$out/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt"
       '';
     }
   );
@@ -43,6 +45,9 @@ let
     // {
       cargoArtifacts = trackingArtifacts;
       doCheck = false;
+      postInstall = ''
+        install -Dm644 ${notices} "$out/share/licenses/odyssey/THIRD_PARTY_NOTICES.txt"
+      '';
     }
   );
   xtaskArgs = common.mkArgs {

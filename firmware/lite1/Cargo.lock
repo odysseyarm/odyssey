@@ -2094,7 +2094,7 @@ dependencies = [
 [[package]]
 name = "odyssey-cv"
 version = "0.1.0"
-source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#ce3c01e9480a74942b7383232b45e262e52dd699"
+source = "git+ssh://git@github.com/odysseyarm/odyssey-cv.git#163d3d6df87b4e21e356cfe1f85119535bbab19a"
 dependencies = [
  "arrayvec",
  "microfft",
