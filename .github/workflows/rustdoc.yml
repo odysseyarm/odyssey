@@ -18,6 +18,7 @@ on:
       - rust-toolchain.toml
       - .cargo/config.toml
       - .github/workflows/rustdoc.yml
+      - .github/scripts/check-rustdoc.py
   schedule:
     - cron: '23 6 * * 1'
   release:
