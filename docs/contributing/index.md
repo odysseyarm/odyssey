@@ -155,10 +155,14 @@ failures still run every suite.
 
 `https://cache.odysseyarm.com` (Cloudflare R2) is the project's Nix binary
 cache. CI trusts `odysseyarm-1` and the dedicated `odysseyarm-workstation-1`
-signer (`.github/actions/setup-nix`). Host CI pushes the host dependency layer
-(`.#host.cargoArtifacts`, built with the private-source stubs), xtask and
-successful proof results on trusted runs. Firmware release workflows push
-firmware derivations, checks and packaging closures; FFI and UniFFI workflows
+signer (`.github/actions/setup-nix`). Host CI builds the host dependency layer
+(`.#host.cargoArtifacts`, built with the private-source stubs) and xtask through
+`.github/actions/push-cache/build.sh`. It uploads them before building the host
+applications, so an application, test or lint failure does not prevent dependency
+caching. Successful proof results are uploaded separately. Uploads require a
+`push` or manual run on `main` or `master` in `odysseyarm/odyssey`.
+Firmware release workflows push firmware derivations, checks and packaging
+closures; FFI and UniFFI workflows
 push SDK derivations and checks on trusted runs. Desktop releases push
 `desktop-nixos`.
 
@@ -194,17 +198,30 @@ are skipped. A recorded completed output that was collected before queuing
 instead blocks upload and requires rebuilding; the uploader builds nothing.
 
 ```sh
-bash .github/actions/push-cache/local.sh --register 'git+file:///path/to/odyssey?rev=COMMIT'
+bash .github/actions/push-cache/local.sh --register "git+file://$(jj git root)?rev=COMMIT"
 bash .github/actions/push-cache/local.sh --flush
 bash .github/actions/push-cache/local.sh --push --bookmark BRANCH
 ```
 
-The push entrypoint asks `jj git push --dry-run` what would move, builds
-`host-lint` and `host-lint-bins` for each distinct target revision, registers
-outgoing revisions, flushes pending uploads, then pushes. Lint or upload failure
-blocks the push. Configure the local `jj push` alias to use this entrypoint;
-plain `jj git push` bypasses it. Uploads never build missing cache outputs:
-commit first, build the relevant checks/packages, then push.
+The push entrypoint asks `jj git push --dry-run` what would move. For each distinct
+target revision, it builds the host dependency layer and xtask through the same
+`build.sh` entrypoint as CI, then builds `host-lint` and `host-lint-bins`. It
+registers every outgoing revision, flushes pending uploads, verifies that the
+push plan has not changed, then pushes. A build, lint or upload failure blocks
+the push.
+
+Use the repository's `jj push` alias to invoke this entrypoint. Direct
+`jj git push` bypasses it. The alias is a local convenience, not an enforcement
+boundary; CI remains authoritative. The uploader never builds missing outputs.
+Commit first so that local builds and approvals refer to the outgoing revision.
+Other firmware and SDK outputs must be built explicitly before pushing.
+
+The workstation dispatcher uses the push implementation in the registered
+Odyssey checkout while preserving the caller's workspace. Relative revision
+selectors such as `@` refer to that workspace. Immutable Nix builds use
+`jj git root` to locate the shared Git repository, so linked workspaces do not
+need their own `.git` directory. Background uploads remain anchored to the
+registered checkout.
 
 The queue uses SQLite transactions and GC roots for pending output and
 approved build closures. Failed uploads keep those roots; successful uploads

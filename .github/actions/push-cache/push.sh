@@ -4,6 +4,8 @@ set -f
 
 cache_action_path=$(dirname "$(realpath "$0")")
 repo=$(jj root)
+cd "$repo"
+git_repo=$(jj git root)
 for arg in "$@"; do
   if [ "$arg" = --dry-run ]; then
     exec jj --color never git push "$@"
@@ -48,7 +50,8 @@ while IFS= read -r line; do
     exit 1
   fi
   if [[ ! ${checked[$commit]+present} ]]; then
-    uri="git+file://${repo}?rev=${commit}"
+    uri="git+file://${git_repo}?rev=${commit}"
+    bash "$cache_action_path/build.sh" "$uri"
     nix build --no-link --max-jobs 2 --cores 3 \
       "$uri#checks.$system.host-lint" \
       "$uri#checks.$system.host-lint-bins"
@@ -59,7 +62,7 @@ while IFS= read -r line; do
   while IFS= read -r revision; do
     [[ -n $revision ]] || continue
     [[ ${registered[$revision]+present} ]] && continue
-    uri="git+file://${repo}?rev=${revision}"
+    uri="git+file://${git_repo}?rev=${revision}"
     bash "$cache_action_path/local.sh" --register "$uri"
     registered[$revision]=1
   done <<<"$outgoing"
