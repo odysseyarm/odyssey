@@ -783,6 +783,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
     /// `Ok(None)` if no object data was ready. Use [`Pag7665QnInterrupt::wait`] to wait until a
     /// frame is ready.
     ///
+    /// In object mode the sensor raises frame-ready only for a frame with at least one
+    /// qualifying object (firmware datasheet V0.75, section 4.6.4). A frame without objects
+    /// produces no report, so a returned count is expected to be at least one.
+    ///
     /// # Errors
     /// Returns an interface error, mode error, [`Error::InvalidObjectCount`] for counts above 16, or [`Error::Timeout`] if report handshake times out.
     ///
@@ -832,6 +836,7 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
                     .await?;
                     frame_complete = true;
                 } else {
+                    // Not expected: a zero count belongs to the second report of a frame.
                     frame_complete = true;
                 }
             } else if !second_report_pending {
