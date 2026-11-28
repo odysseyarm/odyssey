@@ -783,6 +783,10 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
     /// `Ok(None)` if no object data was ready. Use [`Pag7665QnInterrupt::wait`] to wait until a
     /// frame is ready.
     ///
+    /// In object mode the sensor raises frame-ready only for a frame with at least one
+    /// qualifying object (firmware datasheet V0.75, section 4.6.4). A frame without objects
+    /// produces no report, so a returned count is expected to be at least one.
+    ///
     /// # Errors
     /// Returns an interface error, mode error, [`Error::InvalidObjectCount`] for counts above 16, or [`Error::Timeout`] if report handshake times out.
     ///
@@ -795,43 +799,47 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
         self._set_bank(0x00).await?;
         let obj_bytes = bytemuck::bytes_of_mut(obj);
 
-        let mut done = false;
-        let mut flag = false;
-        let mut total_count = 0;
+        let mut frame_complete = false;
+        let mut second_report_pending = false;
+        let mut frame_count = 0;
         let mut polls = 0;
         loop {
             let status = self.int_o_status().await?;
             if status.frame_ready() {
-                let count = self.read_byte(regs::OBJ_COUNT).await?;
-                if count > 16 {
+                let report_count = self.read_byte(regs::OBJ_COUNT).await?;
+                if report_count > 16 {
                     self.set_int_o_status(IntOStatus::ZERO).await?;
-                    return Err(Error::InvalidObjectCount(count));
+                    return Err(Error::InvalidObjectCount(report_count));
                 }
 
                 // At most 8 objects are read per report; above 8, the rest arrive in a second
                 // report.
-                if count > 8 {
-                    total_count = count;
+                if report_count > 8 {
+                    frame_count = report_count;
                     self.read(regs::OBJ_DATA_START, &mut obj_bytes[..8 * 8])
                         .await?;
-                    flag = true;
-                } else if count > 0 {
-                    total_count = count;
-                    self.read(regs::OBJ_DATA_START, &mut obj_bytes[..count as usize * 8])
-                        .await?;
-                    done = true;
-                } else if flag {
-                    // Read 2nd frame
+                    second_report_pending = true;
+                } else if report_count > 0 {
+                    frame_count = report_count;
                     self.read(
                         regs::OBJ_DATA_START,
-                        &mut obj_bytes[8 * 8..total_count as usize * 8],
+                        &mut obj_bytes[..report_count as usize * 8],
                     )
                     .await?;
-                    done = true;
+                    frame_complete = true;
+                } else if second_report_pending {
+                    // The second report of a frame carries a zero count.
+                    self.read(
+                        regs::OBJ_DATA_START,
+                        &mut obj_bytes[8 * 8..frame_count as usize * 8],
+                    )
+                    .await?;
+                    frame_complete = true;
                 } else {
-                    done = true;
+                    // Not expected: a zero count belongs to the second report of a frame.
+                    frame_complete = true;
                 }
-            } else if !flag {
+            } else if !second_report_pending {
                 self.set_int_o_status(IntOStatus::ZERO).await?;
                 return Ok(None);
             }
@@ -841,14 +849,14 @@ impl<I: Interface, D: DelayNs, M: mode::IsObject> Pag7665Qn<I, D, M> {
                 return Err(Error::Timeout);
             }
             self.set_int_o_status(IntOStatus::ZERO).await?;
-            if flag && !done {
+            if second_report_pending && !frame_complete {
                 self.timer.delay_ms(1).await;
             }
-            if done {
+            if frame_complete {
                 break;
             }
         }
-        Ok(Some(total_count))
+        Ok(Some(frame_count))
     }
 }
 

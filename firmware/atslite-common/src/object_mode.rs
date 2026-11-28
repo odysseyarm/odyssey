@@ -1301,9 +1301,10 @@ async fn obj_loop<P: PagSensor, PI: PagInterrupt, const N: usize>(
         let objects = pag.lock().await.get_objects(&mut objs).await;
         match objects {
             Ok(Some(count)) => {
-                send_markers(pkt_snd, stream_infos, &objs);
                 let mut spots = [NO_SPOT; 16];
                 let count = usize::from(count).min(spots.len());
+                // Entries past `count` still hold objects of earlier frames.
+                send_markers(pkt_snd, stream_infos, &objs[..count]);
                 for (spot, obj) in spots.iter_mut().zip(&objs[..count]) {
                     *spot = Spot {
                         x: obj.x(),
@@ -1399,12 +1400,14 @@ async fn restore_image_settings<P: PagSensor>(
 fn send_markers<const N: usize>(
     reports: Sender<'_, Packet, N>,
     streams: &StreamInfos,
-    objs: &[pag7665qn::types::Object; 16],
+    objs: &[pag7665qn::types::Object],
 ) {
     if streams.marker.enabled() {
-        let report = odyssey_protocol::MarkersReport {
-            points: objs.map(|o| nalgebra::Point2::new(o.x(), o.y())),
-        };
+        let mut points = [nalgebra::Point2::origin(); 16];
+        for (point, obj) in points.iter_mut().zip(objs) {
+            *point = nalgebra::Point2::new(obj.x(), obj.y());
+        }
+        let report = odyssey_protocol::MarkersReport { points };
         let _ = reports.try_send(Packet {
             id: streams.marker.req_id(),
             data: report.into(),
