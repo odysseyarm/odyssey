@@ -5,7 +5,7 @@ fits together, how to build and test it, and how releases are made.
 
 - How tracking works inside the hub is documented in the private odyssey-cv
   repository, alongside the tracking code.
-- [Report transport](report-transport.md) describes typed reports, USB and BLE
+- [Report streaming](report-streaming.md) describes compact reports, USB and BLE
   packing, measurement time, protocol versions and update compatibility.
 
 ## Developer tools
@@ -125,7 +125,7 @@ from every historical firmware image. Existing variant slots, field order, paylo
 types and bounds stay fixed; enums may append variants, including nested enums.
 Transmission of appended variants requires a compatibility policy: peer-version or
 capability gates, or the release-level minimum Desktop contract described in
-[report transport](report-transport.md#compatibility-and-updates).
+[report streaming](report-streaming.md#compatibility-and-updates).
 CBOR and packed legacy codecs retain their separate frozen-wire tests and proofs.
 
 ```sh
